@@ -4699,14 +4699,32 @@ async function main() {
     const installerSource = fs.existsSync(legacyInstallerInclude)
       ? fs.readFileSync(legacyInstallerInclude, "utf8")
       : "";
+    const directoryHook =
+      /!macro customPageAfterChangeDir\b([\s\S]*?)!macroend/.exec(
+        installerSource,
+      )?.[1] || "";
     check(
-      "the assisted installer keeps the existing install folder while branding new shortcuts",
+      "a fresh Windows install defaults to the Markaloo folder, with a directory chooser",
       pkg.build.nsis.include === "build/installer.nsh" &&
+        pkg.build.productName === "Markaloo" &&
+        pkg.build.nsis.allowToChangeInstallationDirectory === true &&
         pkg.build.nsis.shortcutName === pkg.productName &&
         fs.existsSync(legacyInstallerInclude) &&
-        /!undef APP_FILENAME\s*!define APP_FILENAME "Folia"/.test(
-          installerSource,
-        ),
+        !/!define\s+APP_FILENAME\b/.test(installerSource) &&
+        /Call instFilesPre/.test(directoryHook),
+    );
+    check(
+      "a recognized prior installer location stays unchanged on upgrade",
+      /ReadRegStr\s+\$0\s+SHELL_CONTEXT\s+"\$\{INSTALL_REGISTRY_KEY\}"\s+"InstallLocation"\s+ClearErrors\s+\$\{If\}\s+\$0 != ""\s+\$\{AndIf\}\s+\$INSTDIR == \$0\s+Pop \$0\s+Return\s+\$\{EndIf\}/.test(
+        directoryHook,
+      ) &&
+        /!undef MUI_PAGE_CUSTOMFUNCTION_PRE\s*!define MUI_PAGE_CUSTOMFUNCTION_PRE preserveExistingInstallDirectory/.test(
+          directoryHook,
+        ) &&
+        directoryHook.indexOf("Call instFilesPre") >
+          directoryHook.indexOf("Return") &&
+        directoryHook.indexOf("!define MUI_PAGE_CUSTOMFUNCTION_PRE") >
+          directoryHook.indexOf("Call instFilesPre"),
     );
 
     // electron-builder's ordinary macro covers APP_EXECUTABLE_FILENAME

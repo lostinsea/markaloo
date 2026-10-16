@@ -1,7 +1,22 @@
-; Keep the existing NSIS installation folder across an assisted upgrade.
-; Display name, executable, shortcuts, and artifact names remain Markaloo.
-!undef APP_FILENAME
-!define APP_FILENAME "Folia"
+; The builder uses the product name for a fresh install's folder. Its directory
+; page would append that name to an existing folder named Folia on upgrade.
+!macro customPageAfterChangeDir
+  Function preserveExistingInstallDirectory
+    Push $0
+    ReadRegStr $0 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" "InstallLocation"
+    ClearErrors
+    ${If} $0 != ""
+    ${AndIf} $INSTDIR == $0
+      Pop $0
+      Return
+    ${EndIf}
+    Pop $0
+    Call instFilesPre
+  FunctionEnd
+
+  !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE preserveExistingInstallDirectory
+!macroend
 
 !include "getProcessInfo.nsh"
 Var pid

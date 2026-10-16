@@ -114,6 +114,16 @@ section is kept here so the register has a visible edge.
     recreation; Cancel kept the original clean document. Receipts:
     `reload-*-baseline.log`, `baseline-native-options.json`, `baseline-app.png`
     in session `f908fe61` artifacts. The baseline app screenshot was viewed.
+- `installer-directory-followup` - CORRECTED LOCALLY, NOT PUBLISHED: the v0.8.0
+  Windows installer defaults even a fresh installation to a folder named
+  `Folia`. Current source defaults to `Markaloo` and preserves a recognized
+  existing location, as the user chose. The installer compiled, packaging
+  passed 417/417, R946/R953/R952 were proven, and independent Sol/Luna reviews
+  found no significant issues. No installer was run and no existing install
+  was moved. A separate check found that v0.7.1 checks for updates once after
+  startup, with no periodic retry; the old feed detects 0.8.0 today, but the
+  cause of the user's missed notification is not yet known. No follow-up
+  release has been authorized.
 - The Markaloo rebrand, feather icon, and reviewed table/TOC and Mermaid-label
   work are published together as [v0.8.0](https://github.com/lostinsea/markaloo/releases/tag/v0.8.0).
   The repository is `lostinsea/markaloo`; old release links still redirect.

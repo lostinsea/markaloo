@@ -3387,16 +3387,34 @@ const REVERTS = [
   {
     id: "R946",
     suite: "test:packaging",
-    what: "let an assisted upgrade nest Markaloo inside the old install folder",
+    what: "append Markaloo inside a recognized previous install folder",
     file: path.join(ROOT, "build", "installer.nsh"),
-    from: '!define APP_FILENAME "Folia"',
-    to: '!define APP_FILENAME "Markaloo"',
+    from: '${AndIf} $INSTDIR == $0',
+    to: '${AndIf} $INSTDIR != $0',
     expect: [
-      /^the assisted installer keeps the existing install folder while branding new shortcuts$/,
+      /^a recognized prior installer location stays unchanged on upgrade$/,
     ],
     mustPass: [
-      /^build.productName names the installer, so the installed app is not the old name$/,
+      /^a fresh Windows install defaults to the Markaloo folder, with a directory chooser$/,
     ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R953",
+    suite: "test:packaging",
+    what: "restore the Folia folder as the fresh-install default",
+    file: path.join(ROOT, "build", "installer.nsh"),
+    from: "!macro customPageAfterChangeDir",
+    to: '!undef APP_FILENAME\n!define APP_FILENAME "Folia"\n!macro customPageAfterChangeDir',
+    expect: [
+      /^a fresh Windows install defaults to the Markaloo folder, with a directory chooser$/,
+    ],
+    mustPass: [
+      /^a recognized prior installer location stays unchanged on upgrade$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
   },
   {
     id: "R952",
@@ -3410,7 +3428,7 @@ const REVERTS = [
     ],
     mustPass: [
       /^the NSIS custom running-app check delegates the current Markaloo executable to electron-builder$/,
-      /^the assisted installer keeps the existing install folder while branding new shortcuts$/,
+      /^a recognized prior installer location stays unchanged on upgrade$/,
     ],
     requireMustPassAssertions: true,
     requireExactFailures: true,

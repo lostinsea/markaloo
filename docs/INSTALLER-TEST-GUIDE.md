@@ -20,11 +20,14 @@ This guide helps you test the Windows installer to ensure everything works corre
    - [ ] "I Agree" button is clickable
 
 3. **Installation Directory**
+   - [ ] On a clean install, the default path ends in
+         `C:\Program Files\lostinsea\Markaloo`
    - [ ] On an upgrade, the selected path remains the existing install folder
          (for example, `C:\Program Files\lostinsea\Folia`), with no nested
          `Markaloo` folder
-   - [ ] On a clean install, confirm the displayed path before proceeding
+   - [ ] On an upgrade from a custom location, that location remains selected
    - [ ] "Browse" button allows changing install location
+   - [ ] A new base path such as `D:\Apps` installs to `D:\Apps\Markaloo`
    - [ ] Selected path is remembered
 
 4. **Installation Options**
@@ -183,8 +186,9 @@ Markaloo-Setup-<version>.exe /S
 REM Wait for installation
 timeout /t 10
 
-REM Set this to the installation directory shown by the installer.
-set "INSTALL_DIR=C:\Program Files\lostinsea\Folia"
+REM Set this to the directory chosen in the installer. Existing upgrades may
+REM still use a previously selected Folia or custom directory.
+set "INSTALL_DIR=C:\Program Files\lostinsea\Markaloo"
 
 REM Test if installed
 if exist "%INSTALL_DIR%\Markaloo.exe" (

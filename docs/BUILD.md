@@ -48,10 +48,10 @@ Both the portable exe and the unpacked binary take their name from
 `build.productName`, so the running process appears as **`Markaloo`** in Task
 Manager and `Get-Process`.
 
-Windows keeps the old `Folia` installation folder and app ID during upgrades.
-The installer, executable and shortcuts say Markaloo; the fixed folder avoids a
-second nested install and keeps existing install locations. The app also keeps
-the old private profile so settings and tabs survive the rename.
+New Windows installations default to `C:\Program Files\lostinsea\Markaloo`.
+An upgrade keeps the previous selected folder, even if it is named `Folia`;
+the installer does not add a nested `Markaloo` folder or move an existing app.
+The app ID and private profile stay unchanged so settings and tabs survive.
 Before replacing files, the installer checks for both `Markaloo.exe` and the
 previous `Folia.exe`, including when PowerShell process detection is unavailable.
 
