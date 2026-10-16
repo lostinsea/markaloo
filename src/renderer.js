@@ -790,6 +790,21 @@ const ZOOM_CONFIG = {
   max: 400
 };
 
+function readReadingZoom() {
+  try {
+    const saved = localStorage.getItem('readingZoom');
+    const level = Number(saved);
+    if (saved === String(level) && Number.isInteger(level) &&
+        level >= ZOOM_CONFIG.min && level <= ZOOM_CONFIG.max &&
+        (level - ZOOM_CONFIG.level) % ZOOM_CONFIG.step === 0) {
+      return level;
+    }
+  } catch (error) {
+    console.warn('Could not restore reading zoom preference:', error);
+  }
+  return ZOOM_CONFIG.level;
+}
+
 // ============================================
 // UI STRINGS
 // ============================================
@@ -951,7 +966,7 @@ const STORAGE = {
 // ============================================
 // APPLICATION STATE
 // ============================================
-let zoomLevel = ZOOM_CONFIG.level;
+let zoomLevel = readReadingZoom();
 
 // ============================================
 // DOM ELEMENT REFERENCES
@@ -2247,7 +2262,7 @@ function scheduleZoomAnchorRestore() {
 }
 
 // Update zoom display
-function updateZoom() {
+function updateZoom({ persist = true } = {}) {
   // Read the reading position FIRST - before any style write in this frame, so
   // the layout is clean and the read is free. See the block comment above.
   captureZoomAnchor();
@@ -2314,6 +2329,10 @@ function updateZoom() {
   // NOTE: the anchor's restore frame is booked by captureZoomAnchor() itself,
   // at the top of this function - see the comment there for why the two cannot
   // be separated.
+  if (persist) {
+    try { localStorage.setItem('readingZoom', String(zoomLevel)); }
+    catch (error) { console.warn('Could not save reading zoom preference:', error); }
+  }
 }
 
 // ============================================
@@ -2337,6 +2356,16 @@ zoomOutBtn.addEventListener('click', () => {
 zoomResetBtn.addEventListener('click', () => {
   zoomLevel = ZOOM_CONFIG.level;
   updateZoom();
+});
+
+window.addEventListener('storage', (event) => {
+  if (event.storageArea !== localStorage ||
+      (event.key !== 'readingZoom' && event.key !== null)) return;
+  // Queued notifications may describe an older choice than the stored one.
+  const nextZoom = readReadingZoom();
+  if (nextZoom === zoomLevel) return;
+  zoomLevel = nextZoom;
+  updateZoom({ persist: false });
 });
 
 // Dark mode toggle
@@ -9278,7 +9307,7 @@ window.folia.onError(message => {
 });
 
 // Update zoom on load
-updateZoom();
+updateZoom({ persist: false });
 
 // ============================================
 // Auto-Update UI Handler

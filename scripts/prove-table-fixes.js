@@ -22450,6 +22450,104 @@ const REVERTS = [
           expectedFailureCount: 1,
         },
         {
+          id: "R954", what: "reset reading zoom to 100 instead of restoring it before the first document",
+          file: RENDERER,
+          from: "let zoomLevel = readReadingZoom();",
+          to: "let zoomLevel = 100;",
+          suite: "test:reading-zoom-restore",
+          expect: [/^zoom full quit relaunch restores 160 before the first document is painted$/],
+          mustPass: [
+            /^zoom every user input persists a canonical percentage synchronously$/,
+            /^zoom relaunch really restored its previously admitted document$/,
+            /^zoom normal 160 percent changes actual prose geometry and the displayed percentage$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R955", what: "change only the current reader without persisting user zoom inputs",
+          file: RENDERER,
+          from: "localStorage.setItem('readingZoom', String(zoomLevel));",
+          to: "/* Reading zoom persistence removed for proof. */",
+          suite: "test:reading-zoom-persist",
+          expect: [
+            /^zoom every user input persists a canonical percentage synchronously$/,
+            /^zoom storage write refusal warns and keeps the changed UI usable$/,
+          ],
+          mustPass: [
+            /^zoom native keyboard increments decrements and resets the reading percentage$/,
+            /^zoom native control wheel changes only reading zoom$/,
+            /^zoom buttons preserve the 50 through 400 bounds ten-point steps and reset 100$/,
+            /^zoom PDF output contains bytes and leaves the screen percentage and preference unchanged$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R956", what: "accept numeric-looking or off-grid stored zoom and silently swallow storage read failures",
+          file: RENDERER,
+          from: "function readReadingZoom() {",
+          to: "function readReadingZoom() {\n" +
+            "  try {\n" +
+            "    const value = Number(localStorage.getItem('readingZoom'));\n" +
+            "    return Number.isFinite(value) && value >= 50 && value <= 400 ? value : 100;\n" +
+            "  } catch (error) { return 100; }\n",
+          suite: "test:reading-zoom-validate",
+          expect: [
+            /^zoom malformed noncanonical off-grid and out-of-range preferences default to 100$/,
+            /^zoom storage read refusal reaches the fallback and warns without throwing$/,
+          ],
+          mustPass: [
+            /^zoom default startup is genuinely missing and is not written back$/,
+            /^zoom canonical range endpoints and interior preferences are accepted$/,
+            /^zoom defaults sentinel proves console and DOM channels alive$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R957", what: "write reading zoom while merely restoring the startup preference",
+          file: RENDERER,
+          from: "// Update zoom on load\nupdateZoom({ persist: false });",
+          to: "// Update zoom on load\nupdateZoom();",
+          suite: "test:reading-zoom-startup",
+          expect: [/^zoom startup restore never writes the preference$/],
+          mustPass: [
+            /^zoom startup applies the canonical saved reading percentage$/,
+            /^zoom startup keeps browser page zoom at 100 percent$/,
+            /^zoom startup sentinel proves console and DOM channels alive$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R958", what: "leave an existing reader stale when another same-profile context changes reading zoom",
+          file: RENDERER,
+          from: "window.addEventListener('storage', (event) => {",
+          to: "window.addEventListener('reading-zoom-proof-disabled-storage', (event) => {",
+          suite: "test:reading-zoom-sync",
+          expect: [/^zoom real same-profile storage changes removals invalid values and clear update the reader$/],
+          mustPass: [
+            /^zoom new same-profile reader starts at the existing application percentage$/,
+            /^zoom storage notifications filter other areas and keys reread current state and never echo writes$/,
+            /^zoom storage probes observe real cross-context delivery$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R959", what: "trust a queued storage notification instead of validating the current reading preference",
+          file: RENDERER,
+          from: "const nextZoom = readReadingZoom();",
+          to: "const nextZoom = event.newValue === null ? 100 : Number(event.newValue);",
+          suite: "test:reading-zoom-sync",
+          expect: [
+            /^zoom real same-profile storage changes removals invalid values and clear update the reader$/,
+            /^zoom storage notifications filter other areas and keys reread current state and never echo writes$/,
+          ],
+          mustPass: [
+            /^zoom new same-profile reader starts at the existing application percentage$/,
+            /^zoom storage probes observe real cross-context delivery$/,
+            /^zoom sync sentinel proves console and DOM channels alive$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
           id: "R960", what: "describe a reappeared file with internal ownership jargon",
           file: TABS,
           from: '"file-reappeared": "The file disappeared and later reappeared with the same name. Are you sure you want to reload it?"',
@@ -23983,7 +24081,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") === "R319" &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount))
       .map((r) => r.id)
-      .join(",") === "R72,R454,R467,R319,R320,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983";
+      .join(",") === "R72,R454,R467,R319,R320,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,

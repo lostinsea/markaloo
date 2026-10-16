@@ -27,6 +27,19 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Reading zoom
+
+- One app-wide percentage is saved in `readingZoom`, not in document history.
+- Buttons, Ctrl/Cmd keyboard shortcuts and Ctrl/Cmd+wheel save the same choice.
+- Documents, reader windows and app restarts keep it in normal and split mode.
+- Startup restores it before documents render, without rewriting the setting.
+- Other same-profile readers follow preference changes without writing them back.
+- The range stays 50% to 400%, in 10-point steps. Reset saves 100%.
+- Missing or invalid values use 100%. Storage failures warn without disabling zoom.
+- Diagram-local zoom and export behavior stay unchanged.
+- `npm run test:zoom` covers disposable-profile restarts, controls, modes,
+  geometry, invalid values, storage failures and cross-window updates.
+
 ### Reading drawers, table headers and update notices
 
 - The left drawer remembers `closed`, `toc` or `notes` in `readingSidePanel`.

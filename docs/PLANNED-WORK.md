@@ -125,6 +125,27 @@ section is kept here so the register has a visible edge.
   ended the notification investigation after it worked on another machine;
   the original report was not diagnosed and no updater behavior was changed.
   No follow-up release has been authorized.
+- `persistent-reading-zoom` - LOCAL REVIEWED / UNMERGED (2026-10-16), isolated from canonical
+  `main` at `54b8ddd8`. One app-wide reading percentage must survive document
+  opens, new reader windows and quit/relaunch. Existing steps, reset, diagram
+  zoom and export behavior stay unchanged.
+- Zoom handoff: Astra traced controls, startup, mode changes and preference
+  storage; Sol/high implemented synchronous validated preference restore,
+  shared user-input persistence and same-profile reader synchronization.
+  Disposable-profile regressions reproduced the missing persistence on baseline
+  source (36/44). Zoom is 54/54; existing reading 296/296, responsive layout
+  28/28, tables 215/215 and source packaging 404/0 (built-archive checks skipped).
+  R954-R959 are individually exact PROVEN; anchors resolve. Normal/split 160%
+  screenshots were viewed. Bounded before/after timings meet their fixed budgets;
+  method, numbers and limits are in `docs/PERF-AUDIT.md`.
+  Responsive layout timed out twice before a 28/28 rerun; its baseline is also
+  28/28. The patch suite is 105/109 on both baseline and changed source, with
+  the same external-opener setup failures and harness exception; not full green.
+  Fresh independent GPT-6.1 Sol/high and GPT-6 Luna/high reviews found no
+  significant issues; no reviewer disagreements or corrections were raised.
+  Final unmutated zoom rerun is 54/54. Local only; awaits serialized integration.
+  This is not a release or a full-suite-green claim.
+  Scope is local source only: no push, release, installation or real profiles.
 - The Markaloo rebrand, feather icon, and reviewed table/TOC and Mermaid-label
   work are published together as [v0.8.0](https://github.com/lostinsea/markaloo/releases/tag/v0.8.0).
   The repository is `lostinsea/markaloo`; old release links still redirect.

@@ -1,5 +1,39 @@
 # Performance Audit
 
+## Reading zoom preference - 2026-10-16
+
+- Command: `node test\test-reading-zoom.js --perf`, before and after on the
+  same Windows x64 machine, AMD EPYC 7763, Node 24.18.1 and Electron 43.4.1.
+- Baseline: canonical `main` at `54b8ddd8`. Only `renderer.js` product bytes
+  changed. Each run checks that product source stayed frozen.
+- Five launches per version use fresh disposable profiles, seeded at 100%.
+  Startup includes test setup and waits for the empty production reader;
+  it is not a large-document startup measurement.
+- Existing 50 KiB prose and table corpus generators supply admitted files.
+  Each mode has 50 handler samples, after two warm-up clicks per launch.
+  The handler sample includes synchronous button dispatch, not later layout.
+- Budgets fixed before measurement: p50 may increase by at most the larger of
+  20% or 2ms for handlers, 20% or 50ms for startup. The p95 limits are the
+  larger of 25% or 5ms for handlers, 25% or 100ms for startup.
+
+| Measurement | Before p50 / p95 (ms) | After p50 / p95 (ms) |
+|---|---:|---:|
+| Empty-reader startup | 1154 / 1227 | 1124 / 1391 |
+| Prose, normal-mode handler | 0.4 / 0.5 | 0.4 / 0.6 |
+| Prose, split-mode handler | 0.3 / 0.5 | 0.4 / 0.6 |
+| Tables, normal-mode handler | 0.7 / 1.1 | 0.8 / 1.0 |
+| Tables, split-mode handler | 0.7 / 1.0 | 0.8 / 1.0 |
+
+- All measured changes stay within the fixed budgets. With five startup
+  samples, nearest-rank p95 is the maximum; the startup tail rose by 164ms.
+- Diagnostic two-frame table timings were 59.5 / 80.1ms before and
+  49.5 / 76.4ms after in normal mode; 68.4 / 89.4ms before and
+  69.1 / 92.4ms after in split mode. These are not handler times.
+- Runs were sequential, with no other suite in this worktree running.
+  This shared desktop was not a controlled exclusive benchmark machine.
+- JSON receipts retain sample arrays, corpus hashes, source hashes and runtime.
+  Later functional-only test additions do not change the measured perf route.
+
 ## Executive summary
 
 | ID | Issue | Measured impact | Estimated fix effort | ROI |
