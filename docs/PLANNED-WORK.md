@@ -121,9 +121,10 @@ section is kept here so the register has a visible edge.
   passed 417/417, R946/R953/R952 were proven, and independent Sol/Luna reviews
   found no significant issues. No installer was run and no existing install
   was moved. A separate check found that v0.7.1 checks for updates once after
-  startup, with no periodic retry; the old feed detects 0.8.0 today, but the
-  cause of the user's missed notification is not yet known. No follow-up
-  release has been authorized.
+  startup, with no periodic retry; the old feed detects 0.8.0 today. The user
+  ended the notification investigation after it worked on another machine;
+  the original report was not diagnosed and no updater behavior was changed.
+  No follow-up release has been authorized.
 - The Markaloo rebrand, feather icon, and reviewed table/TOC and Mermaid-label
   work are published together as [v0.8.0](https://github.com/lostinsea/markaloo/releases/tag/v0.8.0).
   The repository is `lostinsea/markaloo`; old release links still redirect.
