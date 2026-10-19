@@ -3169,6 +3169,90 @@ body.dark-mode .context-menu {
   color: var(--text-primary);
 }
 
+.reload-document-dialog {
+  padding: 0;
+  margin: auto;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.reload-document-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.reload-document-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.reload-document-dialog .note-dialog-header,
+.reload-document-dialog .note-dialog-footer {
+  flex-shrink: 0;
+}
+
+.reload-document-dialog h2 {
+  margin: 0;
+  font: inherit;
+}
+
+.reload-document-dialog .note-dialog-body {
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.reload-document-dialog p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.reload-document-name {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.reload-document-dialog .note-dialog-footer {
+  flex-wrap: wrap;
+}
+
+.reload-document-dialog .note-dialog-btn {
+  min-height: 36px;
+}
+
+.reload-document-close {
+  border: 0;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.reload-document-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.reload-document-dialog button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reload-document-dialog,
+  .reload-document-dialog button {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* ============================================
    Noted Text / Image Styles
    ============================================ */

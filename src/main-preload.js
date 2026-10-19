@@ -480,6 +480,53 @@ function copyAdoptionRefusal(result, flag) {
   return { [flag]: false, why: result.why };
 }
 
+function copyDocumentReplacementConfirmation(value) {
+  const envelope = copyAdoptionEnvelope(value);
+  if (typeof value.id !== "string" || !/^[a-f0-9]{32}$/.test(value.id) ||
+      !["file-reappeared", "location-changed", "earlier-copy-protected"].includes(value.reason) ||
+      typeof value.fileName !== "string" || !value.fileName ||
+      value.fileName.length > 1024 || value.fileName.includes("\0") ||
+      !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= 0 ||
+      (value.owner !== null &&
+        (!value.owner || !positiveInteger(value.owner.tabId) ||
+          !positiveInteger(value.owner.documentGeneration) ||
+          typeof value.owner.documentRef !== "string" ||
+          !/^[a-f0-9]{64}$/.test(value.owner.documentRef)))) {
+    throw new TypeError("Invalid document replacement confirmation");
+  }
+  return Object.freeze({
+    ...envelope, id: value.id, reason: value.reason,
+    fileName: value.fileName, expiresAt: value.expiresAt,
+    owner: value.owner === null ? null : Object.freeze({
+      tabId: value.owner.tabId,
+      documentGeneration: value.owner.documentGeneration,
+      documentRef: value.owner.documentRef,
+    }),
+  });
+}
+
+function copyDiskAdoptionCommitResult(result) {
+  const refused = copyAdoptionRefusal(result, "accepted");
+  if (refused) {
+    if (refused.why === "confirmation-required") {
+      refused.confirmation = copyDocumentReplacementConfirmation(result.confirmation);
+    } else if (refused.why === "resolved-historical-episode") {
+      Object.assign(refused, copyAdoptionReplyFields(result, [
+        "revision", "remainingPhysicalEpisodes",
+      ]));
+    }
+    return Object.freeze(refused);
+  }
+  return Object.freeze({
+    accepted: true,
+    ...copyAdoptionReplyFields(result, [
+      "capability", "incomingSpelling", "ownerSpelling", "tabId",
+      "documentGeneration", "contentDigest", "confirmed", "pathKey", "revision",
+    ]),
+    version: copyDiskVersion(result.version, "disk adoption"),
+  });
+}
+
 function copyAdoptionReplyFields(result, fields) {
   const copy = {};
   for (const field of fields) {
@@ -1072,23 +1119,18 @@ const api = Object.freeze({
       throw new TypeError("Invalid disk adoption revision");
     }
     const result = ipcRenderer.sendSync("commit-document-disk-adoption", payload);
-    const refused = copyAdoptionRefusal(result, "accepted");
-    if (refused) {
-      if (refused.why === "resolved-historical-episode") {
-        Object.assign(refused, copyAdoptionReplyFields(result, [
-          "revision", "remainingPhysicalEpisodes",
-        ]));
-      }
-      return Object.freeze(refused);
+    return copyDiskAdoptionCommitResult(result);
+  },
+  async respondToDocumentReplacementConsent(request) {
+    const envelope = copyAdoptionEnvelope(request);
+    if (typeof request.id !== "string" || !/^[a-f0-9]{32}$/.test(request.id) ||
+        typeof request.approved !== "boolean") {
+      throw new TypeError("Invalid document replacement response");
     }
-    return Object.freeze({
-      accepted: true,
-      ...copyAdoptionReplyFields(result, [
-        "capability", "incomingSpelling", "ownerSpelling", "tabId",
-        "documentGeneration", "contentDigest", "confirmed", "pathKey", "revision",
-      ]),
-      version: copyDiskVersion(result.version, "disk adoption"),
+    const result = await ipcRenderer.invoke("respond-document-replacement-consent", {
+      ...envelope, id: request.id, approved: request.approved,
     });
+    return copyDiskAdoptionCommitResult(result);
   },
   checkCommittedDiskAdoption(request) {
     const payload = copyAdoptionCapability(request);

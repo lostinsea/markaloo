@@ -637,6 +637,7 @@ const supersededDocumentOwners = new Set();
 const notifiedExternalVersionsByOwner = new Map();
 const pendingDiskAdoptions = new Map();
 const committedDiskAdoptions = new Map();
+const pendingDocumentReplacementConsents = new Map();
 const MAX_PENDING_DISK_ADOPTIONS = 128;
 const DISK_ADOPTION_CAPABILITY_MS = 60000;
 const MAX_KNOWN_DOCUMENT_OWNERS = 256;
@@ -865,6 +866,10 @@ function forgetDocumentOwnerAliases(ownerKey) {
 // `pendingDiskAdoptions` before it is committed, so a pending entry under that
 // string is a DIFFERENT grant and still pins its owners.
 function documentOwnerHasDiskAdoptionGrant(ownerKey, consumedCapability = null) {
+  for (const { grant } of pendingDocumentReplacementConsents.values()) {
+    if (grant.oldOwnerKey === ownerKey ||
+        grant.proposedOwnerKey === ownerKey) return true;
+  }
   for (const grant of pendingDiskAdoptions.values()) {
     if (
       grant.oldOwnerKey === ownerKey ||
@@ -2870,6 +2875,10 @@ function sweepRevokedAdmissionOwners() {
 
 function pinnedAdoptionAdmissionReferences() {
   const pinnedReferences = new Set();
+  for (const { grant } of pendingDocumentReplacementConsents.values()) {
+    if (grant.proposedOwner?.documentRef) pinnedReferences.add(grant.proposedOwner.documentRef);
+    if (grant.oldOwner?.documentRef) pinnedReferences.add(grant.oldOwner.documentRef);
+  }
   for (const grants of [pendingDiskAdoptions, committedDiskAdoptions]) {
     for (const grant of grants.values()) {
       if (grant.proposedOwner?.documentRef) pinnedReferences.add(grant.proposedOwner.documentRef);
@@ -3705,6 +3714,7 @@ function replayDeletionForOwner(filePath) {
 // EVIDENCE stays - the files are still missing, and the next selection reopens
 // a report for whoever owns the path then.
 function releaseDeletionDeliveriesForPage() {
+  cancelDocumentReplacementConsents();
   for (const record of Array.from(deletionDeliveries.values())) {
     releaseDeletionDelivery(record);
   }
@@ -8002,7 +8012,8 @@ ipcMain.handle("prepare-document-disk-adoption", async (event, data) => {
   if (
     (!resolutionOnly && pathOnlyKeys && pathOnlyKeys.size > 1) ||
     dependentSibling ||
-    pendingDiskAdoptions.size + committedDiskAdoptions.size >=
+    pendingDiskAdoptions.size + committedDiskAdoptions.size +
+      pendingDocumentReplacementConsents.size >=
       MAX_PENDING_DISK_ADOPTIONS
   ) return refuse(dependentSibling
     ? "live-sibling-deletion-evidence"
@@ -8117,26 +8128,76 @@ ipcMain.on("check-committed-disk-adoption", function checkCommittedDiskAdoption(
   });
 });
 
-ipcMain.on("commit-document-disk-adoption", (event, data) => {
-  const refuse = (why) => {
-    event.returnValue = Object.freeze({ accepted: false, why });
+function cancelDocumentReplacementConsents(predicate = () => true) {
+  for (const [id, consent] of pendingDocumentReplacementConsents) {
+    if (!predicate(consent)) continue;
+    clearTimeout(consent.timer);
+    pendingDocumentReplacementConsents.delete(id);
+  }
+}
+
+function documentReplacementReason(grant, oldOwner, currentKey, ownDeletion) {
+  if ((oldOwner && oldOwner.pathKey !== currentKey) ||
+      (grant.evidencePathKey && grant.evidencePathKey !== currentKey)) {
+    return "location-changed";
+  }
+  if (ownDeletion || grant.evidencePathKey === currentKey) return "file-reappeared";
+  return "earlier-copy-protected";
+}
+
+function prepareDocumentReplacementConsent(event, data, grant, reason) {
+  if (pendingDocumentReplacementConsents.size > 0) {
+    return Object.freeze({ accepted: false, why: "replacement-confirmation-pending" });
+  }
+  const id = crypto.randomBytes(16).toString("hex");
+  const expiresAt = grant.createdAt + DISK_ADOPTION_CAPABILITY_MS;
+  const request = Object.freeze({
+    ...data,
+    oldOwner: data.oldOwner ? Object.freeze({ ...data.oldOwner }) : null,
+    proposedOwner: Object.freeze({ ...data.proposedOwner }),
+    diskVersion: Object.freeze({ ...data.diskVersion }),
+  });
+  const consent = {
+    grant, request, reason,
+    sender: event.sender, frameTreeNodeId: event.senderFrame.frameTreeNodeId,
+    timer: setTimeout(() => {
+      cancelDocumentReplacementConsents(candidate => candidate === consent);
+    }, Math.max(0, expiresAt - Date.now())),
   };
+  pendingDocumentReplacementConsents.set(id, consent);
+  return Object.freeze({
+    accepted: false, why: "confirmation-required",
+    confirmation: Object.freeze({
+      id, reason, expiresAt,
+      fileName: safeFileLabel(path.basename(data.ownerFilePath)),
+      pageSession: grant.pageSession,
+      rendererGeneration: grant.rendererGeneration,
+      owner: grant.oldOwner ? Object.freeze({
+        tabId: grant.oldOwner.tabId,
+        documentGeneration: grant.oldOwner.documentGeneration,
+        documentRef: grant.oldOwner.documentRef,
+      }) : null,
+    }),
+  });
+}
+
+function commitDocumentDiskAdoption(event, data, consent = null) {
+  const refuse = (why) => Object.freeze({ accepted: false, why });
   if (
     !isApprovalSender(event) ||
     approvalRendererState !== "ready" ||
+    shutdownCommitIngressBlocked ||
     !data ||
     typeof data.capability !== "string" ||
     !/^[a-f0-9]{32}$/.test(data.capability) ||
     data.pageSession !== approvalRendererPageSession ||
     data.rendererGeneration !== approvalRendererGeneration
   ) {
-    refuse("stale-adoption-identity");
-    return;
+    return refuse("stale-adoption-identity");
   }
-  const grant = pendingDiskAdoptions.get(data.capability);
+  const grant = consent ? consent.grant : pendingDiskAdoptions.get(data.capability);
   if (!grant) {
-    refuse("unknown-or-used-adoption-capability");
-    return;
+    return refuse("unknown-or-used-adoption-capability");
   }
   pendingDiskAdoptions.delete(data.capability);
   if (
@@ -8150,14 +8211,12 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
     data.replaceDocument !== grant.replaceDocument ||
     data.contentDigest !== grant.contentDigest
   ) {
-    refuse("stale-or-replayed-adoption-capability");
-    return;
+    return refuse("stale-or-replayed-adoption-capability");
   }
   if (!diskAdoptionAuthorityIsCurrent(
     grant.sourcePermission, grant.proposedOwner, grant.oldOwner, grant.ownerPath,
   )) {
-    refuse("adoption-authority-revoked");
-    return;
+    return refuse("adoption-authority-revoked");
   }
   const sourcePath = grant.sourcePermission.filePath;
   if (!admittedDocumentReference(
@@ -8165,8 +8224,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
   ) || (data.oldOwner && !closingDocumentOwnerFromEnvelope(event, {
     ...data.oldOwner, filePath: data.ownerFilePath,
   }))) {
-    refuse("capability-target-mismatch");
-    return;
+    return refuse("capability-target-mismatch");
   }
   const version = normaliseDiskVersion(data.diskVersion);
   const currentKey = resolveCanonicalFileKey(sourcePath);
@@ -8201,22 +8259,19 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
     filePathSpellingKey(data.filePath) !== grant.incomingSpelling ||
     filePathSpellingKey(data.ownerFilePath) !== grant.ownerSpelling
   ) {
-    refuse("capability-target-mismatch");
-    return;
+    return refuse("capability-target-mismatch");
   }
   // The renderer no longer probes disk before committing. Refuse a stale
   // snapshot before either kind of confirmation, as well as after the dialog.
   if (!diskAdoptionSnapshotIsCurrent(grant)) {
-    refuse("disk-version-or-target-moved");
-    return;
+    return refuse("disk-version-or-target-moved");
   }
   if (
     oldOwner &&
     grant.ownerSpelling !== grant.incomingSpelling &&
     matchedOwnerHasDeletionEvidence(oldOwner, grant.ownerPath)
   ) {
-    refuse("matched-owner-deletion-evidence");
-    return;
+    return refuse("matched-owner-deletion-evidence");
   }
   const relatedOrphans = unreachablePhysicalDeletionSpellings(
     currentKey, grant.incomingSpelling,
@@ -8226,8 +8281,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
     relatedOrphans.some((spelling, index) =>
       spelling !== grant.relatedOrphanSpellings[index])
   ) {
-    refuse("physical-orphan-evidence-changed");
-    return;
+    return refuse("physical-orphan-evidence-changed");
   }
   const ownDeletion = !!(
     oldOwner &&
@@ -8248,8 +8302,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
   for (const key of overflowKeys) {
     const record = deletionOverflowEvidence.get(key);
     if (!record || !record.pathKey) {
-      refuse("invalid-overflow-provenance");
-      return;
+      return refuse("invalid-overflow-provenance");
     }
     evidenceKeys.add(record.pathKey);
   }
@@ -8269,15 +8322,13 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
       (grant.pathOnlyKey !== null &&
         !livePathOnlyKeys?.has(grant.pathOnlyKey))
     ) {
-      refuse("historical-episode-moved");
-      return;
+      return refuse("historical-episode-moved");
     }
     const win = mainWindow && !mainWindow.isDestroyed()
       ? mainWindow
       : null;
     if (!win) {
-      refuse("approval-window-unavailable");
-      return;
+      return refuse("approval-window-unavailable");
     }
     let choice;
     try {
@@ -8292,18 +8343,15 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
       });
     } catch (error) {
       console.error("Could not ask about an older document:", error);
-      refuse("approval-dialog-failed");
-      return;
+      return refuse("approval-dialog-failed");
     }
     if (choice !== 0) {
-      refuse("historical-episode-kept");
-      return;
+      return refuse("historical-episode-kept");
     }
     if (!diskAdoptionAuthorityIsCurrent(
       grant.sourcePermission, grant.proposedOwner, grant.oldOwner, grant.ownerPath,
     )) {
-      refuse("adoption-authority-revoked");
-      return;
+      return refuse("adoption-authority-revoked");
     }
     const currentStats = readDocumentStats(
       sourcePath, "while retiring a historical episode",
@@ -8317,8 +8365,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
         grant.version, diskVersionFromStats(currentStats),
       )
     ) {
-      refuse("historical-episode-changed");
-      return;
+      return refuse("historical-episode-changed");
     }
     clearDeletionEvidenceForAdoption(data.filePath, proposedOwner, {
       allowPathReplacement: true,
@@ -8337,16 +8384,14 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
       grant.overflowKeys.some((key) =>
         deletionOverflowEvidence.has(key))
     ) {
-      refuse("historical-episode-remains");
-      return;
+      return refuse("historical-episode-remains");
     }
-    event.returnValue = Object.freeze({
+    return Object.freeze({
       accepted: false,
       why: "resolved-historical-episode",
       revision: deletionEvidenceRevision,
       remainingPhysicalEpisodes: evidenceKeys.size - 1,
     });
-    return;
   }
   const deletionNeedsConsent =
     ownDeletion ||
@@ -8365,8 +8410,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
           .has(grant.pathOnlyKey)
       : grant.pathOnlyKey !== null)
   ) {
-    refuse("adoption-evidence-changed");
-    return;
+    return refuse("adoption-evidence-changed");
   }
   if (
     sharedDeletionEvidenceNeedsSiblingCheck(
@@ -8377,52 +8421,22 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
       grant.oldOwnerKey, grant.evidencePathKey,
     )
   ) {
-    refuse("live-sibling-deletion-evidence");
-    return;
+    return refuse("live-sibling-deletion-evidence");
   }
   if (
     deletionNeedsConsent &&
     grant.ownerSpelling !== grant.incomingSpelling
   ) {
-    refuse("cross-spelling-deletion-adoption");
-    return;
+    return refuse("cross-spelling-deletion-adoption");
   }
   const confirmationRequired =
     deletionNeedsConsent ||
     relatedOrphans.length > 0 ||
     !!(oldOwner && oldOwner.pathKey !== currentKey);
   if (confirmationRequired) {
-    const win = mainWindow && !mainWindow.isDestroyed()
-      ? mainWindow
-      : null;
-    if (!win) {
-      refuse("approval-window-unavailable");
-      return;
-    }
-    let choice;
-    try {
-      choice = dialog.showMessageBoxSync(win, {
-        type: "warning",
-        buttons: ["Replace from disk", "Keep in-memory copy"],
-        defaultId: 1,
-        cancelId: 1,
-        title: "Confirm document replacement",
-        message: relatedOrphans.length > 0 && !deletionNeedsConsent
-          ? `"${safeFileLabel(path.basename(data.filePath))}" shares a file with an unresolved older copy.`
-          : `"${safeFileLabel(path.basename(data.ownerFilePath))}" has an unresolved deletion or a changed file target.`,
-        detail: relatedOrphans.length > 0 && !deletionNeedsConsent
-          ? "The earlier copy stays protected. Opening this file does not retire its deletion evidence."
-          : "Replacing it with the current disk file discards the earlier in-memory copy.",
-      });
-    } catch (error) {
-      console.error("Could not ask about disk adoption:", error);
-      refuse("approval-dialog-failed");
-      return;
-    }
-    if (choice !== 0) {
-      refuse("adoption-declined");
-      return;
-    }
+    const reason = documentReplacementReason(grant, oldOwner, currentKey, ownDeletion);
+    if (!consent) return prepareDocumentReplacementConsent(event, data, grant, reason);
+    if (consent.reason !== reason) return refuse("replacement-reason-changed");
   }
   if (grant.revision !== deletionEvidenceRevision ||
       grant.pageSession !== approvalRendererPageSession ||
@@ -8430,8 +8444,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
       !diskAdoptionAuthorityIsCurrent(
         grant.sourcePermission, grant.proposedOwner, grant.oldOwner, grant.ownerPath,
       )) {
-    refuse("adoption-moved-during-confirmation");
-    return;
+    return refuse("adoption-moved-during-confirmation");
   }
   const before = readDocumentStats(
     sourcePath, "while committing disk adoption",
@@ -8447,8 +8460,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
     diskVersionChanged(version, diskVersionFromStats(before)) ||
     diskVersionChanged(version, diskVersionFromStats(after))
   ) {
-    refuse("disk-version-or-target-moved");
-    return;
+    return refuse("disk-version-or-target-moved");
   }
   committedDiskAdoptions.set(data.capability, Object.freeze({
     ...grant,
@@ -8459,7 +8471,7 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
         filePathSpellingKey(data.filePath),
     deletionNeedsConsent,
   }));
-  event.returnValue = Object.freeze({
+  return Object.freeze({
     accepted: true,
     capability: data.capability,
     incomingSpelling: grant.incomingSpelling,
@@ -8472,6 +8484,39 @@ ipcMain.on("commit-document-disk-adoption", (event, data) => {
     pathKey: currentKey,
     revision: deletionEvidenceRevision,
   });
+}
+
+ipcMain.on("commit-document-disk-adoption", (event, data) => {
+  event.returnValue = commitDocumentDiskAdoption(event, data);
+});
+
+ipcMain.handle("respond-document-replacement-consent", (event, data) => {
+  const refused = (why) => Object.freeze({ accepted: false, why });
+  if (!isApprovalSender(event) || !data ||
+      typeof data.id !== "string" || !/^[a-f0-9]{32}$/.test(data.id) ||
+      typeof data.approved !== "boolean" ||
+      data.pageSession !== approvalRendererPageSession ||
+      data.rendererGeneration !== approvalRendererGeneration) {
+    return refused("invalid-replacement-response");
+  }
+  const consent = pendingDocumentReplacementConsents.get(data.id);
+  if (!consent || consent.sender !== event.sender ||
+      consent.frameTreeNodeId !== event.senderFrame.frameTreeNodeId ||
+      consent.grant.pageSession !== data.pageSession ||
+      consent.grant.rendererGeneration !== data.rendererGeneration) {
+    return refused("unknown-or-stale-replacement-consent");
+  }
+  // The reply contains no authority. Repeat the entire commit against Main's
+  // retained transaction, including evidence selection and dependent siblings.
+  try {
+    if (!data.approved) return refused("adoption-declined");
+    if (Date.now() >= consent.grant.createdAt + DISK_ADOPTION_CAPABILITY_MS) {
+      return refused("replacement-consent-expired");
+    }
+    return commitDocumentDiskAdoption(event, consent.request, consent);
+  } finally {
+    cancelDocumentReplacementConsents(candidate => candidate === consent);
+  }
 });
 
 function completeDocumentDiskAdoption(data) {
@@ -8752,6 +8797,8 @@ ipcMain.on("abandon-document-disk-adoption", (event, data) => {
       data.rendererGeneration !== approvalRendererGeneration) return;
   committedDiskAdoptions.delete(data.capability);
   pendingDiskAdoptions.delete(data.capability);
+  cancelDocumentReplacementConsents(consent =>
+    consent.request.capability === data.capability);
 });
 
 ipcMain.on("query-document-deletion-state", (event, data) => {
@@ -8844,6 +8891,9 @@ function retireDeletedDocumentOwner(event, data) {
     deletionRetirementEventDriftCount += 1;
   }
 
+  cancelDocumentReplacementConsents(consent =>
+    consent.grant.oldOwnerKey === closingOwnerKey ||
+    consent.grant.proposedOwnerKey === closingOwnerKey);
   forgetDocumentOwnerAliases(closingOwnerKey);
   sweepRevokedAdmissionOwners();
   const retiredEvidence = record ? retireDeletionOwnerEvidence(record) : false;
@@ -11992,6 +12042,7 @@ function markRendererUnusable(
   if (generation !== approvalRendererGeneration) return;
   const newlyUnusable = approvalRendererState !== "unusable";
   approvalRendererState = "unusable";
+  cancelDocumentReplacementConsents();
   if (newlyUnusable) shutdownContinuationEpoch += 1;
   lastRendererUnusableReason = why;
   log("Shutdown approval renderer unusable:", why);
@@ -12175,6 +12226,7 @@ function commitThenRun(record, continuations, approvedSession) {
   }
   try {
     shutdownCommitIngressBlocked = true;
+    cancelDocumentReplacementConsents();
     wc.send(QUIT_APPROVAL_COMMIT, {
       id: record.id,
       gen: attempt.generation,

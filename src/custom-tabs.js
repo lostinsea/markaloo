@@ -1806,7 +1806,7 @@
           notify("The file moved before an older copy could be reviewed.", 6000);
           return null;
         }
-        const outcome = window.commitDocumentDiskAdoption({
+        const outcome = await window.commitDocumentDiskAdoption({
           ...preparation,
           oldOwner: tab ? identity : null,
           capability: state.capability,
@@ -1873,7 +1873,7 @@
       notify("The file changed after confirmation. Nothing was replaced.", 6000);
       return null;
     }
-    const committed = window.commitDocumentDiskAdoption({
+    const committed = await window.commitDocumentDiskAdoption({
       ...preparation,
       capability: state.capability,
       oldOwner: tab ? identity : null,
@@ -1893,8 +1893,9 @@
       !sameDiskVersion(committed.version, supplied)
     ) {
       abandonDiskAdoption(state.capability);
-      console.error("[CustomTabs] Disk adoption was refused:", committed);
-      notify("The file changed before adoption. The in-memory copy was kept.", 6000);
+      if (committed?.why === "adoption-declined") return null;
+      console.warn("[CustomTabs] Disk adoption was refused:", committed);
+      notify("The document or file changed. Nothing was reloaded. Try again.", 6000);
       return null;
     }
     let checked;
@@ -5608,6 +5609,107 @@
   // "File Updated" prompt (actively-viewed tab)
   // ============================================
 
+  let pendingReplacementDialog = null;
+
+  function confirmDocumentReplacement(request) {
+    const dialog = document.getElementById("reloadDocumentDialog");
+    const cancel = document.getElementById("reloadDocumentCancel");
+    const reasons = {
+      "file-reappeared": "The file disappeared and later reappeared with the same name. Are you sure you want to reload it?",
+      "location-changed": "This location now opens a different file. Reload that file from disk?",
+      "earlier-copy-protected": "An earlier copy of this file is still protected. Reload this document from disk? The earlier copy will stay protected.",
+    };
+    if (!dialog || !cancel || !request || !reasons[request.reason] ||
+        request.pageSession !== window.getReloadRequestSession?.() ||
+        request.rendererGeneration !== approvalRendererGeneration ||
+        Date.now() >= request.expiresAt || pendingReplacementDialog ||
+        isDocumentFrozen()) return Promise.resolve(false);
+    const selectedTab = getActiveTab();
+    const tab = request.owner
+      ? tabs.find(candidate => candidate.id === request.owner.tabId)
+      : null;
+    const identity = tab && documentIdentity(tab, request.pageSession);
+    if (request.owner && (!identity ||
+        identity.tabId !== request.owner.tabId ||
+        identity.documentGeneration !== request.owner.documentGeneration ||
+        identity.documentRef !== request.owner.documentRef)) return Promise.resolve(false);
+    const revision = documentRevision;
+    const intent = latestTabSwitchIntent;
+    const live = liveDocument();
+    const sequence = tab && window.getLatestReloadRequestSequence?.(tab.filePath);
+    const previousFocus = document.activeElement;
+    const stillCurrent = () =>
+      !isDocumentFrozen() && Date.now() < request.expiresAt &&
+      request.rendererGeneration === approvalRendererGeneration &&
+      request.pageSession === window.getReloadRequestSession?.() &&
+      getActiveTab() === selectedTab && latestTabSwitchIntent === intent &&
+      documentRevision === revision && liveDocument() === live &&
+      (!tab || (tabs.includes(tab) &&
+        window.getLatestReloadRequestSequence?.(tab.filePath) === sequence));
+    document.getElementById("reloadDocumentName").textContent = request.fileName;
+    document.getElementById("reloadDocumentReason").textContent = reasons[request.reason];
+    return new Promise(resolve => {
+      const listeners = new AbortController();
+      let timer;
+      const finish = approved => {
+        if (pendingReplacementDialog !== finish) return;
+        const accepted = approved === true && stillCurrent();
+        pendingReplacementDialog = null;
+        clearInterval(timer);
+        listeners.abort();
+        if (dialog.open) dialog.close();
+        if (!isDocumentFrozen()) {
+          // A dismissed toast can still be visible while its fade is running.
+          const restore = getActiveTab() === selectedTab &&
+            previousFocus?.isConnected &&
+            previousFocus.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
+            !previousFocus.closest("[inert], .file-update-toast:not(.show)")
+            ? previousFocus : document.getElementById("refreshBtn");
+          restore?.focus({ preventScroll: true });
+        }
+        resolve(accepted);
+      };
+      pendingReplacementDialog = finish;
+      const options = { signal: listeners.signal };
+      cancel.addEventListener("click", () => finish(false), options);
+      document.getElementById("reloadDocumentClose").addEventListener("click", () => finish(false), options);
+      document.getElementById("reloadDocumentConfirm").addEventListener("click", () => finish(true), options);
+      dialog.addEventListener("cancel", event => {
+        event.preventDefault();
+        finish(false);
+      }, options);
+      dialog.addEventListener("close", () => finish(false), options);
+      dialog.addEventListener("click", event => {
+        if (event.target === dialog) {
+          const bounds = dialog.getBoundingClientRect();
+          if (event.clientX < bounds.left || event.clientX > bounds.right ||
+              event.clientY < bounds.top || event.clientY > bounds.bottom) finish(false);
+        }
+      }, options);
+      document.addEventListener("keydown", event => {
+        // Native dialog focus containment does not stop app-wide shortcuts.
+        event.stopImmediatePropagation();
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+        } else if (event.ctrlKey || event.metaKey || event.altKey) {
+          event.preventDefault();
+        }
+      }, { ...options, capture: true });
+      window.addEventListener("pagehide", () => finish(false), options);
+      timer = setInterval(() => {
+        if (!stillCurrent()) finish(false);
+      }, 100);
+      try {
+        dialog.showModal();
+        cancel.focus();
+      } catch (error) {
+        console.error("[CustomTabs] Could not show reload confirmation:", error);
+        finish(false);
+      }
+    });
+  }
+
   // The prompt is only raised for the tab the user is looking at - background
   // tabs are reloaded silently on switch instead. Its Reload button is wired
   // in index.html as `onclick="reloadCurrentFile()"`, which reloads whatever
@@ -6197,6 +6299,7 @@
     createTab,
     switchToTab,
     requestReloadWithConfirmation,
+    confirmDocumentReplacement,
     // Exposed so the regression suite can assert that scroll save/restore
     // targets the element the engine actually scrolls, rather than re-deriving
     // that guess in the test and proving nothing.

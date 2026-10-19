@@ -14,6 +14,21 @@
 | PERF-10 | **[FIXED]** The shutdown approval scan recomputed every open document's dirtiness | Closing after editing every tab, at **25 tabs x 2MB**: raw p95 **22.4936ms** (LF) and **98.1947ms** (CRLF) against a predeclared **16.7ms** budget; maintaining the answer at the edit instead brought the same observations to **1.002ms** and **1.2792ms** | Medium | High |
 | PERF-11 | **[FIXED ON INTEGRATION BRANCH; UNRELEASED]** Closing with an active 2 MB editor rebuilt newline spelling and repeated whole-document comparisons | At **25 tabs x 2MB**, active-editor raw p95 **90.654ms** (LF) / **117.275ms** (CRLF), versus **9.6951ms** / **11.7335ms** on the latest product bytes; predeclared budget **16.7ms**, final matrix **42/42** within budget | Medium | High |
 
+## Protected reload dialog — bounded ordinary-reload check
+
+- Local, unreleased; production preload, disposable files and profile.
+- Same small markdown fixture and nine sequential external writes before and
+  after the dialog change. Time runs from reload dispatch to updated DOM,
+  observed every 40 ms. The nearest-rank p95 is the largest sample here.
+- Baseline median/p95: **45.890 / 55.040 ms**.
+  Candidate median/p95: **48.300 / 54.410 ms**.
+- The median difference is about **+2.4 ms**. These coarse, small-sample results
+  do not establish a speedup, zero cost, startup performance or large-file
+  responsiveness. User decision time is outside this ordinary-reload check.
+- Raw samples: session `f908fe61` evidence, `reload-final\baseline-times.json`
+  and `reload-final\candidate-times.json`; execution `reload-targeted-r10.log`.
+  The test command is `npm run test:reload-dialog`.
+
 ## Measurement methodology
 
 - Original audit machine: **AMD EPYC 7763**, 16 vCPU exposed / 32 logical processors, **127.9GB RAM**, **Windows 11 Enterprise 26200**

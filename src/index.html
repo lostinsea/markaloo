@@ -1700,6 +1700,35 @@
       </div>
     </div>
 
+    <dialog
+      id="reloadDocumentDialog"
+      class="note-dialog reload-document-dialog"
+      aria-labelledby="reloadDocumentTitle"
+      aria-describedby="reloadDocumentName reloadDocumentReason"
+    >
+      <div class="note-dialog-header">
+        <h2 id="reloadDocumentTitle">Reload document?</h2>
+        <button
+          id="reloadDocumentClose"
+          class="reload-document-close"
+          type="button"
+          aria-label="Cancel reload"
+        >&times;</button>
+      </div>
+      <div class="note-dialog-body">
+        <p id="reloadDocumentName" class="reload-document-name"></p>
+        <p id="reloadDocumentReason"></p>
+      </div>
+      <div class="note-dialog-footer">
+        <button id="reloadDocumentCancel" class="note-dialog-btn secondary" type="button" autofocus>
+          Cancel
+        </button>
+        <button id="reloadDocumentConfirm" class="note-dialog-btn primary" type="button">
+          Reload from disk
+        </button>
+      </div>
+    </dialog>
+
     <script src="emoji-map.js"></script>
     <script src="emoji-parser.js"></script>
     <script src="utils.js"></script>

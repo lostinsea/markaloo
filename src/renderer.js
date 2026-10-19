@@ -8710,7 +8710,7 @@ function queryDocumentDiskAdoptionState(
   }
 }
 
-function commitDocumentDiskAdoption(request) {
+async function commitDocumentDiskAdoption(request) {
   if (
     !request ||
     typeof request.filePath !== 'string' ||
@@ -8718,6 +8718,18 @@ function commitDocumentDiskAdoption(request) {
   ) return null;
   try {
     const result = window.folia.commitDocumentDiskAdoption(request);
+    if (result?.why === 'confirmation-required') {
+      const confirmation = result.confirmation;
+      const approved = typeof window.CustomTabs?.confirmDocumentReplacement === 'function'
+        ? await window.CustomTabs.confirmDocumentReplacement(confirmation)
+        : false;
+      return await window.folia.respondToDocumentReplacementConsent({
+        id: confirmation.id,
+        pageSession: confirmation.pageSession,
+        rendererGeneration: confirmation.rendererGeneration,
+        approved: approved === true,
+      });
+    }
     return result && typeof result === 'object' ? result : null;
   } catch (error) {
     console.error('Could not commit verified disk adoption:', error);

@@ -20774,9 +20774,9 @@ const REVERTS = [
           from: '  // The renderer no longer probes disk before committing. Refuse a stale\n' +
             '  // snapshot before either kind of confirmation, as well as after the dialog.\n' +
             '  if (!diskAdoptionSnapshotIsCurrent(grant)) {\n' +
-            '    refuse("disk-version-or-target-moved");\n    return;\n  }\n',
+            '    return refuse("disk-version-or-target-moved");\n  }\n',
           to: "",
-          suite: "test:sec08-owned-read-core-evidence",
+          suite: "test:reload-dialog",
           expect: [/^SEC-08 Main refuses a stale prepared snapshot before asking replacement consent$/],
           mustPass: [
             /^SEC-08 pre-dialog check setup retains actual deletion evidence and attests the restored file$/,
@@ -22433,6 +22433,110 @@ const REVERTS = [
           requireMustPassAssertions: true, requireExactFailures: true,
           expectedFailureCount: 1,
         },
+        {
+          id: "R960", what: "describe a reappeared file with internal ownership jargon",
+          file: TABS,
+          from: '"file-reappeared": "The file disappeared and later reappeared with the same name. Are you sure you want to reload it?"',
+          to: '"file-reappeared": "The file has an unresolved deletion. Discard the in-memory copy?"',
+          suite: "test:reload-dialog",
+          expect: [/^known disappearance uses truthful plain English without an unsaved-edit claim$/],
+          mustPass: [
+            /^ordinary external writes reload without a replacement question$/,
+            /^a retargeted location does not falsely claim that the file disappeared$/,
+            /^an unrelated protected older copy is not described as a disappearing current file$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 1,
+        },
+        {
+          id: "R961", what: "focus the destructive reload action instead of safe Cancel",
+          file: TABS,
+          from: '        dialog.showModal();\n        cancel.focus();',
+          to: '        dialog.showModal();\n        document.getElementById("reloadDocumentConfirm").focus();',
+          suite: "test:reload-dialog",
+          expect: [/^reload dialog starts on Cancel and labels its document and reason$/],
+          mustPass: [
+            /^known disappearance uses truthful plain English without an unsaved-edit claim$/,
+            /^ordinary external writes reload without a replacement question$/,
+            /^protected reload uses no native replacement dialog$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 1,
+        },
+        {
+          id: "R962", what: "accept a held replacement after Main deletion evidence changed",
+          file: MAIN,
+          from: '    grant.revision !== deletionEvidenceRevision ||\n    data.revision !== grant.revision ||',
+          to: '    data.revision !== grant.revision ||',
+          also: {
+            from: '  if (grant.revision !== deletionEvidenceRevision ||\n      grant.pageSession !== approvalRendererPageSession ||',
+            to: '  if (grant.pageSession !== approvalRendererPageSession ||',
+          },
+          suite: "test:reload-dialog",
+          expect: [/^Main refuses evidence state changes without trusting a forced affirmative reply$/],
+          mustPass: [
+            /^held consent evidence change is a real new missing-file episode$/,
+            /^a evidence consent cannot be replayed$/,
+            /^Main refuses expiry state changes without trusting a forced affirmative reply$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 1,
+        },
+        {
+          id: "R963", what: "renew expired Main approval by answering a held question",
+          file: MAIN,
+          from: '    if (Date.now() >= consent.grant.createdAt + DISK_ADOPTION_CAPABILITY_MS) {\n      return refused("replacement-consent-expired");\n    }\n',
+          to: "",
+          also: {
+            from: '    Date.now() - grant.createdAt > DISK_ADOPTION_CAPABILITY_MS ||\n    grant.pageSession !== data.pageSession ||',
+            to: '    grant.pageSession !== data.pageSession ||',
+          },
+          suite: "test:reload-dialog",
+          expect: [/^Main refuses expiry state changes without trusting a forced affirmative reply$/],
+          mustPass: [
+            /^Main refuses evidence state changes without trusting a forced affirmative reply$/,
+            /^a expiry consent cannot be replayed$/,
+            /^Main refuses competing state changes without trusting a forced affirmative reply$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 1,
+        },
+        {
+          id: "R964", what: "mistake the selected tab for a protected background document being reopened",
+          file: TABS,
+          from: '    const selectedTab = getActiveTab();\n    const tab = request.owner\n      ? tabs.find(candidate => candidate.id === request.owner.tabId)\n      : null;',
+          to: '    const selectedTab = getActiveTab();\n    const tab = selectedTab;',
+          suite: "test:reload-dialog",
+          expect: [
+            /^reopening a protected background tab asks about that document before selecting it$/,
+            /^approving background reopening selects only the approved updated document$/,
+          ],
+          mustPass: [
+            /^cancelling background reopening preserves both documents and the selection$/,
+            /^Main refuses evidence state changes without trusting a forced affirmative reply$/,
+            /^navigation cancels an open question and refuses its old page approval$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 2,
+        },
+        {
+          id: "R965", what: "restore keyboard focus to an invisible dismissed toast",
+          file: TABS,
+          from: '            previousFocus?.isConnected &&\n' +
+            '            previousFocus.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&\n' +
+            '            !previousFocus.closest("[inert], .file-update-toast:not(.show)")',
+          to: '            previousFocus?.isConnected && previousFocus.checkVisibility() &&\n' +
+            '            !previousFocus.closest("[inert]")',
+          suite: "test:reload-dialog",
+          expect: [/^reload cancellation restores visible keyboard focus$/],
+          mustPass: [
+            /^focus restoration fixture has a connected but invisible initiating Reload button$/,
+            /^Cancel preserves the exact clean document and deletion protection$/,
+            /^clicking the backdrop cancels without replacing the document$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 1,
+        },
       ];
 
 // These are release exceptions, not passing or withdrawn proofs. An explicit
@@ -23512,7 +23616,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") === "R319" &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount))
       .map((r) => r.id)
-      .join(",") === "R72,R467,R319,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951";
+      .join(",") === "R72,R467,R319,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R960,R961,R962,R963,R964,R965";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,

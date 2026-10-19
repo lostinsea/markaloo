@@ -10471,30 +10471,44 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       deletion.known === true && deletion.ownDeletion === true &&
         deletionGrant.state.known === true && deletionGrant.state.ownDeletion === true,
       JSON.stringify({ deletion, state: deletionGrant.state }));
-    let dialogs = 0;
-    const restoreDialog = replaceMethod(dialog, "showMessageBoxSync", (_window, options) => {
-      if (options.title !== "Confirm document replacement") {
-        throw new Error(`Unexpected adoption check dialog: ${options.title}`);
-      }
-      dialogs += 1;
-      return 0;
-    });
-    try {
-      const positive = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(deletionGrant.request)})`);
-      check("SEC-08 pre-dialog positive control reaches the actual replacement confirmation",
-        positive.accepted === true && positive.confirmed === true && dialogs === 1,
-        JSON.stringify({ positive, dialogs }));
-      await exec(`window.folia.abandonDocumentDiskAdoption(${JSON.stringify({
-        ...request, capability: deletionGrant.state.capability,
-      })}); null;`);
-      const staleGrant = await prepare();
-      dialogs = 0;
-      write(filePath, "# Committed adoption check\n\nSTALE_BEFORE_DIALOG\n");
-      const stale = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(staleGrant.request)})`);
-      check("SEC-08 Main refuses a stale prepared snapshot before asking replacement consent",
-        stale.accepted === false && stale.why === "disk-version-or-target-moved" && dialogs === 0,
-        JSON.stringify({ stale, dialogs }));
-    } finally { restoreDialog(); }
+    const positive = await exec(`(async () => {
+      const request = ${JSON.stringify(deletionGrant.request)};
+      const pending = window.folia.commitDocumentDiskAdoption(request);
+      const confirmation = pending?.confirmation;
+      const descriptorValid = pending?.accepted === false &&
+        pending.why === 'confirmation-required' &&
+        confirmation && /^[a-f0-9]{32}$/.test(confirmation.id) &&
+        confirmation.reason === 'file-reappeared' &&
+        Number.isFinite(confirmation.expiresAt) && confirmation.expiresAt > Date.now() &&
+        confirmation.fileName === ${JSON.stringify(path.basename(filePath))} &&
+        confirmation.pageSession === request.pageSession &&
+        confirmation.rendererGeneration === request.rendererGeneration &&
+        confirmation.owner?.tabId === request.oldOwner.tabId &&
+        confirmation.owner?.documentGeneration === request.oldOwner.documentGeneration &&
+        confirmation.owner?.documentRef === request.oldOwner.documentRef;
+      const committed = descriptorValid
+        ? await window.folia.respondToDocumentReplacementConsent({
+            id: confirmation.id, pageSession: confirmation.pageSession,
+            rendererGeneration: confirmation.rendererGeneration, approved: true,
+          })
+        : null;
+      return { pending, descriptorValid: descriptorValid === true, committed };
+    })()`);
+    check("SEC-08 pre-dialog positive control reaches the actual replacement confirmation",
+      positive.descriptorValid === true && positive.committed?.accepted === true &&
+        positive.committed.confirmed === true &&
+        positive.committed.capability === deletionGrant.state.capability,
+      JSON.stringify(positive));
+    await exec(`window.folia.abandonDocumentDiskAdoption(${JSON.stringify({
+      ...request, capability: deletionGrant.state.capability,
+    })}); null;`);
+    const staleGrant = await prepare();
+    write(filePath, "# Committed adoption check\n\nSTALE_BEFORE_DIALOG\n");
+    const stale = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(staleGrant.request)})`);
+    check("SEC-08 Main refuses a stale prepared snapshot before asking replacement consent",
+      stale.accepted === false && stale.why === "disk-version-or-target-moved" &&
+        !Object.prototype.hasOwnProperty.call(stale, "confirmation"),
+      JSON.stringify(stale));
   } finally {
     restoreChooser();
     if (tabId) await exec(`(async () => {
@@ -27563,53 +27577,105 @@ async function runF22SaveAndReloadScenarios(
     if (sentinel) await sentinel.unmute();
   }
   const replacementSave = deletionSave;
-  const deletedAReloadDialogExpected = {
-    type: "warning",
-    buttons: ["Replace from disk", "Keep in-memory copy"],
-    defaultId: 1,
-    cancelId: 1,
-    title: "Confirm document replacement",
-    message: `"${path.basename(deletedAFile)}" has an unresolved deletion or a changed file target.`,
-    detail: "Replacing it with the current disk file discards the earlier in-memory copy.",
-  };
-  const deletedAReloadDialogCalls = [];
-  const restoreDeletedAReloadDialog = replaceMethod(
-    dialog,
-    "showMessageBoxSync",
-    (owner, options) => {
-      const opts = options || {};
-      const mismatches = [];
-      if (owner !== win) mismatches.push("owner-window");
-      if (opts.type !== deletedAReloadDialogExpected.type) mismatches.push("type");
-      if (opts.title !== deletedAReloadDialogExpected.title) mismatches.push("title");
-      if (JSON.stringify(opts.buttons) !== JSON.stringify(deletedAReloadDialogExpected.buttons)) {
-        mismatches.push("buttons");
-      }
-      if (opts.defaultId !== deletedAReloadDialogExpected.defaultId) mismatches.push("defaultId");
-      if (opts.cancelId !== deletedAReloadDialogExpected.cancelId) mismatches.push("cancelId");
-      if (opts.message !== deletedAReloadDialogExpected.message) mismatches.push("message");
-      if (opts.detail !== deletedAReloadDialogExpected.detail) mismatches.push("detail");
-      if (deletedAReloadDialogCalls.length > 0) mismatches.push("second-dialog");
-      const call = {
-        ownerIsTestWindow: owner === win,
-        type: opts.type,
-        title: opts.title,
-        buttons: opts.buttons,
-        defaultId: opts.defaultId,
-        cancelId: opts.cancelId,
-        message: opts.message,
-        detail: opts.detail,
-        mismatches,
+  // Observe Main's actual descriptor and the original themed confirmation.
+  // Only its real Confirm button may approve; a mismatch cancels the dialog.
+  const observeReplacementDialog = async (filePath, tabId, content) => {
+    await exec(`(() => {
+      const tabs = window.CustomTabs;
+      const ipc = window.ipcRenderer;
+      const probe = window.__f22ReloadConsentProbe = {
+        originalConfirm: tabs.confirmDocumentReplacement,
+        originalSync: ipc.sendSync,
+        calls: [], receipts: [],
+        owner: tabs.getDocumentIdentityForTab(
+          ${tabId}, ${JSON.stringify(filePath)}, window.getReloadRequestSession()),
       };
-      deletedAReloadDialogCalls.push(call);
-      if (mismatches.length !== 0) {
-        throw new Error(
-          "F22 deleted-A reload raised an unexpected main-process dialog: " +
-            JSON.stringify(call),
-        );
-      }
-      return 0;
-    },
+      ipc.sendSync = function (channel) {
+        const result = probe.originalSync.apply(this, arguments);
+        if (channel === 'commit-document-disk-adoption') probe.receipts.push(result);
+        return result;
+      };
+      tabs.confirmDocumentReplacement = async function (request) {
+        const pending = probe.originalConfirm.apply(this, arguments);
+        const dialog = document.getElementById('reloadDocumentDialog');
+        const cancel = document.getElementById('reloadDocumentCancel');
+        const confirm = document.getElementById('reloadDocumentConfirm');
+        const receipt = probe.receipts[probe.receipts.length - 1];
+        const call = {
+          request,
+          title: document.getElementById('reloadDocumentTitle')?.textContent.trim(),
+          fileName: document.getElementById('reloadDocumentName')?.textContent,
+          reason: document.getElementById('reloadDocumentReason')?.textContent,
+          cancelLabel: cancel?.textContent.trim(),
+          confirmLabel: confirm?.textContent.trim(),
+          open: dialog?.open === true && dialog.matches(':modal'),
+          cancelFocused: document.activeElement === cancel && cancel?.autofocus === true,
+          approvedBeforeReload: false,
+          confirmClicked: false,
+          mismatches: [],
+        };
+        const mismatches = call.mismatches;
+        if (probe.calls.length !== 0) mismatches.push('second-dialog');
+        if (receipt?.accepted !== false || receipt?.why !== 'confirmation-required' ||
+            !['id', 'reason', 'expiresAt', 'fileName', 'pageSession', 'rendererGeneration']
+              .every(field => receipt.confirmation?.[field] === request?.[field]) ||
+            !['tabId', 'documentGeneration', 'documentRef']
+              .every(field => receipt.confirmation?.owner?.[field] === request?.owner?.[field])) {
+          mismatches.push('main-descriptor');
+        }
+        if (!request || !/^[a-f0-9]{32}$/.test(request.id) ||
+            request.reason !== 'file-reappeared' ||
+            !Number.isFinite(request.expiresAt) || request.expiresAt <= Date.now() ||
+            request.fileName !== ${JSON.stringify(path.basename(filePath))} ||
+            request.pageSession !== probe.owner?.pageSession ||
+            request.rendererGeneration !== probe.owner?.rendererGeneration ||
+            request.owner?.tabId !== probe.owner?.tabId ||
+            request.owner?.documentGeneration !== probe.owner?.documentGeneration ||
+            request.owner?.documentRef !== probe.owner?.documentRef) {
+          mismatches.push('descriptor-owner');
+        }
+        if (!call.open) mismatches.push('open-modal');
+        if (!call.cancelFocused) mismatches.push('cancel-focus');
+        if (call.title !== 'Reload document?' ||
+            call.fileName !== ${JSON.stringify(path.basename(filePath))} ||
+            call.reason !== 'The file disappeared and later reappeared with the same name. Are you sure you want to reload it?' ||
+            call.cancelLabel !== 'Cancel' || call.confirmLabel !== 'Reload from disk') {
+          mismatches.push('labels');
+        }
+        const owner = tabs.getDocumentIdentityForTab(
+          ${tabId}, ${JSON.stringify(filePath)}, window.getReloadRequestSession());
+        if (window.currentFilePath !== ${JSON.stringify(filePath)} ||
+            tabs.getActiveTabId() !== ${tabId} ||
+            owner?.documentGeneration !== probe.owner?.documentGeneration ||
+            owner?.documentRef !== probe.owner?.documentRef ||
+            window.originalMarkdown !== ${JSON.stringify(content)}) {
+          mismatches.push('adopted-before-consent');
+        }
+        probe.calls.push(call);
+        if (mismatches.length === 0) {
+          confirm.addEventListener('click', () => { call.confirmClicked = true; }, { once: true });
+          call.approvedBeforeReload = true;
+          confirm.click();
+        } else if (dialog?.open) {
+          cancel.click();
+        }
+        call.approved = await pending;
+        call.dialogClosed = dialog?.open === false;
+        return call.approved;
+      };
+      return null;
+    })()`);
+    return async () => exec(`(() => {
+      const probe = window.__f22ReloadConsentProbe;
+      window.CustomTabs.confirmDocumentReplacement = probe.originalConfirm;
+      window.ipcRenderer.sendSync = probe.originalSync;
+      delete window.__f22ReloadConsentProbe;
+      return { calls: probe.calls, receipts: probe.receipts };
+    })()`);
+  };
+  let deletedAReloadDialog = null;
+  const restoreDeletedAReloadDialog = await observeReplacementDialog(
+    deletedAFile, deletedA.id, "F22_DELETED_A_BASE\r\n",
   );
   let explicitReplacementAdopted = false;
   try {
@@ -27620,7 +27686,7 @@ async function runF22SaveAndReloadScenarios(
       5000,
     );
   } finally {
-    restoreDeletedAReloadDialog();
+    deletedAReloadDialog = await restoreDeletedAReloadDialog();
   }
   const replacementAfterExplicitAdoption = await deletionTabSnapshot(deletedA.id);
   const deletedAActiveAfterExplicitAdoption = await witnessActiveOwner(
@@ -27637,9 +27703,8 @@ async function runF22SaveAndReloadScenarios(
   const closedDeletedA = await createActiveTab(closedDeletedFile, "F22_DELETED_CLOSED\r\n");
   // A companion path unique to this scenario. Reusing the shared deletion
   // fixture left an unresolved older copy on the same physical key, so
-  // selecting it drove completeFileOpen() into a disk adoption and MAIN
-  // raised its synchronous "Confirm document replacement" dialog - which no
-  // renderer stub can answer, so the run stopped until a human clicked.
+  // selecting it drove completeFileOpen() into a protected disk adoption.
+  // That unrelated consent would block this scenario's owner-close probe.
   // Seeded settled, because that adoption verifies the disk version it reads.
   //
   // Deliberately NOT unlinked afterwards: removing it while its tab is still
@@ -27810,67 +27875,9 @@ async function runF22SaveAndReloadScenarios(
   let replacementReloaded = false;
   let replacementCurrentOwner = null;
   let replacementAdoption = null;
-  // Adopting the recreated file drives main's disk-adoption consent, and main
-  // raises dialog.showMessageBoxSync SYNCHRONOUSLY in the MAIN process - no
-  // renderer stub can answer it, so the reload below would hang for a click.
-  // The replacement is scoped to this reload alone and approves exactly ONE
-  // dialog whose full window/options shape is the one main is proven to build
-  // (src/main.js "Confirm document replacement"); the message/detail wording
-  // is reconstructed from the product's own template, not matched loosely.
-  const replacementDialogExpected = {
-    type: "warning",
-    buttons: ["Replace from disk", "Keep in-memory copy"],
-    defaultId: 1,
-    cancelId: 1,
-    title: "Confirm document replacement",
-    message: `"${path.basename(replacementDeletedFile)}" has an unresolved deletion or a changed file target.`,
-    detail: "Replacing it with the current disk file discards the earlier in-memory copy.",
-  };
-  const replacementDialogCalls = [];
-  const replacementDialogUnexpected = [];
-  let replacementDialogApprovals = 0;
-  let replacementDialogApprovedBeforeReload = false;
-  const restoreReplacementDialog = replaceMethod(
-    dialog,
-    "showMessageBoxSync",
-    (owner, options) => {
-      const opts = options || {};
-      const mismatches = [];
-      if (owner !== win) mismatches.push("owner-window");
-      if (opts.type !== replacementDialogExpected.type) mismatches.push("type");
-      if (opts.title !== replacementDialogExpected.title) mismatches.push("title");
-      if (JSON.stringify(opts.buttons) !== JSON.stringify(replacementDialogExpected.buttons)) {
-        mismatches.push("buttons");
-      }
-      if (opts.defaultId !== replacementDialogExpected.defaultId) mismatches.push("defaultId");
-      if (opts.cancelId !== replacementDialogExpected.cancelId) mismatches.push("cancelId");
-      if (opts.message !== replacementDialogExpected.message) mismatches.push("message");
-      if (opts.detail !== replacementDialogExpected.detail) mismatches.push("detail");
-      if (replacementDialogApprovals > 0) mismatches.push("second-dialog");
-      replacementDialogCalls.push({
-        ownerIsTestWindow: owner === win,
-        type: opts.type,
-        title: opts.title,
-        buttons: opts.buttons,
-        defaultId: opts.defaultId,
-        cancelId: opts.cancelId,
-        message: opts.message,
-        detail: opts.detail,
-        mismatches,
-      });
-      if (mismatches.length > 0) {
-        // main catches this and refuses, so the record above is what makes the
-        // failure loud; what matters here is that NO selection is returned.
-        replacementDialogUnexpected.push(replacementDialogCalls[replacementDialogCalls.length - 1]);
-        throw new Error(
-          "F22 replacement-owner reload raised an unexpected main-process dialog: " +
-            JSON.stringify({ mismatches, observed: replacementDialogCalls[replacementDialogCalls.length - 1] }),
-        );
-      }
-      replacementDialogApprovals += 1;
-      replacementDialogApprovedBeforeReload = replacementReloaded === false;
-      return 0;
-    },
+  let replacementDialog = null;
+  const restoreReplacementDialog = await observeReplacementDialog(
+    replacementDeletedFile, replacementDeletedA.id, "F22_DELETED_REPLACEMENT_OLD\r\n",
   );
   if (consoleAttribution) {
     await consoleAttribution.begin("f22-replacement-owner-adoption", {
@@ -27892,7 +27899,7 @@ async function runF22SaveAndReloadScenarios(
       )`,
     );
   } finally {
-    restoreReplacementDialog();
+    replacementDialog = await restoreReplacementDialog();
     replacementAdoption = await exec(`
       (() => {
         const probe = window.__f22ReplacementAdoptionProbe;
@@ -27910,20 +27917,18 @@ async function runF22SaveAndReloadScenarios(
     }
   }
   if (
-    replacementDialogUnexpected.length !== 0 ||
-    replacementDialogCalls.length !== 1 ||
-    replacementDialogApprovals !== 1 ||
-    replacementDialogApprovedBeforeReload !== true ||
+    replacementDialog.calls.length !== 1 ||
+    replacementDialog.calls[0].mismatches.length !== 0 ||
+    replacementDialog.calls[0].confirmClicked !== true ||
+    replacementDialog.calls[0].approved !== true ||
+    replacementDialog.calls[0].approvedBeforeReload !== true ||
+    replacementDialog.calls[0].dialogClosed !== true ||
     replacementReloaded !== true
   ) {
     throw new Error(
       "F22 replacement-owner reload did not approve exactly one expected replacement dialog before completing: " +
         JSON.stringify({
-          expected: replacementDialogExpected,
-          calls: replacementDialogCalls,
-          unexpected: replacementDialogUnexpected,
-          approvals: replacementDialogApprovals,
-          approvedBeforeReload: replacementDialogApprovedBeforeReload,
+          dialog: replacementDialog,
           reloaded: replacementReloaded,
         }),
     );
@@ -29456,7 +29461,7 @@ async function runF22SaveAndReloadScenarios(
     closedAfterLateAcknowledgement,
     replacementDeletedA: replacementDeletedA.id,
     replacementHeldIdentity, replacementBeforeAdoption, replacementReloaded,
-    replacementCurrentOwner, replacementAdoption, replacementAfterAdoption,
+    replacementCurrentOwner, replacementAdoption, replacementAfterAdoption, replacementDialog,
     replacementDeletedEvent, replacementAcknowledgement, replacementEnvelopeHeld,
     replacementDelivered, replacementBefore, replacementAfterStaleDelivery, replacementAfter,
     replacementBeforeMessages, replacementAfterStaleMessages, replacementAfterMessages,
@@ -29496,7 +29501,7 @@ async function runF22SaveAndReloadScenarios(
     replacementSave, replacementBytesAfterSave,
     replacementConflictAfterSave, explicitReplacementAdopted,
     replacementAfterExplicitAdoption, deletedAActiveAfterExplicitAdoption,
-    deletedAReloadDialogExpected, deletedAReloadDialogCalls,
+    deletedAReloadDialog,
     retryGuard: {
       filePath: retryGuardFile,
       tabId: retryGuardTab.id,
@@ -29747,8 +29752,12 @@ async function runF22SaveAndReloadScenarios(
       deletionAAfterRecreation.deletionTombstone === true &&
       deletionAAfterRecreation.deletionEventId === deletedAEvent.delivery.eventId &&
       explicitReplacementAdopted === true &&
-      deletedAReloadDialogCalls.length === 1 &&
-      deletedAReloadDialogCalls[0].mismatches.length === 0 &&
+      deletedAReloadDialog.calls.length === 1 &&
+      deletedAReloadDialog.calls[0].mismatches.length === 0 &&
+      deletedAReloadDialog.calls[0].confirmClicked === true &&
+      deletedAReloadDialog.calls[0].approved === true &&
+      deletedAReloadDialog.calls[0].approvedBeforeReload === true &&
+      deletedAReloadDialog.calls[0].dialogClosed === true &&
       replacementAfterExplicitAdoption &&
       deletedAActiveAfterExplicitAdoption.selected === true &&
       replacementAfterExplicitAdoption.active === deletedA.id &&

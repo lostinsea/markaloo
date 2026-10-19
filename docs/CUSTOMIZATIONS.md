@@ -243,6 +243,26 @@ nonce/digest and completion's unresolved-evidence signal survive the boundary.
 The bridge adds no read or IPC; remaining authority/consumer transitions and
 final responsiveness acceptance stay open.
 
+**Protected reload confirmation (local, unreleased).**
+
+- The `Reload document?` dialog uses the app's light/dark theme, typography
+  and buttons. It names the document without treating its name as HTML.
+- The reason distinguishes an unavailable file returning, a location opening
+  a different file, and a separate earlier copy that remains protected.
+  It does not imply that a clean document has unsaved edits.
+- Cancel is focused first. Escape, close and backdrop clicks cancel.
+  Keyboard focus stays in the dialog and returns to a visible app control.
+- Main retains the exact approved-read transaction. The fixed asynchronous
+  reply carries only its nonce, page identity and the user's choice.
+  Main repeats the original owner, evidence, sibling, path and version checks.
+  A reply cannot extend the original approval deadline.
+- Changed documents, selection, reload requests, page navigation and owner
+  closure invalidate the question. Cancellation preserves deletion evidence.
+- Ordinary reloads keep their existing commit transport. The separate genuine
+  unsaved-edit warning and historical-episode retirement are unchanged.
+- `npm run test:reload-dialog` exercises the production preload with disposable
+  profiles/files. The revert harness owns the exact sensitivity records.
+
 **Right-click menu fit (2026-10-12, unintegrated).** Menus fit their untransformed
 layout size with normal viewport margins, scroll vertically when needed and
 wrap at extremely narrow widths. Only scrolling inside a menu avoids the

@@ -38,6 +38,44 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `reload-dialog` — **REVIEWED, local only; unpublished** (2026-10-19).
+  - Isolated branch: `users/vinma-microsoft/clear-themed-reload-dialog`.
+  - Base matches canonical `lostinsea/markaloo` main at `54b8ddd8`.
+  - The protected reload confirmation uses an accessible light/dark dialog.
+    Its reason distinguishes disappearance/reappearance with the same name,
+    a changed location, and a separate protected earlier copy.
+  - Main keeps the original transaction and repeats its full validation after
+    the fixed asynchronous response. Ordinary commits stay synchronous.
+    Genuine unsaved-edit protection and historical retirement are unchanged.
+  - Astra's bounded design handoff and Sol/high implementation are complete.
+    Fresh independent Sol/high and Luna/high final reviews found no code issues.
+    Both requested direct Main race coverage, which is present. Sol's separate
+    background-owner, frame-identity and invisible-focus findings are corrected.
+    Luna's final evidence-status correction is reflected in this entry.
+  - Production-preload suite is `48/48` (`reload-focus-final.log`);
+    source packaging `404/0`, with built-asar checks skipped
+    (`reload-packaging-wording-final.log`). Light/dark and narrow/150%
+    screenshots, including a long literal filename, have been viewed.
+  - R854 and R960-R965 are individually exact PROVEN. Receipts:
+    `reload-exact-proofs-r1.log`, `reload-wording-focus-proofs.log`.
+    All mutation writes were restored; `reload-anchors-final.log` resolves.
+    The wording proof was repeated after the user's correction.
+  - The old owned-read focused route still stops on its missing raw `invoke`
+    test bridge (`reload-owned-core-r1.log`). It does not certify F22's updated
+    legacy observers. R854 uses the same named controls in the new
+    production-preload route. Large-file/startup performance and built or
+    installed application behavior are not certified by this unit.
+  - Session `f908fe61` artifacts hold the logs; `files/reload-final/` holds
+    viewed final screenshots, the bounded ordinary-reload samples and source
+    hashes. Current behavior and timing limits are in CUSTOMIZATIONS/PERF-AUDIT.
+  - Local commit only. No integration, push, release or installation.
+  - Do not change the separate installer/reading units or cancelled updater work.
+  - Baseline: packaging `404 passed, 0 failed` (built-asar checks skipped);
+    full tabs `33/34`, stopping on the existing missing `invoke` test bridge.
+    The isolated real watcher reproduced the native warning after deletion and
+    recreation; Cancel kept the original clean document. Receipts:
+    `reload-*-baseline.log`, `baseline-native-options.json`, `baseline-app.png`
+    in session `f908fe61` artifacts. The baseline app screenshot was viewed.
 - The Markaloo rebrand, feather icon, and reviewed table/TOC and Mermaid-label
   work are published together as [v0.8.0](https://github.com/lostinsea/markaloo/releases/tag/v0.8.0).
   The repository is `lostinsea/markaloo`; old release links still redirect.
