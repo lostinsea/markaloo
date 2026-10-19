@@ -646,13 +646,15 @@ async function main() {
     [["--folia-newline-alignment-diagnostics"], false],
     [["--folia-newline-alignment-diagnostics"], "invalid"]]) {
     const calls = [];
+    const preloadEvents = new EventEmitter();
+    preloadEvents.invoke = async channel => { calls.push(channel); return reply; };
     let api;
     require("vm").runInNewContext(read("src/main-preload.js"), {
       process: { isMainFrame: true, argv },
       require(name) {
         if (name !== "electron") throw new Error(`Unexpected preload import: ${name}`);
         return { contextBridge: { exposeInMainWorld(_name, value) { api = value; } },
-          ipcRenderer: { async invoke(channel) { calls.push(channel); return reply; } } };
+          ipcRenderer: preloadEvents };
       },
     });
     let enabled, error;
@@ -704,6 +706,19 @@ async function main() {
       visibilityValues[0].visible === true && visibilityValues[1].visible === false &&
       visibilityValues.every(value => Object.isFrozen(value) && Object.keys(value).join(",") === "visible") &&
       visibilityEvents.listenerCount("window-visibility-changed") === 0);
+  const mainDialogStates = [];
+  const unsubscribeMainDialog = published.onMainDialogVisibility(value => mainDialogStates.push(value));
+  visibilityEvents.emit("main-dialog-visibility", {}, true);
+  visibilityEvents.emit("main-dialog-visibility", {}, false);
+  const validDialogStates = mainDialogStates.length;
+  try { visibilityEvents.emit("main-dialog-visibility", {}, { active: true }); }
+  catch (error) { check("Main dialog visibility rejects malformed notification explicitly", /Invalid/.test(error.message)); }
+  unsubscribeMainDialog();
+  visibilityEvents.emit("main-dialog-visibility", {}, true);
+  check("Main dialog visibility forwards only fixed booleans and unsubscribes",
+    mainDialogStates.length === validDialogStates &&
+      mainDialogStates.every(value => typeof value === "boolean") &&
+      mainDialogStates.slice(-2).join(",") === "true,false");
   check("SEC-08 browser link delegation retains total cancellation independently of private gesture admission",
     read("src/renderer.js").includes(
       "    // Genuine non-anchor links were handled by the private preload.\n    e.preventDefault();".replace(/\n/g,
@@ -743,6 +758,7 @@ async function main() {
   let nativeOpenOptions;
   require("vm").runInNewContext(dialogSource + "\nopenFileDialog();", {
     mainWindow: { webContents: {} }, approvalRendererGeneration: 1,
+    fileOpenDeliveryEpoch: 1, captureFileOpenDelivery: () => ({ current: () => true }),
     SUPPORTED_EXTENSIONS: extensionHelpers.SUPPORTED_EXTENSIONS,
     dialog: { showOpenDialog(_window, options) {
       nativeOpenOptions = options;
@@ -1535,6 +1551,13 @@ async function main() {
 
   // Explicit regression guards for the two files this suite was written for.
   check("popup-preload.js is in build.files", isPackaged(files, "src/popup-preload.js"));
+  for (const source of [
+    "src/app-dialogs.js", "src/owned-dialogs.js", "src/owned-dialog.html",
+    "src/owned-dialog-preload.js", "src/owned-dialog-renderer.js", "src/popup-theme.js",
+  ]) {
+    check(`themed dialog runtime ${source} is present and packaged`,
+      fs.existsSync(path.join(ROOT, source)) && isPackaged(files, source));
+  }
   // fonts/ is a BUILD OUTPUT (gitignored) produced by scripts/vendor-libs.js
   // from the tracked assets/fonts/. Asserting only on fonts/ would therefore
   // keep passing on a machine that has stale build output while the SOURCE has

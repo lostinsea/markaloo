@@ -258,10 +258,23 @@ final responsiveness acceptance stay open.
   A reply cannot extend the original approval deadline.
 - Changed documents, selection, reload requests, page navigation and owner
   closure invalidate the question. Cancellation preserves deletion evidence.
-- Ordinary reloads keep their existing commit transport. The separate genuine
-  unsaved-edit warning and historical-episode retirement are unchanged.
+- Ordinary reloads keep their existing commit transport. Genuine unsaved-edit
+  confirmation remains separate. Historical retirement has its own themed
+  question and defaults to keeping the earlier protection.
 - `npm run test:reload-dialog` exercises the production preload with disposable
   profiles/files. The revert harness owns the exact sensitivity records.
+
+**App-owned message and confirmation dialogs (local, unreleased).**
+
+- Shared themed cards cover browser messages and document decisions.
+- Main uses its own isolated themed host for large-document, external-file,
+  shutdown and terminal safety questions.
+- Async answers repeat the relevant state and authority checks; cancellation
+  never grants permission. Native pickers and narrowly bounded failed-host
+  emergency messages stay native.
+- Child popouts use the selected app palette and bundled font.
+- [Dialog inventory and exclusions](DIALOGS.md) lists every migrated family,
+  retained themed editor, lifecycle rule and regression command.
 
 **Right-click menu fit (2026-10-12, unintegrated).** Menus fit their untransformed
 layout size with normal viewport margins, scroll vertically when needed and

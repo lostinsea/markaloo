@@ -38,6 +38,44 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `reload-dialog.all-dialogs` — **REVIEWED, local only; unpublished** (2026-10-19).
+  - All inventoried app-owned messages and confirmations use shared themed
+    cards or an independent Main-owned themed host. Existing themed input
+    editors keep their behavior and gain responsive bounds. Image, Mermaid
+    and table child windows use canonical app palettes and bundled fonts.
+  - Builds on local `6b876066` in the same isolated branch. Canonical main
+    resolves to `54b8ddd8`; no rebase or unrelated integration.
+  - `docs/DIALOGS.md` records entry-point coverage, authority and exclusions.
+    Native file/directory pickers, platform security/authentication and
+    installer UI remain native. Only failure of the independent themed host
+    permits native shutdown or terminal-error fallback.
+  - Retained-context Astra's authority/design pass and Sol/high implementation
+    are complete. Independent Sol/high and Luna/high final reviews have no
+    remaining blockers.
+  - Review corrections protect private controls and screen-reader labels from
+    document ID collisions, and retain current Main questions after document
+    renderer loss. Luna's additional expiry-control concern is covered without
+    allowing the polling timer to satisfy the assertion.
+  - Queued answers stay bound to their question. Async paths revalidate their
+    state; Main retains approval, evidence and shutdown authority. Genuine
+    unsaved edits and exact save/discard/cancel outcomes remain protected.
+  - Passes: document-window dialogs `53/53`, Main-owned host `104/104`,
+    retained reload `48/48`, document sessions `68/68`, themes `398/398`,
+    source packaging `413/0`, with built-asar checks skipped.
+  - R966-R983 are individually exact PROVEN. R320, R349, R361, R454, R820,
+    R821, R832, R854 and R960-R965 are reproven. Receipts:
+    `dialogs-exact-proofs-r1.log`, `dialogs-exact-proofs-r2.log`,
+    `dialogs-retained-proofs-r1.log`. Failed initial proof receipts are retained;
+    the corrected tests bind AX results to the actual dialog and do not wait
+    for evaluation replies from a destroyed child. Mutation writes are restored.
+  - Light/dark action, error, input, independent-host and retained reload
+    screenshots have been viewed, including narrow windows at 150% zoom.
+    Popout palette/font screenshots have also been viewed.
+  - Evidence is under this session's `files/dialogs-final` directory. Legacy
+    raw-IPC tab/owned-read and popup paths still have their known missing-bridge
+    limits. No full-suite, packaged-app or cross-platform certification.
+  - Local/unpublished only. No primary-checkout changes, integration, push,
+    release, installation or cancelled updater diagnosis.
 - `reload-dialog` — **REVIEWED, local only; unpublished** (2026-10-19).
   - Isolated branch: `users/vinma-microsoft/clear-themed-reload-dialog`.
   - Base matches canonical `lostinsea/markaloo` main at `54b8ddd8`.

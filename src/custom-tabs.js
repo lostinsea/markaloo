@@ -457,6 +457,65 @@
   // mutation, so an approval can name the exact state it was given about and the
   // commit below can refuse to act on a stale one.
   let documentRevision = 0;
+  let dialogDecisionIntent = 0;
+
+  function captureDialogContext(tab = getActiveTab()) {
+    const intent = ++dialogDecisionIntent;
+    const selected = getActiveTab();
+    const revision = documentRevision;
+    const state = tab && documentState.get(tab);
+    const mutation = state && state.mutationRevision;
+    const generation = approvalRendererGeneration;
+    const session = window.getReloadRequestSession?.();
+    const switchIntent = latestTabSwitchIntent;
+    const live = liveDocument();
+    const path = tab && tab.filePath;
+    const reloadSequence = path && window.getLatestReloadRequestSequence?.(path);
+    const saveRevision = window.getPendingSaveStatus?.().revision;
+    const selection = window.getActiveFileSelectionGeneration?.();
+    const overflow = frozenDocumentOperationOverflowCount;
+    const identityKey = value => value
+      ? [value.pageSession, value.rendererGeneration, value.tabId,
+          value.documentGeneration, value.pathKey, value.documentRef].join("\u0000")
+      : null;
+    const identity = tab && identityKey(documentIdentity(tab, session));
+    return () =>
+      !isDocumentFrozen() && intent === dialogDecisionIntent &&
+      getActiveTab() === selected && documentRevision === revision &&
+      approvalRendererGeneration === generation &&
+      window.getReloadRequestSession?.() === session &&
+      latestTabSwitchIntent === switchIntent && liveDocument() === live &&
+      window.getPendingSaveStatus?.().revision === saveRevision &&
+      window.getActiveFileSelectionGeneration?.() === selection &&
+      frozenDocumentOperationOverflowCount === overflow &&
+      (!tab || (tabs.includes(tab) && tab.filePath === path &&
+        documentState.get(tab) === state &&
+        state?.mutationRevision === mutation &&
+        window.getLatestReloadRequestSequence?.(path) === reloadSequence &&
+        identityKey(documentIdentity(tab, session)) === identity));
+  }
+
+  async function showDocumentConfirmation(options, isCurrent) {
+    try {
+      const result = await window.MarkalooDialogs.show({
+        title: options.title,
+        message: options.message,
+        fileName: options.fileName,
+        buttons: [
+          { id: "cancel", label: options.cancelLabel || "Cancel", style: "secondary" },
+          { id: "proceed", label: options.confirmLabel, style: options.style || "danger" },
+        ],
+        defaultId: "cancel",
+        cancelId: "cancel",
+        isCurrent,
+      });
+      return result.cause === "choice" && result.choice === "proceed";
+    } catch (error) {
+      console.error("[CustomTabs] Document confirmation could not be displayed:", error);
+      notify("The question could not be opened. Nothing was discarded.", 6000);
+      return false;
+    }
+  }
 
   function bumpTabMutationRevision(state) {
     if (state) state.mutationRevision += 1;
@@ -2444,7 +2503,7 @@
    *   before the app is usable, and there is one per expensive file. The
    *   document is restored anyway - it is the one they were reading when they
    *   closed the app - and the cost is reported passively instead.
-   * @returns {boolean} true if the switch should proceed
+   * @returns {boolean|Promise<boolean>} true if the switch should proceed
    */
   function confirmLargeTab(tab, silent) {
     if (largeConfirmed.has(tab.id)) return true;
@@ -2476,18 +2535,26 @@
       return true;
     }
 
-    let proceed = true;
+    const isCurrent = captureDialogContext(tab);
     try {
-      proceed = window.folia.confirmLargeRender({
+      const decision = window.folia.confirmLargeRender({
         name: tab.filename,
         seconds: seconds,
       });
+      return Promise.resolve(decision).then(proceed => {
+        if (proceed !== true || !isCurrent()) return false;
+        largeConfirmed.add(tab.id);
+        return true;
+      }).catch(error => {
+        console.error("[CustomTabs] size confirmation failed:", error);
+        notify("The large-document question could not be opened. Please try again.", 6000);
+        return false;
+      });
     } catch (error) {
       console.error("[CustomTabs] size confirmation failed:", error);
-      return true;
+      notify("The large-document question could not be opened. Please try again.", 6000);
+      return false;
     }
-    if (proceed) largeConfirmed.add(tab.id);
-    return proceed;
   }
 
   /**
@@ -2516,7 +2583,13 @@
       notify("This file is still being verified. Retry switching when its open completes.", 4000);
       return false;
     }
-    if (tabId !== activeTabId && !confirmLargeTab(tab, opts.silent)) {
+    const largeDecision = tabId !== activeTabId
+      ? confirmLargeTab(tab, opts.silent) : true;
+    const largeAccepted = largeDecision && typeof largeDecision.then === "function"
+      ? await largeDecision : largeDecision;
+    if (intent !== latestTabSwitchIntent || activeTabId !== selectedAtStart ||
+        !tabs.includes(tab) || isDocumentFrozen()) return;
+    if (!largeAccepted) {
       // Declining means the switch does not happen: the reader stays where
       // they were, with the document they were reading still on screen. This
       // runs BEFORE snapshotActiveTab() and before any state is mutated, so
@@ -3047,13 +3120,28 @@
       const label = safeDocumentLabel(tab.filename);
       const closeWarning =
         dirty && deleted
-          ? `"${label}" has unsaved changes and was deleted outside Markaloo. Close this unsaved in-memory copy anyway?`
+          ? "This tab has unsaved changes and may be the only remaining copy of the file. Close it and discard the changes?"
           : dirty
-            ? `"${label}" has unsaved changes. Close anyway?`
+            ? "This tab has unsaved changes. Close it and discard them?"
             : deleted
-              ? `"${label}" was deleted outside Markaloo. Close this in-memory copy anyway?`
+              ? "This tab may be the only remaining copy of the file. Close the tab?"
               : null;
-      if (closeWarning && !confirm(closeWarning)) return;
+      let acknowledgedRevision = deletionState.revision;
+      if (closeWarning) {
+        const isCurrent = captureDialogContext(tab);
+        const approved = await showDocumentConfirmation({
+          title: dirty ? "Close without saving?" : "Close this copy?",
+          fileName: label,
+          message: closeWarning,
+          confirmLabel: dirty ? "Discard and close" : "Close tab",
+        }, isCurrent);
+        if (!approved || !isCurrent()) return;
+        const currentDeletion = consultDocumentDeletionState(tab.filePath, closingIdentity);
+        if (!currentDeletion || currentDeletion.revision !== acknowledgedRevision) {
+          notify("The file changed during confirmation. Please try closing the tab again.", 6000);
+          return;
+        }
+      }
       // What the reader was actually shown. Main will not erase deletion
       // evidence that nobody was warned about, and this is the only thing that
       // says they were.
@@ -3085,6 +3173,7 @@
               deletionTombstone,
               {
                 acknowledgedDeletion: deletionAcknowledged,
+                expectedDeletionRevision: acknowledgedRevision,
               },
             );
             if (outcome && outcome.retired === true) break;
@@ -3095,12 +3184,23 @@
             ) {
               break;
             }
-            if (
-              !confirm(
-                `"${label}" was deleted outside Markaloo. Close this in-memory copy anyway?`,
-              )
-            ) {
-              notify("The file became unavailable or changed before adoption.", 6000);
+            const retryDeletion = consultDocumentDeletionState(tab.filePath, closingIdentity);
+            if (!retryDeletion) {
+              notify("The file could not be checked. Please try closing the tab again.", 6000);
+              return;
+            }
+            acknowledgedRevision = retryDeletion.revision;
+            const isCurrent = captureDialogContext(tab);
+            const approved = await showDocumentConfirmation({
+              title: "Close this copy?",
+              fileName: label,
+              message: "This tab may be the only remaining copy of the file. Close the tab?",
+              confirmLabel: "Close tab",
+            }, isCurrent);
+            if (!approved || !isCurrent()) return;
+            const currentDeletion = consultDocumentDeletionState(tab.filePath, closingIdentity);
+            if (!currentDeletion || currentDeletion.revision !== acknowledgedRevision) {
+              notify("The file changed during confirmation. Please try closing the tab again.", 6000);
               return;
             }
             deletionAcknowledged = true;
@@ -3116,6 +3216,8 @@
       }
 
       console.log("[CustomTabs] Closing tab:", tab.filename);
+      tabIndex = tabs.indexOf(tab);
+      if (tabIndex === -1) return;
       const closingLastActive =
         tab.id === activeTabId && tabs.length === 1;
       if (
@@ -5618,6 +5720,7 @@
       "file-reappeared": "The file disappeared and later reappeared with the same name. Are you sure you want to reload it?",
       "location-changed": "This location now opens a different file. Reload that file from disk?",
       "earlier-copy-protected": "An earlier copy of this file is still protected. Reload this document from disk? The earlier copy will stay protected.",
+      "historical-episode": "This location now opens a different file. Stop protecting its earlier copy? This will not reload or replace the document shown here.",
     };
     if (!dialog || !cancel || !request || !reasons[request.reason] ||
         request.pageSession !== window.getReloadRequestSession?.() ||
@@ -5637,76 +5740,38 @@
     const intent = latestTabSwitchIntent;
     const live = liveDocument();
     const sequence = tab && window.getLatestReloadRequestSequence?.(tab.filePath);
-    const previousFocus = document.activeElement;
+    const contextStillCurrent = captureDialogContext(tab);
     const stillCurrent = () =>
-      !isDocumentFrozen() && Date.now() < request.expiresAt &&
+      contextStillCurrent() && !isDocumentFrozen() && Date.now() < request.expiresAt &&
       request.rendererGeneration === approvalRendererGeneration &&
       request.pageSession === window.getReloadRequestSession?.() &&
       getActiveTab() === selectedTab && latestTabSwitchIntent === intent &&
       documentRevision === revision && liveDocument() === live &&
       (!tab || (tabs.includes(tab) &&
         window.getLatestReloadRequestSequence?.(tab.filePath) === sequence));
-    document.getElementById("reloadDocumentName").textContent = request.fileName;
-    document.getElementById("reloadDocumentReason").textContent = reasons[request.reason];
-    return new Promise(resolve => {
-      const listeners = new AbortController();
-      let timer;
-      const finish = approved => {
-        if (pendingReplacementDialog !== finish) return;
-        const accepted = approved === true && stillCurrent();
-        pendingReplacementDialog = null;
-        clearInterval(timer);
-        listeners.abort();
-        if (dialog.open) dialog.close();
-        if (!isDocumentFrozen()) {
-          // A dismissed toast can still be visible while its fade is running.
-          const restore = getActiveTab() === selectedTab &&
-            previousFocus?.isConnected &&
-            previousFocus.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&
-            !previousFocus.closest("[inert], .file-update-toast:not(.show)")
-            ? previousFocus : document.getElementById("refreshBtn");
-          restore?.focus({ preventScroll: true });
-        }
-        resolve(accepted);
-      };
-      pendingReplacementDialog = finish;
-      const options = { signal: listeners.signal };
-      cancel.addEventListener("click", () => finish(false), options);
-      document.getElementById("reloadDocumentClose").addEventListener("click", () => finish(false), options);
-      document.getElementById("reloadDocumentConfirm").addEventListener("click", () => finish(true), options);
-      dialog.addEventListener("cancel", event => {
-        event.preventDefault();
-        finish(false);
-      }, options);
-      dialog.addEventListener("close", () => finish(false), options);
-      dialog.addEventListener("click", event => {
-        if (event.target === dialog) {
-          const bounds = dialog.getBoundingClientRect();
-          if (event.clientX < bounds.left || event.clientX > bounds.right ||
-              event.clientY < bounds.top || event.clientY > bounds.bottom) finish(false);
-        }
-      }, options);
-      document.addEventListener("keydown", event => {
-        // Native dialog focus containment does not stop app-wide shortcuts.
-        event.stopImmediatePropagation();
-        if (event.key === "Escape") {
-          event.preventDefault();
-          finish(false);
-        } else if (event.ctrlKey || event.metaKey || event.altKey) {
-          event.preventDefault();
-        }
-      }, { ...options, capture: true });
-      window.addEventListener("pagehide", () => finish(false), options);
-      timer = setInterval(() => {
-        if (!stillCurrent()) finish(false);
-      }, 100);
-      try {
-        dialog.showModal();
-        cancel.focus();
-      } catch (error) {
-        console.error("[CustomTabs] Could not show reload confirmation:", error);
-        finish(false);
-      }
+    const historical = request.reason === "historical-episode";
+    pendingReplacementDialog = request.id;
+    return window.MarkalooDialogs.show({
+      surface: "reload",
+      title: historical ? "Stop protecting the earlier copy?" : "Reload document?",
+      fileName: historical && request.formerTarget
+        ? `Earlier file: ${request.formerTarget}` : request.fileName,
+      message: reasons[request.reason],
+      buttons: [
+        { id: "cancel", label: historical ? "Keep protection" : "Cancel", style: "secondary" },
+        { id: "proceed", label: historical ? "Stop protecting" : "Reload from disk", style: "primary" },
+      ],
+      defaultId: "cancel",
+      cancelId: "cancel",
+      expiresAt: request.expiresAt,
+      isCurrent: stillCurrent,
+    }).then(result =>
+      result.cause === "choice" && result.choice === "proceed" && stillCurrent()
+    ).catch(error => {
+      console.error("[CustomTabs] Could not show reload confirmation:", error);
+      return false;
+    }).finally(() => {
+      if (pendingReplacementDialog === request.id) pendingReplacementDialog = null;
     });
   }
 
@@ -5720,7 +5785,7 @@
   // Assigning .onclick replaces the inline attribute handler rather than
   // adding a second one, so renderer.js's own call sites are unaffected and
   // the user is never asked to confirm twice.
-  function requestReloadWithConfirmation() {
+  async function requestReloadWithConfirmation() {
     if (isDocumentFrozen() ||
         !mayMutateDocument("tab:confirmed-reload")) return false;
     const tab = snapshotActiveTab({ capturePosition: false });
@@ -5747,7 +5812,13 @@
         "confirm.unsavedRefresh",
         "You have unsaved changes. Reload from disk and discard them?",
       );
-      if (!window.confirm(message)) {
+      const isCurrent = captureDialogContext(tab);
+      const approved = await showDocumentConfirmation({
+        title: "Discard unsaved changes?",
+        message,
+        confirmLabel: "Discard and reload",
+      }, isCurrent);
+      if (!approved || !isCurrent()) {
         if (pendingConfirmedReload) pendingConfirmedReload.invalidated = true;
         return false;
       }
@@ -5824,9 +5895,12 @@
     return true;
   }
 
-  function reloadFromUpdatePrompt() {
+  async function reloadFromUpdatePrompt() {
     // Declining keeps the stale-file prompt visible.
-    if (requestReloadWithConfirmation()) {
+    const tab = getActiveTab();
+    const path = tab && tab.filePath;
+    if (await requestReloadWithConfirmation() &&
+        getActiveTab() === tab && tab?.filePath === path) {
       dismissUpdatePrompt();
     }
   }
@@ -6300,6 +6374,8 @@
     switchToTab,
     requestReloadWithConfirmation,
     confirmDocumentReplacement,
+    captureDialogContext,
+    showDocumentConfirmation,
     // Exposed so the regression suite can assert that scroll save/restore
     // targets the element the engine actually scrolls, rather than re-deriving
     // that guess in the test and proving nothing.

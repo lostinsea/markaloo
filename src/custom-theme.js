@@ -107,6 +107,11 @@
        PARTIAL: it used to return undefined for "desktop", which is the defect
        its own comment describes. */
     const scheme = schemeFor(mode);
+    // PDF export can temporarily repaint the page; publish the preference,
+    // not those temporary classes.
+    if (typeof window.folia?.publishDialogTheme === "function") {
+      window.folia.publishDialogTheme(schemeFor(storedMode()).id);
+    }
     /* An export owns the document's appearance until it has finished
        rasterising. Mirrors the darkModeToggle handler in renderer.js: the
        PREFERENCE has already been written by the caller, so skipping the DOM

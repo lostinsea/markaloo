@@ -3024,6 +3024,22 @@ body.dark-mode .context-menu {
   display: flex;
 }
 
+.note-dialog-overlay.visible > .note-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+}
+
+.note-dialog-overlay .note-dialog-header,
+.note-dialog-overlay .note-dialog-footer {
+  flex-shrink: 0;
+}
+
+.note-dialog-overlay .note-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .note-dialog {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -3127,6 +3143,7 @@ body.dark-mode .context-menu {
   padding: 12px 20px 16px;
   justify-content: flex-end;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .note-dialog-id {
@@ -3243,6 +3260,44 @@ body.dark-mode .context-menu {
 .reload-document-dialog button:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
+}
+
+.app-message-dialog .app-dialog-message,
+.app-message-dialog .app-dialog-detail {
+  white-space: pre-wrap;
+}
+
+.app-dialog-detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.app-message-dialog h2 {
+  overflow-wrap: anywhere;
+}
+
+.note-dialog-btn.danger {
+  background: var(--danger-bg);
+  color: var(--on-danger-fg);
+}
+
+.note-dialog-btn.danger:hover {
+  background: var(--danger-bg-hover);
+}
+
+.app-dialog-failure {
+  padding: 12px 20px;
+  color: var(--danger-fg);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.owned-dialog-host .note-dialog-header {
+  -webkit-app-region: drag;
+}
+
+.owned-dialog-host button {
+  -webkit-app-region: no-drag;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3769,6 +3824,7 @@ body.dark-mode .context-menu {
   border-radius: 6px;
   cursor: pointer;
   font-size: 11px;
+  font-family: inherit;
   font-weight: 500;
   text-align: center;
   transition: all 0.15s;
@@ -4022,8 +4078,8 @@ body.dark-mode .context-menu {
 }
 
 .table-insert-preview th {
-  background: var(--secondary-color);
-  color: var(--primary-color);
+  background: var(--table-header-bg);
+  color: var(--table-header-fg);
 }
 
 /* ============================================

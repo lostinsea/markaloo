@@ -16,6 +16,88 @@ const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
 const { pathToFileURL, fileURLToPath } = require("url");
+const { OwnedDialogs, SCHEMES: DIALOG_SCHEMES, ownerRendererAvailable } = require("./owned-dialogs");
+const { popupTheme } = require("./popup-theme");
+let ownedDialogs = null;
+function mainDialogs() {
+  if (!ownedDialogs) ownedDialogs = new OwnedDialogs();
+  return ownedDialogs;
+}
+
+async function showOwnedMessage(owner, options, emergency = null) {
+  const sender = owner && !owner.isDestroyed() ? owner.webContents : null;
+  // A Main-retained shutdown/terminal question remains answerable after the
+  // document process dies. Its window and request, not that dead page, own it.
+  const independentOwner = emergency === "shutdown" || emergency === "terminal";
+  const frame = !independentOwner && sender && !sender.isDestroyed() ? sender.mainFrame : null;
+  const generation = approvalRendererGeneration;
+  const pageSession = approvalRendererPageSession;
+  const startup = approvalRendererState === "loading" && pageSession === null;
+  const current = () => {
+    try {
+      return !!sender && !owner.isDestroyed() && !sender.isDestroyed() &&
+        (independentOwner ||
+          (!!frame && sender.mainFrame === frame && !frame.isDestroyed())) &&
+        generation === approvalRendererGeneration &&
+        (pageSession === approvalRendererPageSession ||
+          (startup && approvalRendererState === "ready")) &&
+        !options.signal?.aborted && (!options.isCurrent || options.isCurrent());
+    } catch { return false; }
+  };
+  const cancelId = options.cancelId;
+  if (!current()) return { response: cancelId, cause: "stale" };
+  // Only shutdown consent and terminal safety acknowledgements can outlive a
+  // failed independent host. Routine permission questions always fail closed.
+  const onFailure = async failure => {
+    console.error(`Themed dialog unavailable: ${options.title}`);
+    if (!current() || (emergency !== "shutdown" && emergency !== "terminal")) return failure;
+    const abortController = new AbortController();
+    const abort = () => abortController.abort();
+    options.signal?.addEventListener("abort", abort, { once: true });
+    const timer = setInterval(() => { if (!current()) abort(); }, 200);
+    try {
+      const nativeResult = await dialog.showMessageBox(owner, {
+        type: options.type || "warning",
+        buttons: emergency === "terminal" ? ["OK", "Later"] : options.buttons,
+        defaultId: options.defaultId,
+        cancelId: emergency === "terminal" ? 1 : cancelId, title: options.title,
+        message: options.message, detail: options.detail, signal: abortController.signal,
+      });
+      if (current()) return { ...nativeResult, cause: "choice", displayed: true, emergency: true };
+      return { response: cancelId, cause: "stale" };
+    } catch (error) {
+      console.error("Emergency dialog failed:", error);
+    } finally {
+      clearInterval(timer);
+      options.signal?.removeEventListener("abort", abort);
+    }
+    return failure;
+  };
+  let result;
+  try {
+    result = await mainDialogs().show(owner, {
+      ...options, isCurrent: current, onFailure, allowUnavailableRenderer: independentOwner,
+    });
+  } catch (error) {
+    console.error("Themed dialog host failed:", error);
+    // Construction failed before there was a broker to hold the owner queue.
+    if (ownerRendererAvailable(sender)) sender.send("main-dialog-visibility", true);
+    try {
+      result = await onFailure({ response: cancelId, cause: "cancel", failed: true });
+    } finally {
+      if (ownerRendererAvailable(sender)) sender.send("main-dialog-visibility", false);
+    }
+  }
+  if (!current()) return { response: cancelId, cause: "stale", failed: result.failed };
+  if (!result.failed) return result;
+  try {
+    if (ownerRendererAvailable(sender)) {
+      sender.send("show-error", "Markaloo could not display the confirmation. The operation was cancelled.");
+    }
+  }
+  catch { /* The owner may already be closing. */ }
+  return { response: cancelId, cause: "cancel", failed: true };
+}
 
 // ============================================
 // DEVELOPMENT PROFILE ISOLATION
@@ -1481,11 +1563,9 @@ let saveAuthorityLatchWriteError = DELETION_EVIDENCE_CAPACITY_WRITE_ERROR;
 // this is the only channel left. Shown at most ONCE per latched session by its
 // single caller, non-blocking, and inert if the dialog cannot be raised: a
 // notice that failed to appear must not take the app down with it.
-function notifyDeletionEvidenceCapacityDownloadBlocked() {
+function notifyDeletionEvidenceCapacityDownloadBlocked(owner) {
+  if (shutdownCommitIngressBlocked || !owner || owner.isDestroyed()) return false;
   try {
-    const win =
-      BrowserWindow.getFocusedWindow() ||
-      (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
     const options = {
       type: "warning",
       buttons: ["OK"],
@@ -1498,12 +1578,16 @@ function notifyDeletionEvidenceCapacityDownloadBlocked() {
         "\n\nThe download you just started was cancelled. Further downloads " +
         "stay blocked without another message.",
     };
-    const shown = win
-      ? dialog.showMessageBox(win, options)
-      : dialog.showMessageBox(options);
-    shown.catch(() => {});
+    void showOwnedMessage(owner, {
+      ...options, isCurrent: () => !shutdownCommitIngressBlocked,
+    }, "terminal").then(result => {
+      if (!result.displayed || result.cause !== "choice" || result.response !== 0) {
+        deletionEvidenceCapacityDownloadNoticeShown = false;
+      }
+    }).catch(() => { deletionEvidenceCapacityDownloadNoticeShown = false; });
+    return true;
   } catch {
-    // Nothing else to try; the refusal counter still records it.
+    return false;
   }
 }
 
@@ -1558,9 +1642,9 @@ function notifyDocumentOwnerSealRefusal(sender) {
   // next refused registration.
   if (shutdownCommitIngressBlocked) return false;
   try {
-    const win =
-      BrowserWindow.getFocusedWindow() ||
-      (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const win = sender && !sender.isDestroyed()
+      ? BrowserWindow.fromWebContents(sender) : null;
+    if (!win) return false;
     const options = {
       type: "warning",
       buttons: ["OK"],
@@ -1571,21 +1655,20 @@ function notifyDocumentOwnerSealRefusal(sender) {
         "Markaloo stopped tracking documents and cannot resume until it restarts.",
       detail: DOCUMENT_OWNER_SEAL_NOTICE_DETAIL,
     };
-    const shown = win
-      ? dialog.showMessageBox(win, options)
-      : dialog.showMessageBox(options);
-    // A DIALOG CAN ALSO FAIL LATE. `showMessageBox` resolves asynchronously,
-    // so a rejection arrives after the one shot has already been spent, and
-    // re-opening it here would risk a SECOND dialog for the same condition.
-    // The toast is dispatched instead: one notice attempt, still exactly one
-    // message, and the reader is not left with silence because the dialog
-    // failed a turn later than the `catch` below can see.
-    shown.catch(() => {
+    void showOwnedMessage(win, {
+      ...options, isCurrent: () => !shutdownCommitIngressBlocked,
+    }, "terminal").then(result => {
+      if (result.displayed && result.cause === "choice" && result.response === 0) return;
+      documentOwnerSealNoticeShown = false;
+      if (result.failed) sendDocumentOwnerSealToast(sender);
+    }).catch(() => {
+      documentOwnerSealNoticeShown = false;
       sendDocumentOwnerSealToast(sender);
     });
     return true;
   } catch {
-    return sendDocumentOwnerSealToast(sender);
+    sendDocumentOwnerSealToast(sender);
+    return false;
   }
 }
 
@@ -2416,6 +2499,15 @@ const MAX_STABLE_FILE_READ_ATTEMPTS = 3;
 const documentAdmissions = new Map();
 const admittedOwnerTabs = new Map();
 const privateSessionBootstraps = new WeakMap();
+ipcMain.handle("private-publish-dialog-theme", (event, data) => {
+  const bootstrap = privateSessionBootstraps.get(event.sender);
+  if (!isApprovalSender(event) || !bootstrap?.used ||
+      data?.nonce !== bootstrap.nonce ||
+      data.rendererGeneration !== approvalRendererGeneration ||
+      event.senderFrame.url !== pathToFileURL(path.join(__dirname, "index.html")).href ||
+      !DIALOG_SCHEMES.has(data.themeId)) return false;
+  return mainDialogs().publishTheme(BrowserWindow.fromWebContents(event.sender), data.themeId);
+});
 const unavailableSessionEntries = new Set();
 const protectedSessionEntries = new Set();
 const MAX_SESSION_DOCUMENTS = 512;
@@ -2555,6 +2647,9 @@ ipcMain.handle("private-trusted-document-gesture", async (event, data) => {
     const readTarget = fs.realpathSync.native(logicalPath);
     if (isTrustedNetworkPath(readTarget)) throw new Error("Network file paths are blocked");
     const stats = fs.statSync(readTarget);
+    if (!stats.isFile() && !stats.isDirectory()) {
+      throw new Error("External links must name a regular file or directory");
+    }
     const ext = path.extname(readTarget).toLowerCase();
     if (TRUSTED_LINK_EXECUTABLE_EXTS.has(ext) ||
         (!stats.isDirectory() && !ext && process.platform !== "win32" &&
@@ -2565,21 +2660,42 @@ ipcMain.handle("private-trusted-document-gesture", async (event, data) => {
       return deliverNativeDocumentIntent(event.sender, logicalPath);
     }
     if (!stats.isDirectory() && !TRUSTED_LINK_SAFE_EXTS.has(ext)) {
-      const decision = await dialog.showMessageBox(mainWindow, {
+      const originOwner = watchedOwner;
+      const originPath = watchedFilePath;
+      const generation = approvalRendererGeneration;
+      const pageSession = approvalRendererPageSession;
+      const current = () => isApprovalSender(event) && !shutdownCommitIngressBlocked &&
+        generation === approvalRendererGeneration &&
+        pageSession === approvalRendererPageSession &&
+        privateSessionBootstraps.get(event.sender) === bootstrap &&
+        watchedFilePath === originPath && sameDocumentOwner(watchedOwner, originOwner) &&
+        !!admittedDocumentReference(data.documentRef, originOwner, originPath);
+      const decision = await showOwnedMessage(BrowserWindow.fromWebContents(event.sender), {
         type: "question", title: "Open external file",
         message: `Open "${path.basename(readTarget)}" with its system application?`,
         buttons: ["Cancel", "Open"], defaultId: 0, cancelId: 0,
+        isCurrent: current,
       });
-      if (decision.response !== 1 || !isApprovalSender(event) ||
-          !admittedDocumentReference(data.documentRef, watchedOwner, watchedFilePath)) {
-        return false;
+      if (decision.cause !== "choice" || decision.response !== 1 || !current()) return false;
+      // Do not transfer a decision across a symlink change, replacement or
+      // reclassification. The final OS path handoff itself is not atomic.
+      const afterTarget = fs.realpathSync.native(logicalPath);
+      const retainedTarget = fs.realpathSync.native(readTarget);
+      const after = fs.statSync(readTarget);
+      if (afterTarget !== readTarget || retainedTarget !== readTarget ||
+          isTrustedNetworkPath(afterTarget) || !after.isFile() ||
+          stats.isDirectory() !== after.isDirectory() ||
+          diskVersionChanged(diskVersionFromStats(stats), diskVersionFromStats(after)) ||
+          TRUSTED_LINK_EXECUTABLE_EXTS.has(path.extname(afterTarget).toLowerCase()) ||
+          (!ext && process.platform !== "win32" && (after.mode & 0o111) !== 0)) {
+        throw new Error("The external file changed while its confirmation was open");
       }
     }
     const error = await shell.openPath(readTarget);
     if (error) throw new Error(error);
     return true;
   } catch (error) {
-    event.sender.send("show-error", error.message);
+    if (!event.sender.isDestroyed()) event.sender.send("show-error", error.message);
     return false;
   }
 });
@@ -4262,22 +4378,20 @@ function resumeFileWatching() {
  * The one place the large-document wording lives, so the dialog the main
  * process shows on open and the one the renderer requests on tab switch
  * cannot drift apart.
- * @returns {boolean} true if rendering should proceed
+ * @returns {Promise<boolean>} true only after an explicit current approval
  */
-function askAboutLargeDocument(name, seconds) {
-  const choice = dialog.showMessageBoxSync(mainWindow, {
+async function askAboutLargeDocument(owner, name, seconds, isCurrent) {
+  const choice = await showOwnedMessage(owner, {
     type: "warning",
     buttons: ["Open anyway", "Cancel"],
-    defaultId: 0,
+    defaultId: 1,
     cancelId: 1,
     title: "Large document",
     message: `"${name}" may take about ${seconds} seconds to display.`,
-    detail:
-      "The window will be unresponsive while it renders. This is an estimate " +
-      "based on the document's structure, not just its size - documents with " +
-      "large tables take much longer than plain text of the same length.",
+    detail: "Markaloo may not respond until the document finishes opening.",
+    isCurrent,
   });
-  return choice === 0;
+  return choice.cause === "choice" && choice.response === 0;
 }
 
 /**
@@ -4292,13 +4406,13 @@ function askAboutLargeDocument(name, seconds) {
  * This is a WARNING, not a refusal. The reader knows things the estimator does
  * not - that the file is the one they need, that they will wait. Refusing
  * outright would make a large document unopenable in the only tool that opens
- * it, so the default button opens it anyway.
+ * it. Cancel is the safe default; an explicit answer can still open it.
  *
  * @param {string} content - Raw markdown
  * @param {string} filePath - Shown to the reader so they know which file
- * @returns {boolean} true if rendering should proceed
+ * @returns {boolean|Promise<boolean>} ordinary documents retain their no-dialog fast path
  */
-function confirmLargeDocument(content, filePath) {
+function confirmLargeDocument(content, filePath, owner, isCurrent) {
   const { large, estimatedMs } = isLargeDocument(content);
   if (!large) return true;
 
@@ -4306,11 +4420,10 @@ function confirmLargeDocument(content, filePath) {
   const name = path.basename(filePath);
   log(`Large document: ${name} predicted at ~${seconds}s to render`);
 
-  if (!askAboutLargeDocument(name, seconds)) {
-    log(`Large document open cancelled by user: ${name}`);
-    return false;
-  }
-  return true;
+  return askAboutLargeDocument(owner, name, seconds, isCurrent).then(approved => {
+    if (!approved) log(`Large document open cancelled by user: ${name}`);
+    return approved;
+  });
 }
 
 // Tabs render lazily, so a file that arrived by multi-select or session
@@ -4318,23 +4431,60 @@ function confirmLargeDocument(content, filePath) {
 // main.js's open-time guard has had its say. The renderer does its own
 // estimate (it loads the same file-helpers) and asks here only to put the
 // dialog on the main process, where dialogs belong. Sending the estimate
-// rather than the document keeps megabytes off the sync IPC channel.
-ipcMain.on("confirm-large-render", (event, data) => {
+// rather than the document keeps megabytes off the fixed async IPC channel.
+ipcMain.handle("confirm-large-render", async (event, data) => {
   if (!isApprovalSender(event) ||
       !data || typeof data !== "object" || Array.isArray(data) ||
-      typeof data.name !== "string" || !Number.isFinite(data.seconds) ||
+      typeof data.name !== "string" || data.name.length > 1024 ||
+      data.name.includes("\0") || !Number.isFinite(data.seconds) ||
       data.seconds < 0) {
     log("Large render confirmation refused: invalid sender or payload.");
-    event.returnValue = null;
-    return;
+    return false;
   }
+  const generation = approvalRendererGeneration;
+  const pageSession = approvalRendererPageSession;
+  const current = () => isApprovalSender(event) &&
+    !shutdownCommitIngressBlocked && generation === approvalRendererGeneration &&
+    pageSession === approvalRendererPageSession;
   try {
-    event.returnValue = askAboutLargeDocument(data.name, data.seconds);
+    return await askAboutLargeDocument(BrowserWindow.fromWebContents(event.sender),
+      data.name, data.seconds, current) && current();
   } catch (error) {
     log("Large render confirmation failed:", error);
-    event.returnValue = null;
+    return false;
   }
 });
+
+function captureFileOpenDelivery(target, deliveryEpoch) {
+  const owner = target && !target.isDestroyed() ? BrowserWindow.fromWebContents(target) : null;
+  const frame = target && !target.isDestroyed() ? target.mainFrame : null;
+  const generation = approvalRendererGeneration;
+  const pageSession = approvalRendererPageSession;
+  const startup = approvalRendererState === "loading" && pageSession === null;
+  return {
+    owner,
+    current: () => {
+      try {
+        return !!owner && owner === mainWindow && !owner.isDestroyed() &&
+          !target.isDestroyed() && target === owner.webContents &&
+          frame === target.mainFrame && !frame.isDestroyed() &&
+          generation === approvalRendererGeneration &&
+          (pageSession === approvalRendererPageSession ||
+            (startup && approvalRendererState === "ready")) &&
+          deliveryEpoch === fileOpenDeliveryEpoch && !shutdownCommitIngressBlocked;
+      } catch { return false; }
+    },
+  };
+}
+
+function fileOpenSnapshotIsCurrent(filePath, diskVersion, physical) {
+  const target = resolveCanonicalFilePath(filePath);
+  if (!target || target !== physical.readTarget) return false;
+  const stats = readDocumentStats(filePath, "after large document confirmation");
+  return !!stats && stats.isFile() &&
+    !diskVersionChanged(diskVersion, diskVersionFromStats(stats)) &&
+    resolveCanonicalFilePath(filePath) === target;
+}
 
 function safeSendFileOpen(target, channel, data, rendererGeneration = null) {
   if (!target || target.isDestroyed()) return false;
@@ -4505,9 +4655,12 @@ function openFile(filePath, options = {}) {
     return;
   }
   const target = requestedSender || mainWindow.webContents;
+  const delivery = captureFileOpenDelivery(target, deliveryEpoch);
 
-  // Use helper function for reading markdown files
-  readMarkdownSnapshot(filePath, (err, data, modifiedTime, diskVersion, physical) => {
+  // Own the continuation: readMarkdownSnapshot's legacy callback does not
+  // consume promises returned by an async callback.
+  void markdownSnapshotPromise(filePath).then(async snapshot => {
+    const { content: data, modifiedTime, diskVersion, physical } = snapshot;
     if (options.approvedBrowserPermission &&
         !approvedBrowserPermissionIsCurrent(options.approvedBrowserPermission)) {
       log("Approved document open lost its owner or permission before read completion.");
@@ -4515,7 +4668,7 @@ function openFile(filePath, options = {}) {
         null, rendererGeneration);
       return;
     }
-    if (deliveryEpoch !== fileOpenDeliveryEpoch) {
+    if (!delivery.current()) {
       sendFileOpenFailure(
         target,
         filePath,
@@ -4526,21 +4679,10 @@ function openFile(filePath, options = {}) {
       );
       return;
     }
-    if (err) {
-      log("ERROR: Error reading file:", err);
-      sendFileOpenFailure(
-        target,
-        filePath,
-        openRequest,
-        "read-failed",
-        `Error reading file: ${err.message}`,
-        rendererGeneration,
-      );
-      return;
-    }
-
     log("File read successfully, sending to renderer");
-    if (!confirmLargeDocument(data, filePath)) {
+    const confirmation = confirmLargeDocument(data, filePath, delivery.owner, delivery.current);
+    const approved = confirmation === true || await confirmation;
+    if (!approved) {
       sendFileOpenFailure(
         target,
         filePath,
@@ -4549,6 +4691,12 @@ function openFile(filePath, options = {}) {
         null,
         rendererGeneration,
       );
+      return;
+    }
+    if (!delivery.current() ||
+        (confirmation !== true && !fileOpenSnapshotIsCurrent(filePath, diskVersion, physical))) {
+      sendFileOpenFailure(target, filePath, openRequest, "superseded-open",
+        null, rendererGeneration);
       return;
     }
     if (options.approvedBrowserPermission &&
@@ -4589,6 +4737,10 @@ function openFile(filePath, options = {}) {
       return;
     }
     activeDialogExtraBatch = null;
+  }).catch(err => {
+    log("ERROR: Error reading file:", err);
+    sendFileOpenFailure(target, filePath, openRequest, "read-failed",
+      `Error reading file: ${err.message}`, rendererGeneration);
   });
 }
 
@@ -4596,6 +4748,7 @@ function openFileDialog() {
   const target =
     mainWindow && mainWindow.webContents ? mainWindow.webContents : null;
   const rendererGeneration = approvalRendererGeneration;
+  const pickerDelivery = captureFileOpenDelivery(target, fileOpenDeliveryEpoch);
   dialog
     .showOpenDialog(mainWindow, {
       properties: ["openFile", "multiSelections"],
@@ -4608,75 +4761,55 @@ function openFileDialog() {
         { name: "All Files", extensions: ["*"] },
       ],
     })
-    .then((result) => {
+    .then(async (result) => {
+      if (!pickerDelivery.current() || rendererGeneration !== approvalRendererGeneration) return;
       if (!result.canceled && result.filePaths.length > 0) {
         const deliveryEpoch = ++fileOpenDeliveryEpoch;
         const filePaths = result.filePaths;
         const firstFilePath = filePaths[0];
 
-        // Use helper function for reading markdown files
-        readMarkdownSnapshot(
-          firstFilePath,
-          (err, data, modifiedTime, diskVersion, physical) => {
-            if (deliveryEpoch !== fileOpenDeliveryEpoch) return;
-            if (err) {
-              console.error("Error reading file:", err);
-              return;
-            }
+        const delivery = captureFileOpenDelivery(target, deliveryEpoch);
+        const { content: data, modifiedTime, diskVersion, physical } =
+          await markdownSnapshotPromise(firstFilePath);
+        if (!delivery.current() || rendererGeneration !== approvalRendererGeneration) return;
 
-            // Send first file content and all selected paths. Extra paths stay
-            // in main; the renderer can read only the dialog's one-use grants.
-            if (!confirmLargeDocument(data, firstFilePath)) return;
-            rememberDocumentModifiedTime(firstFilePath, modifiedTime, {
-              replace: false,
-            });
-            const frame = target && !target.isDestroyed()
-              ? target.mainFrame
-              : null;
-            if (!frame || frame.isDestroyed()) {
-              console.error("Could not deliver dialog extras: main frame unavailable");
-            }
-            const grants = new Map();
-            const extraReadGrants = filePaths.slice(1).map((extraPath) => {
-              const grant = crypto.randomBytes(32).toString("hex");
-              grants.set(grant, extraPath);
-              return grant;
-            });
-            const batch = {
-              sender: target,
-              frameTreeNodeId: frame && !frame.isDestroyed()
-                ? frame.frameTreeNodeId
-                : null,
-              rendererGeneration,
-              pageSession: approvalRendererPageSession,
-              grants,
-            };
-            let document;
-            try {
-              document = issueDocumentAdmission(target, firstFilePath,
-                diskVersion, physical, "native-dialog");
-            } catch (error) {
-              console.error("Could not admit the selected document:", error);
-              return;
-            }
-            const sent = safeSendFileOpen(
-              target,
-              "file-opened",
-              {
-                content: data,
-                path: firstFilePath,
-                allPaths: filePaths,
-                extraReadGrants,
-                modifiedTime,
-                diskVersion,
-                document,
-              },
-              rendererGeneration,
-            );
-            if (sent) activeDialogExtraBatch = batch;
-            else documentAdmissions.delete(document.ref);
-          },
-        );
+        // Send first file content and all selected paths. Extra paths stay
+        // in main; the renderer can read only the dialog's one-use grants.
+        const confirmation = confirmLargeDocument(data, firstFilePath, delivery.owner, delivery.current);
+        if (!(confirmation === true || await confirmation)) return;
+        if (!delivery.current() || rendererGeneration !== approvalRendererGeneration ||
+            (confirmation !== true &&
+              !fileOpenSnapshotIsCurrent(firstFilePath, diskVersion, physical))) return;
+        rememberDocumentModifiedTime(firstFilePath, modifiedTime, { replace: false });
+        const frame = target && !target.isDestroyed() ? target.mainFrame : null;
+        if (!frame || frame.isDestroyed()) {
+          console.error("Could not deliver dialog extras: main frame unavailable");
+          return;
+        }
+        const grants = new Map();
+        const extraReadGrants = filePaths.slice(1).map((extraPath) => {
+          const grant = crypto.randomBytes(32).toString("hex");
+          grants.set(grant, extraPath);
+          return grant;
+        });
+        const batch = {
+          sender: target, frameTreeNodeId: frame.frameTreeNodeId,
+          rendererGeneration, pageSession: approvalRendererPageSession, grants,
+        };
+        let document;
+        try {
+          document = issueDocumentAdmission(target, firstFilePath,
+            diskVersion, physical, "native-dialog");
+        } catch (error) {
+          console.error("Could not admit the selected document:", error);
+          return;
+        }
+        const sent = safeSendFileOpen(target, "file-opened", {
+          content: data, path: firstFilePath, allPaths: filePaths,
+          extraReadGrants, modifiedTime, diskVersion, document,
+        }, rendererGeneration);
+        if (sent) activeDialogExtraBatch = batch;
+        else documentAdmissions.delete(document.ref);
       }
     })
     .catch((err) => {
@@ -8170,6 +8303,8 @@ function prepareDocumentReplacementConsent(event, data, grant, reason) {
     confirmation: Object.freeze({
       id, reason, expiresAt,
       fileName: safeFileLabel(path.basename(data.ownerFilePath)),
+      ...(reason === "historical-episode"
+        ? { formerTarget: safeFileLabel(grant.evidencePathKey) } : {}),
       pageSession: grant.pageSession,
       rendererGeneration: grant.rendererGeneration,
       owner: grant.oldOwner ? Object.freeze({
@@ -8324,30 +8459,10 @@ function commitDocumentDiskAdoption(event, data, consent = null) {
     ) {
       return refuse("historical-episode-moved");
     }
-    const win = mainWindow && !mainWindow.isDestroyed()
-      ? mainWindow
-      : null;
-    if (!win) {
-      return refuse("approval-window-unavailable");
+    if (!consent) {
+      return prepareDocumentReplacementConsent(event, data, grant, "historical-episode");
     }
-    let choice;
-    try {
-      choice = dialog.showMessageBoxSync(win, {
-        type: "warning",
-        buttons: ["Retire this older copy", "Keep it"],
-        defaultId: 1,
-        cancelId: 1,
-        title: "Earlier deleted document",
-        message: `"${safeFileLabel(path.basename(data.filePath))}" has an older unresolved file target.`,
-        detail: `Former target: ${safeFileLabel(grant.evidencePathKey)}\n\nThis confirmation retires only that older copy. Other open copies remain protected.`,
-      });
-    } catch (error) {
-      console.error("Could not ask about an older document:", error);
-      return refuse("approval-dialog-failed");
-    }
-    if (choice !== 0) {
-      return refuse("historical-episode-kept");
-    }
+    if (consent.reason !== "historical-episode") return refuse("replacement-reason-changed");
     if (!diskAdoptionAuthorityIsCurrent(
       grant.sourcePermission, grant.proposedOwner, grant.oldOwner, grant.ownerPath,
     )) {
@@ -8398,6 +8513,7 @@ function commitDocumentDiskAdoption(event, data, consent = null) {
     orphanedDeletionForSpelling(data.filePath, proposedOwner) ||
     pathOnlyDeletionForSpelling(data.filePath) ||
     overflowKeys.length > 0;
+  if (consent?.reason === "historical-episode") return refuse("replacement-reason-changed");
   if (
     overflowKeys.length !== grant.overflowKeys.length ||
     overflowKeys.some((key) => !grant.overflowKeys.includes(key)) ||
@@ -8509,7 +8625,8 @@ ipcMain.handle("respond-document-replacement-consent", (event, data) => {
   // The reply contains no authority. Repeat the entire commit against Main's
   // retained transaction, including evidence selection and dependent siblings.
   try {
-    if (!data.approved) return refused("adoption-declined");
+    if (!data.approved) return refused(consent.reason === "historical-episode"
+      ? "historical-episode-kept" : "adoption-declined");
     if (Date.now() >= consent.grant.createdAt + DISK_ADOPTION_CAPABILITY_MS) {
       return refused("replacement-consent-expired");
     }
@@ -8859,6 +8976,12 @@ function retireDeletedDocumentOwner(event, data) {
   if (state.unreadable) {
     return retirementRefusal("deletion-state-unreadable", state);
   }
+  if (data.acknowledgedDeletion === true &&
+      (!Number.isSafeInteger(data.expectedDeletionRevision) ||
+        data.expectedDeletionRevision < 0 ||
+        data.expectedDeletionRevision !== state.revision)) {
+    return retirementRefusal("deletion-evidence-changed", state);
+  }
   if (
     state.unresolved &&
     !record &&
@@ -8881,8 +9004,8 @@ function retireDeletedDocumentOwner(event, data) {
   // the renderer read a moment ago is stale by design and comparing it
   // manufactured refusals. A newer event id for the SAME owner is the same
   // fact about the same document. What authorises the retirement is the
-  // authenticated owner plus the reader's explicit confirmation, evaluated
-  // against live state above - not a snapshot token.
+  // authenticated owner plus the reader's explicit confirmation and evidence
+  // revision above, not a mutable delivery-attempt token.
   if (
     record &&
     Number.isSafeInteger(data.eventId) &&
@@ -9256,7 +9379,10 @@ ipcMain.on("reload-file", async (event, data) => {
 // ============================================
 
 ipcMain.on("open-mermaid-popup", (event, data) => {
-  const { svgContent, isDarkMode } = data;
+  const { svgContent, isDarkMode: requestedDarkMode } = data;
+  const theme = popupTheme(ownedDialogs?.theme(mainWindow) ||
+    (requestedDarkMode ? "default-dark" : "default-light"));
+  const isDarkMode = theme.dark;
 
   // Create popup window
   const popupWindow = new BrowserWindow({
@@ -9283,41 +9409,41 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mermaid Diagram</title>
     <style>
+        ${theme.css}
         body, html {
             margin: 0;
             padding: 0;
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background-color: ${isDarkMode ? "#1a1a1a" : "#f0f0f0"};
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-primary);
         }
         .ui-overlay {
             position: absolute;
             top: 20px;
             left: 20px;
-            background: ${isDarkMode ? "#2d2d2d" : "white"};
+            background: var(--bg-secondary);
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0,0,0,${isDarkMode ? "0.3" : "0.1"});
             pointer-events: auto;
             z-index: 10;
-            border: 1px solid ${isDarkMode ? "#404040" : "transparent"};
+            border: 1px solid var(--border-color);
         }
         h1 {
             margin: 0 0 10px 0;
             font-size: 16px;
-            color: ${isDarkMode ? "#3DBDC6" : "#333"};
+            color: var(--text-primary);
         }
         p {
             margin: 0 0 10px 0;
             font-size: 12px;
-            color: ${isDarkMode ? "#a0a0a0" : "#666"};
+            color: var(--text-secondary);
         }
         button {
             padding: 8px 12px;
-            background-color: ${isDarkMode ? "#3DBDC6" : "#279EA7"};
-            color: white;
+            background-color: var(--accent-main);
+            color: var(--on-accent-fg);
             border: none;
             border-radius: 4px;
             cursor: pointer;
@@ -9330,10 +9456,10 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
             margin-bottom: 0;
         }
         button:hover {
-            background-color: ${isDarkMode ? "#4FCDD6" : "#1f8089"};
+            background-color: var(--accent-hover);
         }
         button:disabled {
-            background-color: ${isDarkMode ? "#555" : "#ccc"};
+            background-color: var(--bg-tertiary);
             cursor: not-allowed;
         }
         #svg-container-wrapper {
@@ -9353,7 +9479,7 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
         }
     </style>
 </head>
-<body>
+<body ${theme.attributes}>
     <div class="ui-overlay">
         <h1>Mermaid Diagram</h1>
         <p>• Scroll to Zoom (at cursor)<br>• Click & Drag to Pan</p>
@@ -9499,7 +9625,7 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
             // Create a clean PDF container with the SVG at proper size
             const pdfContainer = document.createElement('div');
             pdfContainer.id = 'pdf-export-container';
-            pdfContainer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${isDarkMode ? "#1a1a1a" : "#f0f0f0"};';
+            pdfContainer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);';
 
             // Clone the SVG
             const svgClone = mermaidSvg.cloneNode(true);
@@ -9637,7 +9763,10 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
 
 // Handle Image popup request
 ipcMain.on("open-image-popup", (event, data) => {
-  const { src, alt, isDarkMode } = data;
+  const { src, alt, isDarkMode: requestedDarkMode } = data;
+  const theme = popupTheme(ownedDialogs?.theme(mainWindow) ||
+    (requestedDarkMode ? "default-dark" : "default-light"));
+  const isDarkMode = theme.dark;
 
   const title = alt ? `Image — ${alt}` : "Image Viewer";
   const popupWindow = new BrowserWindow({
@@ -9654,13 +9783,13 @@ ipcMain.on("open-image-popup", (event, data) => {
 
   popupWindow.setMenu(null);
 
-  const bg = isDarkMode ? "#1a1a1a" : "#f0f0f0";
-  const uiBg = isDarkMode ? "#2d2d2d" : "#ffffff";
-  const uiBorder = isDarkMode ? "#404040" : "transparent";
-  const textColor = isDarkMode ? "#e0e0e0" : "#333";
-  const accentColor = isDarkMode ? "#3DBDC6" : "#279EA7";
-  const accentHover = isDarkMode ? "#4FCDD6" : "#1f8089";
-  const subTextColor = isDarkMode ? "#a0a0a0" : "#666";
+  const bg = "var(--bg-primary)";
+  const uiBg = "var(--bg-secondary)";
+  const uiBorder = "var(--border-color)";
+  const textColor = "var(--text-primary)";
+  const accentColor = "var(--accent-main)";
+  const accentHover = "var(--accent-hover)";
+  const subTextColor = "var(--text-secondary)";
 
   const nonce = makeNonce();
   const htmlContent = `<!DOCTYPE html>
@@ -9670,11 +9799,11 @@ ipcMain.on("open-image-popup", (event, data) => {
   <meta http-equiv="Content-Security-Policy" content="${popupCsp(nonce, "https: http: blob:")}">
   <title>${escapeHtml(alt || "Image Viewer")}</title>
   <style>
+    ${theme.css}
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       width: 100%; height: 100%; overflow: hidden;
       background: ${bg};
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     #canvas {
       width: 100%; height: 100%;
@@ -9726,7 +9855,7 @@ ipcMain.on("open-image-popup", (event, data) => {
       padding: 7px 10px;
       margin-bottom: 6px;
       background: ${accentColor};
-      color: #fff;
+      color: var(--on-accent-fg);
       border: none;
       border-radius: 6px;
       font-size: 13px;
@@ -9746,18 +9875,18 @@ ipcMain.on("open-image-popup", (event, data) => {
       font-weight: 500;
     }
     .btn-secondary {
-      background: ${isDarkMode ? "#3a3a3a" : "#e8e8e8"} !important;
-      color: ${isDarkMode ? "#e0e0e0" : "#444"} !important;
+      background: var(--bg-tertiary) !important;
+      color: var(--text-primary) !important;
     }
-    .btn-secondary:hover { background: ${isDarkMode ? "#4a4a4a" : "#d4d4d4"} !important; }
+    .btn-secondary:hover { background: var(--border-color) !important; }
     .divider {
       border: none;
-      border-top: 1px solid ${isDarkMode ? "#404040" : "#e0e0e0"};
+      border-top: 1px solid var(--border-color);
       margin: 8px 0;
     }
   </style>
 </head>
-<body>
+<body ${theme.attributes}>
   <div class="ui-overlay">
     <h1>Image Viewer</h1>
     <p>• Scroll to zoom (at cursor)<br>• Drag to pan</p>
@@ -10111,7 +10240,10 @@ function normaliseTablePayload(tableData) {
 
 // Handle Table popup request
 ipcMain.on("open-table-popup", (event, data) => {
-  const { tableData, isDarkMode } = data || {};
+  const { tableData, isDarkMode: requestedDarkMode } = data || {};
+  const theme = popupTheme(ownedDialogs?.theme(mainWindow) ||
+    (requestedDarkMode ? "default-dark" : "default-light"));
+  const isDarkMode = theme.dark;
   const safeTableData = normaliseTablePayload(tableData);
 
   // Create popup window
@@ -10164,6 +10296,7 @@ ipcMain.on("open-table-popup", (event, data) => {
     <title>Interactive Table</title>
     <style>
         ${tabulatorCss}
+        ${theme.css}
 
         /* Custom theme to match app colors */
         body, html {
@@ -10172,8 +10305,7 @@ ipcMain.on("open-table-popup", (event, data) => {
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background-color: ${isDarkMode ? "#1a1a1a" : "#f5f5f5"};
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-primary);
         }
 
         .container {
@@ -10185,7 +10317,7 @@ ipcMain.on("open-table-popup", (event, data) => {
         }
 
         .header {
-            background: ${isDarkMode ? "#2d2d2d" : "white"};
+            background: var(--bg-secondary);
             padding: 20px;
             border-radius: 8px 8px 0 0;
             box-shadow: 0 2px 4px rgba(0,0,0,${isDarkMode ? "0.3" : "0.1"});
@@ -10193,14 +10325,14 @@ ipcMain.on("open-table-popup", (event, data) => {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 0;
-            border: 1px solid ${isDarkMode ? "#404040" : "transparent"};
+            border: 1px solid var(--border-color);
             border-bottom: none;
         }
 
         h1 {
             margin: 0;
             font-size: 20px;
-            color: ${isDarkMode ? "#3DBDC6" : "#279EA7"};
+            color: var(--text-primary);
         }
 
         .controls {
@@ -10210,8 +10342,8 @@ ipcMain.on("open-table-popup", (event, data) => {
 
         button {
             padding: 10px 16px;
-            background-color: ${isDarkMode ? "#3DBDC6" : "#279EA7"};
-            color: white;
+            background-color: var(--accent-main);
+            color: var(--on-accent-fg);
             border: none;
             border-radius: 6px;
             cursor: pointer;
@@ -10224,9 +10356,9 @@ ipcMain.on("open-table-popup", (event, data) => {
         }
 
         button:hover {
-            background-color: ${isDarkMode ? "#4FCDD6" : "#1f8089"};
+            background-color: var(--accent-hover);
             transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(${isDarkMode ? "61, 189, 198" : "39, 158, 167"}, 0.3);
+            box-shadow: 0 2px 8px rgba(var(--accent-glow-rgb), 0.3);
         }
 
         button:active {
@@ -10235,13 +10367,13 @@ ipcMain.on("open-table-popup", (event, data) => {
 
         .table-wrapper {
             flex: 1;
-            background: ${isDarkMode ? "#242424" : "white"};
+            background: var(--bg-secondary);
             border-radius: 0 0 8px 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,${isDarkMode ? "0.3" : "0.1"});
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            border: 1px solid ${isDarkMode ? "#404040" : "transparent"};
+            border: 1px solid var(--border-color);
             border-top: none;
         }
 
@@ -10251,29 +10383,29 @@ ipcMain.on("open-table-popup", (event, data) => {
 
         .info {
             padding: 12px 20px;
-            background: ${isDarkMode ? "#2d2d2d" : "#e8e8e8"};
-            color: ${isDarkMode ? "#a0a0a0" : "#5a6b7d"};
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
             font-size: 13px;
-            border-bottom: 1px solid ${isDarkMode ? "#404040" : "#d0d0d0"};
+            border-bottom: 1px solid var(--border-color);
         }
 
         /* Tabulator theme customization */
         .tabulator {
             font-size: 13px;
             border: none;
-            background-color: ${isDarkMode ? "#242424" : "white"};
-            color: ${isDarkMode ? "#e8e8e8" : "#1F3244"};
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
         }
 
         .tabulator .tabulator-header {
-            background-color: #1F3244;
-            color: ${isDarkMode ? "#3DBDC6" : "#279EA7"};
+            background-color: var(--bg-tertiary);
+            color: var(--text-primary);
             border: none;
         }
 
         .tabulator .tabulator-header .tabulator-col {
-            background-color: #1F3244;
-            border-right: 1px solid #3a4a5c;
+            background-color: var(--bg-tertiary);
+            border-right: 1px solid var(--border-color);
         }
 
         .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
@@ -10281,66 +10413,66 @@ ipcMain.on("open-table-popup", (event, data) => {
         }
 
         .tabulator .tabulator-header .tabulator-col .tabulator-col-title {
-            color: ${isDarkMode ? "#3DBDC6" : "#279EA7"};
+            color: var(--text-primary);
             font-weight: 600;
         }
 
         .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover {
-            background-color: #2a3a4c;
+            background-color: var(--border-color);
         }
 
         .tabulator .tabulator-tableholder .tabulator-table .tabulator-row {
-            background-color: ${isDarkMode ? "#242424" : "white"};
-            color: ${isDarkMode ? "#e8e8e8" : "#1F3244"};
-            border-bottom: 1px solid ${isDarkMode ? "#404040" : "#d0d0d0"};
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border-color);
         }
 
         .tabulator .tabulator-tableholder .tabulator-table .tabulator-row:hover {
-            background-color: ${isDarkMode ? "#2d2d2d" : "#f5f5f5"};
+            background-color: var(--bg-tertiary);
         }
 
         .tabulator .tabulator-tableholder .tabulator-table .tabulator-row .tabulator-cell {
             padding: 10px 12px;
-            border-right: 1px solid ${isDarkMode ? "#404040" : "#e8e8e8"};
+            border-right: 1px solid var(--border-color);
         }
 
         .tabulator .tabulator-footer {
-            background-color: ${isDarkMode ? "#2d2d2d" : "#f5f5f5"};
-            border-top: 2px solid ${isDarkMode ? "#404040" : "#d0d0d0"};
+            background-color: var(--bg-tertiary);
+            border-top: 2px solid var(--border-color);
             padding: 8px;
-            color: ${isDarkMode ? "#e8e8e8" : "#1F3244"};
+            color: var(--text-primary);
         }
 
         .tabulator .tabulator-footer .tabulator-page {
-            background-color: ${isDarkMode ? "#3DBDC6" : "#279EA7"};
-            color: white;
+            background-color: var(--accent-main);
+            color: var(--on-accent-fg);
             border: none;
         }
 
         .tabulator .tabulator-footer .tabulator-page:hover {
-            background-color: ${isDarkMode ? "#4FCDD6" : "#1f8089"};
+            background-color: var(--accent-hover);
         }
 
         .tabulator .tabulator-footer .tabulator-page.active {
-            background-color: #1F3244;
+            background-color: var(--accent-hover);
         }
 
         /* Header filter styling */
         .tabulator .tabulator-header-filter input {
-            border: 1px solid #d0d0d0;
+            border: 1px solid var(--border-color);
             padding: 4px 8px;
             border-radius: 4px;
-            background: white;
-            color: #1F3244;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
         }
 
         .tabulator .tabulator-header-filter input:focus {
-            border-color: #279EA7;
+            border-color: var(--accent-main);
             outline: none;
         }
     </style>
 </head>
-<body>
+<body ${theme.attributes}>
     <div class="container">
         <div class="header">
             <h1>Interactive Table Viewer</h1>
@@ -10660,12 +10792,11 @@ if (!gotTheLock) {
     // No data: allowance is needed: DOMPurify's default ALLOWED_URI_REGEXP does
     // not admit data: on an <a href>, so such an anchor loses its href.
     //
-    // defaultSession is the complete surface: main.js creates no partitions and
-    // passes no custom session to any of its four BrowserWindow sites, so this
-    // one handler covers the main window, all three popups and anything added
-    // later. Registered here rather than in createWindow() so a second
+    // The independent dialog host has its own deny-all download session.
+    // This handler covers the document and generated popups. It is registered
+    // here rather than in createWindow() so a second
     // createWindow() (macOS activate) cannot stack duplicate listeners.
-    session.defaultSession.on("will-download", (event, item) => {
+    session.defaultSession.on("will-download", (event, item, source) => {
       const url = item.getURL();
       if (!isDownloadAllowed(url)) {
         console.warn("Blocked download from document content:", url);
@@ -10688,7 +10819,13 @@ if (!gotTheLock) {
           console.error(
             "Blocked a download: " + saveAuthorityLatchWriteError,
           );
-          notifyDeletionEvidenceCapacityDownloadBlocked();
+          const originalOwner = source && !source.isDestroyed() &&
+            mainWindow && !mainWindow.isDestroyed() &&
+            (source === mainWindow.webContents || popupKinds.has(source.id))
+            ? mainWindow : null;
+          if (!notifyDeletionEvidenceCapacityDownloadBlocked(originalOwner)) {
+            deletionEvidenceCapacityDownloadNoticeShown = false;
+          }
         }
       }
     });
@@ -12331,12 +12468,11 @@ function releaseShutdownFreeze(options = {}) {
   shutdownCommitIngressBlocked = false;
   const win = shutdownOwnerWindow();
   const wc = win ? win.webContents : null;
-  if (!wc || wc.isDestroyed()) return;
-  try {
-    wc.send(QUIT_APPROVAL_THAW);
-  } catch (error) {
-    // The renderer is gone, so there is no freeze left to release.
-  }
+  // WebContents survives a renderer crash; send() then reports disposal from
+  // inside Electron rather than throwing at this call site. Main is thawed
+  // above regardless, but a dead/detached document has nothing to notify.
+  if (!ownerRendererAvailable(wc)) return;
+  wc.send(QUIT_APPROVAL_THAW);
 }
 
 ipcMain.on(QUIT_APPROVAL_COMMITTED, (event, data) => {
@@ -12659,8 +12795,7 @@ function askShutdownQuestion(record, options) {
   const askedBeforeSavesBlocked = !deletionEvidenceCapacityLatched;
   const abortController = new AbortController();
   record.dialogAbortController = abortController;
-  dialog
-    .showMessageBox(win, {
+  showOwnedMessage(win, {
       type: "warning",
       buttons: [options.confirmLabel, "Cancel"],
       defaultId: 1,
@@ -12669,7 +12804,8 @@ function askShutdownQuestion(record, options) {
       message: options.message,
       detail: options.detail,
       signal: abortController.signal,
-    })
+      isCurrent: () => pendingShutdown === record,
+    }, "shutdown")
     .then((result) => {
       if (record.dialogAbortController === abortController) {
         record.dialogAbortController = null;
@@ -12682,7 +12818,7 @@ function askShutdownQuestion(record, options) {
         return;
       }
       if (
-        result.response === 0 &&
+        result.cause === "choice" && result.response === 0 &&
         askedBeforeSavesBlocked &&
         deletionEvidenceCapacityLatched
       ) {
@@ -12695,7 +12831,7 @@ function askShutdownQuestion(record, options) {
         );
         return;
       }
-      settleShutdown(record, result.response === 0, options.why);
+      settleShutdown(record, result.cause === "choice" && result.response === 0, options.why);
     })
     .catch((error) => {
       if (record.dialogAbortController === abortController) {

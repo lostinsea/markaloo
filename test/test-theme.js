@@ -608,6 +608,16 @@ app.whenReady().then(async () => {
     const exec = (js) => win.webContents.executeJavaScript(js);
 
     await checkContextMenuViewport(win, exec);
+    await exec(`(async()=>{
+      const answer=window.MarkalooDialogs.show({
+        title:'Dialog style probe',message:'Disposable theme measurement.',
+        buttons:[{id:'cancel',label:'Cancel',style:'secondary'},
+          {id:'discard',label:'Discard',style:'danger'}],
+        defaultId:'cancel',cancelId:'cancel'
+      });
+      document.querySelector('#appMessageDialog [data-dialog-choice="cancel"]').click();
+      await answer;
+    })()`);
 
     const golden = JSON.parse(fs.readFileSync(GOLDEN_PATH, "utf8"));
 
@@ -4906,14 +4916,11 @@ app.whenReady().then(async () => {
        and its continued necessity is asserted, so it cannot quietly widen into
        a licence for the chrome around it. */
     const DEFAULT_DRIFT_EXCUSALS = {
-      /* EMPTY, AND THAT IS A RESULT RATHER THAN AN OMISSION. This carried one
-         entry - the "Light schemes" / "Dark schemes" group headings - for as
-         long as that chrome was uncommitted. Once it landed at HEAD both halves
-         of the swap render it from the same rule, the drift disappeared, and
-         the stale-excusal guard below FAILED and named it. Removed on that
-         measurement. An excusal here is a statement about what HEAD lacks, so
-         it expires the moment the change is committed; the guard is what stops
-         one outliving its reason and quietly pardoning a real regression. */
+      // This new surface has no HEAD appearance. Once committed it joins the
+      // same strict comparison as every other control, without a stale waiver.
+      ...(!headSheets["styles.css"].includes(".note-dialog-btn.danger") ? {
+        "button.note-dialog-btn.danger": "New shared destructive action",
+      } : {}),
     };
     const driftExcusalUsed = new Set();
     const realDrift = drift.filter((d) => {
@@ -4963,17 +4970,11 @@ app.whenReady().then(async () => {
       staleDriftExcusals.length === 0,
       `no longer drifting, so the entries must go: ${staleDriftExcusals.join(", ")}`,
     );
-    /* THE GUARD ABOVE IS INERT WHILE THE TABLE IS EMPTY - `[].every(...)` is
-       true, so it has nothing to say and cannot fail. That is correct for what
-       it checks, but it means the table's SIZE is unpinned, and an excusal
-       added by hand would arrive silently and pardon a real regression from its
-       first run. Asserted separately rather than folded in, because the two
-       fail for different reasons and each should name its own: this one says an
-       excusal was ADDED, the one above says an existing excusal EXPIRED. The
-       measured count is 0 - see the table's own comment for why it emptied. */
     check(
-      "the default-drift excusal table is still empty",
-      Object.keys(DEFAULT_DRIFT_EXCUSALS).length === 0,
+      "default-drift excusals cover only the new dialog action absent from HEAD",
+      Object.keys(DEFAULT_DRIFT_EXCUSALS).every(key =>
+        key === "button.note-dialog-btn.danger" &&
+        !headSheets["styles.css"].includes(".note-dialog-btn.danger")),
       `excusals present: ${Object.keys(DEFAULT_DRIFT_EXCUSALS).join(", ")}`,
     );
 
@@ -7618,17 +7619,8 @@ app.whenReady().then(async () => {
       }`,
     );
     const popupsFound = POPUP_CHANNELS.filter((c) => mainSrc.includes('"' + c + '"'));
-    /* THE POPUP HANDLERS, SLICED. `darkAware >= 20` used to stand here as the
-       positive control, and 20 was a number with no relationship behind it -
-       the real count is 56, so the sweep would have gone on passing after two
-       of the three popup surfaces stopped being boolean-themed entirely.
-       What is asserted instead is a property of EACH handler: it is bounded,
-       it decides on isDarkMode, it paints literal colours, and it consumes NO
-       custom property at all. That last one is the boundary itself rather than
-       a proxy for it - a popup that reads a `var(--...)` is by construction
-       participating in the token layer, whatever the variable is called, and it
-       is the case a scheme-id marker list cannot express. Measured: 0 in all
-       three handlers today. */
+    // Each child must consume the shared palette and fonts. Actual popup
+    // appearance is measured through the production preload in test:dialogs.
     const HANDLER_RE = /ipcMain\.on\(/g;
     const handlerStarts = [];
     for (let m = HANDLER_RE.exec(mainSrc); m; m = HANDLER_RE.exec(mainSrc)) {
@@ -7653,10 +7645,11 @@ app.whenReady().then(async () => {
       if (body.length === 0 || body.length >= mainSrc.length * 0.5) {
         handlerFaults.push(`${c}: slice ${body.length}/${mainSrc.length}`);
       }
-      if (!/isDarkMode\s*\?/.test(body)) handlerFaults.push(`${c}: no isDarkMode decision`);
-      if (!/#[0-9a-fA-F]{3,8}/.test(body)) handlerFaults.push(`${c}: no literal colours`);
-      const vars = body.match(/var\(--[\w-]+/g) || [];
-      if (vars.length) handlerFaults.push(`${c}: reads ${[...new Set(vars)].join(", ")}`);
+      if (!body.includes("popupTheme(ownedDialogs?.theme(mainWindow) ||") ||
+          !body.includes("${theme.css}") || !body.includes("${theme.attributes}") ||
+          !body.includes("var(--bg-primary)")) {
+        handlerFaults.push(`${c}: missing canonical popup presentation`);
+      }
       // Same matcher as the file-wide sweep, so the two cannot drift apart and
       // a handler is judged by exactly the rule the whole file is judged by.
       for (const marker of schemeMentions(body)) {
@@ -7664,16 +7657,16 @@ app.whenReady().then(async () => {
       }
     }
     check(
-      "10i: every popup handler paints literal colours chosen by isDarkMode and reads no token-layer variable",
+      "10i: every popup handler consumes the canonical app palette and fonts",
       popupsFound.length === POPUP_CHANNELS.length && handlerFaults.length === 0,
       `found ${popupsFound.length}/${POPUP_CHANNELS.length} popup channels; ${
         handlerFaults.join(" | ") || "no faults"
       }`,
     );
     check(
-      "10i: the main process, which owns every popup window, knows nothing about colour schemes",
+      "10i: Main does not hardcode named popup palettes",
       schemeLeaks.length === 0,
-      `main.js references ${schemeLeaks.join(", ")} - a popup consuming the scheme layer moves a recorded scope boundary and needs a decision, not a passing test`,
+      `main.js hardcodes ${schemeLeaks.join(", ")} instead of using the shared popup palette`,
     );
 
     console.log(
@@ -10210,6 +10203,7 @@ app.whenReady().then(async () => {
       "styles.css|.search-highlight.current|color": "self-consistent pair, see above",
       "styles.css|.notes-item.search-highlight|background": "translucent tint over a themed row, no ink of its own",
       "styles.css|.note-dialog-overlay|background": "modal scrim, paints no ink",
+      "styles.css|.reload-document-dialog::backdrop|background": "modal scrim, paints no ink",
       "styles.css|.note-label|color": "ink over the note's own author-chosen colour, which no scheme owns",
       "styles.css|.note-tooltip::-webkit-scrollbar-track|background": "translucent decoration on the tooltip's own dark surface",
       "styles.css|.note-tooltip::-webkit-scrollbar-thumb|background": "translucent decoration, see above",

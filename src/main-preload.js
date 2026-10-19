@@ -1,5 +1,39 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 let selectedDocumentRef = null;
+let mainDialogVisible = false;
+const mainDialogVisibilityCallbacks = new Set();
+ipcRenderer.on("main-dialog-visibility", (_event, value) => {
+  if (typeof value !== "boolean") return;
+  mainDialogVisible = value;
+  for (const callback of mainDialogVisibilityCallbacks) {
+    try { callback(value); }
+    catch (error) { console.error("Main dialog visibility callback failed:", error); }
+  }
+});
+const dialogThemeIds = new Set([
+  "default-light", "default-dark", "clarity", "parchment", "abyss", "ember",
+]);
+let pendingDialogTheme = null;
+let publishingDialogTheme = false;
+async function publishPendingDialogTheme() {
+  if (publishingDialogTheme || !bootstrapArgument || !process.isMainFrame) return;
+  publishingDialogTheme = true;
+  try {
+    while (pendingDialogTheme !== null) {
+      const rendererGeneration = await ipcRenderer.invoke("quit-approval-generation");
+      const themeId = pendingDialogTheme;
+      pendingDialogTheme = null;
+      await ipcRenderer.invoke("private-publish-dialog-theme", {
+        nonce: bootstrapArgument.slice("--folia-session-bootstrap=".length),
+        rendererGeneration, themeId,
+      });
+    }
+  } catch (error) {
+    console.error("Dialog appearance publication failed:", error);
+  } finally {
+    publishingDialogTheme = false;
+  }
+}
 
 // Capture before any page script can replace the legacy keys. The nonce and
 // startup channel are deliberately absent from the public bridge.
@@ -483,10 +517,13 @@ function copyAdoptionRefusal(result, flag) {
 function copyDocumentReplacementConfirmation(value) {
   const envelope = copyAdoptionEnvelope(value);
   if (typeof value.id !== "string" || !/^[a-f0-9]{32}$/.test(value.id) ||
-      !["file-reappeared", "location-changed", "earlier-copy-protected"].includes(value.reason) ||
+      !["file-reappeared", "location-changed", "earlier-copy-protected", "historical-episode"].includes(value.reason) ||
       typeof value.fileName !== "string" || !value.fileName ||
       value.fileName.length > 1024 || value.fileName.includes("\0") ||
       !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= 0 ||
+      (value.reason === "historical-episode" &&
+        (typeof value.formerTarget !== "string" || !value.formerTarget ||
+          value.formerTarget.length > 1024 || value.formerTarget.includes("\0"))) ||
       (value.owner !== null &&
         (!value.owner || !positiveInteger(value.owner.tabId) ||
           !positiveInteger(value.owner.documentGeneration) ||
@@ -497,6 +534,7 @@ function copyDocumentReplacementConfirmation(value) {
   return Object.freeze({
     ...envelope, id: value.id, reason: value.reason,
     fileName: value.fileName, expiresAt: value.expiresAt,
+    ...(value.reason === "historical-episode" ? { formerTarget: value.formerTarget } : {}),
     owner: value.owner === null ? null : Object.freeze({
       tabId: value.owner.tabId,
       documentGeneration: value.owner.documentGeneration,
@@ -638,6 +676,19 @@ function copyDocumentQueryReply(result, fields) {
 }
 
 const api = Object.freeze({
+  publishDialogTheme(themeId) {
+    if (typeof themeId !== "string" || !dialogThemeIds.has(themeId)) {
+      throw new TypeError("Invalid dialog theme");
+    }
+    pendingDialogTheme = themeId;
+    void publishPendingDialogTheme();
+  },
+  onMainDialogVisibility(callback) {
+    if (typeof callback !== "function") throw new TypeError("Invalid dialog visibility callback");
+    mainDialogVisibilityCallbacks.add(callback);
+    callback(mainDialogVisible);
+    return () => mainDialogVisibilityCallbacks.delete(callback);
+  },
   onWindowVisibilityChanged(callback) {
     if (typeof callback !== "function") {
       throw new TypeError("Invalid window visibility callback");
@@ -655,13 +706,13 @@ const api = Object.freeze({
   revealApprovedDocument(request) {
     ipcRenderer.send("open-folder-in-explorer", copyApprovedDocumentRequest(request));
   },
-  confirmLargeRender(request) {
+  async confirmLargeRender(request) {
     if (!request || typeof request !== "object" || Array.isArray(request) ||
         typeof request.name !== "string" || !Number.isFinite(request.seconds) ||
-        request.seconds < 0) {
+        request.name.length > 1024 || request.name.includes("\0") || request.seconds < 0) {
       throw new TypeError("Invalid large render confirmation request");
     }
-    const result = ipcRenderer.sendSync("confirm-large-render", {
+    const result = await ipcRenderer.invoke("confirm-large-render", {
       name: request.name, seconds: request.seconds,
     });
     if (typeof result !== "boolean") throw new TypeError("Invalid large render confirmation response");
@@ -1046,6 +1097,13 @@ const api = Object.freeze({
       throw new TypeError("Invalid document retirement acknowledgement");
     }
     payload.acknowledgedDeletion = request.acknowledgedDeletion;
+    if (request.acknowledgedDeletion ||
+        request.expectedDeletionRevision !== undefined) {
+      if (!revisionNumber(request.expectedDeletionRevision)) {
+        throw new TypeError("Invalid document retirement revision");
+      }
+      payload.expectedDeletionRevision = request.expectedDeletionRevision;
+    }
     // Delivery tokens are evidence, not authority: main tolerates live drift.
     for (const field of ["eventId", "watcherGeneration", "attempt"]) {
       if (request[field] !== undefined) {

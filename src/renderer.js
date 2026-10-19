@@ -892,11 +892,11 @@ const UI_STRINGS = {
   'notif.imageProcessFailed': 'Failed to process image',
   'notif.imageDeleted': 'Image deleted',
   'notif.pathCopied': 'Path copied to clipboard',
-  'confirm.unsavedOpen': 'You have unsaved changes. Discard changes and open a new file?',
+  'confirm.unsavedOpen': 'You have unsaved changes. Discard them and open another file?',
   'drop.hint': 'Drop file to open',
-  'confirm.unsavedRefresh': 'You have unsaved changes. Discard changes and refresh from disk?',
-  'confirm.unsavedExit': 'You have unsaved changes. Exiting edit mode will DISCARD them. Exit anyway?',
-  'confirm.unsavedOpenFile': 'You have unsaved changes. Discard changes and open "${name}"?',
+  'confirm.unsavedRefresh': 'You have unsaved changes. Reload from disk and discard them?',
+  'confirm.unsavedExit': 'You have unsaved changes. Leave edit mode and discard them?',
+  'confirm.unsavedOpenFile': 'You have unsaved changes. Discard them and open "${name}"?',
   'alert.openFirst': 'Please open a markdown file first before exporting to PDF.',
   'alert.noFileOpen': 'No file is currently open.',
   'alert.pdfFailed': 'Failed to export PDF: ',
@@ -1712,10 +1712,47 @@ function handleFileOpenResult(event, data) {
 
 documentEvents.on('file-open-result', handleFileOpenResult);
 
-function requestHistoryNavigation(targetIndex) {
+async function confirmUnsavedAction(message, confirmLabel = 'Discard changes') {
+  const tabs = window.CustomTabs;
+  const isCurrent = tabs?.captureDialogContext?.();
+  if (!isCurrent) {
+    console.error('Document confirmation is unavailable');
+    showNotification('The document could not be checked. Please try again.', 5000);
+    return Object.freeze({ approved: false, isCurrent: () => false });
+  }
+  const approved = await tabs.showDocumentConfirmation({
+    title: 'Discard unsaved changes?',
+    message,
+    confirmLabel,
+  }, isCurrent);
+  return Object.freeze({ approved, isCurrent });
+}
+
+function showMessageDialog(title, message) {
+  try {
+    window.MarkalooDialogs.show({
+      title,
+      message: String(message),
+      buttons: [{ id: 'close', label: 'Close', style: 'primary' }],
+      defaultId: 'close',
+      cancelId: 'close',
+    }).catch(error => {
+      console.error('Message dialog failed:', error);
+    });
+  } catch (error) {
+    console.error('Message dialog failed:', error);
+    showNotification(`${title}: ${String(message)}`, 10000);
+  }
+}
+
+async function requestHistoryNavigation(targetIndex) {
   const entry = navigationHistory[targetIndex];
   if (!entry) return false;
-  if (hasUnsavedWork() && !confirm(i18n('confirm.unsavedOpen'))) return false;
+  if (hasUnsavedWork()) {
+    const consent = await confirmUnsavedAction(i18n('confirm.unsavedOpen'), 'Discard and open');
+    if (!consent.approved || !consent.isCurrent() ||
+        navigationHistory[targetIndex] !== entry) return false;
+  }
   cancelPendingNavigation('superseded-by-navigation-request');
 
   if (navigationHistory[navigationIndex]) {
@@ -1782,29 +1819,20 @@ if (navForwardBtn) navForwardBtn.addEventListener('click', navigateForward);
 
 // Keyboard navigation (left/right arrows)
 //
-// preventDefault() is NARROW - it fires only when navigation really happened.
-// MEASURED, with a trusted CDP key (a synthetic dispatchEvent can never drive a
-// default action, so it would have reported a clean zero either way):
-//   - focus rests on BODY in the shipped product (no scroller carries a
-//     tabindex and nothing calls .focus() on one), and from BODY an arrow key
-//     scrolls 0 - so today the unconditional preventDefault() cost nothing;
-//   - but give a scroller focus and it costs real scrolling: 240px inside a
-//     focused `pre.language-js` (ArrowRight) and 200px in a focused
-//     .content-wrapper (ArrowDown).
-// So the harm is LATENT, not absent: the moment a scroller becomes focusable -
-// which an accessibility fix would do - an unconditional preventDefault() starts
-// eating the reader's scrolling. Narrowing it is what stops that landing
-// silently, and it costs nothing when navigation does occur.
+// Keep ordinary scrolling when no history destination is available. Consume
+// a valid navigation request before its async question, even if later cancelled.
 document.addEventListener('keydown', (e) => {
   // Don't trigger if typing in input/textarea or if modifier keys are pressed
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-  if (e.key === 'ArrowLeft') {
-    if (navigateBack()) e.preventDefault();
-  } else if (e.key === 'ArrowRight') {
-    if (navigateForward()) e.preventDefault();
-  }
+  const target = e.key === 'ArrowLeft' ? navigationIndex - 1
+    : e.key === 'ArrowRight' ? navigationIndex + 1 : -1;
+  if (target < 0 || target >= navigationHistory.length ||
+      !mayMutateRendererDocument('keyboard-history-navigation')) return;
+  // Browser default actions must be stopped before an asynchronous question.
+  e.preventDefault();
+  void requestHistoryNavigation(target);
 });
 
 // ============================================
@@ -3215,11 +3243,12 @@ viewer.addEventListener('click', (e) => {
 })();
 
 // Open file button (toolbar)
-openFileBtn.addEventListener('click', () => {
+openFileBtn.addEventListener('click', async () => {
   if (!mayMutateRendererDocument('open-file-dialog')) return;
   // Check for unsaved changes before opening file dialog
   if (hasUnsavedWork()) {
-    if (!confirm(i18n('confirm.unsavedOpen'))) {
+    const consent = await confirmUnsavedAction(i18n('confirm.unsavedOpen'), 'Discard and open');
+    if (!consent.approved || !consent.isCurrent()) {
       return; // User canceled, don't open file dialog
     }
   }
@@ -3254,7 +3283,7 @@ if (welcomeReadmeBtn) {
 }
 
 // Refresh button
-refreshBtn.addEventListener('click', () => {
+refreshBtn.addEventListener('click', async () => {
   if (!mayMutateRendererDocument('refresh-button')) return;
   if (!currentFilePath) {
     return;
@@ -3266,7 +3295,8 @@ refreshBtn.addEventListener('click', () => {
 
   // Check for unsaved changes before refreshing
   if (hasUnsavedWork()) {
-    if (!confirm(i18n('confirm.unsavedRefresh'))) {
+    const consent = await confirmUnsavedAction(i18n('confirm.unsavedRefresh'), 'Discard and reload');
+    if (!consent.approved || !consent.isCurrent()) {
       return;
     }
   }
@@ -3279,7 +3309,7 @@ refreshBtn.addEventListener('click', () => {
 exportPdfBtn.addEventListener('click', () => {
   fileMenu.classList.remove('visible');
   if (!currentFilePath) {
-    alert(i18n('alert.openFirst'));
+    showMessageDialog('Open a document first', i18n('alert.openFirst'));
     return;
   }
 
@@ -3571,7 +3601,7 @@ window.folia.onPdfExportResult(async (data) => {
     showNotification(i18n('notif.pdfExported') + fileName);
   } else {
     console.error('PDF export failed:', data.error);
-    alert(i18n('alert.pdfFailed') + data.error);
+    showMessageDialog('PDF export failed', i18n('alert.pdfFailed') + data.error);
   }
 });
 
@@ -3668,7 +3698,8 @@ toggleEditBtn.addEventListener('click', async () => {
   }
   if (!mayMutateRendererDocument('toggle-edit-mode-after-await')) return;
   if (isEditMode && hasUnsavedChanges) {
-    if (!confirm(i18n('confirm.unsavedExit'))) {
+    const consent = await confirmUnsavedAction(i18n('confirm.unsavedExit'), 'Discard and leave edit mode');
+    if (!consent.approved || !consent.isCurrent()) {
       return;
     }
     discardOnExit = true;
@@ -4081,7 +4112,7 @@ function settleUndeliveredSave(entry, error) {
   entry.resolve(false);
   releaseSaveOrderingState(entry.identityKey);
   console.error('Save request was not delivered:', error);
-  alert(i18n('alert.saveFailed') + error);
+  showMessageDialog('File could not be saved', i18n('alert.saveFailed') + error);
   return true;
 }
 
@@ -4173,13 +4204,12 @@ function hasPendingSaveFor(path) {
 function saveMarkdownFile() {
   if (!mayMutateRendererDocument('save-request')) return null;
   if (!currentFilePath) {
-    alert(i18n('alert.noFileOpen'));
+    showMessageDialog('No document is open', i18n('alert.noFileOpen'));
     return;
   }
   if (!pendingSaveCapacityAvailable()) {
-    alert(
-      i18n('alert.saveFailed') +
-        'Too many saves are still awaiting an authoritative result.'
+    showMessageDialog('File could not be saved',
+      'Too many saves are still running. Wait a moment and try again.'
     );
     return null;
   }
@@ -4188,7 +4218,8 @@ function saveMarkdownFile() {
   const sequence = allocatePositiveSafeInteger('sequence');
   if (!Number.isSafeInteger(sequence) || sequence <= 0) {
     console.error('Refusing save after sequence space was exhausted');
-    alert(i18n('alert.saveFailed') + 'Save sequence space is exhausted.');
+    showMessageDialog('Saving has stopped',
+      'Copy your changes somewhere safe, then restart Markaloo.');
     return null;
   }
   let prepared;
@@ -4203,7 +4234,7 @@ function saveMarkdownFile() {
         : null;
   } catch (error) {
     console.error('Refusing save without provable document bytes:', error);
-    alert(
+    showMessageDialog('File could not be saved',
       i18n('alert.saveFailed') +
         (error && error.message ? error.message : String(error))
     );
@@ -4211,11 +4242,11 @@ function saveMarkdownFile() {
   }
   if (!prepared) {
     console.error('Refusing save without exact tab document ownership');
-    alert(
+    showMessageDialog('File could not be saved',
       i18n('alert.saveFailed') +
       (reloadConflictFor(currentFilePath)
         ? 'File conflict: copy any edits to a safe place before reloading or reopening.'
-        : 'Document ownership changed before save.')
+        : 'The document changed before it could be saved. Please try again.')
     );
     return null;
   }
@@ -4232,13 +4263,15 @@ function saveMarkdownFile() {
     identity.selectionGeneration !== activeFileSelectionGeneration
   ) {
     console.error('Refusing save with invalid document identity');
-    alert(i18n('alert.saveFailed') + 'Document identity is unavailable.');
+    showMessageDialog('File could not be saved',
+      'The document could not be checked. Try saving again.');
     return null;
   }
   const requestId = allocatePositiveSafeInteger('request');
   if (!Number.isSafeInteger(requestId) || requestId <= 0) {
     console.error('Refusing save without a correlation identifier');
-    alert(i18n('alert.saveFailed') + 'Save correlation is unavailable.');
+    showMessageDialog('File could not be saved',
+      'Saving could not start. Wait a moment and try again.');
     return null;
   }
   const requestIdentity = Object.freeze({
@@ -4346,7 +4379,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Ctrl+R keyboard shortcut for refresh
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', async (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
     e.preventDefault();
     if (!mayMutateRendererDocument('shortcut-reload')) return;
@@ -4357,7 +4390,8 @@ document.addEventListener('keydown', (e) => {
       }
       // Check for unsaved changes
       if (hasUnsavedWork()) {
-        if (confirm(i18n('confirm.unsavedRefresh'))) {
+        const consent = await confirmUnsavedAction(i18n('confirm.unsavedRefresh'), 'Discard and reload');
+        if (consent.approved && consent.isCurrent()) {
           reloadCurrentFile();
         }
       } else {
@@ -4664,7 +4698,7 @@ function applyRendererSaveResultDecision(decision) {
     // immutable request contained the clean baseline.
     updateUnsavedIndicator();
     console.error('Save failed:', decision.error);
-    alert(i18n('alert.saveFailed') + decision.error);
+    showMessageDialog('File could not be saved', i18n('alert.saveFailed') + decision.error);
   }
   return true;
 }
@@ -4790,11 +4824,15 @@ function updateFileMenuRecent() {
     pathSpan.textContent = file.path;
     item.append(nameSpan, pathSpan);
 
-    item.addEventListener('click', () => {
+    item.addEventListener('click', async () => {
       if (!mayMutateRendererDocument('recent-file-open')) return;
       // Check for unsaved changes before opening
       if (hasUnsavedWork()) {
-        if (!confirm(i18n('confirm.unsavedOpenFile', {name: file.name}))) {
+        const name = String(file.name).replace(/\s+/g, ' ').slice(0, 120);
+        const consent = await confirmUnsavedAction(
+          i18n('confirm.unsavedOpenFile', {name}), 'Discard and open'
+        );
+        if (!consent.approved || !consent.isCurrent()) {
           return;
         }
       }
@@ -8844,13 +8882,9 @@ function retireDeletionTombstone(
       filePath,
       ...identity,
       ...(tombstone || {}),
-      // Explicit reader confirmation that a deletion warning was shown and
-      // accepted for THIS document. Main refuses to erase evidence nobody was
-      // shown, and this is the only thing that says they were. Deliberately
-      // the ONLY new input: the revision the caller consulted is not sent,
-      // because main re-evaluates live state at this call, and a snapshot
-      // token would only reintroduce the stale-token refusals this replaces.
+      // Async consent covers the evidence revision shown, not a later deletion.
       acknowledgedDeletion: options.acknowledgedDeletion === true,
+      expectedDeletionRevision: options.expectedDeletionRevision,
     });
     return outcome && typeof outcome === 'object'
       ? outcome
@@ -9197,7 +9231,7 @@ documentEvents.on('file-reload-result', async (event, data) => {
 });
 
 // Handle external file open request (from double-clicking a file when app is already open)
-window.folia.onExternalFileOpenRequest(data => {
+window.folia.onExternalFileOpenRequest(async data => {
   if (!mayMutateRendererDocument('ipc-external-file-open')) {
     if (data.documentOpenTicket) {
       window.folia.cancelDocumentOpenTicket({ ticket: data.documentOpenTicket });
@@ -9209,7 +9243,11 @@ window.folia.onExternalFileOpenRequest(data => {
 
   // Check for unsaved changes
   if (hasUnsavedWork()) {
-    if (!confirm(i18n('confirm.unsavedOpenFile', {name: filePath.split(/[\\/]/).pop()}))) {
+    const name = filePath.split(/[\\/]/).pop().replace(/\s+/g, ' ').slice(0, 120);
+    const consent = await confirmUnsavedAction(
+      i18n('confirm.unsavedOpenFile', {name}), 'Discard and open'
+    );
+    if (!consent.approved || !consent.isCurrent()) {
       if (data.documentOpenTicket) {
         window.folia.cancelDocumentOpenTicket({ ticket: data.documentOpenTicket });
       }

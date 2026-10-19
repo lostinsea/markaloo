@@ -51,11 +51,14 @@ async function capture(name) {
 async function open(name, body) {
   chosen = path.join(fixtures, name);
   fs.writeFileSync(chosen, body);
-  await exec("window.__openConfirm=window.confirm;window.confirm=()=>true;document.getElementById('openFile').click();true");
+  await exec(`document.getElementById('openFile').click();
+    if(document.getElementById('appMessageDialog')?.open &&
+        document.getElementById('appMessageTitle').textContent==='Discard unsaved changes?'){
+      document.querySelector('#appMessageDialog [data-dialog-choice="proceed"]').click();
+    }true`);
   await wait("admitted " + name, `currentFilePath===${JSON.stringify(chosen)}&&
     originalMarkdown===${JSON.stringify(body)}&&viewer.querySelector('h1')?.textContent===${JSON.stringify(body.split("\n")[0].slice(2))}&&
     !loadingScreen.classList.contains('active')`);
-  await exec("window.confirm=window.__openConfirm;true");
   await settle();
   return chosen;
 }
@@ -198,8 +201,8 @@ async function run() {
     text.focused === "reloadDocumentCancel" &&
     await exec(`(()=>{
       const d=document.getElementById('reloadDocumentDialog');
-      return d.getAttribute('aria-labelledby')==='reloadDocumentTitle'&&
-        d.getAttribute('aria-describedby').split(' ').includes('reloadDocumentReason')&&
+      return d.ariaLabelledByElements?.includes(document.getElementById('reloadDocumentTitle'))&&
+        d.ariaDescribedByElements?.includes(document.getElementById('reloadDocumentReason'))&&
         document.getElementById('reloadDocumentConfirm').textContent.trim()==='Reload from disk';
     })()`), text);
   const focusCycle = [];
@@ -277,19 +280,20 @@ async function run() {
     !loaded.dirty && (await deletionState()).ownDeletion === false, loaded);
   const edited = "# Reload example\n\nA genuine unsaved edit.\n";
   await edit(edited);
-  await exec(`window.__reloadOriginalConfirm=window.confirm;window.__reloadEditQuestions=[];
-    window.confirm=message=>{window.__reloadEditQuestions.push(message);return false};
-    window.CustomTabs.requestReloadWithConfirmation();true`);
+  await exec("window.CustomTabs.requestReloadWithConfirmation();true");
+  await wait("genuine unsaved themed warning", "document.getElementById('appMessageDialog')?.open===true");
+  const editQuestions = await exec("[document.getElementById('appMessageText').textContent]");
+  await exec(`document.querySelector('#appMessageDialog [data-dialog-choice="cancel"]').click();true`);
   await settle();
-  const editQuestions = await exec("window.__reloadEditQuestions");
   check("a genuine unsaved edit still has its separate discard warning",
-    editQuestions.length === 1 && editQuestions[0] === "You have unsaved changes. Discard changes and refresh from disk?" &&
+    editQuestions.length === 1 && editQuestions[0] === "You have unsaved changes. Reload from disk and discard them?" &&
     (await exec(stateExpression)).live === edited &&
     !await exec("document.getElementById('reloadDocumentDialog').open"), editQuestions);
-  await exec("window.confirm=()=>true;window.CustomTabs.requestReloadWithConfirmation();true");
+  await exec("window.CustomTabs.requestReloadWithConfirmation();true");
+  await wait("second genuine unsaved warning", "document.getElementById('appMessageDialog')?.open===true");
+  await exec(`document.querySelector('#appMessageDialog [data-dialog-choice="proceed"]').click();true`);
   await wait("confirmed genuine edit discarded", `currentReloadSnapshot()===${JSON.stringify(updated)}&&
     window.CustomTabs.getActiveTab()?.content===${JSON.stringify(updated)}&&!hasUnsavedChanges`);
-  await exec("window.confirm=window.__reloadOriginalConfirm;true");
   check("confirmed genuine edit reload does not add a spurious replacement question",
     !await exec("document.getElementById('reloadDocumentDialog').open"));
   await edit("# Reload example\n\nSaved normally.\n");
@@ -317,8 +321,13 @@ async function run() {
       await open("other-selected.md", "# Other selection\n\nA different document.\n");
     } else {
       await exec(`(async()=>{
-        const confirm=window.confirm;window.confirm=()=>true;
-        try{await window.CustomTabs.closeTab(${raceId})}finally{window.confirm=confirm}
+        const answer=setInterval(()=>{
+          if(document.getElementById('appMessageDialog')?.open &&
+              document.getElementById('appMessageTitle').textContent.startsWith('Close')){
+            document.querySelector('#appMessageDialog [data-dialog-choice="proceed"]').click();
+          }
+        },20);
+        try{await window.CustomTabs.closeTab(${raceId})}finally{clearInterval(answer)}
         return true;
       })()`);
       const closedReply = await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
@@ -464,12 +473,17 @@ async function reasonScenarios(sentinel) {
     check("related-copy fixture retains a real deletion while the physical file stays readable",
       missing.ownDeletion && fs.readFileSync(path.join(first, "document.md"), "utf8") === body, missing);
     await exec(`(async()=>{
-      const confirm=window.confirm;window.confirm=()=>true;
+      const answer=setInterval(()=>{
+        if(document.getElementById('appMessageDialog')?.open &&
+            document.getElementById('appMessageTitle').textContent.startsWith('Close')){
+          document.querySelector('#appMessageDialog [data-dialog-choice="proceed"]').click();
+        }
+      },20);
       try{
         for(const tab of window.CustomTabs.getTabs().slice()){
           if(tab.id!==${olderId})await window.CustomTabs.closeTab(tab.id);
         }
-      }finally{window.confirm=confirm}
+      }finally{clearInterval(answer)}
       return true;
     })()`);
     await settle();

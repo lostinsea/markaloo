@@ -42,6 +42,9 @@ const RENDERER = path.join(SRC, "renderer.js");
 const TABS = path.join(SRC, "custom-tabs.js");
 const COLLAPSE = path.join(SRC, "custom-collapse.js");
 const MAIN = path.join(SRC, "main.js");
+const OWNED_DIALOGS = path.join(SRC, "owned-dialogs.js");
+const APP_DIALOGS = path.join(SRC, "app-dialogs.js");
+const POPUP_THEME = path.join(SRC, "popup-theme.js");
 const VISUAL = path.join(ROOT, "test", "test-visual-utils.js");
 const RELEASE = path.join(ROOT, "scripts", "release.js");
 const MERGE_SH = path.join(ROOT, "scripts", "post-upstream-merge.sh");
@@ -1259,7 +1262,7 @@ const REVERTS = [
     suite: "test:tabs",
     what: "warn about unsaved changes without saying they will be discarded",
     file: RENDERER,
-    from: "'confirm.unsavedExit': 'You have unsaved changes. Exiting edit mode will DISCARD them. Exit anyway?'",
+    from: "'confirm.unsavedExit': 'You have unsaved changes. Leave edit mode and discard them?'",
     to: "'confirm.unsavedExit': 'You have unsaved changes. Exit edit mode anyway?'",
     expect: [/the exit warning states that the changes will be discarded/],
   },
@@ -2411,15 +2414,23 @@ const REVERTS = [
     // connected protects nothing, and only the wiring check can tell.
     what: "unhook the will-download guard from the default session",
     file: MAIN,
-    from: '    session.defaultSession.on("will-download", (event, item) => {',
-    to: '    if (false) session.defaultSession.on("will-download", (event, item) => {',
-    suite: "test:popups",
-    expect: [/^SEC-30 the download policy is wired to the default session$/],
+    from: '    session.defaultSession.on("will-download", (event, item, source) => {',
+    to: '    if (false) session.defaultSession.on("will-download", (event, item, source) => {',
+    // The legacy popup route uses renderer require(). Drive this unchanged
+    // registration against the real disposable session instead, including
+    // forbidden-download and latched-export behavior, not just a source sweep.
+    suite: "test:owned-dialogs",
+    expect: [
+      /^SEC-30 the download policy is wired to the default session$/,
+      /^Main download policy wiring cancels a forbidden URL without dispatching a notice$/,
+      /^Main blocked export keeps its exact original root owner and remains cancelled$/,
+    ],
     mustPass: [
       /^SEC-30 the download policy admits the app's blob: exports and nothing else$/,
     ],
     requireMustPassAssertions: true,
     requireExactFailures: true,
+    expectedFailureCount: 3,
   },
   {
     id: "R455",
@@ -6871,8 +6882,8 @@ const REVERTS = [
     // populate the acceptance memo.
     what: "ignore the reader's answer and switch to the expensive tab anyway",
     file: TABS,
-    from: "    if (tabId !== activeTabId && !confirmLargeTab(tab, opts.silent)) {",
-    to: "    if (tabId !== activeTabId && !confirmLargeTab(tab, opts.silent) && false) {",
+    from: "    if (!largeAccepted) {",
+    to: "    if (!largeAccepted && false) {",
     expect: [
       /opening an expensive file asks, and declining leaves the reader put/,
       /switching to an expensive tab asks first/,
@@ -8783,49 +8794,24 @@ const REVERTS = [
   },
   {
     id: "R320",
-    // THE POPUP SCOPE BOUNDARY. A popup is a separate BrowserWindow whose CSS
-    // is built in the MAIN process from literal hexes chosen by an isDarkMode
-    // boolean, so the renderer - which owns none of those windows - cannot
-    // observe the boundary at all and the assertion is necessarily made at
-    // source level. This is the first step of forwarding a scheme across it,
-    // and it is deliberately INERT: nothing consumes the new binding, so no
-    // other assertion in any suite can notice. That is the point - a boundary
-    // assertion has to fail on the crossing itself, not on its consequences.
-    //
-    // BOTH main-side assertions are listed, and that is a measurement rather
-    // than a hedge: the file-wide sweep sees the new `data-theme` spelling, and
-    // so does the per-handler sweep, because the binding is introduced INSIDE
-    // the mermaid handler's own slice. An `expect` naming only the first would
-    // understate what the revert really does.
-    //
-    // mustPass USED TO NAME THE TWO RENDERER-SIDE PAYLOAD ASSERTIONS, AND
-    // THAT GUARD COULD NOT FAIL. The edit is confined to main.js; one of those
-    // assertions reads renderer.js source and the other drives a real click
-    // with ipcRenderer.send intercepted in the renderer, so main.js is never
-    // consulted by either. A collateral guard that is structurally incapable of
-    // firing is decorative - it reads as coverage and supplies none. The scope
-    // claim it was making is still true and is stated here in prose, where it
-    // costs nothing and pretends to nothing.
-    //
-    // What mustPass names instead are the two assertions in this section that
-    // main.js really can break: both run the export through the main process
-    // (printToPDF and the CDP media emulation behind it). They keep this a
-    // proof that the SWEEPS caught a scheme crossing the boundary, rather than
-    // a proof that a malformed edit broke the main process and took the
-    // section down with it.
-    what: "forward the active scheme into the mermaid popup builder",
-    file: MAIN,
-    from: "  const { svgContent, isDarkMode } = data;\n",
-    to: "  const { svgContent, isDarkMode, dataTheme } = data;\n  const schemeAttr = dataTheme ? ' data-theme=\"' + dataTheme + '\"' : '';\n",
-    suite: "test:theme",
+    // The user's all-dialog migration explicitly retires the former
+    // binary-only popup boundary. Preserve the ID's scope sensitivity with
+    // actual computed palettes/font loading, rather than asserting the now
+    // intentionally false claim that Main knows nothing about schemes.
+    what: "ignore the selected scheme when constructing trusted popup styling",
+    file: POPUP_THEME,
+    from: "function popupTheme(themeId) {\n",
+    to: 'function popupTheme(themeId) {\n  themeId = "default-light";\n',
+    suite: "test:owned-dialogs",
     expect: [
-      /10i: the main process, which owns every popup window, knows nothing about colour schemes/,
-      /10i: every popup handler paints literal colours chosen by isDarkMode and reads no token-layer variable/,
+      /^popup (?:clarity|parchment|default-dark|abyss|ember) actually paints the selected canonical scheme and font$/,
     ],
     mustPass: [
-      /10i: every theme state prints each measured surface exactly as the shipped light default does/,
-      /10i: the print stylesheet really was in effect for every printed measurement/,
+      /^popup default-light actually paints the selected canonical scheme and font$/,
+      /^popup default-dark uses canonical tokens and bundled font data$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+    expectedFailureCount: 5,
   },
   {
     id: "R321",
@@ -9570,24 +9556,19 @@ const REVERTS = [
   },
   {
     id: "R349",
-    // THE OTHER FLOOR: `darkAware >= 20` against a real count of 56, so two of
-    // the three popup surfaces could have stopped being boolean-themed
-    // altogether and the control would still have passed with 36 to spare.
-    // This makes ONE handler read ONE token-layer variable - the smallest
-    // possible version of a popup joining the scheme layer, and one that spells
-    // no scheme id, so the marker sweep beside it stays green. The old floor
-    // could not express it; the per-handler relationship fails on it.
-    what: "let the table popup take one colour from the app's token layer instead of its own literal",
+    what: "drop the canonical palette and fonts from one popup",
     file: MAIN,
-    from: "ipcMain.on(\"open-table-popup\", (event, data) => {\n",
-    to:
-      "ipcMain.on(\"open-table-popup\", (event, data) => {\n" +
-      "  const popupAccent = \"var(--primary-color)\";\n" +
-      "  void popupAccent;\n",
+    from: "    <title>Mermaid Diagram</title>\n    <style>\n        ${theme.css}\n",
+    to: "    <title>Mermaid Diagram</title>\n    <style>\n",
     suite: "test:theme",
     expect: [
-      /10i: every popup handler paints literal colours chosen by isDarkMode and reads no token-layer variable/,
+      /^10i: every popup handler consumes the canonical app palette and fonts$/,
     ],
+    mustPass: [
+      /^10i: Main does not hardcode named popup palettes$/,
+      /^every theme state settled its CSS transitions before it was measured$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
   },
   {
     id: "R350",
@@ -10065,7 +10046,7 @@ const REVERTS = [
     suite: "test:theme",
     expect: [
       /10i: the scheme-leak sweep catches an unquoted id and ignores the same letters in prose \(control\)/,
-      /10i: the main process, which owns every popup window, knows nothing about colour schemes/,
+      /10i: Main does not hardcode named popup palettes/,
     ],
   },
   {
@@ -13314,8 +13295,9 @@ const REVERTS = [
           what: "swallow the arrow key even when there is nowhere to navigate, as it did before F23",
           file: RENDERER,
           from:
-            "  if (e.key === 'ArrowLeft') {\n    if (navigateBack()) e.preventDefault();\n  } else if (e.key === 'ArrowRight') {\n    if (navigateForward()) e.preventDefault();\n  }",
-          to: "  if (e.key === 'ArrowLeft') {\n    e.preventDefault();\n    navigateBack();\n  } else if (e.key === 'ArrowRight') {\n    e.preventDefault();\n    navigateForward();\n  }",
+            "  if (target < 0 || target >= navigationHistory.length ||\n      !mayMutateRendererDocument('keyboard-history-navigation')) return;",
+          to: "  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.preventDefault();\n" +
+            "  if (target < 0 || target >= navigationHistory.length ||\n      !mayMutateRendererDocument('keyboard-history-navigation')) return;",
           suite: "test:patch",
           expect: [
             // The ONLY assertion that can see this. Deliberately named apart
@@ -13356,7 +13338,12 @@ const REVERTS = [
           what: "let arrow-key back navigation discard unsaved work without asking",
           file: RENDERER,
           from:
-            "  if (!entry) return false;\n  if (hasUnsavedWork() && !confirm(i18n('confirm.unsavedOpen'))) return false;",
+            "  if (!entry) return false;\n" +
+            "  if (hasUnsavedWork()) {\n" +
+            "    const consent = await confirmUnsavedAction(i18n('confirm.unsavedOpen'), 'Discard and open');\n" +
+            "    if (!consent.approved || !consent.isCurrent() ||\n" +
+            "        navigationHistory[targetIndex] !== entry) return false;\n" +
+            "  }",
           to: "  if (!entry) return false;",
           suite: "test:patch",
           expect: [
@@ -17373,11 +17360,13 @@ const REVERTS = [
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
             '    <script src="emoji-parser.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="utils.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
@@ -17454,12 +17443,14 @@ const REVERTS = [
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
             '    <script src="emoji-parser.js"></script>\n' +
             '    <script src="utils.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
@@ -17549,6 +17540,7 @@ const REVERTS = [
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
@@ -17556,6 +17548,7 @@ const REVERTS = [
             '    <script src="utils.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>',
@@ -17876,11 +17869,13 @@ const REVERTS = [
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>',
           to:
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
+            '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>',
@@ -19797,8 +19792,8 @@ const REVERTS = [
           id: "R797",
           what: "load the browser document registry after both consumers",
           file: HTML,
-          from: '    <script src="document-events.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
-          to: '    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
+          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
+          to: '    <script src="app-dialogs.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
           suite: "test:packaging",
           expect: [
             /^SEC-08 document-events\.js loads exactly once before both consumers$/,
@@ -20165,35 +20160,38 @@ const REVERTS = [
           file: MAIN,
           from: '  if (!isApprovalSender(event) ||\n' +
             '      !data || typeof data !== "object" || Array.isArray(data) ||\n' +
-            '      typeof data.name !== "string" || !Number.isFinite(data.seconds) ||\n' +
+            '      typeof data.name !== "string" || data.name.length > 1024 ||\n' +
+            '      data.name.includes("\\0") || !Number.isFinite(data.seconds) ||\n' +
             '      data.seconds < 0) {',
           to: '  if (!data || typeof data !== "object" || Array.isArray(data) ||\n' +
-            '      typeof data.name !== "string" || !Number.isFinite(data.seconds) ||\n' +
+            '      typeof data.name !== "string" || data.name.length > 1024 ||\n' +
+            '      data.name.includes("\\0") || !Number.isFinite(data.seconds) ||\n' +
             '      data.seconds < 0) {',
-          suite: "test:sec08-owned-read-evidence",
-          expect: [/^SEC-08 an actual isolated foreign window cannot open the main large-render modal$/],
+          suite: "test:owned-dialogs",
+          expect: [/^Main large-render handler refuses an actual foreign window before presentation work$/],
           mustPass: [
-            /^SEC-08 real large-render bridge preserves native approval cancellation and exact modal metadata$/,
-            /^SEC-08 Main refuses malformed large-render envelopes before modal work and replies exactly once$/,
+            /^Main large-render handler has a real successful isolated child control$/,
+            /^Main large-render handler refuses malformed metadata before presentation work$/,
           ],
-          requireMustPassAssertions: true, requireExactFailures: true,
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
         {
           id: "R821",
-          what: "let malformed main-window large-render metadata reach the native modal",
+          what: "let malformed main-window large-render metadata reach themed presentation",
           file: MAIN,
           from: '  if (!isApprovalSender(event) ||\n' +
             '      !data || typeof data !== "object" || Array.isArray(data) ||\n' +
-            '      typeof data.name !== "string" || !Number.isFinite(data.seconds) ||\n' +
+            '      typeof data.name !== "string" || data.name.length > 1024 ||\n' +
+            '      data.name.includes("\\0") || !Number.isFinite(data.seconds) ||\n' +
             '      data.seconds < 0) {',
           to: '  if (!isApprovalSender(event)) {',
-          suite: "test:sec08-owned-read-evidence",
-          expect: [/^SEC-08 Main refuses malformed large-render envelopes before modal work and replies exactly once$/],
+          suite: "test:owned-dialogs",
+          expect: [/^Main large-render handler refuses malformed metadata before presentation work$/],
           mustPass: [
-            /^SEC-08 real large-render bridge preserves native approval cancellation and exact modal metadata$/,
-            /^SEC-08 an actual isolated foreign window cannot open the main large-render modal$/,
+            /^Main large-render handler has a real successful isolated child control$/,
+            /^Main large-render handler refuses an actual foreign window before presentation work$/,
           ],
-          requireMustPassAssertions: true, requireExactFailures: true,
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
         {
           id: "R822",
@@ -20229,8 +20227,8 @@ const REVERTS = [
           id: "R824",
           what: "restore raw Electron IPC in the actual tab size-confirmation caller",
           file: TABS,
-          from: "      proceed = window.folia.confirmLargeRender({",
-          to: '      proceed = tabIpc.sendSync("confirm-large-render", {',
+          from: "      const decision = window.folia.confirmLargeRender({",
+          to: '      const decision = tabIpc.sendSync("confirm-large-render", {',
           suite: "test:packaging",
           expect: [/^SEC-08 tab size confirmation uses only the fixed production port$/],
           mustPass: [
@@ -20359,9 +20357,9 @@ const REVERTS = [
           to: "    if (!sent) return;\n    activeDialogExtraBatch = null;",
           also: [{
             file: MAIN,
-            from: "            if (sent) activeDialogExtraBatch = batch;\n" +
-              "            else documentAdmissions.delete(document.ref);",
-            to: "            if (sent) activeDialogExtraBatch = batch;",
+            from: "        if (sent) activeDialogExtraBatch = batch;\n" +
+              "        else documentAdmissions.delete(document.ref);",
+            to: "        if (sent) activeDialogExtraBatch = batch;",
           }],
           suite: "test:document-session",
           expect: [
@@ -22450,9 +22448,9 @@ const REVERTS = [
         },
         {
           id: "R961", what: "focus the destructive reload action instead of safe Cancel",
-          file: TABS,
-          from: '        dialog.showModal();\n        cancel.focus();',
-          to: '        dialog.showModal();\n        document.getElementById("reloadDocumentConfirm").focus();',
+          file: APP_DIALOGS,
+          from: '      footer.querySelector(`[data-dialog-choice="${CSS.escape(spec.defaultId)}"]`)?.focus();',
+          to: '      footer.querySelector(`[data-dialog-choice="${CSS.escape(spec.buttons.at(-1).id)}"]`)?.focus();',
           suite: "test:reload-dialog",
           expect: [/^reload dialog starts on Cancel and labels its document and reason$/],
           mustPass: [
@@ -22521,12 +22519,12 @@ const REVERTS = [
         },
         {
           id: "R965", what: "restore keyboard focus to an invisible dismissed toast",
-          file: TABS,
-          from: '            previousFocus?.isConnected &&\n' +
-            '            previousFocus.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&\n' +
-            '            !previousFocus.closest("[inert], .file-update-toast:not(.show)")',
-          to: '            previousFocus?.isConnected && previousFocus.checkVisibility() &&\n' +
-            '            !previousFocus.closest("[inert]")',
+          file: APP_DIALOGS,
+          from: '      previous?.isConnected &&\n' +
+            '      previous.checkVisibility({ opacityProperty: true, visibilityProperty: true }) &&\n' +
+            '      !previous.closest("[inert], .file-update-toast:not(.show)")',
+          to: '      previous?.isConnected && previous.checkVisibility() &&\n' +
+            '      !previous.closest("[inert]")',
           suite: "test:reload-dialog",
           expect: [/^reload cancellation restores visible keyboard focus$/],
           mustPass: [
@@ -22536,6 +22534,356 @@ const REVERTS = [
           ],
           requireMustPassAssertions: true, requireExactFailures: true,
           expectedFailureCount: 1,
+        },
+        {
+          id: "R966", what: "accept an owned-dialog response without its private nonce",
+          file: OWNED_DIALOGS,
+          from: "    if (!request || request.done || data.nonce !== request.nonce ||",
+          to: "    if (!request || request.done ||",
+          suite: "test:owned-dialogs",
+          expect: [/^a wrong nonce from the actual child cannot answer$/],
+          mustPass: [
+            /^explicit current button maps to Main's retained index$/,
+            /^an exact nonce and id from the wrong sender cannot answer$/,
+            /^a completed request cannot be replayed into the next dialog$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R967", what: "let a foreign sender or frame answer a retained child dialog",
+          file: OWNED_DIALOGS,
+          from: "    return event.sender === wc && event.senderFrame === wc.mainFrame &&\n" +
+            "      event.senderFrame.url === this.url ? request : null;",
+          to: "    return request;",
+          suite: "test:owned-dialogs",
+          expect: [
+            /^an exact nonce and id from the wrong sender cannot answer$/,
+            /^the actual child sender cannot answer from a different frame$/,
+          ],
+          mustPass: [
+            /^explicit current button maps to Main's retained index$/,
+            /^a wrong nonce from the actual child cannot answer$/,
+            /^an out-of-range choice cannot select a retained button$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R968", what: "mistake a lifecycle cancellation for an acknowledged single-button notice",
+          file: OWNED_DIALOGS,
+          from: '        false, current ? data.cause : "stale");',
+          to: '        false, current ? "choice" : "stale");',
+          suite: "test:owned-dialogs",
+          expect: [/^Escape-style cancellation is not a single-button acknowledgement$/],
+          mustPass: [
+            /^explicit current button maps to Main's retained index$/,
+            /^abort settles exactly as cancellation$/,
+            /^shutdown cannot interpret lifecycle cancellation as discard$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R969", what: "make independent emergency consent and thaw depend on a crashed document frame",
+          file: MAIN,
+          from: '  const independentOwner = emergency === "shutdown" || emergency === "terminal";',
+          to: "  const independentOwner = false;",
+          also: [
+            {
+              file: OWNED_DIALOGS,
+              from: "        (request.options.allowUnavailableRenderer ||",
+              to: "        (false ||",
+            },
+            {
+              file: MAIN,
+              from: "  if (!ownerRendererAvailable(wc)) return;\n  wc.send(QUIT_APPROVAL_THAW);",
+              to: "  wc.send(QUIT_APPROVAL_THAW);",
+            },
+          ],
+          suite: "test:owned-dialogs",
+          expect: [
+            /^Main retains a shutdown question on its window after the document frame is disposed$/,
+            /^a crashed document still has an independent emergency host in its cached scheme$/,
+            /^Main clears its freeze without sending thaw to a crashed renderer$/,
+            /^renderer-loss fixture has a displayed independent host and three queued requests$/,
+          ],
+          mustPass: [
+            /^ordinary file consent still requires a live owning document$/,
+            /^Main large-render handler has a real successful isolated child control$/,
+            /^owner destruction cannot produce a positive answer$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+        },
+        {
+          id: "R970", what: "apply external-file consent after its originating authority changed",
+          file: MAIN,
+          from: '      if (decision.cause !== "choice" || decision.response !== 1 || !current()) return false;',
+          to: '      if (decision.cause !== "choice" || decision.response !== 1) return false;',
+          suite: "test:owned-dialogs",
+          expect: [
+            /^external confirmation cannot cross a page generation$/,
+            /^external confirmation cannot cross a document selection$/,
+            /^external confirmation cannot cross frozen shutdown$/,
+          ],
+          mustPass: [
+            /^external confirmation opens its unchanged retained target$/,
+            /^external confirmation refuses a file changed during the question$/,
+            /^external confirmation refuses changed target classification$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R971", what: "retire newly appeared deletion evidence under an older close confirmation",
+          file: MAIN,
+          from: "  if (data.acknowledgedDeletion === true &&\n" +
+            "      (!Number.isSafeInteger(data.expectedDeletionRevision) ||\n" +
+            "        data.expectedDeletionRevision < 0 ||\n" +
+            "        data.expectedDeletionRevision !== state.revision)) {\n" +
+            '    return retirementRefusal("deletion-evidence-changed", state);\n' +
+            "  }\n",
+          to: "",
+          suite: "test:owned-dialogs",
+          expect: [
+            /^retirement rejects evidence changed during the async close$/,
+            /^retirement cannot acknowledge evidence without a revision$/,
+          ],
+          mustPass: [
+            /^the exact current acknowledged revision reaches the existing retirement$/,
+            /^unacknowledged clean close does not need a revision$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R972", what: "trust an open's pre-dialog ownership and disk snapshot after asynchronous consent",
+          file: MAIN,
+          from: "          generation === approvalRendererGeneration &&\n" +
+            "          (pageSession === approvalRendererPageSession ||\n" +
+            '            (startup && approvalRendererState === "ready")) &&\n' +
+            "          deliveryEpoch === fileOpenDeliveryEpoch && !shutdownCommitIngressBlocked;",
+          to: "          (pageSession === approvalRendererPageSession ||\n" +
+            '            (startup && approvalRendererState === "ready"));',
+          also: {
+            from: "    if (!delivery.current() ||\n" +
+              "        (confirmation !== true && !fileOpenSnapshotIsCurrent(filePath, diskVersion, physical))) {",
+            to: "    if (!delivery.current()) {",
+          },
+          suite: "test:owned-dialogs",
+          expect: [
+            /^a competing open revokes the delayed large-file answer$/,
+            /^navigation revokes the delayed large-file answer$/,
+            /^frozen shutdown revokes the delayed large-file answer$/,
+            /^large-file approval cannot deliver bytes whose disk snapshot changed$/,
+          ],
+          mustPass: [
+            /^open delivery starts with its actual owner and page$/,
+            /^initial ready handshake does not revoke the same startup open$/,
+            /^large-file approval still delivers an unchanged retained snapshot$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+        },
+        {
+          id: "R973", what: "release the owner queue before emergency fallback has settled",
+          file: OWNED_DIALOGS,
+          from: '    if (failed && typeof request.options.onFailure === "function") {\n' +
+            "      Promise.resolve().then(() => request.options.onFailure(result))",
+          to: '    if (failed && typeof request.options.onFailure === "function") {\n' +
+            "      if (state.active === request) state.active = null;\n" +
+            "      this.next(request.owner, state);\n" +
+            "      Promise.resolve().then(() => request.options.onFailure(result))",
+          suite: "test:owned-dialogs",
+          expect: [
+            /^emergency fallback retains the owner's serialized queue$/,
+            /^no second themed host is raised over emergency fallback$/,
+          ],
+          mustPass: [
+            /^failed child is destroyed before emergency fallback$/,
+            /^queue resumes only after fallback settles$/,
+            /^a different owner has its own independent active dialog$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R974", what: "report stale local consent as a reader choice",
+          file: APP_DIALOGS,
+          from: '        if (active && !current(active)) settle(active, active.spec.cancelId, "stale");',
+          to: '        if (active && !current(active)) settle(active, active.spec.cancelId, "choice");',
+          suite: "test:dialogs",
+          expect: [/^a changed local decision is cancelled without pretending to be a user answer$/],
+          mustPass: [
+            /^the second queued question receives only its own explicit action$/,
+            /^an aborted local decision never becomes affirmative$/,
+            /^cancelled tab close preserves its exact unsaved document$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R975", what: "keep a mutable caller descriptor behind a queued question",
+          file: APP_DIALOGS,
+          from: "    spec = Object.freeze({\n" +
+            "      ...spec,\n" +
+            "      buttons: Object.freeze(spec.buttons.map(button => Object.freeze({ ...button }))),\n" +
+            "    });",
+          to: "",
+          suite: "test:dialogs",
+          expect: [/^a queued presentation keeps the validated descriptor it received$/],
+          mustPass: [
+            /^queued dialog renders text literally and starts on its safe action$/,
+            /^the second queued question receives only its own explicit action$/,
+            /^a changed local decision is cancelled without pretending to be a user answer$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R976", what: "drop the evidence revision between themed close and Main retirement",
+          file: RENDERER,
+          from: "      expectedDeletionRevision: options.expectedDeletionRevision,\n",
+          to: "",
+          suite: "test:dialogs",
+          expect: [/^themed deletion close carries its exact evidence revision through the production preload$/],
+          mustPass: [
+            /^cancelled tab close preserves its exact unsaved document$/,
+            /^explicit tab discard closes only the confirmed tab$/,
+            /^normal dialog journeys have no unexpected renderer errors$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R977", what: "paint destructive dialog text with accent ink instead of danger ink",
+          file: CSS,
+          from: ".note-dialog-btn.danger {\n  background: var(--danger-bg);\n  color: var(--on-danger-fg);\n}",
+          to: ".note-dialog-btn.danger {\n  background: var(--danger-bg);\n  color: var(--on-accent-fg);\n}",
+          suite: "test:theme",
+          expect: [
+            /^abyss: every element it paints at full opacity meets WCAG AA \(4.5:1\)$/,
+            /^abyss: no element that was ALREADY below AA in the default is made worse$/,
+            /^ember: every element it paints at full opacity meets WCAG AA \(4.5:1\)$/,
+            /^ember: no element that was ALREADY below AA in the default is made worse$/,
+            /^abyss: every hover cell it paints at full opacity meets its WCAG minimum$/,
+            /^abyss: every hover cell that met its minimum in the default still meets it$/,
+            /^ember: every hover cell it paints at full opacity meets its WCAG minimum$/,
+            /^ember: every hover cell that met its minimum in the default still meets it$/,
+          ],
+          mustPass: [
+            /^10i: every popup handler consumes the canonical app palette and fonts$/,
+            /^every theme state settled its CSS transitions before it was measured$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 8,
+        },
+        {
+          id: "R978", what: "keep local consent current after the selected document changes",
+          file: TABS,
+          from: "    return () =>\n      !isDocumentFrozen() && intent === dialogDecisionIntent &&",
+          to: "    return () => true ||\n      !isDocumentFrozen() && intent === dialogDecisionIntent &&",
+          suite: "test:dialogs",
+          expect: [
+            /^editing during async exit consent preserves the newer text$/,
+            /^async tab close cannot discard text added while its question was open$/,
+          ],
+          mustPass: [
+            /^cancelling exit-edit keeps genuine unsaved edits and edit mode$/,
+            /^cancelled tab close preserves its exact unsaved document$/,
+            /^explicit tab discard closes only the confirmed tab$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R979", what: "let document IDs prevent creation of app-owned message controls",
+          file: APP_DIALOGS,
+          from: "    if (!messageSurface) {",
+          to: '    if (!messageSurface && document.getElementById("appMessageDialog")) {\n' +
+            '      throw new Error("The dialog surface is unavailable");\n' +
+            "    }\n    if (!messageSurface) {",
+          suite: "test:dialogs",
+          expect: [
+            /^message dialog uses app-owned controls despite document ID collisions$/,
+            /^message dialog announces its real warning despite document ID collisions$/,
+          ],
+          mustPass: [
+            /^reload dialog uses app-owned controls despite document ID collisions$/,
+            /^queued dialog renders text literally and starts on its safe action$/,
+            /^explicit tab discard closes only the confirmed tab$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R980", what: "cancel an authoritative independent question when only its document renderer dies",
+          file: OWNED_DIALOGS,
+          from: "      state.rendererGone = () => cancelRequests(true);",
+          to: "      state.rendererGone = () => cancelRequests(false);",
+          suite: "test:owned-dialogs",
+          expect: [
+            /^a displayed independent question survives its owner's renderer loss$/,
+            /^a queued independent question survives its owner's renderer loss$/,
+            /^a displayed independent question accepts an explicit current choice after renderer loss$/,
+            /^a queued independent question accepts an explicit current choice after renderer loss$/,
+            /^independent queued consent stays choosable after document-bound cancellation$/,
+          ],
+          mustPass: [
+            /^renderer loss cancels displayed document-bound consent$/,
+            /^renderer loss cancels queued document-bound consent$/,
+            /^renderer loss cancels independent consent whose Main authority expired$/,
+            /^committed navigation cancels displayed and queued independent questions$/,
+            /^owner destruction cancels displayed and queued independent questions$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 5,
+        },
+        {
+          id: "R981", what: "resolve reload controls through document-supplied IDs instead of the captured app surface",
+          file: APP_DIALOGS,
+          from: "    return reloadSurface;",
+          to: "    return {\n" +
+            '      dialog: document.getElementById("reloadDocumentDialog"),\n' +
+            '      title: document.getElementById("reloadDocumentTitle"),\n' +
+            '      name: document.getElementById("reloadDocumentName"),\n' +
+            '      message: document.getElementById("reloadDocumentReason"),\n' +
+            '      close: document.getElementById("reloadDocumentClose"),\n' +
+            '      footer: document.querySelector("#reloadDocumentDialog .note-dialog-footer"),\n' +
+            '      cancel: document.getElementById("reloadDocumentCancel"),\n' +
+            '      confirm: document.getElementById("reloadDocumentConfirm"),\n' +
+            "    };",
+          suite: "test:dialogs",
+          expect: [
+            /^reload dialog uses app-owned controls despite document ID collisions$/,
+            /^reload dialog announces its real warning despite document ID collisions$/,
+          ],
+          mustPass: [
+            /^message dialog uses app-owned controls despite document ID collisions$/,
+            /^the second queued question receives only its own explicit action$/,
+            /^themed deletion close carries its exact evidence revision through the production preload$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R982", what: "resolve accessible dialog warnings through document-supplied IDs",
+          file: APP_DIALOGS,
+          from: "      dialog.ariaLabelledByElements = [title];\n" +
+            "      dialog.ariaDescribedByElements = [name, message, detail].filter(node => node && !node.hidden);",
+          to: '      dialog.setAttribute("aria-labelledby", spec.surface === "reload" ? "reloadDocumentTitle" : "appMessageTitle");\n' +
+            '      dialog.setAttribute("aria-describedby", spec.surface === "reload" ? "reloadDocumentReason" : "appMessageText");',
+          suite: "test:dialogs",
+          expect: [
+            /^message dialog announces its real warning despite document ID collisions$/,
+            /^reload dialog announces its real warning despite document ID collisions$/,
+          ],
+          mustPass: [
+            /^message dialog uses app-owned controls despite document ID collisions$/,
+            /^reload dialog uses app-owned controls despite document ID collisions$/,
+            /^queued dialog renders text literally and starts on its safe action$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R983", what: "retain expired independent consent on renderer loss until a later poll",
+          file: OWNED_DIALOGS,
+          from: "              !(retainIndependent && pending.options.allowUnavailableRenderer && this.current(pending))) {",
+          to: "              !(retainIndependent && pending.options.allowUnavailableRenderer)) {",
+          suite: "test:owned-dialogs",
+          expect: [/^renderer loss cancels independent consent whose Main authority expired$/],
+          mustPass: [
+            /^a displayed independent question survives its owner's renderer loss$/,
+            /^a queued independent question survives its owner's renderer loss$/,
+            /^renderer loss cancels queued document-bound consent$/,
+            /^owner destruction cancels displayed and queued independent questions$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
       ];
 
@@ -23329,7 +23677,7 @@ function proofOnlyProtocolProblems(r, checkedRun) {
 function exactShutdownTailForMutation(r) {
   // These are mutation-only transcripts. Clean runs, every other record, any
   // reordered or added line, and every fatal marker remain health failures.
-  if (r.id === "R454") return R454_POPUP_POLICY_WIRING_TAIL;
+  if (r.id === "R454" && r.suite === "test:popups") return R454_POPUP_POLICY_WIRING_TAIL;
   if (r.id === "R319") return R319_MERMAID_SCOPE_TAIL;
   if (["R741", "R742", "R749", "R750", "R751", "R752"].includes(r.id) &&
       r.suite === "test:theme") {
@@ -23607,7 +23955,8 @@ function proveCompanionTranscriptRoles() {
   const r319AllowanceIsRecordScoped =
     exactShutdownTailForMutation(r319Record) === R319_MERMAID_SCOPE_TAIL &&
     exactShutdownTailForMutation(REVERTS.find((r) => r.id === "R320")) === undefined &&
-    exactShutdownTailForMutation(REVERTS.find((r) => r.id === "R454")) ===
+    exactShutdownTailForMutation(REVERTS.find((r) => r.id === "R454")) === undefined &&
+    exactShutdownTailForMutation({ id: "R454", suite: "test:popups" }) ===
       R454_POPUP_POLICY_WIRING_TAIL &&
     exactShutdownTailForMutation(REVERTS.find((r) => r.id === "R660")) ===
       R660_PROOF_ONLY_SHUTDOWN_TAIL &&
@@ -23616,7 +23965,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") === "R319" &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount))
       .map((r) => r.id)
-      .join(",") === "R72,R467,R319,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R960,R961,R962,R963,R964,R965";
+      .join(",") === "R72,R454,R467,R319,R320,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,
