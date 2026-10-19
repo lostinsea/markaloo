@@ -38,6 +38,37 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `release-0.8.1` — **READY, publication gates running** (2026-10-19).
+  - User requested version 0.8.1 with all current completed work, including zoom.
+  - Sole release writer: this isolated dialog stream. Includes reviewed reload/
+    dialog commits `6b876066` and `7d97a8eb`, installer `cccf6b51` with its
+    cancellation-status note `a767b9c6`, and reading zoom `70ab9947`.
+  - Canonical main is `54b8ddd8`. Use an explicit canonical push destination;
+    do not change shared Git configuration or the primary checkout.
+  - Installer and zoom were integrated serially. Existing/custom installation
+    folders stay unchanged; new installs default to Markaloo. No PC installation
+    or cancelled updater investigation.
+  - Combined zoom/reload input check found modifier-wheel changed the reading
+    preference behind a modal. Dialog capture now blocks that shortcut; normal
+    and split reading at 160% cover cancel, approval and the persisted value.
+    R984 owns the exact sensitivity proof.
+  - Gates: independent release-delta review, matching package/lock versions,
+    packaging check, tag-source verification, successful build/attestation/
+    release jobs, downloaded asset hashes and updater-manifest checks.
+  - Integrated source: reload `56/56`, document dialogs `53/53`, Main-owned
+    host `104/104`, real quit/relaunch zoom `54/54`, themes `398/398`.
+    Windows portable and NSIS builds succeeded; strict built-archive packaging
+    is `426/0`. No installer was executed.
+  - Installer R946/R953/R952, zoom R954-R959 and modal interaction R984 are
+    individually exact PROVEN on the combined source; all anchors resolve.
+    R955 needed a rerun after its child watchdog expired. The first theme run
+    also timed out; its unchanged rerun passed. Both failed receipts remain.
+  - Fresh independent GPT-6.1 Sol/high and GPT-6 Luna/high combined-source
+    reviews found no significant issues and no disagreements. They reviewed
+    source, not installed behavior or future hosted build results.
+  - Combined normal/split 160% reload screenshots were viewed. Evidence:
+    session `f908fe61`, `files/release-081-*`. The app was not installed;
+    built-archive checks are not packaged-UI or live-upgrade certification.
 - `reload-dialog.all-dialogs` — **REVIEWED, local only; unpublished** (2026-10-19).
   - All inventoried app-owned messages and confirmations use shared themed
     cards or an independent Main-owned themed host. Existing themed input
@@ -74,8 +105,8 @@ section is kept here so the register has a visible edge.
   - Evidence is under this session's `files/dialogs-final` directory. Legacy
     raw-IPC tab/owned-read and popup paths still have their known missing-bridge
     limits. No full-suite, packaged-app or cross-platform certification.
-  - Local/unpublished only. No primary-checkout changes, integration, push,
-    release, installation or cancelled updater diagnosis.
+  - Included in the user-authorized 0.8.1 publication above. No primary-checkout
+    changes, PC installation or cancelled updater diagnosis.
 - `reload-dialog` — **REVIEWED, local only; unpublished** (2026-10-19).
   - Isolated branch: `users/vinma-microsoft/clear-themed-reload-dialog`.
   - Base matches canonical `lostinsea/markaloo` main at `54b8ddd8`.
@@ -106,8 +137,10 @@ section is kept here so the register has a visible edge.
   - Session `f908fe61` artifacts hold the logs; `files/reload-final/` holds
     viewed final screenshots, the bounded ordinary-reload samples and source
     hashes. Current behavior and timing limits are in CUSTOMIZATIONS/PERF-AUDIT.
-  - Local commit only. No integration, push, release or installation.
-  - Do not change the separate installer/reading units or cancelled updater work.
+  - Included in the user-authorized 0.8.1 publication above. No PC installation.
+  - The original focused scope did not include installer/reading work; the
+    later release authorization above includes both reviewed units. Cancelled
+    updater diagnosis remains excluded.
   - Baseline: packaging `404 passed, 0 failed` (built-asar checks skipped);
     full tabs `33/34`, stopping on the existing missing `invoke` test bridge.
     The isolated real watcher reproduced the native warning after deletion and
@@ -124,7 +157,7 @@ section is kept here so the register has a visible edge.
   startup, with no periodic retry; the old feed detects 0.8.0 today. The user
   ended the notification investigation after it worked on another machine;
   the original report was not diagnosed and no updater behavior was changed.
-  No follow-up release has been authorized.
+  Included in the user-authorized 0.8.1 release above.
 - `persistent-reading-zoom` - LOCAL REVIEWED / UNMERGED (2026-10-16), isolated from canonical
   `main` at `54b8ddd8`. One app-wide reading percentage must survive document
   opens, new reader windows and quit/relaunch. Existing steps, reset, diagram
@@ -143,9 +176,9 @@ section is kept here so the register has a visible edge.
   the same external-opener setup failures and harness exception; not full green.
   Fresh independent GPT-6.1 Sol/high and GPT-6 Luna/high reviews found no
   significant issues; no reviewer disagreements or corrections were raised.
-  Final unmutated zoom rerun is 54/54. Local only; awaits serialized integration.
-  This is not a release or a full-suite-green claim.
-  Scope is local source only: no push, release, installation or real profiles.
+  Final unmutated zoom rerun is 54/54. Included in the user-authorized 0.8.1
+  release above; combined source also passes 54/54. This is not a full-suite-green
+  or installed-upgrade claim. No real profiles are used.
 - The Markaloo rebrand, feather icon, and reviewed table/TOC and Mermaid-label
   work are published together as [v0.8.0](https://github.com/lostinsea/markaloo/releases/tag/v0.8.0).
   The repository is `lostinsea/markaloo`; old release links still redirect.

@@ -211,6 +211,12 @@
           event.preventDefault();
         }
       }, { ...options, capture: true });
+      document.addEventListener("wheel", event => {
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, { ...options, capture: true, passive: false });
       dialog.showModal();
       footer.querySelector(`[data-dialog-choice="${CSS.escape(spec.defaultId)}"]`)?.focus();
       updatePolling();

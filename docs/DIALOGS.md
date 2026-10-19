@@ -13,6 +13,7 @@
   clicks do not authorize an action.
 - Native HTML dialogs contain keyboard focus. App shortcuts cannot run behind
   them. Focus returns only to a visible control, not a dismissed toast.
+- Modifier-wheel zoom cannot change the reading preference behind a card.
 - Cards scroll within the window. Action buttons remain reachable at narrow
   widths and high zoom. Existing themed input editors use the same bounds.
 - Questions are queued. Each answer belongs to its own question.

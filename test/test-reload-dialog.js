@@ -304,6 +304,47 @@ async function run() {
   check("an ordinary editor save does not ask for replacement consent",
     fs.readFileSync(file, "utf8").includes("Saved normally.") &&
     !await exec("document.getElementById('reloadDocumentDialog').open"));
+  for (const split of [false, true]) {
+    const mode = split ? "split" : "normal";
+    const earlier = "# Zoom consent " + mode + "\n\nEarlier document.\n";
+    const later = "# Zoom consent " + mode + "\n\nRecreated document.\n";
+    const zoomFile = await open("zoom-consent-" + mode + ".md", earlier);
+    await exec(`document.getElementById('zoomReset').click();
+      for(let i=0;i<6;i++)document.getElementById('zoomIn').click();
+      if(isEditMode!==${split})document.getElementById('toggleEdit').click();true`);
+    await settle();
+    check(`${mode} zoom consent fixture has real 160 percent reading scale`,
+      await exec(`zoomLevel===160&&localStorage.getItem('readingZoom')==='160'&&
+        Number(getComputedStyle(viewer).zoom)===1.6&&isEditMode===${split}`));
+    await recreate(zoomFile, later);
+    await prompt();
+    const point = await exec(`(()=>{
+      const d=document.getElementById('reloadDocumentDialog');
+      const r=d.getBoundingClientRect();
+      return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};
+    })()`);
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "+", modifiers: ["control"] });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "+", modifiers: ["control"] });
+    win.webContents.sendInputEvent({ type: "mouseWheel", ...point, deltaX: 0, deltaY: 120,
+      modifiers: ["control"] });
+    await sleep(180);
+    check(`${mode} reload question blocks underlying reading zoom shortcuts`,
+      await exec(`zoomLevel===160&&localStorage.getItem('readingZoom')==='160'&&
+        !viewer.contains(document.getElementById('reloadDocumentDialog'))`));
+    await capture("reload-reading-160-" + mode);
+    // Restore the fixture if a shortcut regression changed its scale.
+    await exec("zoomLevel=160;updateZoom();true");
+    await cancel();
+    check(`${mode} reload cancellation preserves content and reading zoom`,
+      (await exec(stateExpression)).live === earlier &&
+      await exec("zoomLevel===160&&localStorage.getItem('readingZoom')==='160'"));
+    await prompt();
+    await accept(later);
+    check(`${mode} approved reload keeps the persisted reading zoom`,
+      await exec("zoomLevel===160&&localStorage.getItem('readingZoom')==='160'&&Number(getComputedStyle(viewer).zoom)===1.6"));
+    await exec("if(isEditMode)document.getElementById('toggleEdit').click();true");
+    await settle();
+  }
   await checkPreDialogSnapshot();
   for (const change of ["disk", "edit", "selection", "closed"]) {
     const oldBody = "# Stale " + change + "\n\nEarlier document.\n";

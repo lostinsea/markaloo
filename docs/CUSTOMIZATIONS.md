@@ -256,7 +256,7 @@ nonce/digest and completion's unresolved-evidence signal survive the boundary.
 The bridge adds no read or IPC; remaining authority/consumer transitions and
 final responsiveness acceptance stay open.
 
-**Protected reload confirmation (local, unreleased).**
+**Protected reload confirmation (0.8.1).**
 
 - The `Reload document?` dialog uses the app's light/dark theme, typography
   and buttons. It names the document without treating its name as HTML.
@@ -277,7 +277,7 @@ final responsiveness acceptance stay open.
 - `npm run test:reload-dialog` exercises the production preload with disposable
   profiles/files. The revert harness owns the exact sensitivity records.
 
-**App-owned message and confirmation dialogs (local, unreleased).**
+**App-owned message and confirmation dialogs (0.8.1).**
 
 - Shared themed cards cover browser messages and document decisions.
 - Main uses its own isolated themed host for large-document, external-file,
