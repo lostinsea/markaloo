@@ -38,13 +38,26 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `release-0.8.1` — **READY, publication gates running** (2026-10-19).
+- `release-0.8.1` — **PUBLISHED AND VERIFIED** (2026-10-19).
+  - Release: [Markaloo 0.8.1](https://github.com/lostinsea/markaloo/releases/tag/v0.8.1).
+  - Exact tag source: `5633221d4205fc59fb84f80256a74083418add30`.
+    Annotated tag object: `1c8959daa08c2230986b36faaec46888c52053f6`.
+  - [Workflow 39322514065, attempt 1](https://github.com/lostinsea/markaloo/actions/runs/39322514065)
+    succeeded for Windows, Linux, macOS, provenance and publication.
+  - All nine downloaded assets match API sizes and SHA256. All three updater
+    manifests match version, filenames, sizes and SHA512. Provenance for every
+    runnable download matches the exact source, tag, signer workflow and run.
+    Windows/macOS remain unsigned; macOS updater limitations are unchanged.
+  - Evidence: session `f908fe61`, `files/release-081-source-receipt.json`,
+    `release-081-workflow.json`, `release-081-asset-verification.json`,
+    `release-081-provenance-summary.json` and the retained verification outputs.
   - User requested version 0.8.1 with all current completed work, including zoom.
   - Sole release writer: this isolated dialog stream. Includes reviewed reload/
     dialog commits `6b876066` and `7d97a8eb`, installer `cccf6b51` with its
     cancellation-status note `a767b9c6`, and reading zoom `70ab9947`.
-  - Canonical main is `54b8ddd8`. Use an explicit canonical push destination;
-    do not change shared Git configuration or the primary checkout.
+  - Integrated from canonical main `54b8ddd8`. Publication used an explicit
+    canonical destination and the existing owner login. Shared Git configuration
+    and the primary checkout were not changed.
   - Installer and zoom were integrated serially. Existing/custom installation
     folders stay unchanged; new installs default to Markaloo. No PC installation
     or cancelled updater investigation.
@@ -69,13 +82,13 @@ section is kept here so the register has a visible edge.
   - Combined normal/split 160% reload screenshots were viewed. Evidence:
     session `f908fe61`, `files/release-081-*`. The app was not installed;
     built-archive checks are not packaged-UI or live-upgrade certification.
-- `reload-dialog.all-dialogs` — **REVIEWED, local only; unpublished** (2026-10-19).
+- `reload-dialog.all-dialogs` — **PUBLISHED in 0.8.1** (2026-10-19).
   - All inventoried app-owned messages and confirmations use shared themed
     cards or an independent Main-owned themed host. Existing themed input
     editors keep their behavior and gain responsive bounds. Image, Mermaid
     and table child windows use canonical app palettes and bundled fonts.
-  - Builds on local `6b876066` in the same isolated branch. Canonical main
-    resolves to `54b8ddd8`; no rebase or unrelated integration.
+  - Reviewed unit `7d97a8eb` builds on `6b876066` in the same isolated branch.
+    The 0.8.1 integration above preserves both commits.
   - `docs/DIALOGS.md` records entry-point coverage, authority and exclusions.
     Native file/directory pickers, platform security/authentication and
     installer UI remain native. Only failure of the independent themed host
@@ -107,7 +120,7 @@ section is kept here so the register has a visible edge.
     limits. No full-suite, packaged-app or cross-platform certification.
   - Included in the user-authorized 0.8.1 publication above. No primary-checkout
     changes, PC installation or cancelled updater diagnosis.
-- `reload-dialog` — **REVIEWED, local only; unpublished** (2026-10-19).
+- `reload-dialog` — **PUBLISHED in 0.8.1** (2026-10-19).
   - Isolated branch: `users/vinma-microsoft/clear-themed-reload-dialog`.
   - Base matches canonical `lostinsea/markaloo` main at `54b8ddd8`.
   - The protected reload confirmation uses an accessible light/dark dialog.
@@ -147,7 +160,7 @@ section is kept here so the register has a visible edge.
     recreation; Cancel kept the original clean document. Receipts:
     `reload-*-baseline.log`, `baseline-native-options.json`, `baseline-app.png`
     in session `f908fe61` artifacts. The baseline app screenshot was viewed.
-- `installer-directory-followup` - CORRECTED LOCALLY, NOT PUBLISHED: the v0.8.0
+- `installer-directory-followup` - PUBLISHED in 0.8.1: the v0.8.0
   Windows installer defaults even a fresh installation to a folder named
   `Folia`. Current source defaults to `Markaloo` and preserves a recognized
   existing location, as the user chose. The installer compiled, packaging
@@ -158,7 +171,7 @@ section is kept here so the register has a visible edge.
   ended the notification investigation after it worked on another machine;
   the original report was not diagnosed and no updater behavior was changed.
   Included in the user-authorized 0.8.1 release above.
-- `persistent-reading-zoom` - LOCAL REVIEWED / UNMERGED (2026-10-16), isolated from canonical
+- `persistent-reading-zoom` - PUBLISHED in 0.8.1; originally reviewed in isolation from canonical
   `main` at `54b8ddd8`. One app-wide reading percentage must survive document
   opens, new reader windows and quit/relaunch. Existing steps, reset, diagram
   zoom and export behavior stay unchanged.
