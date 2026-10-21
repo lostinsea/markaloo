@@ -38,6 +38,47 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `combined-final-review` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+  - Local-only combination: TOC `02108b98`, editor/scroll `e8b41f8b`,
+    toolbar `9ff824bc` and About `1e446a38`, based on canonical `4d614ee2`.
+  - The isolated combined worktree owns this entry. Earlier unit entries describe
+    their individual snapshots; all four units are included here.
+  - Sol 6.1/high reconciled menu, scripts, HTML and proof-registry seams.
+    Fresh independent Sol 6.1/high and Luna 6/high reviewed the full base delta
+    and accepted the corrected affected revision in immutable `review-r4`.
+  - Sol found the empty-list metadata hang; Luna later agreed. Actual Marked
+    tokens and bounded execution prove the terminal-position guard, R1053.
+  - Luna found stale-path/refused-admission rollback could re-enable actions.
+    Sol initially missed it, then agreed. R1062/R1063 prove captured-owner
+    restoration and the absence of a bogus watcher reassertion.
+  - Reload/Edit are natively disabled without an admitted document, with command
+    guards as well. TOC remains global; admitted empty files remain actionable.
+    Repeated Edit preserves draft, history, selection, both scroll axes, render
+    state and focus. Existing no-op behavior is preserved, not replaced.
+  - Combined About cases retain two dirty editors, shared TOC, zoom and modal
+    focus. Child failure/timeout/footer checks reject incomplete receipts.
+  - `test:features` runs before legacy tabs in `npm test` and Windows CI.
+    Final state/UI updates are `42/42` and `139/139`; toolbar `38/38`,
+    editor `60/60`, scrolling `221/221` and panels `59/59`.
+  - Startup `13/13`, source packaging `427/0` with two built-asar skips, and
+    the directly affected reload/dialog/TOC/responsive/zoom/theme/table/visual
+    suites pass. Standard `npm test` then exits 1 at the known baseline
+    SEC-08 tab failures (`21/26`); no full-chain pass is claimed.
+  - Required exact reverts `R169`, `R932` and `R985-R1063` are PROVEN.
+    All anchors resolve. Earlier failed proof/test/performance receipts remain
+    preserved; final assertions and footer parsing were not weakened.
+  - Astra-guided corrections avoid repeated unchanged-tree verification,
+    discarded non-table rows and unused synchronous semver range-module loading.
+    Work-count/cache controls protect them without weakening validation.
+  - Matched R5 passes every original timing budget on the final product bytes.
+    The final settled callback p95 is 0.20 ms, with no rebuilds or Range reads.
+    Small samples and retained first-open outliers limit tail claims; see
+    `docs/PERF-AUDIT.md`. Final light/dark, narrow/zoom, multi-editor/About
+    and disabled-Welcome screenshots were actually viewed.
+  - Evidence: session `7c3d5e2b`, `files/final-combined-result.json`,
+    `final-review-manifest.json` and the preserved immutable review snapshots.
+  - User authorized **0.9.0 as the next release after all acceptance work**.
+    This gate does not push, merge main, tag, dispatch, publish or run installers.
 - `grouped-toc-toolbar` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
   - Isolated toolbar stream based on reviewed editor/scroll `e8b41f8b`.
     The separate About unit is not included.

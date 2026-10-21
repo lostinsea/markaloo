@@ -38,6 +38,7 @@
     "test:toc": "node --check test/test-toc.js && electron test/test-toc.js",
     "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
     "test:reading": "node --check test/test-reading.js && node test/test-reading.js",
+    "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     "test:zoom": "node --check test/test-reading-zoom.js && node test/test-reading-zoom.js",
     "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js",
     "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
@@ -46,7 +47,8 @@
     "test:corpus": "node --check bench/run.js && node --check bench/corpus.js && node bench/verify.js",
     "bench": "electron bench/run.js",
     "bench:f22": "node bench/run-f22-shutdown.js",
-    "test": "npm run test:packaging && npm run test:profile && npm run test:corpus && npm run test:startup && npm run test:document-session && npm run test:tabs && npm run test:reload-dialog && npm run test:owned-dialogs && npm run test:dialogs && npm run test:updates && npm run test:security && npm run test:popups && npm run test:visual && npm run test:search && npm run test:toc && npm run test:toc-toolbar && npm run test:reading && npm run test:zoom && npm run test:document-editor && npm run test:editor-scroll && npm run test:responsive && npm run test:mermaid && npm run test:patch && npm run test:tables && npm run test:theme",
+    "test:features": "npm run test:updates && npm run test:toc-toolbar && npm run test:document-editor && npm run test:editor-scroll && npm run test:reading-panels",
+    "test": "npm run test:packaging && npm run test:profile && npm run test:corpus && npm run test:startup && npm run test:document-session && npm run test:features && npm run test:tabs && npm run test:reload-dialog && npm run test:owned-dialogs && npm run test:dialogs && npm run test:security && npm run test:popups && npm run test:visual && npm run test:search && npm run test:toc && npm run test:reading && npm run test:zoom && npm run test:responsive && npm run test:mermaid && npm run test:patch && npm run test:tables && npm run test:theme",
     "test:tables": "node --check test/test-table-display.js && electron test/test-table-display.js",
     "test:theme": "node --check test/test-theme.js && electron test/test-theme.js"
   },

@@ -220,23 +220,29 @@ async function run() {
   const controller = path.join(__dirname, "test-about-updates.js");
   function controllerPhases(platform) {
     const phases = [], exited = {};
+    let exitCode;
+    const context = vm.createContext({
+      __dirname, __filename: controller, console: { log() {}, error() {} },
+      process: { platform, argv: ["node", controller], env: {},
+        stdout: { write() {} }, stderr: { write() {} }, exit(code) { exitCode = code; throw exited; } },
+      require(name) {
+        if (name === "./test-userdata-isolation") return {};
+        if (name === "fs") return { mkdirSync() {}, writeFileSync() {} };
+        if (name === "electron") return "controlled-electron";
+        if (name === "child_process") return { spawnSync(_exe, args) {
+          phases.push(args[1]);
+          const names = args[1] === "combined"
+            ? vm.runInContext("combinedRequired", context) : ["control one", "control two", "control three"];
+          return { status: 0, stdout: names.map(name => "PASS " + name).join("\n") +
+            `\n=== updates ${args[1]}: ${names.length}/${names.length} passed ===\n` };
+        } };
+        return require(name);
+      },
+    });
     try {
-      vm.runInNewContext(fs.readFileSync(controller, "utf8"), {
-        __dirname, __filename: controller, console: { log() {}, error() {} },
-        process: { platform, argv: ["node", controller], env: {},
-          stdout: { write() {} }, stderr: { write() {} }, exit() { throw exited; } },
-        require(name) {
-          if (name === "./test-userdata-isolation") return {};
-          if (name === "fs") return { mkdirSync() {}, writeFileSync() {} };
-          if (name === "electron") return "controlled-electron";
-          if (name === "child_process") return { spawnSync(_exe, args) {
-            phases.push(args[1]);
-            return { status: 0, stdout: `=== updates ${args[1]}: 3/3 passed ===\n` };
-          } };
-          return require(name);
-        },
-      });
+      vm.runInContext(fs.readFileSync(controller, "utf8"), context);
     } catch (error) { if (error !== exited) throw error; }
+    if (exitCode !== 0) throw new Error("Controlled update phases did not complete: " + exitCode);
     return phases;
   }
   check("update controller keeps Windows portable fixtures on Windows",
@@ -244,7 +250,7 @@ async function run() {
   check("update controller excludes Windows portable fixtures on Linux and macOS",
     ["linux", "darwin"].every(platform => {
       const phases = controllerPhases(platform);
-      return phases.length === 6 && phases.includes("discover") &&
+      return phases.length === 7 && phases.includes("combined") && phases.includes("discover") &&
         !phases.some(phase => phase.startsWith("portable-"));
     }));
 }

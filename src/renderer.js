@@ -3321,7 +3321,7 @@ if (welcomeReadmeBtn) {
 // Refresh button
 refreshBtn.addEventListener('click', async () => {
   if (!mayMutateRendererDocument('refresh-button')) return;
-  if (!currentFilePath) {
+  if (!currentDocumentActionOwner()) {
     return;
   }
   if (typeof window.CustomTabs?.requestReloadWithConfirmation === 'function') {
@@ -3648,9 +3648,17 @@ let editorModeRevision = 0;
 let editorInteractionRevision = 0;
 let editorExitOperation = null;
 
+function currentDocumentActionOwner() {
+  const tab = window.CustomTabs?.getActiveTab();
+  if (!tab || tab.filePath !== currentFilePath) return null;
+  return currentSaveDocumentIdentity()?.tabId === tab.id ? tab : null;
+}
+
 function setEditorPresentation(open, enabled = true) {
   isEditMode = open;
   contentWrapper.classList.toggle('split-view', open);
+  // Admission supplies this flag before the incoming tab becomes active.
+  refreshBtn.disabled = !enabled;
   for (const button of [toggleEditBtn, openEditorBtn]) {
     button.disabled = !enabled;
     button.setAttribute('aria-expanded', String(open));
@@ -3728,8 +3736,8 @@ window.rebaseEditSession = () => captureEditSessionBaseline(false);
 async function changeCurrentDocumentEditor(open) {
   if (!mayMutateRendererDocument('toggle-edit-mode')) return;
   fileMenu.classList.remove('visible');
-  const tab = window.CustomTabs?.getActiveTab();
-  if (!tab || tab.filePath !== currentFilePath) {
+  const tab = currentDocumentActionOwner();
+  if (!tab) {
     console.warn('Cannot open an editor without an admitted document');
     return;
   }
@@ -4513,7 +4521,7 @@ document.addEventListener('keydown', async (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
     e.preventDefault();
     if (!mayMutateRendererDocument('shortcut-reload')) return;
-    if (currentFilePath) {
+    if (currentDocumentActionOwner()) {
       if (typeof window.CustomTabs?.requestReloadWithConfirmation === 'function') {
         window.CustomTabs.requestReloadWithConfirmation();
         return;
@@ -8330,6 +8338,7 @@ function beginFileOpen(data, options = {}) {
     markdown: originalMarkdown,
     editorValue: markdownEditor.value,
     editor: captureDocumentEditor(),
+    documentActionsEnabled: !!currentDocumentActionOwner(),
     dirty: hasUnsavedChanges,
     renderedContent: _lastRenderedContent,
     history: historySnapshot(),
@@ -8475,7 +8484,7 @@ function beginFileOpen(data, options = {}) {
     _lastRenderedContent = prior.renderedContent;
     updateFileInfo(prior.filePath);
     originalMarkdown = prior.markdown;
-    setEditorPresentation(prior.editor.open, !!prior.filePath);
+    setEditorPresentation(prior.editor.open, prior.documentActionsEnabled);
     markdownEditor.value = prior.editorValue;
     markdownEditor.setSelectionRange(prior.editor.selection.start, prior.editor.selection.end,
       prior.editor.selection.direction);
@@ -8512,7 +8521,7 @@ function beginFileOpen(data, options = {}) {
         );
       }
     }
-    if (prior.filePath && priorOwnerRestored) {
+    if (prior.documentActionsEnabled && priorOwnerRestored) {
       const restoredSelection = assertFileTrackingOwnership(
         prior.filePath, prior.trackingActive, {
           adoptBaseline: false,

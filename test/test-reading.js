@@ -18,7 +18,7 @@ if (typeof electron === "string") {
   let total = 0;
   let passed = 0;
   const panelPhases = ["startup", "welcomeChoice", "fresh", "freshClosed", "toc", "notes", "closed", "invalid", "missing", "unreadable"];
-  const phases = process.env.FOLIA_READING_PANELS ? panelPhases :
+  const phases = process.argv.includes("--panels") || process.env.FOLIA_READING_PANELS ? panelPhases :
     process.env.FOLIA_READING_BORDERS ? ["borders"] :
     process.env.FOLIA_READING_PERF ? ["screen"] : ["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed", "invalid", "missing", "unreadable", "borders"];
   for (const phase of phases) {
@@ -34,9 +34,13 @@ if (typeof electron === "string") {
     });
     process.stdout.write(run.stdout || "");
     process.stderr.write(run.stderr || "");
-    const footer = run.stdout?.match(/=== reading (\w+): (\d+)\/(\d+) passed ===/);
-    if (run.error || !footer || footer[1] !== phase || Number(footer[3]) < 4 ||
-        run.status !== (footer[2] === footer[3] ? 0 : 1)) {
+    const footers = [...(run.stdout || "").matchAll(/=== reading (\w+): (\d+)\/(\d+) passed ===/g)];
+    const footer = footers[0];
+    const assertions = (run.stdout || "").split(/\r?\n/).filter(line => /^(PASS|FAIL) /.test(line));
+    const failures = assertions.filter(line => line.startsWith("FAIL ")).length;
+    if (run.error || footers.length !== 1 || footer[1] !== phase || Number(footer[3]) < 4 ||
+        assertions.length !== Number(footer[3]) || failures !== Number(footer[3]) - Number(footer[2]) ||
+        run.status !== (failures ? 1 : 0)) {
       console.error("FAIL reading child completion  -> " + (run.error || run.status));
       process.exit(1);
     }
@@ -48,6 +52,11 @@ if (typeof electron === "string") {
 } else {
   const { app, BrowserWindow, dialog, session, net, shell } = electron;
   const phase = process.argv[2];
+  if (!["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed",
+    "invalid", "missing", "unreadable", "borders"].includes(phase)) {
+    console.error("Unsupported reading fixture phase: " + phase);
+    app.exit(2);
+  }
   const profile = path.join(batch, ["startup", "welcomeChoice"].includes(phase) ? phase + "-profile" : "profile");
   fs.mkdirSync(profile, { recursive: true });
   app.setPath("userData", profile);

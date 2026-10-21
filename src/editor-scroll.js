@@ -82,6 +82,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         let position = expanded.indexOf(value);
         while (position >= 0) {
           if (allowedPrefix(expanded.slice(0, position)) && /^[ \t]*$/.test(expanded.slice(position + value.length))) return position;
+          // indexOf('', length + 1) clamps back to length instead of failing.
+          if (position === expanded.length) return -1;
           position = expanded.indexOf(value, position + 1);
         }
         return -1;
@@ -228,9 +230,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           const tokenView = sliceView(view, at, at + token.raw.length);
           const end = token.raw.trimEnd().length;
           const tokenOwner = topLevel ? {} : owner;
-          const rows = [...token.raw.trimEnd().matchAll(/[^\n]+/g)].map(match => ({
+          const rows = token.type === 'table' ? [...token.raw.trimEnd().matchAll(/[^\n]+/g)].map(match => ({
             start: tokenView.at(match.index), end: tokenView.at(match.index + match[0].length),
-          }));
+          })) : [];
           let codeOffset = 0;
           const codeStart = token.type === 'code' ? token.raw.indexOf(token.text) : -1;
           spans.set(token, { start: tokenView.at(0), end: tokenView.at(end), kind: token.type, inline, opaque,
@@ -385,7 +387,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         return [...left].every((node, i) => equal(node.content, right[i].content));
       };
       let metadata = read(this.mappingHtml);
-      if (!metadata.valid || !equal(root, metadata.copy)) {
+      let verified = metadata.valid && equal(root, metadata.copy);
+      if (!verified) {
         // Foreign/raw-text HTML can parse an inserted span as authored content.
         // Keep those token subtrees opaque in the metadata copy, not in the UI.
         this.mappingHtml = this.renderMapping(true);
@@ -393,10 +396,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           this.mappingHtml = this.restoreMapping(this.mappingHtml, restoration);
         }
         metadata = read(this.mappingHtml);
+        verified = metadata.valid && equal(root, metadata.copy);
       }
       const bindings = new WeakMap(), specs = this.textSpecs;
       this.textSpecs = new WeakMap();
-      if (!metadata.valid || !equal(root, metadata.copy)) {
+      if (!verified) {
         this.warn('unverified authored HTML structure');
         return bindings;
       }

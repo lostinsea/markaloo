@@ -2833,6 +2833,92 @@ async function main() {
     );
   }
 
+  // A reachable suite after a failing legacy command is not an executed gate.
+  // Resolve ordered npm calls as well as their membership, including node-owned
+  // Electron controllers that the older direct-electron census cannot see.
+  {
+    const featureCommands = {
+      "test:updates": "node test/test-update-state.js && node test/test-about-updates.js",
+      "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
+      "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js",
+      "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
+      "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
+    };
+    const featureScripts = Object.keys(featureCommands);
+    function orderedCalls(scripts, name, ancestors = []) {
+      if (typeof scripts[name] !== "string" || ancestors.includes(name)) return null;
+      const calls = [name];
+      for (const command of scripts[name].split(/\s*&&\s*/)) {
+        const match = command.trim().match(/^npm\s+(?:run\s+)?([\w:-]+)$/);
+        if (!match) {
+          if (/(?:^|\s)npm(?:\s|$)/.test(command)) return null;
+          continue;
+        }
+        const nested = orderedCalls(scripts, match[1], [...ancestors, name]);
+        if (!nested) return null;
+        calls.push(...nested);
+      }
+      return calls;
+    }
+    function beforeLegacy(calls) {
+      const tabs = calls?.indexOf("test:tabs") ?? -1;
+      return tabs > 0 && ["test:features", ...featureScripts].every(name =>
+        calls.filter(call => call === name).length === 1 && calls.indexOf(name) < tabs);
+    }
+    const featureCalls = orderedCalls(pkg.scripts, "test:features");
+    check("the feature aggregate contains each accepted behavioral suite exactly once",
+      JSON.stringify(featureCalls) === JSON.stringify(["test:features", ...featureScripts]) &&
+        featureScripts.every(name => pkg.scripts[name] === featureCommands[name]),
+      JSON.stringify(featureCalls));
+    const standardCalls = orderedCalls(pkg.scripts, "test");
+    check("npm test executes the complete feature gate before legacy tabs and retains full reading later",
+      beforeLegacy(standardCalls) && standardCalls.filter(name => name === "test:reading").length === 1 &&
+        standardCalls.indexOf("test:reading") > standardCalls.indexOf("test:tabs"),
+      JSON.stringify(standardCalls));
+    const ordinaryJob = read(".github/workflows/ci.yml").match(/^  test:\r?\n([\s\S]*?)(?=^  [\w-]+:|(?![\s\S]))/m)?.[1] || "";
+    const ciCommands = [...ordinaryJob.matchAll(/^        run:\s*npm\s+(?:run\s+)?(test(?::[\w-]+)?)\s*$/gm)]
+      .map(match => match[1]);
+    const ciCalls = ciCommands.flatMap(name => orderedCalls(pkg.scripts, name) || []);
+    check("ordinary CI executes the complete feature gate before legacy tabs",
+      ciCommands.length > 0 && beforeLegacy(ciCalls), JSON.stringify(ciCommands));
+    const fixtureScripts = { test: "npm run test:features && npm run test:tabs",
+      "test:features": featureScripts.map(name => "npm run " + name).join(" && "),
+      "test:tabs": "electron test/test-tab-refresh.js",
+      ...Object.fromEntries(featureScripts.map(name => [name, "node fixture.js"])) };
+    check("feature reachability oracle rejects omitted duplicate reordered and cyclic routes",
+      beforeLegacy(orderedCalls(fixtureScripts, "test")) &&
+      !beforeLegacy(orderedCalls({ ...fixtureScripts, test: "npm run test:tabs && npm run test:features" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm run test:toc-toolbar" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...fixtureScripts, test: fixtureScripts.test + " && npm run test:features" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm run test:missing" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm test" }, "test")));
+    function phaseSelection(file, context) {
+      const expressions = [...stripJsComments(read(file)).matchAll(/const phases = ([\s\S]*?);\r?\n/g)];
+      if (expressions.length !== 1) return null;
+      try {
+        return require("vm").runInNewContext(expressions[0][1], context, { timeout: 1000 });
+      } catch {
+        return null;
+      }
+    }
+    const aboutPhases = args => phaseSelection("test/test-about-updates.js", {
+      perf: false, portablePhases: [],
+      process: { argv: ["node", "fixture", ...args] },
+    });
+    check("the standard updates command actually selects combined acceptance and preserves its focused route",
+      pkg.scripts["test:updates"] === "node test/test-update-state.js && node test/test-about-updates.js" &&
+      JSON.stringify(aboutPhases([])) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current"]) &&
+      JSON.stringify(aboutPhases(["--combined"])) === '["combined"]');
+    const panels = ["startup", "welcomeChoice", "fresh", "freshClosed", "toc", "notes", "closed", "invalid", "missing", "unreadable"];
+    const readingPhases = phaseSelection("test/test-reading.js", {
+      panelPhases: panels,
+      process: { argv: ["node", "fixture", "--panels"], env: {} },
+    });
+    check("the focused panel command uses a cross-platform selector for every lifecycle phase",
+      pkg.scripts["test:reading-panels"] === "node --check test/test-reading.js && node test/test-reading.js --panels" &&
+      JSON.stringify(readingPhases) === JSON.stringify(panels), JSON.stringify(readingPhases));
+  }
+
   // Both ordinary CI jobs execute the theme oracle, which reads a frozen commit.
   {
     function checkoutHistory(text, job) {

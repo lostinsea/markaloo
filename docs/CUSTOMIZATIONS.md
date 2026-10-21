@@ -27,9 +27,20 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Combined feature regression gate
+
+- `npm run test:features` runs updates, grouped toolbar, document editors,
+  content-aware scrolling and panel lifecycle before the legacy tab suite.
+- `npm test` and Windows CI run that same ordered gate. A broken later suite
+  cannot silently skip these feature regressions.
+- About also runs with two dirty document editors, retained selection/history,
+  shared TOC and zoom through the real isolated production preload.
+
 ### Grouped toolbar actions
 
 - Reload and Open editor act on the current document and stay in one group.
+- Both are natively disabled without an admitted document, including Welcome
+  and last-tab close. TOC stays available. Empty admitted files remain actionable.
 - A noninteractive separator marks the app-wide TOC toggle. Its pressed state
   follows the same drawer state as the menu, close button, Escape and All Notes.
 - TOC visibility applies to every open tab. Toggling it keeps document editors,
@@ -47,6 +58,8 @@ This approach means after an upstream merge, you only need to ensure these files
 
 - The toolbar's Open editor button and the menu action only open the current
   document. Repeating either action keeps its draft, selection and undo history.
+- An already-open editor command does no render, reset, scroll or focus work.
+  Native button focus stays normal. Save and Exit remain separate actions.
 - Each tab keeps its own open or closed editor, source selection, scroll offsets,
   history and discard checkpoint. Multiple documents can have editors open.
 - Switching tabs restores that document's editor. It never places another
@@ -61,6 +74,10 @@ This approach means after an upstream merge, you only need to ensure these files
   or restore drafts after restart. Welcome has no editable document.
 - `npm run test:document-editor` covers real production admission, independent
   drafts, Save, discard, deferred callbacks and stale Exit completions.
+- No-document controls are checked after cancellation/refusal/last close and
+  against a stale path with no owner. Direct commands cannot bypass disabled UI.
+- Failed admission restores captured owner availability, not a nonempty path.
+  It never enables actions or reasserts a watcher for an ownerless stale path.
 
 ### Content-aware editor scrolling
 
@@ -89,6 +106,10 @@ This approach means after an upstream merge, you only need to ensure these files
   follower's vertical position. They do not parse, scan or re-render the document.
 - Physical-line rebuilds walk the paragraph once and measure short text ranges,
   not every remaining line after each break.
+- Empty Markdown list items terminate source searches. Bounded actual-Marked
+  controls and real reading/edit/full/light-preview cases protect that path.
+- Metadata verifies each unchanged tree once. Only tables build physical-row
+  descriptors; unused non-table row scans are excluded by work-count controls.
 - `npm run test:editor-scroll` uses the production preload and disposable files
   and profile. Performance method and limits are in `docs/PERF-AUDIT.md`.
 - Both editor suites run in `npm test`, including the existing Windows CI job.
@@ -105,6 +126,8 @@ This approach means after an upstream merge, you only need to ensure these files
 - `window-state.json` keeps only `updateAvailability: { schema: 1, version }`.
   Main validates it and uses semantic version ordering. Running the same or
   a newer version removes the notice, including after a manual installation.
+- Startup loads only the semantic version validator and comparison functions,
+  not the unused range API. The same validation still runs before state is used.
 - A later failed or no-update check does not erase a known newer version.
   Failure and unconfirmed remembered availability have separate messages.
 - Cached availability never means an installer is ready. Explicit Download

@@ -1,10 +1,12 @@
 "use strict";
 
-const semver = require("semver");
+// Startup validates versions, but does not need the package's range parser.
+const valid = require("semver/functions/valid");
+const gt = require("semver/functions/gt");
 
 function validVersion(value) {
   return typeof value === "string" && value.length <= 128 &&
-    /^\d/.test(value) && semver.valid(value) ? value : null;
+    /^\d/.test(value) && valid(value) ? value : null;
 }
 
 // Availability is durable knowledge, not a downloaded installer or permission.
@@ -42,7 +44,7 @@ function createUpdateState(options) {
   if (cached !== undefined && cached !== null) {
     if (cached && typeof cached === "object" && !Array.isArray(cached) &&
         Object.keys(cached).length === 2 && cached.schema === 1 &&
-        validVersion(cached.version) && semver.gt(cached.version, installedVersion)) {
+        validVersion(cached.version) && gt(cached.version, installedVersion)) {
       availableVersion = cached.version;
       phase = "available";
     } else {
@@ -81,10 +83,10 @@ function createUpdateState(options) {
   }
 
   function remember(version) {
-    if (!validVersion(version) || !semver.gt(version, installedVersion)) {
+    if (!validVersion(version) || !gt(version, installedVersion)) {
       throw new Error("The update provider returned an invalid newer version.");
     }
-    if (!availableVersion || semver.gt(version, availableVersion)) {
+    if (!availableVersion || gt(version, availableVersion)) {
       availableVersion = version;
       persist();
     } else if (storageError) {
@@ -131,7 +133,7 @@ function createUpdateState(options) {
         const result = await updater.checkForUpdates();
         const version = result?.updateInfo?.version;
         if (!validVersion(version)) throw new Error("The update provider returned an invalid version.");
-        if (semver.gt(version, installedVersion)) {
+        if (gt(version, installedVersion)) {
           // update-not-available can describe a gated/channel-ineligible offer.
           // Only the provider's actual availability event grants a live offer.
           if (liveCheckOffer !== version) {

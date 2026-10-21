@@ -187,6 +187,10 @@ if (typeof electron === "string") {
     await click("toggleNotes");
     await click("closeNotes");
     samples.push(await state());
+    await click("toggleIndex");
+    check("File menu TOC activation moves focus into the drawer close control",
+      await exec("indexPanel.classList.contains('visible')&&document.activeElement===closeIndexBtn"));
+    await click("closeIndex");
     check("TOC toolbar pressed expanded and exclusive panel state agree after every entry and exit",
       samples.every(agrees) && samples.map(value => value.toc ? "toc" : value.notes ? "notes" : "closed")
         .join("|") === "closed|toc|closed|notes|toc|closed|closed", samples);

@@ -1,5 +1,59 @@
 # Performance Audit
 
+## Combined feature gate - bounded check, 2026-10-21
+
+- Includes About/update state, default TOC, document editors, content-aware
+  scrolling and grouped TOC toolbar on the same final product source.
+- Same shared Windows x64 desktop, AMD EPYC 7763, Node 24.18.1 and Electron
+  43.4.1. No other local suite runs during these measurements.
+- Existing About harness: five fresh profiles against canonical `4d614ee2`.
+  Startup includes Main load, reader observation and two animation frames.
+  Prose open uses the existing 64 KiB fixture and painted-DOM wait.
+- Existing scroll harness: three matched observations per mixed/plain fixture
+  against reviewed TOC `02108b98`; identical fixture and harness hashes.
+- Original budgets stay fixed: startup p50/p95 +100/+200 ms, prose +30/+60 ms;
+  scroll open/complete split p50/p95 +max(20%, 50 ms).
+
+| Measurement | Baseline p50 / p95 (ms) | Combined p50 / p95 (ms) |
+|---|---:|---:|
+| Empty-reader startup | 1337.84 / 1621.94 | 1144.71 / 1264.04 |
+| Prose open through painted DOM | 182.12 / 187.58 | 182.25 / 214.21 |
+| Mixed open/render | 101.99 / 3204.35 | 146.54 / 519.24 |
+| Mixed complete split entry | 93.40 / 94.10 | 92.90 / 96.20 |
+| Plain open/render | 65.16 / 76.43 | 73.45 / 75.58 |
+| Plain complete split entry | 94.10 / 94.10 | 92.30 / 93.60 |
+
+- Every listed budget passes together in this one source-frozen batch.
+  This is not a speedup claim: startup remains sensitive to shared desktop
+  scheduling. Nearest-rank p95 is the maximum of these small samples.
+- The mixed baseline includes a 3204.35 ms observation. It is retained, not
+  discarded; its p95 comparison has little tail-certification value. Mixed-open
+  median adds 44.55 ms against the unchanged 50 ms allowance.
+- Startup uses documented `semver/functions/valid` and `semver/functions/gt`,
+  the exact functions exported by the package. It does not load unused range
+  utilities. Required validation and cached-state initialization are not deferred.
+- Actual startup-stage diagnosis measured full semver load at 57.06 ms inside
+  an 80.63 ms Main require. That identifies unnecessary synchronous work, not
+  the whole cause of startup variance. Positive module-cache controls and an
+  exact eager-import revert protect the correction.
+- Metadata reuses successful unchanged-tree verification and builds physical
+  row descriptors only for tables. Exact work-count controls reject both
+  redundant operations without weakening DOM/text/template validation.
+- Settled scroll retains its separate <=4 ms p95, zero-rebuild and zero-source-
+  Range-read acceptance checks. This batch does not certify extreme documents,
+  high-refresh displays, packaged startup, installed upgrades or other platforms.
+- On the same product bytes, the final standard scroll suite measured 0.20 ms
+  settled callback p95: 40 driver frames, 40 writes, no rebuilds or source Range
+  reads. Its separate first mixed open took 3309.04 ms. That observation is
+  retained, not substituted into R5, and reinforces the first-open tail limit.
+- Evidence: session `7c3d5e2b`, `files/performance-r5/combined-performance.json`,
+  matching About/scroll samples and source/harness hashes. Failed R1 prose
+  (+30.77 ms median) and R2 startup (+114.29 ms median) receipts remain preserved;
+  neither is mixed into the final passing batch.
+- R5 includes native disabled-state, admitted-owner command guards and corrected
+  refused-admission rollback. Earlier passing R3/R4 snapshots remain preserved;
+  neither is substituted for this final product source.
+
 ## Content-aware editor scrolling - bounded check, 2026-10-21
 
 - Same Windows x64 machine, AMD EPYC 7763, Node 24.18.1, Electron 43.4.1.

@@ -72,15 +72,10 @@ jobs:
         # pins and fails if the lockfile and package.json disagree.
         run: npm ci
 
-      # Legacy failures earlier in npm test must not silently skip this unit.
-      - name: Verify the grouped global TOC toolbar
-        run: npm run test:toc-toolbar
-
-      # The whole chain - all 13 suites, the 10 windowed ones included. Electron
-      # does not ship its binary on npm; the first `electron` invocation lazily
-      # fetches a ~100MB build from GitHub's CDN, which is why this step can be
-      # slow on a cold cache and why the timeout above is generous.
-      - name: Run the full test suite
+      # npm test reaches test:features before legacy tabs: About/update state,
+      # shared TOC toolbar, document-owned editors, scroll sync and panel lifecycle.
+      # Keep one invocation so the feature suites are not paid for twice.
+      - name: Run feature acceptance before the legacy suite
         run: npm test
 
       # Read-only and about a second, but it is the check that catches a revert

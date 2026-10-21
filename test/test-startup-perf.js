@@ -6,9 +6,8 @@
 // the window could even be created, paid by every launch regardless of whether
 // the session ever exported a DOCX or checked for an update. html-to-docx has
 // since been removed outright along with Word export, which retires the larger
-// of the two costs by deletion rather than by deferral; electron-updater is now
-// the only production dependency, and the lazy-load property still has to hold
-// for it.
+// of the two costs by deletion rather than by deferral. electron-updater remains
+// optional, and startup must not eagerly load it or semver's unused range API.
 //
 // This harness IS the Electron main script. It requires ./main.js, so main.js
 // runs in this very process and shares this process's module registry. That
@@ -146,6 +145,16 @@ app.whenReady().then(async () => {
 
   // --- 1. The heavy module is not loaded by startup ------------------------
   const updaterCached = cachedModulePaths("electron-updater");
+  check(
+    "startup loads the actual focused semantic version validators",
+    ["semver/functions/valid", "semver/functions/gt"].every(name =>
+      Object.hasOwn(require.cache, require.resolve(name))),
+  );
+  check(
+    "startup does not load unused semantic range utilities or the full package entry",
+    ["semver", "semver/classes/range", "semver/ranges/subset"].every(name =>
+      !Object.hasOwn(require.cache, require.resolve(name))),
+  );
   check(
     "electron-updater is not required during startup",
     updaterCached.length === 0,

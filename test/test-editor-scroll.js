@@ -12,7 +12,7 @@ fs.mkdirSync(evidence, { recursive: true });
 const baseline = process.argv.includes("--baseline");
 const perfOnly = process.argv.includes("--perf");
 const proof = process.env.FOLIA_SCROLL_PROOF;
-if (proof && !["core", "blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds"].includes(proof)) {
+if (proof && !["core", "blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty"].includes(proof)) {
   console.error("Unsupported editor-scroll proof route: " + proof);
   app.exit(2);
 }
@@ -305,6 +305,106 @@ async function run() {
   await capture("preview-middle-section");
   if (!baseline && !perfOnly && !coreProof) {
     await wait("published scroll geometry", "getEditorScrollDiagnostics().ready");
+    if (scenario("empty")) {
+      const vm = require("vm");
+      const markedModule = await import(require("url").pathToFileURL(require.resolve("marked")).href);
+      const context = vm.createContext({
+        window: {}, document: {}, crypto: require("crypto").webcrypto,
+        ResizeObserver: class {}, MutationObserver: class {},
+        console: { warn() {} }, marked: markedModule,
+      });
+      vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "editor-scroll.js"), "utf8") +
+        `\nwindow.mapping=window.createEditorScroll({
+          editor:{addEventListener(){}},preview:{addEventListener(){}},
+          active:()=>false,frozen:()=>false,identity:()=>1,scale:()=>1
+        });`, context);
+      const emptyCases = ["-", "- ", "+", "*", "1.", "1. ", "1)", "> -", "- [ ] "];
+      const controls = emptyCases.map(body => {
+        context.body = body;
+        try {
+          const html = vm.runInContext("window.mapping.source(body).parse(marked)", context, { timeout: 500 });
+          return { body, completed: html === markedModule.parse(body) };
+        } catch (error) {
+          if (error.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw error;
+          return { body, completed: false };
+        }
+      });
+      receipt.emptyListControls = controls;
+      const bounded = controls.every(value => value.completed);
+      check("empty list metadata parsing terminates within a bounded real-parser control",
+        bounded, controls);
+      const rowWork = vm.runInContext(`(() => {
+        const matchAll=String.prototype.matchAll;
+        let scans=0;
+        String.prototype.matchAll=function(regex){
+          if(regex.source==='[^\\\\n]+')scans++;
+          return matchAll.call(this,regex);
+        };
+        try {
+          window.mapping.source('# Plain\\n\\nA **formatted** paragraph.\\n\\nAnother paragraph.').parse(marked);
+          const prose=scans;
+          window.mapping.source('| A | B |\\n| --- | --- |\\n| 1 | 2 |').parse(marked);
+          return {prose,tables:scans-prose};
+        } finally {String.prototype.matchAll=matchAll;}
+      })()`, context, { timeout: 1000 });
+      receipt.metadataRowWork = rowWork;
+      check("metadata parsing constructs physical row descriptors only for table tokens",
+        rowWork.prose === 0 && rowWork.tables === 1, rowWork);
+      const verification = await exec(`(() => {
+        const source=editorScroll.source('# One verification\\n\\nA **real** paragraph.');
+        const root=document.createElement('div');root.innerHTML=sanitizeHtml(source.parse(marked));
+        const equal=root.isEqualNode;
+        let calls=0;
+        root.isEqualNode=function(other){calls++;return equal.call(this,other);};
+        const bindings=source.detach(root,sanitizeHtml);
+        return {calls,bound:bindings.has(root.querySelector('p')),warnings:[...source.warnings]};
+      })()`);
+      check("verified metadata compares each unchanged canonical tree only once",
+        verification.calls === 1 && verification.bound && verification.warnings.length === 0, verification);
+      // A rejecting control must not send the known synchronous loop to a live renderer.
+      if (bounded) {
+        for (const [index, body] of emptyCases.entries()) {
+          const text = `# Empty list ${index}\n\n${body}\n`;
+          const file = path.join(directory, `empty-${index}.md`);
+          fs.writeFileSync(file, text);
+          await open(file, `Empty list ${index}`);
+          check(`empty list ${index} opens a responsive canonical reading preview`,
+            await exec(`!isEditMode&&viewer.querySelectorAll('li').length===1&&
+              viewer.querySelector('h1')?.textContent===${JSON.stringify("Empty list " + index)}&&
+              viewer.querySelector('li').textContent.trim()===${JSON.stringify(body === "- [ ] " ? "[ ]" : "")}`));
+          await mode(true);
+          for (const renderMode of ["full", "light-format"]) {
+            const result = await exec(`(async()=>{
+              await renderMarkdown(${JSON.stringify(text)},${JSON.stringify(renderMode)});
+              const expected=document.createElement('div');
+              expected.innerHTML=sanitizeHtml(marked.parse(${JSON.stringify(text)}));
+              return {edit:isEditMode,items:viewer.querySelectorAll('li').length,
+                actual:viewer.querySelector('li')?.textContent,
+                expected:expected.querySelector('li')?.textContent,
+                heading:viewer.querySelector('h1')?.textContent,
+                mapped:getEditorScrollDiagnostics().matchesSource};
+            })()`);
+            check(`empty list ${index} ${renderMode} editing keeps canonical text and current mapping`,
+              result.edit && result.items === 1 && result.actual === result.expected &&
+              result.heading === `Empty list ${index}` && result.mapped, result);
+          }
+          await exec(`markdownEditor.value=${JSON.stringify(text + "\nTyping after the empty item.")};
+            markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
+          await wait("typing after empty item", "viewer.textContent.includes('Typing after the empty item.')&&hasUnsavedChanges");
+          await exec(`markdownEditor.value=${JSON.stringify(text)};
+            markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
+          await wait("empty item restored after typing", `!viewer.textContent.includes('Typing after the empty item.')&&
+            getEditorScrollDiagnostics().matchesSource&&!loadingScreen.classList.contains('active')`);
+          check(`empty list ${index} remains responsive through live preview editing`,
+            await exec("isEditMode&&viewer.querySelectorAll('li').length===1"));
+          await exec("saveMarkdownFile();true");
+          await wait("empty-item editor saved", "!hasUnsavedChanges");
+          await mode(false);
+        }
+      }
+      await open(first, "Scroll correspondence");
+      await mode(true);
+    }
     if (scenario("blocks")) {
       for (const direction of ["editor", "preview"]) {
         await correspondence(direction, "Row 20", `${direction} aligns an interior table row`);
@@ -964,7 +1064,7 @@ async function run() {
     }
   }
   const requiredScenarios = baseline || perfOnly || coreProof ? [] :
-    proof ? [proof] : ["blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds"];
+    proof ? [proof] : ["blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty"];
   receipt.scenarios = [...executedScenarios];
   check("all required scrolling scenarios were executed",
     requiredScenarios.every(name => executedScenarios.has(name)), { requiredScenarios, executed: receipt.scenarios });
