@@ -38,6 +38,17 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `release-0.9.0` - **PREPARING AUTHORIZED RELEASE** (2026-10-21).
+  - Sole serial release writer: the existing combined isolated worktree.
+  - Accepted combined source: `670ef3e8`. Only version, notes, release records
+    and a real-runtime cache-clearing test are added for this release.
+  - Existing owner credentials resolve to `lostinsea` with repository write
+    permission. Canonical main is `4d614ee2`; `v0.9.0` is unused.
+  - Independent Sol/Luna metadata review, version/update regressions, local
+    build and strict built-ASAR checks precede publication.
+  - Publication uses the existing tag workflow, followed by downloaded asset,
+    updater-manifest and hosted provenance verification.
+  - No primary-checkout/shared-auth changes, installation or live upgrade.
 - `combined-final-review` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
   - Local-only combination: TOC `02108b98`, editor/scroll `e8b41f8b`,
     toolbar `9ff824bc` and About `1e446a38`, based on canonical `4d614ee2`.

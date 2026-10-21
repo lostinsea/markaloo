@@ -47,7 +47,16 @@ if (typeof electron === "string") {
   console.log("About update evidence: " + batch);
   let passed = 0, total = 0;
   for (const phase of phases) {
-    const result = spawnSync(electron, [__filename, phase], {
+    let entry = __filename;
+    if (phase === "equal") {
+      entry = path.join(batch, "runtime-app");
+      fs.mkdirSync(entry, { recursive: true });
+      fs.writeFileSync(path.join(entry, "package.json"), JSON.stringify({
+        name: "markaloo-runtime-fixture", version: require("../package.json").version,
+        main: __filename,
+      }));
+    }
+    const result = spawnSync(electron, [entry, phase], {
       cwd: root, encoding: "utf8", timeout: 120000,
       env: { ...process.env, MARKALOO_UPDATE_BATCH: batch },
     });
@@ -131,14 +140,14 @@ if (typeof electron === "string") {
   app.setPath("crashDumps", path.join(batch, "crash-dumps"));
   app.setAppLogsPath(path.join(batch, "logs"));
   const settingsFile = path.join(profile, "window-state.json");
+  const runtimeVersion = phase === "equal" ? app.getVersion() : phase === "newer" ? "0.11.0" : "0.9.0";
   if (["equal", "newer", "malformed"].includes(phase)) {
     fs.writeFileSync(settingsFile, JSON.stringify({ width: 1100, height: 780,
       updateAvailability: phase === "malformed"
         ? { schema: 1, version: "<img onerror=alert(1)>", ready: true, path: "untrusted.exe" }
-        : { schema: 1, version: "0.10.0" } }));
+        : { schema: 1, version: phase === "equal" ? runtimeVersion : "0.10.0" } }));
   }
-  const runtimeVersion = phase === "equal" ? "0.10.0" : phase === "newer" ? "0.11.0" : "0.9.0";
-  app.getVersion = () => runtimeVersion;
+  if (phase !== "equal") app.getVersion = () => runtimeVersion;
   const provider = new EventEmitter();
   const counts = { checks: 0, downloads: 0, launches: 0, installs: 0, kills: 0, external: [] };
   let releaseHeldLaunch;
@@ -795,6 +804,10 @@ if (typeof electron === "string") {
       await wait("cached Download rechecks metadata", () => counts.checks === 2);
       check("offline cached Download cannot use old installer bytes", counts.downloads === 0 && !(await snapshot()).canInstall);
     } else {
+      if (phase === "equal") {
+        check("equal fixture exercises the actual package runtime version",
+          runtimeVersion === require("../package.json").version);
+      }
       if (phase === "current") {
         checkMode = "current";
         await click("aboutCheckUpdates");
