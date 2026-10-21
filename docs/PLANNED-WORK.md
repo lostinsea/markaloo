@@ -38,6 +38,38 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `toc-default-visible` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+  - Sole writer: this isolated TOC stream, based on canonical main `4d614ee2`.
+  - Missing, invalid or unreadable `readingSidePanel` uses TOC. Valid saved
+    `closed`, `toc` and `notes` choices keep their behavior.
+  - Sol/high owns the focused fallback, existing reading-fixture updates and
+    current-state docs. Fresh independent Sol/high and Luna/high review follows.
+  - Gates: disposable-profile first open/restart, exclusive panels, headings,
+    accessibility, storage refusal, exact revert proofs and viewed fresh capture.
+  - No preference migration, per-document state, About feature, push or release.
+  - Corrected fallback and focused fixture are ready. Panel route is `47/47`
+    (`panels-final.log`); TOC is `30/30` (`toc-final.log`); source packaging is
+    `414/0`, with built-asar checks skipped (`packaging-final.log`).
+  - R932 and R1000-R1004 are individually exact PROVEN
+    (`panel-proofs-welcome-fix.log`). Fresh Welcome-open and document-argument
+    startup captures were viewed. All anchors resolve (`anchors-final.log`).
+  - Full baseline reading timed out on unchanged source (`reading-baseline.log`).
+    No full-reading-green or packaged/installed/cross-platform claim.
+  - Before repeated first-open measurements: fixed budget is +20% or +50 ms
+    (whichever is larger), for both p50 and p95 on this disposable heading fixture.
+  - Corrected first-open p50/p95: baseline `112.96/113.11 ms`, candidate `116.99/117.71 ms`;
+    within the fixed budget. Method and limits are in `docs/PERF-AUDIT.md`.
+  - Evidence: session `f9bc2d56`, `files/panel-*`, `panels-*`, `toc-final.log`.
+  - Round one: Sol found no blocker; Luna found the unsaved fallback opened
+    TOC over empty Welcome. Corrected that no-document regression by deferring
+    only the unsaved default until document admission. An explicit Welcome
+    choice cancels the pending default. Exact proofs, measurements and clean
+    targeted suites repeated on the corrected source.
+  - Fresh GPT-6.1 Sol/high and GPT-6 Luna/high round-two reviews both found no
+    significant issues. No remaining disagreement. Failure/supersession during
+    open was reviewed from control flow, not newly exercised by this unit.
+  - Ready as one local commit on `users/vinma-microsoft/toc-visible-by-default`.
+    No integration or publication is authorized.
 - `release-0.8.1` — **PUBLISHED AND VERIFIED** (2026-10-19).
   - Release: [Markaloo 0.8.1](https://github.com/lostinsea/markaloo/releases/tag/v0.8.1).
   - Exact tag source: `5633221d4205fc59fb84f80256a74083418add30`.

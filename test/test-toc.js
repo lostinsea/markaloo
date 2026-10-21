@@ -81,7 +81,7 @@ async function run() {
   await exec("document.getElementById('openFile').click(); true");
   await wait("actual admitted document", "viewer.querySelector('h1')?.textContent==='TOC Alpha' && viewer.querySelectorAll('.mermaid svg').length===1 && !loadingScreen.classList.contains('active')");
   await sleep(1300);
-  await exec("document.getElementById('toggleIndex').click(); true");
+  await exec("setIndexVisible(false);document.getElementById('toggleIndex').click(); true");
   let state = await oracle();
   check("TOC opens with exactly one current heading before any outline click", matches(state), state);
   const layout = await exec(`(() => {

@@ -17,10 +17,18 @@ if (typeof electron === "string") {
   console.log("Reading evidence: " + batch);
   let total = 0;
   let passed = 0;
-  const phases = process.env.FOLIA_READING_BORDERS ? ["borders"] :
-    process.env.FOLIA_READING_PERF ? ["screen"] : ["screen", "toc", "notes", "closed", "invalid", "borders"];
+  const panelPhases = ["startup", "welcomeChoice", "fresh", "freshClosed", "toc", "notes", "closed", "invalid", "missing", "unreadable"];
+  const phases = process.env.FOLIA_READING_PANELS ? panelPhases :
+    process.env.FOLIA_READING_BORDERS ? ["borders"] :
+    process.env.FOLIA_READING_PERF ? ["screen"] : ["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed", "invalid", "missing", "unreadable", "borders"];
   for (const phase of phases) {
-    const run = spawnSync(electron, [__filename, phase], {
+    const args = [__filename, phase];
+    if (phase === "startup") {
+      const file = path.join(batch, "startup.md");
+      fs.writeFileSync(file, "# Startup outline\n\nOpening text.\n\n## Startup details\n\nMore text.\n");
+      args.push(file);
+    }
+    const run = spawnSync(electron, args, {
       cwd: root, encoding: "utf8", timeout: 180000,
       env: { ...process.env, FOLIA_READING_BATCH: batch },
     });
@@ -38,16 +46,17 @@ if (typeof electron === "string") {
   console.log(`=== ${passed}/${total} passed ===`);
   process.exit(passed === total ? 0 : 1);
 } else {
-  const { app, BrowserWindow, dialog, session } = electron;
+  const { app, BrowserWindow, dialog, session, net, shell } = electron;
   const phase = process.argv[2];
-  const profile = path.join(batch, "profile");
+  const profile = path.join(batch, ["startup", "welcomeChoice"].includes(phase) ? phase + "-profile" : "profile");
   fs.mkdirSync(profile, { recursive: true });
   app.setPath("userData", profile);
   const first = path.join(batch, "reading.md");
   const other = path.join(batch, "other.md");
   let chosen = first;
   dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
-  require("../src/main.js");
+  shell.openExternal = async () => { throw new Error("Reading test must not open an external application"); };
+  shell.openPath = async () => { throw new Error("Reading test must not open an external application"); };
   const { startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
   let win;
   const results = [];
@@ -118,7 +127,7 @@ if (typeof electron === "string") {
       await exec("viewer.querySelectorAll('table').length===3&&viewer.querySelectorAll('.mermaid svg').length===5"));
     check("production renderer remains isolated",
       await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)"));
-    await exec("localStorage.setItem('notesVisible','false');document.getElementById('toggleIndex').click();true");
+    await exec("localStorage.setItem('notesVisible','false');setIndexVisible(false);document.getElementById('toggleIndex').click();true");
     let state = await exec(panelState);
     if (!process.env.FOLIA_READING_PERF) check("TOC user intent persists without changing inline notes", state.toc && !state.notes && state.saved === "toc" && state.inline === "false", state);
     await exec("document.getElementById('toggleNotes').click();true");
@@ -780,25 +789,136 @@ if (typeof electron === "string") {
     const errors = await sentinel.stop();
     check("boundary controls produce no renderer or document errors", errors.hits.length === 0, errors.hits);
   }
+  async function startup() {
+    await wait("argument document painted", "viewer.querySelector('h1')?.textContent==='Startup outline'&&!loadingScreen.classList.contains('active')");
+    await settle();
+    const state = await exec(panelState);
+    check("fresh launch with a document argument defaults to visible exclusive accessible TOC",
+      state.toc && !state.notes && !state.inertToc && state.inertNotes, state);
+    check("argument document has actual TOC headings and a tracked current heading",
+      await exec("[...indexList.querySelectorAll('.index-item')].map(item=>item.textContent).join('|')==='Startup outline|Startup details'&&indexList.querySelector('[aria-current=\"location\"]')?.textContent==='Startup outline'"));
+    check("argument document keeps its new profile preference unset and does not focus a drawer",
+      state.saved === null && !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);
+    check("argument fixture uses the isolated production preload and admitted file",
+      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)&&window.CustomTabs.getActiveTab()?.filePath===" + JSON.stringify(path.join(batch, "startup.md"))));
+    await capture("fresh-argument-toc");
+  }
+  async function fresh() {
+    const sentinel = startErrorSentinel(win, { label: "reading-panels" });
+    check("fresh profile has no saved panel or documents and keeps the welcome open action",
+      await exec("localStorage.getItem('readingSidePanel')===null&&window.CustomTabs.getTabs().length===0&&!!viewer.querySelector('.welcome')&&!!document.getElementById('welcomeOpenBtn')"));
+    const welcome = await exec(panelState);
+    check("fresh Welcome keeps both drawers closed before the first document",
+      !welcome.toc && !welcome.notes && welcome.inertToc && welcome.inertNotes, welcome);
+    fs.writeFileSync(first, "# First outline\n\nOpening text.\n\n## Details\n\n" +
+      "A paragraph for reading.\n\n".repeat(100) + "## Final section\n\nEnd.\n");
+    fs.writeFileSync(other, "# Other reading document\n\nOther content.");
+    const started = performance.now();
+    await exec("document.getElementById('welcomeOpenBtn').click();true");
+    await wait("first welcome document painted", "viewer.querySelector('h1')?.textContent==='First outline'&&!loadingScreen.classList.contains('active')");
+    const firstOpenMs = performance.now() - started;
+    await settle();
+    const state = await exec(`({...${panelState},headings:[...indexList.querySelectorAll('.index-item')].map(item=>item.textContent),
+      current:indexList.querySelector('[aria-current="location"]')?.textContent,
+      expanded:toggleIndexBtn.getAttribute('aria-expanded'),
+      beside:indexPanel.getBoundingClientRect().right<=getViewerScroller().getBoundingClientRect().left+1})`);
+    check("fresh document defaults to visible TOC with real headings tracking and exclusive accessible panels",
+      state.toc && !state.notes && !state.inertToc && state.inertNotes && state.expanded === "true" &&
+      state.headings.join("|") === "First outline|Details|Final section" && state.current === "First outline" && state.beside, state);
+    check("default TOC neither saves a preference nor focuses a drawer",
+      state.saved === null && !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);
+    await capture("fresh-default-toc");
+    console.log("READING_PANEL_FIRST_OPEN " + JSON.stringify({ firstOpenMs }));
+    await exec("document.getElementById('closeIndex').click();true");
+    chosen = other;
+    await exec("document.getElementById('openFile').click();true");
+    await wait("closed preference on another document", "viewer.querySelector('h1')?.textContent==='Other reading document'&&!loadingScreen.classList.contains('active')");
+    const closed = await exec(panelState);
+    check("user closing TOC stays closed when another document opens",
+      !closed.toc && !closed.notes && closed.saved === "closed" && closed.inertToc && closed.inertNotes, closed);
+    const alive = await proveSentinelAlive(win, sentinel);
+    check("panel sentinel proves console and DOM channels alive", alive.console && alive.dom, alive);
+    const errors = await sentinel.stop();
+    check("fresh panel flow has no renderer or document errors", errors.hits.length === 0, errors.hits);
+  }
+  async function welcomeChoice() {
+    const before = await exec(panelState);
+    check("Welcome choice starts with no preference and closed drawers",
+      before.saved === null && !before.toc && !before.notes, before);
+    await exec("document.getElementById('toggleNotes').click();true");
+    const chosen = await exec(panelState);
+    check("Welcome choice really opens and saves Notes before a document",
+      chosen.notes && !chosen.toc && chosen.saved === "notes", chosen);
+    fs.writeFileSync(first, "# Welcome choice document\n\nReading text.\n");
+    await exec("document.getElementById('welcomeOpenBtn').click();true");
+    await wait("Welcome choice document painted", "viewer.querySelector('h1')?.textContent==='Welcome choice document'&&!loadingScreen.classList.contains('active')");
+    const after = await exec(panelState);
+    check("explicit Welcome choice wins over the pending first-document TOC default",
+      after.notes && !after.toc && !after.inertNotes && after.inertToc && after.saved === "notes", after);
+    check("Welcome choice opens the actual admitted document",
+      await exec("window.CustomTabs.getActiveTab()?.filePath===" + JSON.stringify(first)));
+  }
   async function restart() {
-    const expected = phase === "invalid" ? "closed" : phase;
+    const expected = ["invalid", "missing", "unreadable"].includes(phase) ? "toc" :
+      phase === "freshClosed" ? "closed" : phase;
     const state = await exec(panelState);
     check(`${phase} restores actual drawer visibility across process exit`, state.toc === (expected === "toc") && state.notes === (expected === "notes"), state);
     check(`${phase} restore preserves hidden drawer accessibility`, state.inertToc === (expected !== "toc") && state.inertNotes === (expected !== "notes"), state);
     check(`${phase} restore never focuses a drawer`, !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);
     check(`${phase} restart restores the actual admitted document`, await exec("viewer.querySelector('h1')?.textContent==='Other reading document'"));
+    if (phase === "freshClosed") {
+      check("user closed preference survives a real quit and document restoration", state.saved === "closed", state);
+      await exec("document.getElementById('toggleIndex').click();true");
+    }
+    if (phase === "invalid" || phase === "missing") {
+      check(`${phase} default does not rewrite the saved preference`, state.saved === (phase === "invalid" ? "invalid" : null), state);
+    }
+    if (phase === "unreadable") {
+      const refusal = await exec("window.__panelReadRefusal");
+      check("unreadable panel storage was refused and warned without stopping document startup",
+        refusal.reads === 1 && refusal.warned && state.saved === null, refusal);
+    }
     if (phase === "toc") await exec("document.getElementById('toggleNotes').click();true");
     if (phase === "notes") await exec("document.getElementById('closeNotes').click();true");
     if (phase === "closed") await exec("localStorage.setItem('readingSidePanel','invalid');true");
+    if (phase === "invalid") await exec("localStorage.removeItem('readingSidePanel');true");
   }
   app.whenReady().then(async () => {
+    if (phase === "unreadable") {
+      const { pathToFileURL } = require("url");
+      const indexPath = path.join(root, "src", "index.html");
+      const indexUrl = pathToFileURL(indexPath).href;
+      const probe = `<script>
+        window.__panelReadRefusal={reads:0,warned:false};
+        const panelGet=Storage.prototype.getItem,panelWarn=console.warn;
+        Storage.prototype.getItem=function(key){
+          if(this===localStorage&&key==='readingSidePanel'&&window.__panelReadRefusal.reads===0){
+            window.__panelReadRefusal.reads++;
+            throw new Error('deliberate panel storage refusal');
+          }
+          return panelGet.call(this,key);
+        };
+        console.warn=function(...args){
+          if(args[0]==='Could not restore reading panel preference:')window.__panelReadRefusal.warned=true;
+          return panelWarn.apply(this,args);
+        };
+      </script>`;
+      await session.defaultSession.protocol.handle("file", request => request.url === indexUrl
+        ? new Response(fs.readFileSync(indexPath, "utf8").replace("</head>", probe + "</head>"),
+          { headers: { "content-type": "text/html" } })
+        : net.fetch(request.url, { bypassCustomProtocolHandlers: true }));
+    }
+    require("../src/main.js");
     await sleep(1500);
     win = BrowserWindow.getAllWindows()[0];
     win.setSize(1280, 850);
     let failed = false;
     try {
       await wait("production ready", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
-      if (phase === "screen") await screen();
+      if (phase === "startup") await startup();
+      else if (phase === "welcomeChoice") await welcomeChoice();
+      else if (phase === "fresh") await fresh();
+      else if (phase === "screen") await screen();
       else if (phase === "borders") await borders();
       else {
         await wait("real saved document restoration", "viewer.querySelector('h1')?.textContent==='Other reading document'&&!loadingScreen.classList.contains('active')");

@@ -43,6 +43,10 @@ This approach means after an upstream merge, you only need to ensure these files
 ### Reading drawers, table headers and update notices
 
 - The left drawer remembers `closed`, `toc` or `notes` in `readingSidePanel`.
+- Missing, invalid or unreadable preferences default to TOC without saving a
+  choice. A saved Closed or All Notes choice is not replaced.
+- The unsaved default waits for the first admitted document, leaving Welcome
+  closed. A user choice made on Welcome wins over that pending default.
 - Only user toggles, close buttons and Escape save that choice.
 - Startup restores it without moving focus. TOC and All Notes remain exclusive.
 - `notesVisible` still controls inline annotations, not the All Notes drawer.

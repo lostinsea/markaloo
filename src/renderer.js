@@ -5647,6 +5647,7 @@ function expandToHeader(headerId) {
 
 // Store the final user choice, not intermediate closes during mutual exclusion.
 const SIDE_PANEL_KEY = 'readingSidePanel';
+let defaultSidePanelPending = false;
 function setSidePanel(mode, { restoring = false, persist = true } = {}) {
   const visible = mode === 'toc';
   const notesVisible = mode === 'notes';
@@ -5668,6 +5669,7 @@ function setSidePanel(mode, { restoring = false, persist = true } = {}) {
   if (notesVisible) updateNotesList();
   else closeNotesPanel();
   if (!restoring && persist) {
+    defaultSidePanelPending = false;
     try { localStorage.setItem(SIDE_PANEL_KEY, mode); }
     catch (error) { console.warn('Could not save reading panel preference:', error); }
   }
@@ -5723,9 +5725,12 @@ notesPanel.addEventListener('keydown', event => {
 try {
   indexPanel.style.transition = notesPanel.style.transition = 'none';
   const savedPanel = localStorage.getItem(SIDE_PANEL_KEY);
-  setSidePanel(savedPanel === 'toc' || savedPanel === 'notes' ? savedPanel : 'closed', { restoring: true });
+  const hasSavedPanel = savedPanel === 'closed' || savedPanel === 'toc' || savedPanel === 'notes';
+  defaultSidePanelPending = !hasSavedPanel;
+  setSidePanel(hasSavedPanel ? savedPanel : 'closed', { restoring: true });
 } catch (error) {
   console.warn('Could not restore reading panel preference:', error);
+  defaultSidePanelPending = true;
   setSidePanel('closed', { restoring: true });
 }
 requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -8446,6 +8451,12 @@ function beginFileOpen(data, options = {}) {
 
   if (typeof options.onTrackingCommitted === 'function') {
     options.onTrackingCommitted();
+  }
+
+  // Leave Welcome unchanged; apply the unsaved default only to an admitted file.
+  if (defaultSidePanelPending) {
+    defaultSidePanelPending = false;
+    setSidePanel('toc', { restoring: true });
   }
 
   // Own every non-visual part of the open synchronously. A render may take

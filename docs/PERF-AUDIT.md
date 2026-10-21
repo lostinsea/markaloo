@@ -1,5 +1,27 @@
 # Performance Audit
 
+## Default TOC - bounded first-open check, 2026-10-21
+
+- Same Windows x64 machine, AMD EPYC 7763, Node 24.18.1, Electron 43.4.1.
+- Three sequential fresh disposable profiles per version. Baseline is canonical
+  main `4d614ee2`; candidate changes only the reading-panel fallback.
+- Existing production-preload reading fixture: Welcome Open to matching admitted
+  heading and inactive loading indicator, polled every 50 ms. The fixture has
+  three headings and scrolling prose. Screenshots and settle waits are excluded.
+- Budget fixed before sampling: p50 and p95 may each rise by at most the larger
+  of 20% or 50 ms.
+
+| Measurement | Before p50 / p95 (ms) | After p50 / p95 (ms) |
+|---|---:|---:|
+| Welcome to first heading document | 112.96 / 113.11 | 116.99 / 117.71 |
+
+- Both clear the budget. With three samples, nearest-rank p95 is the maximum.
+- Coarse, small-fixture check only; not a speedup, large-file or cold-start claim.
+  This shared desktop was not a controlled exclusive benchmark machine.
+- Session `f9bc2d56` retains `files/panel-open-performance.json`, source hashes,
+  sample arrays, logs and `measure-panel-open.cjs`. No product source remained
+  mutated after sampling.
+
 ## Reading zoom preference - 2026-10-16
 
 - Command: `node test\test-reading-zoom.js --perf`, before and after on the
