@@ -38,25 +38,28 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `release-0.9.1` - **REVIEWED; READY FOR PUBLICATION** (2026-10-21).
-  - Sole serial main/tag/release writer: this isolated menu/toolbar worktree.
-  - Accepted UI source: `cc3326e7`, based on canonical main `e6a9d11b`.
-    Release changes are version/lock metadata, two-fix notes and this register.
-    Product bytes and the dependency graph stay unchanged from accepted UI.
-  - Existing owner access resolves to `lostinsea` with repository write access.
-    Canonical main is `e6a9d11b`; `v0.9.1` is unused; `v0.9.0` stays fixed.
-  - Runtime/About/menu/startup checks, local portable/NSIS builds, strict ASAR
-    equivalence, isolated unpacked UI and independent Sol/Luna review precede
-    the atomic non-force canonical main/tag push.
-  - The existing tag workflow builds all platforms and attests before publishing.
-    Downloaded asset, exact updater-role and hosted provenance checks follow.
-    After workflow success, `gh release edit` applies the reviewed 0.9.1 notes
-    before the final verifier checks the public release body.
-  - Fresh independent Sol 6.1/high and Luna 6/high accept the release.
-    Luna flagged the notes-publication step; both accept the explicit sequence.
-    No blocker remains. Publication and hosted verification are still pending.
-  - Dependency maintenance is a separate queued unit after verified publication.
-    No dependency upgrade, primary-checkout change, installation or live upgrade.
+- `release-0.9.1` - **PUBLISHED AND VERIFIED** (2026-10-21).
+  - Release: [Markaloo 0.9.1](https://github.com/lostinsea/markaloo/releases/tag/v0.9.1).
+  - Exact tagged source: `2d8a92e827d1ec50b564c2d150161efe5b662f86`.
+    Annotated tag object: `cb0b71901a95f614474eca87930d93494cd873eb`.
+    The non-force atomic canonical main/tag push succeeded; `v0.9.0` is fixed.
+  - [Workflow 39693181398, attempt 1](https://github.com/lostinsea/markaloo/actions/runs/39693181398)
+    succeeded for Windows, Linux, macOS, provenance and stable publication.
+    It started automatically on the tag push; no duplicate dispatch.
+  - All nine downloaded assets match API sizes and SHA256. All three updater
+    manifests match version, exact platform artifact roles, primary path, sizes
+    and actual base64 SHA512. Windows selects Setup, not the portable executable.
+  - All five runnable downloads have verified GitHub-hosted attestations bound
+    to this source, tag, signer workflow, OIDC issuer and exact run attempt.
+    Exact platform-positive and wrong-role/missing/duplicate controls pass.
+  - The latest stable API points to 0.9.1. Its public URL returns HTTP 200.
+    Reviewed notes were applied after workflow success and match the release API.
+  - Fresh independent Sol 6.1/high and Luna 6/high accepted release preparation.
+    Luna flagged the notes-publication step; both accepted the explicit sequence.
+    No workflow, product or dependency change was needed for that step.
+  - Only version/lock metadata, notes and this register differ from accepted UI
+    source `cc3326e7`, based on canonical main `e6a9d11b`. Product bytes and the
+    dependency graph are unchanged. Dependency maintenance is a separate unit.
   - Update state `42/42`, About `143/143` (including actual-runtime equal `9/9`),
     startup `13/13` and toolbar `47/47` pass on the prepared version.
     R986/R990 are exact PROVEN; all anchors resolve.
@@ -65,16 +68,25 @@ section is kept here so the register has a visible edge.
   - Actual unpacked 0.9.1 uses the frozen preload, clears equal availability
     in Main and on disk, keeps Welcome Reload/Edit disabled and TOC enabled,
     and passes native keyboard/menu/About checks. Both captures were viewed.
-  - Existing exact platform updater-role controls are reused for publication.
-    No new timing, full legacy-chain or cross-platform runtime claim.
-- `menu-toolbar-grouping` - **REVIEWED LOCALLY; NOT INTEGRATED** (2026-10-21).
+  - The hosted Windows job also passes strict built-ASAR packaging `439/0`.
+    Evidence: session `c224c61c`, `files/release-091-source.json`,
+    `release-091-asset-verification.json`, CLI attestation results and retained
+    downloads/logs. Public notes match `docs/RELEASE-NOTES-0.9.1.md`.
+  - Known legacy tab failures still prevent a full `npm test` pass. Release
+    builds are not a hosted full-suite or cross-platform UI certification.
+    No new timing claim; prior accepted performance limits still apply.
+  - Windows/macOS are unsigned; macOS updates remain manual. No installation,
+    live upgrade or personal-profile access. Primary checkout, other worktrees,
+    origin and shared auth remain unchanged. This docs-only record leaves the
+    published tag fixed.
+- `menu-toolbar-grouping` - **PUBLISHED IN 0.9.1** (2026-10-21).
   - Sole writer: isolated `users/vinma-microsoft/menu-and-toolbar-grouping`,
     based on canonical main `e6a9d11b`, including released source `853c4f2a`.
   - About sits immediately above History, separated above and below.
     Toolbar: Reload/Open editor | TOC | menu; separators wrap with their actions.
   - Sol 6.1/high implementation; fresh independent Sol 6.1/high and Luna 6/high
     reviews both found no significant issues. No disagreement remains.
-    UI acceptance is complete; authorized 0.9.1 publication is tracked above.
+    UI acceptance is complete; verified 0.9.1 publication is tracked above.
   - Toolbar `47/47`, update state `42/42`, About `143/143`, focused About
     `33/33`, responsive `28/28`, theme `404/404`, document editor `60/60`,
     panels `59/59`, TOC `30/30`, reload `56/56` and zoom `54/54` pass.
@@ -84,7 +96,7 @@ section is kept here so the register has a visible edge.
     normal/narrow/150% web-zoom menus were viewed in light and dark.
   - Evidence: session `c224c61c`, `files/menu-toolbar-receipt.json`,
     `toolbar-r1.log`, `updates-r1.log`, `updates-ui-r2.log` and `exact-proofs-r1.log`.
-    No full-suite, packaged-app, performance or cross-platform certification.
+    These are source UI checks; the release checks and limits are listed above.
   - Dependency assessment is read-only and kept in separate session artifacts.
 - `release-0.9.0` - **PUBLISHED AND VERIFIED** (2026-10-21).
   - Release: [Markaloo 0.9.0](https://github.com/lostinsea/markaloo/releases/tag/v0.9.0).
