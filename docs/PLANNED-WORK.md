@@ -38,6 +38,77 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `document-owned-editor` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+  - User-directed priority ahead of scroll acceptance, in this same worktree.
+  - Each document owns whether its editor is open. Switching tabs restores
+    that document's state; it does not enable editing in every tab.
+  - Menu and new toolbar action only open the current document's editor.
+    Repeated activation keeps edits, selection and history. The editor's
+    explicit exit action retains save, discard and cancel protections.
+  - Multiple documents may keep editors open. No forced closure of another
+    document, shared-config change, publication or integration is authorized.
+  - Bounded Astra/high lifecycle design, Sol implementation and fresh independent
+    Sol 6.1/high and Luna 6/high review are complete.
+  - Production-preload lifecycle coverage is `45/45`, including refused dirty
+    admission and minimum-width toolbar hit testing. TOC is `30/30`, reading
+    panels `47/47`, responsive layout `28/28`, dialogs `53/53`, tables `215/215`
+    and theme `398/398`.
+  - Late Exit cannot clear a newer session's checkpoint. Clean Exit flushes its
+    pending preview. Both behaviors have production-preload regressions.
+  - R56, R94-R97, R100 and R1016-R1026 are individually exact PROVEN.
+    The restored Alpha/Beta editors and minimum-width toolbar captures were
+    viewed. Two final full editor runs pass `45/45` after test-only frame
+    scheduling was made independent of desktop occlusion. An earlier watchdog
+    failure remains in the evidence; its cause is not conclusively established.
+    The timeout was not enlarged.
+  - One local editor/scroll unit; no risky partial staging of shared files.
+    No full-suite, packaged-app or cross-platform certification.
+  - Evidence: session `bcd79899`, `files/editor-scroll-final-receipt.json`
+    and `files/document-editor-*`.
+  - The separate TOC toolbar toggle remains queued. About is not included.
+- `content-aware-editor-scroll` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+  - Sole writer: this isolated scroll stream, stacked on reviewed TOC `02108b98`
+    and canonical main `4d614ee2`. The separate About unit is not included.
+  - Parser-bound source spans, measured textarea layout, cached bidirectional
+    geometry and direct-input ownership are implemented and independently reviewed.
+  - Two-way edit/preview scrolling follows content, including tall diagrams,
+    wrapped prose and other unequal-height blocks. User input owns scrolling;
+    selection, undo, document authority and normal reading remain unchanged.
+  - Fixed budgets before candidate runs: settled sync callback p95 <= 4 ms
+    and no full source/DOM scan per scroll; no self-sustaining scroll feedback.
+    Open/render and split-entry p50/p95 may add at most 20% or 50 ms,
+    whichever is larger, on the same mixed-height and existing plain fixtures.
+  - Gates: reproduced mismatch, viewed before/after content landmarks in both
+    directions, lifecycle/layout regressions, exact individual revert proofs,
+    bounded timings and clean local commit. No publication or integration.
+  - Current TOC `30/30`, responsive `28/28`, panels `47/47`, zoom `54/54`,
+    reload `56/56` and shared visual helpers `34/34` pass. Source packaging is
+    `416/0`, with built-asar checks skipped.
+  - Legacy tabs `21/26`, security `115/124` and render patch `105/109` fail
+    identically by assertion name on the exact TOC base with the same fixtures.
+    Their early exits do not certify the remaining legacy scenarios.
+  - Reproduced and viewed mixed-height landmarks differ by 3,941.74 / 4,721.66
+    pixels before, and 0.14 / 0.06 pixels after, in the two directions.
+  - User-approved separate metadata keeps canonical HTML unchanged. A separate,
+    inert metadata copy verifies complete structure/text, single-use identities,
+    token ownership and source order before bindings cross to the real DOM.
+    Parser-sensitive HTML gets one bounded opaque retry. Provenance and the
+    scrolling controller are retained.
+  - Checked-in cases cover full/light SVG, raw-text and table HTML equivalence,
+    rejected metadata, repeated source occurrences, native input, layout and
+    document transitions. Both suites run in `npm test` and Windows CI.
+  - Long physical-line paragraphs have a linear work-count guard. Short-source
+    tall images, hidden prefixes and shared preview rows have rejecting controls.
+  - Fresh Sol 6.1/high and Luna 6/high independently accept the product/test
+    design. Exact frozen-source scrolling runs both pass `182/182`.
+  - R1005-R1045 and inherited R530 are individually exact PROVEN. R1019
+    requires the three coupled history/selection failures and unrelated passes.
+    Anchor and changed assertion-name inventories resolve.
+  - Matched open/render and complete split-entry gates pass unchanged budgets.
+    Settled callback p95 is 0.1 ms, with no rebuilds or source Range reads.
+    Method, samples and honest limits are in `docs/PERF-AUDIT.md`.
+  - Evidence: session `bcd79899`, `files/editor-scroll-final-receipt.json`
+    and `files/scroll-*`. No full-suite, packaged or cross-platform claim.
 - `toc-default-visible` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
   - Sole writer: this isolated TOC stream, based on canonical main `4d614ee2`.
   - Missing, invalid or unreadable `readingSidePanel` uses TOC. Valid saved

@@ -1,5 +1,49 @@
 # Performance Audit
 
+## Content-aware editor scrolling - bounded check, 2026-10-21
+
+- Same Windows x64 machine, AMD EPYC 7763, Node 24.18.1, Electron 43.4.1.
+- Baseline: reviewed TOC `02108b98`. Candidate includes document-owned editing
+  and separate, verified scroll metadata. Disposable files and profiles only.
+- Same harness and fixture hashes; three sequential observations per fixture.
+  Mixed content includes a tall Mermaid, images, table, code and wrapped prose.
+  Plain content uses the existing 50 KiB prose corpus generator.
+- Disposable test windows disable background frame throttling. Production
+  window throttling is unchanged. Neither timeouts nor budgets were enlarged.
+- Open runs from chooser dispatch to the matching painted heading and inactive
+  loading indicator, polled every 30 ms. Split entry includes layout and current
+  geometry, then two stable animation frames. Diagnostics, captures and settle
+  waits are outside the interval on both sides.
+- Fixed budget: each p50 and p95 increment <= the larger of 20% or 50 ms.
+
+| Measurement | Before p50 / p95 (ms) | After p50 / p95 (ms) |
+|---|---:|---:|
+| Mixed open/render | 109.42 / 490.78 | 140.25 / 503.74 |
+| Mixed complete split entry | 93.60 / 93.90 | 93.10 / 93.40 |
+| Plain open/render | 69.12 / 74.89 | 76.28 / 86.28 |
+| Plain complete split entry | 92.70 / 92.90 | 92.20 / 92.50 |
+
+- All measured gates pass. Mixed open median adds about 31 ms; it is not free.
+  Nearest-rank p95 is the maximum with this small sample. These measurements
+  do not establish a speedup or a reliable cold-tail result.
+- This shared desktop is not an exclusive benchmark machine. These fixtures
+  do not certify extreme files, high-refresh displays or other platforms.
+- Parsing, sanitizing and verifying separate metadata add linear render work.
+  Editor entry reuses that metadata; it measures layout rather than parsing.
+- Settled scroll coverage separately requires p95 <= 4 ms, no geometry rebuilds
+  or source Range reads, and bounded writes without follower feedback.
+- Measured settled p95 is 0.1 ms, with no rebuilds or source Range reads:
+  40 driver frames cause 40 follower writes.
+- A 1,200-line paragraph uses 6,011 short geometry reads and no suffix-rectangle
+  enumeration. The exact rejecting control produces quadratic rectangle work.
+- Named editor-to-preview and preview-to-editor landmark errors fall from
+  3,941.74 / 4,721.66 pixels to 0.14 / 0.06 pixels on the mixed fixture.
+- `npm run test:editor-scroll` runs the production-preload behavioral/work-count
+  checks. Matched comparison remains separate from ordinary CI.
+- Session `bcd79899`: `files/scroll-accepted-performance.json`, matched
+  `scroll-accepted-baseline/receipt.json` and `scroll-accepted-candidate/receipt.json`
+  retain samples, fixture/harness hashes, source hashes and fixed limits.
+
 ## Default TOC - bounded first-open check, 2026-10-21
 
 - Same Windows x64 machine, AMD EPYC 7763, Node 24.18.1, Electron 43.4.1.

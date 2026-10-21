@@ -1287,7 +1287,30 @@ try {
   // Required from plain Node - that tier is covered by the hook above.
 }
 
+async function admitTestDocument(win, fixture, markdown) {
+  const { dialog } = require("electron");
+  const heading = /^# (.+)$/m.exec(markdown)?.[1];
+  if (!heading) throw new Error("An admitted visual fixture needs a distinct heading");
+  fs.mkdirSync(path.dirname(fixture), { recursive: true });
+  fs.writeFileSync(fixture, markdown);
+  const chooser = dialog.showOpenDialog;
+  try {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [fixture] });
+    await win.webContents.executeJavaScript("document.getElementById('openFile').click();true");
+    for (let attempt = 0; attempt < 160; attempt++) {
+      if (await win.webContents.executeJavaScript(`currentFilePath===${JSON.stringify(fixture)}&&
+        viewer.querySelector('h1')?.textContent===${JSON.stringify(heading)}&&
+        !loadingScreen.classList.contains('active')`)) return;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error("Disposable visual document was not admitted and rendered: " + fixture);
+  } finally {
+    dialog.showOpenDialog = chooser;
+  }
+}
+
 module.exports = {
+  admitTestDocument,
   VISUAL_PROBE_SOURCE,
   inspectVisual,
   captureScreenshot,

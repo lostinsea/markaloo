@@ -82,7 +82,7 @@ if (typeof electron === "string") {
     fs.writeFileSync(path.join(batch, name + ".png"), (await win.webContents.capturePage()).toPNG());
   }
   async function setView(split, zoom) {
-    await exec(`if(isEditMode!==${split})document.getElementById('toggleEdit').click();true`);
+    await exec(`if(isEditMode!==${split})document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true`);
     await wait("view mode", `isEditMode===${split}&&!loadingScreen.classList.contains('active')`);
     await exec(`zoomLevel=${zoom};updateZoom();true`);
     await sleep(700);

@@ -39,6 +39,7 @@ const ROOT = path.join(__dirname, "..");
 const SRC = path.join(ROOT, "src");
 const CSS = path.join(SRC, "styles.css");
 const RENDERER = path.join(SRC, "renderer.js");
+const EDITOR_SCROLL = path.join(SRC, "editor-scroll.js");
 const TABS = path.join(SRC, "custom-tabs.js");
 const COLLAPSE = path.join(SRC, "custom-collapse.js");
 const MAIN = path.join(SRC, "main.js");
@@ -140,6 +141,98 @@ const TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL = Object.freeze([
   "Shutdown approval renderer unusable: webContents destroyed",
 ]);
 const VIRTUAL_SUITES = Object.freeze({
+  "test:document-editor-toolbar": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "toolbar" }),
+  }),
+  "test:document-editor-modes": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "modes" }),
+  }),
+  "test:document-editor-sessions": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "sessions" }),
+  }),
+  "test:document-editor-baseline": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "baseline" }),
+  }),
+  "test:document-editor-deferred": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "deferred" }),
+  }),
+  "test:document-editor-visible-save": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "visible-save" }),
+  }),
+  "test:document-editor-save": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "save" }),
+  }),
+  "test:document-editor-reload": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "reload" }),
+  }),
+  "test:document-editor-clean-exit": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "clean-exit" }),
+  }),
+  "test:document-editor-reopen-exit": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "reopen-exit" }),
+  }),
+  "test:document-editor-admission": Object.freeze({
+    npmScript: "test:document-editor",
+    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "admission" }),
+  }),
+  "test:editor-scroll-core": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "core" }),
+  }),
+  "test:editor-scroll-blocks": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "blocks" }),
+  }),
+  "test:editor-scroll-edits": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "edits" }),
+  }),
+  "test:editor-scroll-layout": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "layout" }),
+  }),
+  "test:editor-scroll-cost": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "cost" }),
+  }),
+  "test:editor-scroll-transitions": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "transitions" }),
+  }),
+  "test:editor-scroll-save": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "save" }),
+  }),
+  "test:editor-scroll-html": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "html" }),
+  }),
+  "test:editor-scroll-mapping": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "mapping" }),
+  }),
+  "test:editor-scroll-input": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "input" }),
+  }),
+  "test:editor-scroll-rich": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "rich" }),
+  }),
+  "test:editor-scroll-bounds": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "bounds" }),
+  }),
   "test:reading-panels": Object.freeze({
     npmScript: "test:reading",
     environment: Object.freeze({ FOLIA_READING_PANELS: "1" }),
@@ -465,13 +558,15 @@ const REVERTS = [
     id: "R56",
     what: "do not recalculate when leaving split view (table stays sized for the narrow viewer)",
     file: RENDERER,
-    from: "    applyTableBreakout();\n    toggleEditBtn.style.background = '';",
-    to: "    toggleEditBtn.style.background = '';",
+    from: "    applyTableBreakout();\n    const previewPending = previewDebounceTimer !== null;",
+    to: "    const previewPending = previewDebounceTimer !== null;",
     // Vacuous against the settled assertion for the same reason as R55: the
     // ResizeObserver backstop restores the width ~140ms later and the settled
     // assertion waits 500ms. Pinned synchronously instead.
-    expect: [/leaving split view restores the widened width at the transition/],
-    mustPass: [/leaving split view restores the full widened width/],
+    expect: [/^leaving split view restores the widened width at the transition, not 140ms later$/],
+    mustPass: [/^leaving split view restores the full widened width$/],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
   },
   {
     id: "R58",
@@ -1083,16 +1178,19 @@ const REVERTS = [
     // Without the hook only the tab the session STARTED on has a baseline, so
     // discarding on any other tab degrades to "keep the text, mark it clean".
     id: "R94",
-    suite: "test:tabs",
-    what: "skip the arriving document's edit baseline in the active beginFileOpen tab-switch path",
+    suite: "test:document-editor-baseline",
+    what: "forget the arriving document's retained discard checkpoint on a tab round trip",
     file: RENDERER,
-    from: "      captureEditSessionBaseline(options.preserveEditBaseline ? false : true);",
-    to: "      /* reverted for proof: arriving document baseline not captured */",
-    expect: [/undo cannot resurrect content discarded on a tab the session did not start on/],
+    from: "  editSessionBaseline = incomingEditor?.open ? incomingEditor.baseline : null;",
+    to: "  editSessionBaseline = null;",
+    expect: [
+      /^undo cannot resurrect edits discarded after returning to their owning document$/,
+      /^discard restores the owning document's clean flag rather than the other tab's dirty flag$/,
+    ],
     mustPass: [
-      /^the second tab arrives clean after a dirty first tab before its edit baseline is captured$/,
-      /^the edit really diverged on the second tab, so the discard there can fail$/,
-      /^discarding after a tab round trip does not restore the discarded text$/,
+      /^returning to Alpha restores its own open editor draft selection and undo$/,
+      /^both edited documents remain protected instead of forcing one editor closed$/,
+      /^document editor scenarios introduce no renderer or visible document errors$/,
     ],
     requireMustPassAssertions: true,
     requireExactFailures: true,
@@ -1104,40 +1202,47 @@ const REVERTS = [
     // asked to save them - and then discarded them in the renderer while the
     // main process wrote them to disk. File and app held different documents.
     id: "R95",
-    suite: "test:tabs",
+    suite: "test:document-editor-save",
     what: "exit edit mode without waiting for an in-flight save to come back",
     file: RENDERER,
     from: "  if (isEditMode) {\n    const inFlight = pendingSaveFor(currentFilePath);",
     to: "  if (false) {\n    const inFlight = pendingSaveFor(currentFilePath);",
     expect: [
-      /exiting during a save does not warn that the changes will be discarded/,
-      /the document the app shows after a save-then-exit is the document on disk/,
+      /^an unresolved Save timeout keeps the editor open without offering discard$/,
     ],
+    mustPass: [
+      /^background Save setup holds another real write with a different dispatch checkpoint$/,
+      /^an Exit awaiting Alpha Save cannot open or close Beta after switching tabs$/,
+      /^document editor scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
   },
   {
     // The write persisted the bytes it was HANDED. Re-reading the textarea when
     // the reply lands adopts anything typed since, so `originalMarkdown` starts
     // describing a document that was never written to disk.
     id: "R96",
-    suite: "test:tabs",
+    suite: "test:document-editor-visible-save",
     what: "resync the document store from the textarea after a save instead of from the bytes that were written",
     file: RENDERER,
     from:
-      "    if (isEditMode) {\n" +
       "      originalMarkdown = decision.savedContent;\n" +
-      "      setDocumentDirtyState(",
+      "      setDocumentDirtyState(\n" +
+      "        !sameReloadDocument(markdownEditor.value, decision.savedContent)\n" +
+      "      );",
     to:
-      "    if (isEditMode) {\n" +
       "      originalMarkdown = markdownEditor.value;\n" +
-      "      setDocumentDirtyState(",
+      "      setDocumentDirtyState(\n" +
+      "        !sameReloadDocument(markdownEditor.value, decision.savedContent)\n" +
+      "      );",
     expect: [
-      /after a save the document store holds the bytes that were written, not later keystrokes/,
+      /^foreground Save keeps the renderer baseline on the bytes actually written$/,
     ],
     mustPass: [
-      /^the type-during-save fixture starts from beta\.md's real clean disk baseline$/,
-      /^the type-during-save race really was set up: the write and the buffer diverged$/,
-      /^the tab keeps the later unsaved edit while its saved baseline follows disk$/,
-      /^the type-during-save reply leaves every other tab unchanged$/,
+      /^late Save setup holds a real admitted write before it touches the disposable file$/,
+      /^foreground Save still reports newer editor keystrokes as unsaved$/,
+      /^foreground Save keeps the newer tab source and the independently saved disk baseline$/,
     ],
     requireMustPassAssertions: true,
     requireExactFailures: true,
@@ -1147,26 +1252,22 @@ const REVERTS = [
     // hides genuinely unsaved bytes, which the next exit then discards without
     // warning - the dirty flag is what the whole discard path keys off.
     id: "R97",
-    suite: "test:tabs",
+    suite: "test:document-editor-visible-save",
     what: "declare the document clean after a save even if it was typed into while the write was in flight",
     file: RENDERER,
     from:
-      "    if (isEditMode) {\n" +
       "      originalMarkdown = decision.savedContent;\n" +
       "      setDocumentDirtyState(\n" +
       "        !sameReloadDocument(markdownEditor.value, decision.savedContent)\n" +
       "      );",
     to:
-      "    if (isEditMode) {\n" +
       "      originalMarkdown = decision.savedContent;\n" +
       "      setDocumentDirtyState(false);",
-    expect: [/keystrokes made during a save are still reported as unsaved/],
+    expect: [/^foreground Save still reports newer editor keystrokes as unsaved$/],
     mustPass: [
-      /^the type-during-save fixture starts from beta\.md's real clean disk baseline$/,
-      /^the type-during-save race really was set up: the write and the buffer diverged$/,
-      /^after a save the document store holds the bytes that were written, not later keystrokes$/,
-      /^the tab keeps the later unsaved edit while its saved baseline follows disk$/,
-      /^the type-during-save reply leaves every other tab unchanged$/,
+      /^late Save setup holds a real admitted write before it touches the disposable file$/,
+      /^foreground Save keeps the renderer baseline on the bytes actually written$/,
+      /^foreground Save keeps the newer tab source and the independently saved disk baseline$/,
     ],
     requireMustPassAssertions: true,
     requireExactFailures: true,
@@ -1225,20 +1326,19 @@ const REVERTS = [
     // capturing it before switchToTab moves that flag bakes in the PREVIOUS
     // tab's unsaved state.
     id: "R100",
-    suite: "test:tabs",
-    what: "capture the arriving tab's edit baseline before its unsaved state has been restored",
+    suite: "test:document-editor-baseline",
+    what: "let the outgoing tab's dirty flag contaminate the arriving document's discard checkpoint",
     file: RENDERER,
-    from: "      markdownEditor.value = originalMarkdown;\n      setDocumentDirtyState(dirty);",
+    from: "  editSessionBaseline = incomingEditor?.open ? incomingEditor.baseline : null;",
     to:
-      "      markdownEditor.value = originalMarkdown;\n" +
-      "      captureEditSessionBaseline(options.preserveEditBaseline ? false : true);\n" +
-      "      setDocumentDirtyState(dirty);",
+      "  editSessionBaseline = incomingEditor?.open && incomingEditor.baseline\n" +
+      "    ? { ...incomingEditor.baseline, dirty: prior.dirty } : null;",
     expect: [
-      /discarding on a clean tab does not inherit the previous tab's unsaved state/,
+      /^discard restores the owning document's clean flag rather than the other tab's dirty flag$/,
     ],
     mustPass: [
-      /^the second tab arrives clean after a dirty first tab before its edit baseline is captured$/,
-      /^discarding on a tab the session did not start on restores that tab's own content$/,
+      /^both edited documents remain protected instead of forcing one editor closed$/,
+      /^undo cannot resurrect edits discarded after returning to their owning document$/,
     ],
     requireMustPassAssertions: true,
     requireExactFailures: true,
@@ -13292,8 +13392,8 @@ const REVERTS = [
           what: "drop parseEmojis() from the light render path, so emoji resolve on one path only",
           file: RENDERER,
           from:
-            "  content = parseEmojis(content);\n\n  // Extract and placeholder special blocks (same as full render)",
-          to: "  // Extract and placeholder special blocks (same as full render)",
+            "  content = scrollSource.prepare(parseEmojis);\n\n  // Extract and placeholder special blocks (same as full render)",
+          to: "  content = scrollSource.prepare(text => text);\n\n  // Extract and placeholder special blocks (same as full render)",
           suite: "test:patch",
           expect: [
             // The light path stops resolving shortcodes at all.
@@ -13435,8 +13535,8 @@ const REVERTS = [
           what: "stop restoring the mermaid source attribute on the light-format path",
           file: RENDERER,
           from:
-            "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html);\n  restoreMermaidSourceAttributes();",
-          to: "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html);",
+            "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html, scrollSource);\n  restoreMermaidSourceAttributes();",
+          to: "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html, scrollSource);",
           suite: "test:security",
           expect: [
             /^N18 a flowchart arrow diagram still carries its source after render \(light-format\)$/,
@@ -13512,9 +13612,9 @@ const REVERTS = [
           what: "stop restoring the mermaid source attribute on the full path",
           file: RENDERER,
           from:
-            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html);\n  restoreMermaidSourceAttributes();",
+            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html, scrollSource);\n  restoreMermaidSourceAttributes();",
           to:
-            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html);",
+            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html, scrollSource);",
           suite: "test:security",
           expect: [
             /^N18 a flowchart arrow diagram still carries its source after render \(full\)$/,
@@ -13668,44 +13768,18 @@ const REVERTS = [
           what: "restore block placeholders with a per-block string replacement ($-expanding)",
           file: RENDERER,
           from:
-            "      return html.replace(new RegExp(pattern, 'g'), (match, wrapped, bare) => {\n        const index = Number(wrapped !== undefined ? wrapped : bare);\n        // A token bearing this render's nonce always indexes a block this\n        // render lifted out. Out of range is unreachable rather than hostile,\n        // so leave the text alone instead of inventing markup for it.\n        return index < blocks.length ? build(blocks[index]) : match;\n      });",
+            "      return html.replace(new RegExp(pattern, 'g'), (match, wrapped, bare) => {\n        const index = Number(wrapped !== undefined ? wrapped : bare);\n        // A token bearing this render's nonce always indexes a block this\n        // render lifted out. Out of range is unreachable rather than hostile,\n        // so leave the text alone instead of inventing markup for it.\n        return index < blocks.length ? build(blocks[index], index) : match;\n      });",
           to:
-            "      for (let i = 0; i < blocks.length; i++) {\n        const ph = `${token}${i}_`;\n        const built = build(blocks[i]);\n        if (unwrapParagraph) html = html.replace(`<p>${ph}</p>`, built);\n        html = html.replace(ph, built);\n      }\n      return html;",
-          suite: "test:security",
-          expect: [
-            /^F43 a diagram body of \$-replacement patterns round-trips verbatim \(light-format\)$/,
-            /^F43 a diagram body of \$-replacement patterns round-trips verbatim \(full\)$/,
-            // A THIRD FAILURE USED TO BE NAMED HERE - "nothing rendered a
-            // visible error at any point during the suite" - and it is REMOVED
-            // BY MEASUREMENT rather than by opinion. The record's reasoning was
-            // that the corrupted source is no longer valid mermaid, so the
-            // library draws its syntax-error graphic and the suite's sentinel
-            // sees it. That was true while the full path re-derived a source
-            // from the element's own text; it is not true now. The `$\``
-            // expansion injects unescaped HTML whose embedded `"` closes the
-            // attribute early, so a real <h1> and <div class="collapsible-
-            // section"> land INSIDE the <pre class="mermaid">, and an element
-            // with a child is one restoreMermaidSourceAttributes() will not
-            // adopt a source for. With no source the render path leaves it
-            // alone, so nothing is drawn and nothing is painted red.
-            //
-            // MEASURED under this revert on the current tree: both legs record
-            // mermaidSrc null and the injected <h1>/<div> in the element's
-            // markup, and the sentinel stays green. The corruption is still
-            // exactly as visible in the two named failures - it just no longer
-            // costs the reader an error graphic on top of it.
-          ],
-          mustPass: [
-            // The nonce is untouched, so both decoy families must still be
-            // refused - including the nonce-less shape, which is what proves
-            // this revert did not quietly reintroduce R529's defect.
-            /^F43 a decoy matching the nonce-less token shape cannot capture the real diagram \(light-format\)$/,
-            /^F43 a decoy mermaid placeholder cannot capture the real diagram \(light-format\)$/,
-            // The loop visits every index, so multi-block restoration must
-            // survive. If this fails, the revert has strayed into R531.
-            /^F43 every block is restored, not just the first \(light-format\)$/,
-            /^F43 every block is restored, not just the first \(full\)$/,
-          ],
+            "      for (let i = 0; i < blocks.length; i++) {\n        const ph = `${token}${i}_`;\n        const built = build(blocks[i], i);\n        if (unwrapParagraph) html = html.replace(`<p>${ph}</p>`, built);\n        html = html.replace(ph, built);\n      }\n      return html;",
+          // The production-preload probe covers both copies without the
+          // security suite's unrelated legacy relative-image/IPC fixtures.
+          suite: "test:editor-scroll-mapping",
+          expect: [/^(canonical|metadata) placeholder restoration keeps literal dollar sequences \((unwrapped|wrapped)\)$/],
+          mustPass: [/^placeholder builders execute once per occurrence while metadata replays the result$/,
+            /^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejects mismatch metadata instead of retargeting repeated source occurrences$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
         },
         {
           id: "R531",
@@ -23118,6 +23192,543 @@ const REVERTS = [
             /^explicit Welcome choice wins over the pending first-document TOC default$/],
           requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
         },
+        {
+          id: "R1005", what: "stop source-editor scrolling from moving the corresponding preview content",
+          file: EDITOR_SCROLL,
+          from: "    const from = owner, to = from === 'editor' ? 'preview' : 'editor';",
+          to: "    if (owner === 'editor') return;\n    const from = owner, to = from === 'editor' ? 'preview' : 'editor';",
+          suite: "test:editor-scroll-core",
+          expect: [/^editor aligns content after a tall Mermaid$/],
+          mustPass: [/^preview aligns content inside a long section$/,
+            /^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1006", what: "stop preview scrolling from moving the corresponding source content",
+          file: EDITOR_SCROLL,
+          from: "    const from = owner, to = from === 'editor' ? 'preview' : 'editor';",
+          to: "    if (owner === 'preview') return;\n    const from = owner, to = from === 'editor' ? 'preview' : 'editor';",
+          suite: "test:editor-scroll-core",
+          expect: [/^preview aligns content inside a long section$/],
+          mustPass: [/^editor aligns content after a tall Mermaid$/,
+            /^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^scroll error sentinel detects both deliberately provoked channels$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1007", what: "replace semantic block correspondence with a whole-document scrollbar percentage",
+          file: EDITOR_SCROLL,
+          from: "      target = a[to] + fraction * (b[to] - a[to]);",
+          to: "      target = position / max * otherMax;",
+          suite: "test:editor-scroll-core",
+          expect: [/^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/],
+          mustPass: [/^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/,
+            /^scroll product source remains unchanged throughout this run$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1008", what: "forget the new source occurrence when a rendered block is reused",
+          file: EDITOR_SCROLL,
+          from: "    adopt(fresh, adopted, bindings) {\n      const nodes = [fresh, ...fresh.querySelectorAll('*')];",
+          to: "    adopt(fresh, adopted, bindings) {\n      if (fresh !== adopted) return;\n      const nodes = [fresh, ...fresh.querySelectorAll('*')];",
+          suite: "test:editor-scroll-edits",
+          expect: [/^insertion updates the source position of reused repeated blocks$/,
+            /^undo rebuilds mapping for the restored source$/,
+            /^redo rebuilds mapping for the edited source$/],
+          mustPass: [/^new editor input suspends mapping while the preview still holds old source$/,
+            /^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R1009", what: "keep using old preview coordinates during the edit debounce",
+          file: EDITOR_SCROLL,
+          from: "    changed() { pendingSource = true; clearGeometry(); claim('editor'); },",
+          to: "    changed() { claim('editor'); },",
+          suite: "test:editor-scroll-edits",
+          expect: [/^new editor input suspends mapping while the preview still holds old source$/],
+          mustPass: [/^insertion updates the source position of reused repeated blocks$/,
+            /^undo rebuilds mapping for the restored source$/,
+            /^redo restores the exact edited body through the real history path$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1010", what: "keep old semantic coordinates after media and pane layout changes",
+          file: EDITOR_SCROLL,
+          from: "  function invalidate() {\n    dirty = true;",
+          to: "  function invalidate() {\n    if (anchors.length) return;\n    dirty = true;",
+          suite: "test:editor-scroll-layout",
+          expect: [/^late image sizing rebuilds correspondence without moving the editor driver$/,
+            /^editor correspondence follows freshly resized image$/,
+            /^(editor|preview) correspondence survives reading zoom$/,
+            /^(editor|preview) correspondence survives splitter and TOC resize$/],
+          mustPass: [/^preview aligns content inside a long section$/,
+            /^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^scroll error sentinel detects both deliberately provoked channels$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 6,
+        },
+        {
+          id: "R1011", what: "rebuild the full source and DOM geometry during every settled scroll",
+          file: EDITOR_SCROLL,
+          from: "      stats.scrolls++;\n      schedule();",
+          to: "      stats.scrolls++;\n      dirty = true;\n      schedule();",
+          suite: "test:editor-scroll-cost",
+          expect: [/^settled scrolling uses cached geometry without rebuilding or source range reads$/],
+          mustPass: [/^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1012", what: "leave tab restoration armed after the editor takes scroll ownership",
+          file: TABS,
+          from: "  window.addEventListener('editor-scroll-intent', () => {\n    if (cancelActiveRestore) cancelActiveRestore();\n  });",
+          to: "",
+          suite: "test:editor-scroll-transitions",
+          expect: [/^editor wheel retires the outstanding tab restore immediately$/],
+          mustPass: [/^tab return really has an armed bounded restore before editor input$/,
+            /^tab return maps the admitted document not the previous short tab$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1013", what: "invalidate the rendered source map when Save resumes file watching",
+          file: RENDERER,
+          from: "  identity: () => fileOpenSequence, scale: scrollerScale,",
+          to: "  identity: () => activeFileSelectionGeneration, scale: scrollerScale,",
+          suite: "test:editor-scroll-save",
+          expect: [/^successful save keeps the committed scroll geometry ready$/,
+            /^(editor|preview) correspondence survives successful save$/],
+          mustPass: [/^save setup writes the edited fixture and resumes watching without another render$/,
+            /^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R1014", what: "lose the source span of a diagram beside prose without a blank separator",
+          file: EDITOR_SCROLL,
+          from: "        this.specials[kind].push({ start: this.offset(from),",
+          to: "        if (kind !== 'mermaid') this.specials[kind].push({ start: this.offset(from),",
+          suite: "test:editor-scroll-blocks",
+          expect: [/^inside a tall diagram maps to that diagram rather than a neighboring section$/,
+            /^preview pixels inside a tall diagram map back inside its source fence$/],
+          mustPass: [/^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^(editor|preview) aligns prose after a tall inline image$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1015", what: "spread an inline image's height across unrelated prose in its paragraph",
+          file: EDITOR_SCROLL,
+          from: "'table', 'html', 'hr', 'image']",
+          to: "'table', 'html', 'hr']",
+          suite: "test:editor-scroll-blocks",
+          expect: [/^editor aligns a short inline image before its adjacent prose$/],
+          mustPass: [/^(editor|preview) aligns an interior table row$/,
+            /^(editor|preview) stays within a multi-screen single source paragraph$/,
+            /^(editor|preview) aligns prose after a tall inline image$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1016", what: "let the menu close an already open current-document editor",
+          file: RENDERER,
+          from: "toggleEditBtn.addEventListener('click', () => changeCurrentDocumentEditor(true));",
+          to: "toggleEditBtn.addEventListener('click', () => changeCurrentDocumentEditor(!isEditMode));",
+          suite: "test:document-editor-modes",
+          expect: [/^menu only opens the current editor and repeated activation preserves its exact draft$/],
+          mustPass: [/^new documents begin in reading mode through the isolated production preload$/,
+            /^switching to an unopened editor keeps that document in reading mode$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1017", what: "let the toolbar close an already open current-document editor",
+          file: RENDERER,
+          from: "openEditorBtn.addEventListener('click', () => changeCurrentDocumentEditor(true));",
+          to: "openEditorBtn.addEventListener('click', () => changeCurrentDocumentEditor(!isEditMode));",
+          suite: "test:document-editor-sessions",
+          expect: [/^toolbar only opens the current editor without resetting text selection undo or dirty state$/],
+          mustPass: [/^menu only opens the current editor and repeated activation preserves its exact draft$/,
+            /^both edited documents remain protected instead of forcing one editor closed$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1018", what: "carry the outgoing editor's open mode into another document",
+          file: RENDERER,
+          from: "  setEditorPresentation(incomingEditor?.open === true, !!incomingEditor);",
+          to: "  setEditorPresentation(prior.editor.open === true, !!incomingEditor);",
+          suite: "test:document-editor-modes",
+          expect: [/^switching to an unopened editor keeps that document in reading mode$/],
+          mustPass: [/^new documents begin in reading mode through the isolated production preload$/,
+            /^menu only opens the current editor and repeated activation preserves its exact draft$/,
+            /^document editor product source remains unchanged throughout the run$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1019", what: "drop a document's retained history and selection when restoring its editor",
+          file: RENDERER,
+          from: "  if (incomingEditor) historyRestore(historyForEditorState(incomingEditor));\n  else historyClear();",
+          to: "  historyClear();",
+          also: {
+            from: "  if (selection) markdownEditor.setSelectionRange(selection.start, selection.end, selection.direction);",
+            to: "  /* proof: incoming editor selection is not restored */",
+          },
+          suite: "test:document-editor-sessions",
+          expect: [/^returning to Alpha restores its own open editor draft selection and undo$/,
+            /^refused admission preserves the dirty owning editor selection history and discard checkpoint$/,
+            /^returning to Beta restores its different open editor draft selection and undo$/],
+          mustPass: [/^both edited documents remain protected instead of forcing one editor closed$/,
+            /^menu only opens the current editor and repeated activation preserves its exact draft$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R1020", what: "leave a background editor's discard checkpoint behind the accepted Save",
+          file: TABS,
+          from: "        baseline: editor.open\n          ? { document: savedContent, history: decision.editorHistory, dirty: false }\n          : null,",
+          to: "        baseline: editor.baseline,",
+          suite: "test:document-editor-save",
+          expect: [/^discard after a background Save restores saved bytes and its history checkpoint$/],
+          mustPass: [/^background Save setup holds another real write with a different dispatch checkpoint$/,
+            /^background Save preserves the newer owning draft and its open editor$/,
+            /^an Exit awaiting Alpha Save cannot open or close Beta after switching tabs$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1021", what: "let an older Exit completion clear a reopened editor's discard checkpoint",
+          file: RENDERER,
+          from: "      if (window.CustomTabs.getActiveTab() === tab && fileOpenSequence === sequence &&\n          editorModeRevision === completionRevision &&\n          mayMutateRendererDocument('editor-exit-cleanup')) {",
+          to: "      if (window.CustomTabs.getActiveTab() === tab && fileOpenSequence === sequence) {",
+          suite: "test:document-editor-reopen-exit",
+          expect: [/^an older Exit completion cannot clear the reopened editor's baseline$/,
+            /^discard after an older Exit completes restores the new session's undo checkpoint$/],
+          mustPass: [/^reopen race holds a real discard render after the editor closes$/,
+            /^reopening during discard establishes a separate live session baseline$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1022", what: "cancel a clean editor's final preview instead of flushing it on Exit",
+          file: RENDERER,
+          from: "    if (previewPending) await renderMarkdown(markdownEditor.value);",
+          to: "    /* proof: final clean preview remains pending */",
+          suite: "test:document-editor-clean-exit",
+          expect: [/^clean editor exit flushes the final source instead of leaving the intermediate preview$/],
+          mustPass: [/^clean exit probe really has a clean buffer and a stale pending preview$/,
+            /^foreground Save keeps the renderer baseline on the bytes actually written$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1023", what: "keep obsolete editor history and discard content after clean disk replacement",
+          file: TABS,
+          from: "      state.editor = freshEditorState(content, state.editor.open);",
+          to: "      /* proof: content-dependent editor state is not rebased */",
+          suite: "test:document-editor-reload",
+          expect: [/^clean disk replacement retains only that document's editor intent and retires old undo$/,
+            /^discard after disk replacement cannot resurrect an earlier document version$/],
+          mustPass: [/^discard after a background Save restores saved bytes and its history checkpoint$/,
+            /^both edited documents remain protected instead of forcing one editor closed$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1024", what: "leave a retired document's editor and controls over the empty Welcome view",
+          file: TABS,
+          from: "          if (window.clearDocumentEditor) window.clearDocumentEditor();",
+          to: "          /* proof: retired editor remains visible over Welcome */",
+          suite: "test:document-editor",
+          expect: [/^closing the last editor clears its source history mode and Open controls over Welcome$/],
+          mustPass: [/^closing and reopening a document does not inherit a retired tab's edit session$/,
+            /^reopening after Welcome starts a new reading session rather than reviving the closed editor$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1025", what: "allow the previous editor's deferred work to run in another document",
+          file: RENDERER,
+          from: "  cancelEditorDeferredWork();\n  editorModeRevision++;\n  editorScroll.reset();",
+          to: "  editorModeRevision++;\n  editorScroll.reset();",
+          also: [{
+            from: "    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      historyPush(markdownEditor.value);",
+            to: "    if (isEditMode) {\n      historyPush(markdownEditor.value);",
+          }, {
+            from: "    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      renderMarkdown(markdownEditor.value);",
+            to: "    if (isEditMode) {\n      renderMarkdown(markdownEditor.value);",
+          }],
+          suite: "test:document-editor-deferred",
+          expect: [/^pending editor callbacks cannot re-render or change the newly selected document$/],
+          mustPass: [/^rapid switch starts with both editor timers pending and admits the other document$/,
+            /^returning restores the owning draft and its pending history without a cross-tab undo entry$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1026", what: "let the added editor button push the menu outside a narrow toolbar",
+          file: CUSTOM_CSS,
+          from: ".header {\n  gap: 8px;\n  flex-wrap: wrap;\n}",
+          to: ".header {\n  gap: 8px;\n}",
+          suite: "test:document-editor-toolbar",
+          expect: [/^narrow toolbar keeps Reload Open editor and the menu visible and hit-testable$/],
+          mustPass: [/^narrow toolbar probe really needs more space than a single button row$/,
+            /^toolbar exposes an accessible current-document Open editor button$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1027", what: "let source mapping markup change displayed SVG and raw-text HTML",
+          file: EDITOR_SCROLL,
+          from: "      this.restorations = [];\n      return html;",
+          to: "      this.restorations = [];\n      return this.mappingHtml;",
+          suite: "test:editor-scroll-html",
+          expect: [/^(reading|edit) (full|light-format) preserves canonical .+ HTML without mapping mutations$/,
+            /^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^(editor|preview) retains precise ordinary content after opaque (svg|textarea|table|formatting)$/,
+            /^(editor|preview) retains the correct repeated occurrence around (svg|textarea|table|formatting)$/],
+          mustPass: [/^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^all required scrolling scenarios were executed$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 70,
+        },
+        {
+          id: "R1028", what: "publish source bindings even when the sanitized DOM does not verify",
+          file: EDITOR_SCROLL,
+          from: "      if (!metadata.valid || !equal(root, metadata.copy)) {\n        this.warn('unverified authored HTML structure');",
+          to: "      if (false) {\n        this.warn('unverified authored HTML structure');",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^mapping rejects (mismatch|duplicate|owner|order) metadata instead of retargeting repeated source occurrences$/],
+          mustPass: [/^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejection controls really contain independently owned repeated text leaves$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+        },
+        {
+          id: "R1029", what: "consume one source annotation twice after HTML reconstructs an element",
+          file: EDITOR_SCROLL,
+          from: "if (!Number.isSafeInteger(index) || !descriptor || consumed.has(index))",
+          to: "if (!Number.isSafeInteger(index) || !descriptor)",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^mapping rejects duplicate metadata instead of retargeting repeated source occurrences$/],
+          mustPass: [/^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejects owner metadata instead of retargeting repeated source occurrences$/,
+            /^mapping rejects order metadata instead of retargeting repeated source occurrences$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1030", what: "move a repeated leaf's source identity into another token's rendered root",
+          file: EDITOR_SCROLL,
+          from: "        if (descriptor && !descriptor.root && !owners.get(descriptor.owner)?.contains(node)) {\n          this.invalidAnnotations = true;\n        }",
+          to: "",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^mapping rejects owner metadata instead of retargeting repeated source occurrences$/],
+          mustPass: [/^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejects duplicate metadata instead of retargeting repeated source occurrences$/,
+            /^mapping rejects order metadata instead of retargeting repeated source occurrences$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1031", what: "accept reversed equal-text source occurrences inside a rendered token",
+          file: EDITOR_SCROLL,
+          from: "          if (descriptor.start < previous) this.invalidAnnotations = true;",
+          to: "",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^mapping rejects order metadata instead of retargeting repeated source occurrences$/],
+          mustPass: [/^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejects duplicate metadata instead of retargeting repeated source occurrences$/,
+            /^mapping rejects owner metadata instead of retargeting repeated source occurrences$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1032", what: "parse detached mapping HTML in the live document's resource context",
+          file: EDITOR_SCROLL,
+          from: "        template.content.append(copy);",
+          to: "",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^mapping HTML is parsed only in an inert document rather than a live resource context$/],
+          mustPass: [/^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejects mismatch metadata instead of retargeting repeated source occurrences$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1033", what: "leave unsafe inline instrumentation inside opaque authored HTML on retry",
+          file: EDITOR_SCROLL,
+          from: "        this.mappingHtml = this.renderMapping(true);",
+          to: "        this.mappingHtml = this.renderMapping(false);",
+          suite: "test:editor-scroll-html",
+          expect: [/^(editor|preview) retains precise ordinary content after opaque (svg|formatting)$/,
+            /^(editor|preview) retains the correct repeated occurrence around (svg|formatting)$/],
+          mustPass: [/^(reading|edit) (full|light-format) preserves canonical .+ HTML without mapping mutations$/,
+            /^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 8,
+        },
+        {
+          id: "R1034", what: "keep nested wheel ownership after native scrolling chains at its edge",
+          file: EDITOR_SCROLL,
+          from: "      if (!direction || (direction < 0 ? node.scrollTop > 1 : node.scrollTop < max - 1) ||\n          /contain|none/.test(style.overscrollBehaviorY)) return true;",
+          to: "      return true;",
+          suite: "test:editor-scroll-input",
+          expect: [/^native wheel chaining at the nested (bottom|top) follows direct preview intent$/],
+          mustPass: [/^horizontal and nested vertical scrollports remain independent$/,
+            /^nested overscroll (contain|none) preserves outer position and ownership$/,
+            /^follower events settle without feedback bounce or an idle write loop$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1035", what: "take outer ownership when nested wheel containment prevents chaining",
+          file: EDITOR_SCROLL,
+          from: "      if (!direction || (direction < 0 ? node.scrollTop > 1 : node.scrollTop < max - 1) ||\n          /contain|none/.test(style.overscrollBehaviorY)) return true;",
+          to: "      if (!direction || (direction < 0 ? node.scrollTop > 1 : node.scrollTop < max - 1)) return true;",
+          suite: "test:editor-scroll-input",
+          expect: [/^nested overscroll (contain|none) preserves outer position and ownership$/],
+          mustPass: [/^native wheel chaining at the nested (bottom|top) follows direct preview intent$/,
+            /^horizontal and nested vertical scrollports remain independent$/,
+            /^follower events settle without feedback bounce or an idle write loop$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1036", what: "discard inline source provenance and interpolate hidden syntax as visible prose",
+          file: EDITOR_SCROLL,
+          from: "      for (const name of ['text', 'codespan']) {",
+          to: "      for (const name of []) {",
+          suite: "test:editor-scroll-rich",
+          expect: [/^(editor|preview) aligns prose after a long hidden link destination$/,
+            /^(editor|preview) aligns uneven wrapping inside one source paragraph$/,
+            /^(editor|preview) preserves inline entities escapes repeated link labels and code$/],
+          mustPass: [/^rich fixture has wrapped hidden syntax and prefix-stripped nested media$/,
+            /^(editor|preview) aligns nested (quote|list) content after a tall image$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 6,
+        },
+        {
+          id: "R1037", what: "close the live editor when an incoming document owner is refused",
+          file: RENDERER,
+          from: "    setEditorPresentation(prior.editor.open, !!prior.filePath);",
+          to: "    setEditorPresentation(false, !!prior.filePath);",
+          suite: "test:editor-scroll-transitions",
+          expect: [/^a refused incoming owner restores the live editor history selection source and scroll map$/,
+            /^(editor|preview) correspondence survives refused document admission$/],
+          mustPass: [/^tab return maps the admitted document not the previous short tab$/,
+            /^a newly opened document does not inherit another document's editor$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R1038", what: "lose a dirty editor's discard checkpoint after incoming admission is refused",
+          file: RENDERER,
+          from: "    editSessionBaseline = prior.editBaseline;",
+          to: "    editSessionBaseline = null;",
+          suite: "test:document-editor-admission",
+          expect: [/^refused admission preserves the dirty owning editor selection history and discard checkpoint$/],
+          mustPass: [/^returning to Alpha restores its own open editor draft selection and undo$/,
+            /^both edited documents remain protected instead of forcing one editor closed$/,
+            /^document editor scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1039", what: "assign an opaque multi-root HTML token to its first surviving element",
+          file: EDITOR_SCROLL,
+          from: "            if (nodes.length !== 1 || !node.isEqualNode(nodes[0])) {\n              this.warn('opaque multi-root HTML block');\n              continue;\n            }",
+          to: "",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^a multi-root opaque HTML token never assigns its entire source to the first surviving element$/],
+          mustPass: [/^verified mapping accepts the unchanged repeated-content control$/,
+            /^mapping rejects owner metadata instead of retargeting repeated source occurrences$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1040", what: "report success when a required scrolling scenario was not executed",
+          file: path.join(ROOT, "test", "test-editor-scroll.js"),
+          from: "  const selected = !proof || proof === name;",
+          to: "  const selected = false;",
+          suite: "test:editor-scroll-mapping",
+          expect: [/^all required scrolling scenarios were executed$/],
+          mustPass: [/^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+            /^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1041", what: "map a one-line image source to the bottom of its tall preview",
+          file: EDITOR_SCROLL,
+          from: "        else if (point.priority > last.priority) points[points.length - 1] = point;",
+          to: "        else points[points.length - 1] = point;",
+          suite: "test:editor-scroll-blocks",
+          expect: [/^editor keeps a one-line image source at its corresponding tall image$/,
+            /^editor aligns a short inline image before its adjacent prose$/,
+            /^editor keeps an image edge after hidden empty-link syntax$/],
+          mustPass: [/^preview keeps a one-line image source at its corresponding tall image$/,
+            /^editor aligns content after a tall Mermaid$/,
+            /^preview aligns content inside a long section$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R1042", what: "restart nested source searches before already consumed reference definitions",
+          file: EDITOR_SCROLL,
+          from: "          cursor = at + token.raw.length;",
+          to: "          cursor = topLevel ? at + token.raw.length : 0;",
+          suite: "test:editor-scroll-bounds",
+          expect: [/^nested reference definitions cannot steal the repeated visible paragraph source$/,
+            /^preview maps the visible nested reference occurrence rather than its hidden definition$/],
+          mustPass: [/^physical-line stress setup really rebuilds an overflowing single paragraph$/,
+            /^physical-line rebuild geometry work grows linearly rather than enumerating paragraph suffixes$/,
+            /^editor maps the visible nested reference occurrence rather than its hidden definition$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+        },
+        {
+          id: "R1043", what: "enumerate every remaining paragraph rectangle for each physical source line",
+          file: EDITOR_SCROLL,
+          from: "              range.setEnd(node, 1);\n              const box = range.getBoundingClientRect();",
+          to: "              range.setEnd(element, element.childNodes.length);\n              const box = range.getClientRects()[0];",
+          suite: "test:editor-scroll-bounds",
+          expect: [/^physical-line rebuild geometry work grows linearly rather than enumerating paragraph suffixes$/],
+          mustPass: [/^physical-line stress setup really rebuilds an overflowing single paragraph$/,
+            /^(editor|preview) aligns an interior physical line after a bounded geometry rebuild$/,
+            /^nested reference definitions cannot steal the repeated visible paragraph source$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1044", what: "scroll past the beginning of source text sharing a visible preview row",
+          file: EDITOR_SCROLL,
+          from: "        else if (point.priority > last.priority) points[points.length - 1] = point;",
+          to: "        else points[points.length - 1] = point;",
+          suite: "test:editor-scroll-rich",
+          expect: [/^preview aligns prose after a long hidden link destination$/],
+          mustPass: [/^editor aligns prose after a long hidden link destination$/,
+            /^(editor|preview) aligns nested (quote|list) content after a tall image$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1045", what: "discard a precise image boundary coinciding with its coarse paragraph boundary",
+          file: EDITOR_SCROLL,
+          from: "        if (pair.priority > previous.priority) anchors[anchors.length - 1] = previous = pair;",
+          to: "",
+          suite: "test:editor-scroll-blocks",
+          expect: [/^editor keeps an image edge after hidden empty-link syntax$/],
+          mustPass: [/^(editor|preview) keeps a one-line image source at its corresponding tall image$/,
+            /^editor aligns a short inline image before its adjacent prose$/,
+            /^(editor|preview) maps inside a tall inline image rather than its adjacent prose$/,
+            /^scroll scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
       ];
 
 // These are release exceptions, not passing or withdrawn proofs. An explicit
@@ -24198,7 +24809,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") === "R319" &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount))
       .map((r) => r.id)
-      .join(",") === "R72,R454,R467,R319,R320,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004";
+      .join(",") === "R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,

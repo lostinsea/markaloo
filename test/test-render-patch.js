@@ -2062,7 +2062,7 @@ async function run(win) {
         guarded: hasUnsavedWork(),
         note: originalMarkdown.includes('LOST NOTE'),
       })`);
-      await exec(`toggleEditBtn.click(); null`);
+      await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null`);
       await waitFor(exec, "entering edit mode after the failed save", `isEditMode`);
       const afterEnterEdit = await exec(`({ dirty: hasUnsavedChanges, mode: isEditMode })`);
       failState = {
@@ -2109,7 +2109,7 @@ async function run(win) {
       fs.readFileSync(failPath, "utf8").includes("LOST NOTE"),
       fs.readFileSync(failPath, "utf8"),
     );
-    await exec(`toggleEditBtn.click(); null`);
+    await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null`);
     await waitFor(exec, "returning to view mode after failed note retry", `!isEditMode`);
 
     // ---- 7. A store that moves while a write is in flight ----
@@ -2492,7 +2492,7 @@ async function run(win) {
     try {
       await exec(`commitViewModeNote(originalMarkdown + '\\nLATE NOTE\\n', 0)`);
       await waitFor(() => heldLate.observed(), "the late save to reach disk open", "");
-      await exec(`toggleEditBtn.click(); null`);
+      await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null`);
       await waitFor(exec, "entering edit mode with a save pending", `isEditMode`);
       const carried = await exec(`hasUnsavedChanges && markdownEditor.value.includes('LATE NOTE')`);
       heldLate.releaseNext();
@@ -2531,7 +2531,7 @@ async function run(win) {
     );
     await exec(`saveMarkdownFile(); null`);
     await waitFor(exec, "late note retry to settle", `!hasPendingSaveFor(${JSON.stringify(tabAPath)}) && !saveFailedFor(${JSON.stringify(tabAPath)})`);
-    await exec(`toggleEditBtn.click(); null`);
+    await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null`);
     await waitFor(exec, "returning to view mode after retry", `!isEditMode`);
 
     // ---- 10. A renderer-only delivery failure is stale after disk adoption ----

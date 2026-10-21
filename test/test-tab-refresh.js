@@ -11840,7 +11840,7 @@ async function runNativeAuthorityBoundary(win, exec) {
     restores.length = 0;
     const saved = "# Native authority saved\n\nNATIVE_AUTHORITY_V2\n";
     await exec(`(() => {
-      if (!isEditMode) toggleEditBtn.click();
+      if (!isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
       markdownEditor.value = ${JSON.stringify(saved)};
       markdownEditor.dispatchEvent(new Event('input'));
       saveButton.click(); return true;
@@ -11850,7 +11850,7 @@ async function runNativeAuthorityBoundary(win, exec) {
       `!window.getPendingSaveStatus(${JSON.stringify(source)}).pending && !hasUnsavedWork()`, 8000);
     check("SEC-08 admitted native Save writes and settles through the actual editor and fixed port",
       written && settled, JSON.stringify({ written, settled }));
-    await exec("if (isEditMode) toggleEditBtn.click(); null;");
+    await exec("if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click(); null;");
     write(source, "# Native authority reloaded\n\nNATIVE_AUTHORITY_V3\n");
     const dispatched = await exec("window.reloadCurrentFile()");
     const reloaded = await waitForCondition(exec,
@@ -17662,7 +17662,7 @@ async function run(win) {
   const splitScroll = await exec(`
     (async () => {
       await new Promise(r => setTimeout(r, 200));
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 600));
       const wrapper = document.querySelector('.content-wrapper');
       const inSplit = wrapper.classList.contains('split-view');
@@ -17683,7 +17683,7 @@ async function run(win) {
       await new Promise(r => setTimeout(r, 900));
 
       const restored = getViewerScroller().scrollTop;
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 500));
       return {
         inSplit,
@@ -17720,7 +17720,7 @@ async function run(win) {
   // is dropped somewhere else entirely on every tab switch.
   const zoomScroll = await exec(`
     (async () => {
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 600));
       zoomLevel = 200;
       updateZoom();
@@ -17743,7 +17743,7 @@ async function run(win) {
       zoomLevel = 100;
       updateZoom();
       await new Promise(r => setTimeout(r, 300));
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 500));
       return { zoomed, scrollerId: s.id || s.className, parked, restored };
     })()
@@ -17776,7 +17776,7 @@ async function run(win) {
   // reviewer described shows up as a failure instead of a bug report.
   const undoScroll = await exec(`
     (async () => {
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 700));
       const inSplit = document
         .querySelector('.content-wrapper')
@@ -17805,7 +17805,7 @@ async function run(win) {
       await new Promise(r => setTimeout(r, 1400));
 
       const restored = getViewerScroller().scrollTop;
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 500));
       return {
         inSplit,
@@ -18250,7 +18250,7 @@ async function run(win) {
   await sleep(600);
   const undoSave = await exec(`
     (async () => {
-      if (isEditMode) toggleEditBtn.click();
+      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 300));
       // Make the undo stack local to this scenario. Without it the assertions
       // below depend on whatever every preceding scenario left on the stack,
@@ -18327,7 +18327,7 @@ async function run(win) {
       const seen = [];
       const realConfirm = window.confirm;
       window.confirm = (msg) => { seen.push(String(msg)); return true; };
-      if (isEditMode) toggleEditBtn.click();
+      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 600));
       historyClear();
       historyPush('# Alpha\\n\\nS7_OLD_UNDO_POINT\\n');
@@ -18354,7 +18354,7 @@ async function run(win) {
         tabDirty: tab && tab.hasUnsavedChanges,
         ownerTabId: owner && owner.tabId,
       };
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 800));
       markdownEditor.value = '# Alpha\\n\\nS7_EARLY\\n';
       markdownEditor.dispatchEvent(new Event('input'));
@@ -18379,7 +18379,7 @@ async function run(win) {
         viewerShowsTyped: viewer.textContent.includes('S7_TYPED'),
         undoDepth: undoHistory.length,
       };
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 1800));
       const after = {
         editMode: isEditMode,
@@ -18478,7 +18478,7 @@ async function run(win) {
       const seen = [];
       const realConfirm = window.confirm;
       window.confirm = (m) => { seen.push(String(m)); return true; };
-      if (isEditMode) toggleEditBtn.click();
+      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 600));
       const findOrMake = (p) => {
         const found = window.CustomTabs.getTabs().find(t => t.filePath === p);
@@ -18494,7 +18494,7 @@ async function run(win) {
       // and this scenario stops testing it.
       window.CustomTabs.updateTabContent(window.originalMarkdown, false);
       await new Promise(r => setTimeout(r, 300));
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 800));
       markdownEditor.value = '# Alpha\\n\\nS8_TYPED\\n';
       markdownEditor.dispatchEvent(new Event('input'));
@@ -18507,7 +18507,7 @@ async function run(win) {
         editMode: isEditMode,
         storeHasTyped: window.originalMarkdown.includes('S8_TYPED'),
       };
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 2000));
       const after = {
         editMode: isEditMode,
@@ -18560,14 +18560,14 @@ async function run(win) {
     (async () => {
       const realConfirm = window.confirm;
       window.confirm = () => true;
-      if (isEditMode) toggleEditBtn.click();
+      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 600));
       const tabsNow = window.CustomTabs.getTabs();
       const tA = tabsNow.find(t => t.filePath === ${jsA});
       const tB = tabsNow.find(t => t.filePath === ${jsB});
       window.CustomTabs.switchToTab(tA.id);
       await new Promise(r => setTimeout(r, 800));
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 800));
       markdownEditor.value = '# Alpha\\n\\nS8B_ON_A\\n';
       markdownEditor.dispatchEvent(new Event('input'));
@@ -18595,7 +18595,7 @@ async function run(win) {
         dirty: hasUnsavedChanges,
         viewerHasB: viewer.textContent.includes('S8B_ON_B'),
       };
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 2000));
       // Capture BEFORE the undo below. Building this object inside the return
       // statement would evaluate it after historyUndo() had already moved the
@@ -18686,12 +18686,12 @@ async function run(win) {
       const seen = [];
       const realConfirm = window.confirm;
       window.confirm = (msg) => { seen.push(String(msg)); return true; };
-      if (isEditMode) toggleEditBtn.click();
+      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 800));
       window.originalMarkdown = '# Beta\\n\\nS9_SAVED\\n';
       markdownEditor.value = window.originalMarkdown;
       await renderMarkdown(window.originalMarkdown);
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 800));
       markdownEditor.value = '# Beta\\n\\nS9_TYPED\\n';
       markdownEditor.dispatchEvent(new Event('input'));
@@ -18699,7 +18699,7 @@ async function run(win) {
       const before = { editMode: isEditMode, dirty: hasUnsavedChanges };
       // One synchronous task: the save reply cannot land between these two.
       saveButton.click();
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 2500));
       const after = {
         editMode: isEditMode,
@@ -18814,7 +18814,7 @@ async function run(win) {
     (async () => {
       const realConfirm = window.confirm;
       window.confirm = () => true;
-      toggleEditBtn.click();
+      (isEditMode ? exitEditBtn : toggleEditBtn).click();
       await new Promise(r => setTimeout(r, 800));
       markdownEditor.value = '# Beta\\n\\nS9B_SENT\\n';
       markdownEditor.dispatchEvent(new Event('input'));
@@ -18930,7 +18930,7 @@ async function run(win) {
         markdownEditor.value = physicalBeforeReset;
         markdownEditor.dispatchEvent(new Event('input'));
         window.CustomTabs.updateTabContent(physicalBeforeReset, false);
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(r => setTimeout(r, 800));
         resetApplied = true;
       }
@@ -19380,7 +19380,7 @@ async function run(win) {
         }
         probe.savedTabId = mine.id;
         probe.otherTabId = other.id;
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(resolve => setTimeout(resolve, 800));
         markdownEditor.value = expectedContent;
         markdownEditor.dispatchEvent(new Event('input'));
@@ -19614,7 +19614,7 @@ async function run(win) {
           tabOriginalHasTyped: String(window.CustomTabs.getActiveTab().originalContent).includes('S9C_TYPED'),
         };
         const exitStartedAt = Date.now();
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         const exitDeadline = exitStartedAt + 6000;
         while (isEditMode && Date.now() < exitDeadline) {
           await new Promise(resolve => setTimeout(resolve, 25));
@@ -19816,12 +19816,12 @@ async function run(win) {
         const alertSentinelObserved =
           alerts.length === 1 && alerts[0] === alertSentinel;
         alerts.length = 0;
-        if (isEditMode) toggleEditBtn.click();
+        if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(r => setTimeout(r, 800));
         window.originalMarkdown = '# Beta\\n\\nS9D_BASE\\n';
         markdownEditor.value = window.originalMarkdown;
         await renderMarkdown(window.originalMarkdown);
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(r => setTimeout(r, 800));
         markdownEditor.value = '# Beta\\n\\nS9D_FIRST\\n';
         markdownEditor.dispatchEvent(new Event('input'));
@@ -19911,12 +19911,12 @@ async function run(win) {
       (async () => {
         const realConfirm = window.confirm;
         window.confirm = () => true;
-        if (isEditMode) toggleEditBtn.click();
+        if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(r => setTimeout(r, 800));
         window.originalMarkdown = '# Beta\\n\\nS9E_STALE\\n';
         markdownEditor.value = window.originalMarkdown;
         await renderMarkdown(window.originalMarkdown);
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(r => setTimeout(r, 800));
         // The file on disk still holds whatever the previous scenario wrote, so
         // reloading brings in content the session never saw.
@@ -19926,7 +19926,7 @@ async function run(win) {
         markdownEditor.value = reloaded + '\\nS9E_TYPED\\n';
         markdownEditor.dispatchEvent(new Event('input'));
         await new Promise(r => setTimeout(r, 1600));
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise(r => setTimeout(r, 2000));
         window.confirm = realConfirm;
         return JSON.stringify({
@@ -23329,7 +23329,7 @@ async function runF22SaveAndReloadScenarios(
             return originalSend.call(this, channel, ...args);
           };
           window.alert = () => {};
-          if (!window.CustomTabs.__inEditMode()) toggleEditBtn.click();
+          if (!window.CustomTabs.__inEditMode()) (isEditMode ? exitEditBtn : toggleEditBtn).click();
           const deadline = Date.now() + 5000;
           for (;;) {
             if (
@@ -23417,7 +23417,7 @@ async function runF22SaveAndReloadScenarios(
       const confirm = window.confirm;
       window.confirm = () => true;
       try {
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         const deadline = Date.now() + 5000;
         while (Date.now() < deadline) {
           if (window.CustomTabs.__inEditMode() === false) return true;
@@ -24925,7 +24925,7 @@ async function runF22SaveAndReloadScenarios(
   const crlfOtherTab = await exec(
     `window.CustomTabs.createTab(${JSON.stringify(crlfOtherFile)}, ${JSON.stringify(crlfOtherOriginal)}, { activate: false })`,
   );
-  await exec(`toggleEditBtn.click(); null;`);
+  await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
   const crlfEnteredEditMode = await waitForCondition(
     exec,
     `window.CustomTabs.__inEditMode() === true`,
@@ -25262,7 +25262,7 @@ async function runF22SaveAndReloadScenarios(
         };
         window.alert = () => {};
         if (window.CustomTabs.__inEditMode()) {
-          toggleEditBtn.click();
+          (isEditMode ? exitEditBtn : toggleEditBtn).click();
         }
         window.originalMarkdown = ${JSON.stringify(crlfViewSaved)};
         window.markdownEditor.value = ${JSON.stringify(crlfViewSaved.replace(/\r\n/g, "\n"))};
@@ -25419,7 +25419,7 @@ async function runF22SaveAndReloadScenarios(
           return originalSend.call(this, channel, ...args);
         };
         window.alert = () => {};
-        if (!window.CustomTabs.__inEditMode()) toggleEditBtn.click();
+        if (!window.CustomTabs.__inEditMode()) (isEditMode ? exitEditBtn : toggleEditBtn).click();
         const editor = window.markdownEditor;
         const original = editor.value;
         const undoSizeBeforeInput = window.getFileOpenDiagnostics().undoSize;
@@ -25668,7 +25668,7 @@ async function runF22SaveAndReloadScenarios(
       `window.CustomTabs.createTab(${JSON.stringify(otherPath)}, "F22_NEWLINE_OTHER\\n", { activate: false })`,
     );
     if (!(await exec(`window.CustomTabs.__inEditMode()`))) {
-      await exec(`toggleEditBtn.click(); null;`);
+      await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
     }
     const evidence = await exec(`
       (async () => {
@@ -25842,7 +25842,7 @@ async function runF22SaveAndReloadScenarios(
     `window.CustomTabs.createTab(${JSON.stringify(activeEditorFoldOtherFile)}, "F22_FOLD_OTHER\\n", { activate: false })`,
   );
   if (!(await exec(`window.CustomTabs.__inEditMode()`))) {
-    await exec(`toggleEditBtn.click(); null;`);
+    await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
   }
   const activeEditorFoldEvidence = await exec(`
     (() => {
@@ -30368,7 +30368,7 @@ async function runF22SaveAndReloadScenarios(
   // way it was found, because the scenarios after this one inherit it.
   const orderedSaveEditModeBefore = await exec(`window.CustomTabs.__inEditMode()`);
   if (orderedSaveEditModeBefore !== true) {
-    await exec(`toggleEditBtn.click(); null;`);
+    await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
   }
   const orderedSaveEditorReady = await waitForCondition(
     exec,
@@ -30905,7 +30905,7 @@ async function runF22SaveAndReloadScenarios(
       await exec(`
         window.__f22OrderedSaveConfirm = window.confirm;
         window.confirm = () => true;
-        if (window.CustomTabs.__inEditMode() === true) toggleEditBtn.click();
+        if (window.CustomTabs.__inEditMode() === true) (isEditMode ? exitEditBtn : toggleEditBtn).click();
         null;
       `);
       await waitForCondition(exec, `window.CustomTabs.__inEditMode() === false`, 5000);
@@ -31975,7 +31975,7 @@ async function runF22QueueFocusedScenario(exec) {
         );
         window.CustomTabs.switchToTab(tab.id);
         await new Promise((resolve) => setTimeout(resolve, 350));
-        if (!isEditMode) toggleEditBtn.click();
+        if (!isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await new Promise((resolve) => setTimeout(resolve, 350));
         markdownEditor.value = '# Queue focused\\n\\nQUEUE_FIRST\\n';
         markdownEditor.dispatchEvent(new Event('input'));
@@ -32052,7 +32052,7 @@ async function runF22QueueFocusedScenario(exec) {
       !!window.CustomTabs.getDocumentDescriptor()
     `);
     if (opened) {
-      await exec("if (!isEditMode) toggleEditBtn.click(); null;");
+      await exec("if (!isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click(); null;");
       failureOpened = await waitForCondition(exec, `
         isEditMode && window.markdownEditor.value === ${JSON.stringify(failureBase)}
       `);

@@ -27,6 +27,57 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Document-owned editors
+
+- The toolbar's Open editor button and the menu action only open the current
+  document. Repeating either action keeps its draft, selection and undo history.
+- Each tab keeps its own open or closed editor, source selection, scroll offsets,
+  history and discard checkpoint. Multiple documents can have editors open.
+- Switching tabs restores that document's editor. It never places another
+  document's unsaved source in the panel.
+- Exit is a separate action in the editor header. Save, discard and cancel keep
+  their existing protections. An unresolved Save keeps the editor open.
+- A completed Save advances only its owning document's discard checkpoint.
+  Newer typing remains unsaved, including when Save completes in the background.
+- Disk replacement retires old undo content but keeps that document's open
+  intent. Closing its tab retires the session; reopening starts in reading mode.
+- Editor sessions stay in memory. They do not change saved reading preferences
+  or restore drafts after restart. Welcome has no editable document.
+- `npm run test:document-editor` covers real production admission, independent
+  drafts, Save, discard, deferred callbacks and stale Exit completions.
+
+### Content-aware editor scrolling
+
+- Edit mode links the source and preview in both directions.
+- Positions follow parsed source occurrences, not matching words, headings alone,
+  equal `scrollTop` values or a whole-document percentage.
+- Paragraphs, physical prose lines, list items, table rows and code lines provide
+  landmarks. Mermaid, images and sandboxed HTML use stable block correspondence.
+- A hidden, inert mirror measures the textarea's actual wrapping.
+- Displayed HTML stays unchanged. A separate, inert metadata copy supplies
+  source spans only after its complete sanitized structure and text verify.
+  Reused nodes receive the new source occurrence's spans.
+- Parser-sensitive authored HTML gets one coarse metadata retry. Ambiguous,
+  reordered or cross-token annotations are rejected, never matched to later
+  repeated words. Opaque multi-root HTML keeps only verified neighboring bounds.
+- One source row can describe a tall image; one preview row can span hidden
+  source syntax. Each direction keeps that row's leading precise boundary.
+  It does not scroll past visible content to manufacture a pixel-for-pixel match.
+- Wheel, scrollbar and keyboard input choose the driving pane. Follower scroll
+  events cannot take ownership. TOC, search and zoom explicitly use the preview.
+- Scroll-only actions do not change text, focus, selection, undo or dirty state.
+  Horizontal scrolling and nested scrollports remain independent.
+- New input suspends mapping until the matching preview commits. Layout changes,
+  media sizing, zoom, pane sizing and collapse state refresh cached coordinates.
+- Settled scroll frames binary-search cached coordinates and write only the
+  follower's vertical position. They do not parse, scan or re-render the document.
+- Physical-line rebuilds walk the paragraph once and measure short text ranges,
+  not every remaining line after each break.
+- `npm run test:editor-scroll` uses the production preload and disposable files
+  and profile. Performance method and limits are in `docs/PERF-AUDIT.md`.
+- Both editor suites run in `npm test`, including the existing Windows CI job.
+  Missing required scroll scenarios, assertion failures and timeouts fail the run.
+
 ### Reading zoom
 
 - One app-wide percentage is saved in `readingZoom`, not in document history.

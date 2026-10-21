@@ -34,7 +34,7 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { stripJsComments } = require("./test-source-utils.js");
-const { captureScreenshot } = require("./test-visual-utils.js");
+const { admitTestDocument, captureScreenshot } = require("./test-visual-utils.js");
 
 const {
   GOLDEN_PATH,
@@ -538,7 +538,7 @@ async function checkContextMenuViewport(win, exec) {
     const escaped = await read("escape");
     check("context-viewport: Escape still dismisses the menu (control)",
       !escaped.open, JSON.stringify(escaped));
-    await exec(`document.getElementById("toggleEdit").click()`);
+    await exec(`document.getElementById(isEditMode ? "exitEditBtn" : "toggleEdit").click()`);
     await waitFor(exec, `document.querySelector(".content-wrapper").classList.contains("split-view")`,
       "real edit-mode entry enables the larger context menu");
     const editing = await read("open", 999, 179);
@@ -585,7 +585,7 @@ async function checkContextMenuViewport(win, exec) {
       document.body.click();
       window.getSelection().removeAllRanges();
       if (document.querySelector(".content-wrapper").classList.contains("split-view")) {
-        document.getElementById("toggleEdit").click();
+        document.getElementById(isEditMode ? "exitEditBtn" : "toggleEdit").click();
       }
       const menu = document.getElementById("contextMenu");
       const saved = ${JSON.stringify(savedMenu)};
@@ -607,6 +607,14 @@ app.whenReady().then(async () => {
     const win = await waitForWindow(BrowserWindow);
     const exec = (js) => win.webContents.executeJavaScript(js);
 
+    const welcomeStash = await exec(`(() => {
+      const w = document.querySelector('#viewer > .welcome');
+      if (!w) return 0;
+      window.__foliaWelcomeHTML = w.outerHTML;
+      return w.querySelectorAll('*').length;
+    })()`);
+    await admitTestDocument(win, path.join(__dirname, "..", "tmp", "document-editor-theme.md"),
+      "# Theme context\n\nA disposable admitted document for menu and editor layout.\n");
     await checkContextMenuViewport(win, exec);
     await exec(`(async()=>{
       const answer=window.MarkalooDialogs.show({
@@ -815,12 +823,6 @@ app.whenReady().then(async () => {
        whole --welcome-* surface family is absent from the DOM and any probe
        that walks querySelectorAll('*') is scanning a page that cannot contain
        it. Section 10 re-attaches this markup for its scheme scans. */
-    const welcomeStash = await exec(`(() => {
-      const w = document.querySelector('#viewer > .welcome');
-      if (!w) return 0;
-      window.__foliaWelcomeHTML = w.outerHTML;
-      return w.querySelectorAll('*').length;
-    })()`);
     check(
       "the welcome screen was captured before the first render replaced it",
       welcomeStash > 20,
@@ -4186,9 +4188,6 @@ app.whenReady().then(async () => {
       ".context-menu-item.disabled:hover": "the .disabled variant is applied only while an action is unavailable",
       ".note-tooltip-close:hover": "the tooltip is built on demand when a note marker is hovered",
       ".tools-menu-recent-item:hover": "the recent-files list is empty in the suite's isolated userData profile",
-      ".tab:hover": "the tab strip renders only for open documents; this suite opens none",
-      ".tab-close:hover": "same - no tab exists to carry a close button",
-      "body.dark-mode .tab-close:hover": "same - no tab exists to carry a close button",
     };
     /* RUN IN BOTH MODES, and that is not symmetry for its own sake. A
        mode-scoped selector cannot be falsified from the wrong side: in light,
@@ -4239,7 +4238,10 @@ app.whenReady().then(async () => {
         got.collected >= 30 && got.matched >= 24 && got.cells.length >= 90,
         `collected ${got.collected}, matched ${got.matched}, cells ${got.cells.length}`,
       );
-      const unexcused = got.unmatched.filter((s) => !HOVER_EXCUSALS[s]);
+      const dark = hoverBase.dark;
+      const unexcused = got.unmatched.filter((s) => !HOVER_EXCUSALS[s] &&
+        !(mode === "light" && s.startsWith("body.dark-mode ") &&
+          dark.collectedSels.includes(s) && !dark.unmatched.includes(s)));
       check(
         `hover replay (${mode}): every rule the probe could not reach is a named, still-absent surface`,
         unexcused.length === 0,

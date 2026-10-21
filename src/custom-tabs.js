@@ -389,6 +389,33 @@
     }
   }
 
+  function freshEditorState(content, open = false) {
+    const history = { undo: [], redo: [] };
+    return Object.freeze({
+      open, rendererMarkdown: content, history, pendingHistory: null,
+      selection: { start: 0, end: 0, direction: "none" },
+      scrollTop: 0, scrollLeft: 0,
+      baseline: open ? { document: content, history, dirty: false } : null,
+    });
+  }
+
+  function getDocumentEditorState(tabId = activeTabId) {
+    const tab = tabs.find(candidate => candidate.id === tabId);
+    return tab ? documentState.get(tab)?.editor || null : null;
+  }
+
+  function setDocumentEditorState(tabId, editor) {
+    if (!mayMutateDocument("tab:editor-presentation")) return false;
+    const tab = tabs.find(candidate => candidate.id === tabId);
+    const state = tab && documentState.get(tab);
+    if (!state || !editor || typeof editor.open !== "boolean") {
+      console.error("[CustomTabs] Cannot retain editor state without its document");
+      return false;
+    }
+    state.editor = Object.freeze(editor);
+    return true;
+  }
+
   function defineDocumentAccessors(tab, content, reservedGeneration = null) {
     const state = {
       content: content,
@@ -414,6 +441,7 @@
       // stable across ordinary lookups so retargeting a symlink cannot make an
       // in-flight save/reload reply address another tab.
       pathKey: null,
+      editor: freshEditorState(content),
       mutationRevision: 0,
       generation: reservedGeneration === null
         ? ++nextDocumentGeneration
@@ -571,6 +599,7 @@
         ? ++nextDocumentGeneration
         : reservedGeneration;
       state.deletionTombstone = null;
+      state.editor = freshEditorState(content, state.editor.open);
     }
     return true;
   }
@@ -1509,6 +1538,9 @@
   // switching) would otherwise keep dragging the new tab to the old anchor for
   // the length of its observer window.
   let cancelActiveRestore = null;
+  window.addEventListener('editor-scroll-intent', () => {
+    if (cancelActiveRestore) cancelActiveRestore();
+  });
 
   function restorePosition(anchor) {
     if (cancelActiveRestore) {
@@ -1647,6 +1679,7 @@
       generation: state.generation,
       pathKey: state.pathKey,
       admission: state.admission,
+      editor: state.editor,
       diskVersion: tab.diskVersion,
       mtimeMs: tab.mtimeMs,
       hasUnsavedChanges: tab.hasUnsavedChanges,
@@ -1661,7 +1694,7 @@
     for (const key of [
       "content", "originalContent", "dirty", "foldedLive",
       "reloadConflict", "saveFailure", "deletionTombstone",
-      "generation", "pathKey", "admission",
+      "generation", "pathKey", "admission", "editor",
     ]) {
       state[key] = prior[key];
     }
@@ -2477,6 +2510,9 @@
       }
     }
     currentTab.hasUnsavedChanges = isDirty(currentTab);
+    if (typeof window.captureDocumentEditor === "function") {
+      documentState.get(currentTab).editor = window.captureDocumentEditor();
+    }
     return currentTab;
   }
 
@@ -3267,6 +3303,7 @@
           if (window.updateFileInfo) {
             window.updateFileInfo(null);
           }
+          if (window.clearDocumentEditor) window.clearDocumentEditor();
         }
       }
 
@@ -3970,6 +4007,14 @@
         : tab.diskVersion
           ? tab.diskVersion.mtimeMs
           : null;
+      const editor = state.editor;
+      state.editor = Object.freeze({
+        ...editor,
+        rendererMarkdown: editor.open ? savedContent : state.content,
+        baseline: editor.open
+          ? { document: savedContent, history: decision.editorHistory, dirty: false }
+          : null,
+      });
     } else {
       if (!decision.deleted) {
         state.saveFailure = true;
@@ -5197,14 +5242,6 @@
       const isBackground = !!(
         targetTab && activeAfter && targetTab.id !== activeAfter.id
       );
-      if (isBackground && inEditMode() &&
-          (targetTab.filePath === activeAfter.filePath ||
-            typeof window.invalidateBackgroundEditSessionBaseline !==
-              "function")) {
-        console.error("[CustomTabs] Background reload cannot safely update its edit baseline");
-        notify("This tab's edit baseline could not be updated. Retry its reload after selecting it.", 6000);
-        return;
-      }
       if (
         !isBackground &&
         startedSwitchIntent !== latestTabSwitchIntent
@@ -5325,13 +5362,6 @@
               targetTab, activeAfter, "background-target-moved", data,
             );
             return;
-          }
-          if (inEditMode() &&
-              !window.invalidateBackgroundEditSessionBaseline(
-                targetTab.filePath,
-              )) {
-            console.error("[CustomTabs] Could not invalidate the reloaded tab's edit baseline");
-            notify("The tab was reloaded, but its previous edit baseline could not be cleared.", 6000);
           }
         }
         lastAcceptedReloadSequence = data.reloadRequest.sequence;
@@ -6370,8 +6400,12 @@
   // ============================================
 
   window.CustomTabs = {
+    // A scroll can look correct even while a restore is still armed to undo it.
+    __scrollRestorePending: () => !!cancelActiveRestore,
     createTab,
     switchToTab,
+    getDocumentEditorState,
+    setDocumentEditorState,
     requestReloadWithConfirmation,
     confirmDocumentReplacement,
     captureDialogContext,

@@ -50,7 +50,7 @@ async function wait(label, expression) {
 }
 async function settle() { await sleep(200); await frames(); }
 async function setView(split, zoom) {
-  await exec(`if(isEditMode!==${split}) document.getElementById('toggleEdit').click();true`);
+  await exec(`if(isEditMode!==${split}) document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true`);
   await wait("real view mode", `isEditMode===${split} && contentWrapper.classList.contains('split-view')===${split} && !loadingScreen.classList.contains('active')`);
   await exec(`zoomLevel=${zoom};updateZoom();true`);
   await sleep(600);

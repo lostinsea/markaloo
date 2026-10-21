@@ -108,7 +108,7 @@ async function accept(body) {
   await settle();
 }
 async function edit(body) {
-  await exec(`if(!isEditMode)document.getElementById('toggleEdit').click();
+  await exec(`if(!isEditMode)document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
     markdownEditor.value=${JSON.stringify(body)};
     markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
   await wait("genuine unsaved edit", `hasUnsavedChanges&&currentReloadSnapshot()===${JSON.stringify(body)}`);
@@ -311,7 +311,7 @@ async function run() {
     const zoomFile = await open("zoom-consent-" + mode + ".md", earlier);
     await exec(`document.getElementById('zoomReset').click();
       for(let i=0;i<6;i++)document.getElementById('zoomIn').click();
-      if(isEditMode!==${split})document.getElementById('toggleEdit').click();true`);
+      if(isEditMode!==${split})document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true`);
     await settle();
     check(`${mode} zoom consent fixture has real 160 percent reading scale`,
       await exec(`zoomLevel===160&&localStorage.getItem('readingZoom')==='160'&&
@@ -342,7 +342,7 @@ async function run() {
     await accept(later);
     check(`${mode} approved reload keeps the persisted reading zoom`,
       await exec("zoomLevel===160&&localStorage.getItem('readingZoom')==='160'&&Number(getComputedStyle(viewer).zoom)===1.6"));
-    await exec("if(isEditMode)document.getElementById('toggleEdit').click();true");
+    await exec("if(isEditMode)document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true");
     await settle();
   }
   await checkPreDialogSnapshot();

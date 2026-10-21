@@ -23,17 +23,18 @@ div.container div.header,
 }
 
 /* ============================================
-   CUSTOM: Single-row header
+   CUSTOM: Compact document toolbar
    ============================================
 
    The bar holds, left to right: the tab strip (which grows and scrolls), the
-   reload button, then the hamburger. There is no logo, product name or
+   reload and Open editor buttons, then the hamburger. There is no logo, product name or
    file-path row - the product name reaches the user through <title> (window
    frame + taskbar) and a document's location through its tab tooltip and the
    tab right-click menu. */
 
 .header {
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* The strip takes all the space the two buttons do not, and the tab-system
@@ -43,6 +44,10 @@ div.container div.header,
    override block looked correct in review and was measurably dead. */
 
 .header-reload {
+  flex-shrink: 0;
+}
+
+.header-editor {
   flex-shrink: 0;
 }
 

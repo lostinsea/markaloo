@@ -683,8 +683,9 @@ function sanitizeTableHtml(html) {
 // not honoured" rather than "the document is wrecked".
 const RAW_HTML_FENCE = /@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g;
 
-function eachRawHtmlBlock(content, replacer) {
+function eachRawHtmlBlock(content, replacer, scrollSource = null) {
   RAW_HTML_FENCE.lastIndex = 0;
+  if (scrollSource) return scrollSource.replaceSpecial('raw', RAW_HTML_FENCE, (match, code) => replacer(code));
   return content.replace(RAW_HTML_FENCE, (match, code) => replacer(code));
 }
 
@@ -820,7 +821,7 @@ const UI_STRINGS = {
   'file': 'File', 'title.file': 'File',
   'openFile': 'Open File', 'export': 'Export',
   'exportPdf': 'Export as PDF',
-  'history': 'History', 'editMode': 'Edit Mode',
+  'history': 'History', 'editMode': 'Open editor', 'title.openEditor': 'Open editor for this document',
   'allNotes': 'All Notes', 'noNotes': 'No notes found',
   'view': 'View', 'title.view': 'View',
   'darkMode': 'Dark Mode', 'fullscreen': 'Fullscreen', 'showNotes': 'Show Notes',
@@ -1003,6 +1004,7 @@ const notesSearchInput = document.getElementById('notesSearchInput');
 const refreshBtn = document.getElementById('refreshBtn');
 const exportPdfBtn = document.getElementById('exportPdf');
 const toggleEditBtn = document.getElementById('toggleEdit');
+const openEditorBtn = document.getElementById('openEditorBtn');
 const editorPanel = document.getElementById('editorPanel');
 const markdownEditor = document.getElementById('markdownEditor');
 const saveButton = document.getElementById('saveButton');
@@ -1012,6 +1014,13 @@ const contentWrapper = document.querySelector('.content-wrapper');
 const editorSplitter = document.getElementById('editorSplitter');
 const loadingScreen = document.getElementById('loadingScreen');
 const darkModeToggle = document.getElementById('darkModeToggle');
+const editorScroll = window.createEditorScroll({
+  editor: markdownEditor, preview: viewer,
+  active: () => isEditMode, frozen: frozenForShutdown,
+  // Watcher ownership also advances on Save; only document admission fences this map.
+  identity: () => fileOpenSequence, scale: scrollerScale,
+});
+window.getEditorScrollDiagnostics = () => editorScroll.diagnostics();
 
 // Which element actually scrolls is a CSS fact, not something to assume.
 // .content-wrapper owns the scrollbar in normal view, but in split view it is
@@ -1127,6 +1136,7 @@ function snapScrollerScale(raw, local) {
 // Upstream fixed the same class of bug the same way in 80646de.
 function scrollElementIntoView(el, block = 'start') {
   if (!el) return;
+  editorScroll.previewNavigation();
   el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });
 }
 
@@ -1415,6 +1425,7 @@ function setDocumentDirtyState(value) {
 }
 
 function noteActiveContentMutation() {
+  editorScroll.changed();
   window.CustomTabs?.noteActiveContentMutation?.();
 }
 
@@ -2263,6 +2274,8 @@ function scheduleZoomAnchorRestore() {
 
 // Update zoom display
 function updateZoom({ persist = true } = {}) {
+  editorScroll.previewNavigation();
+  editorScroll.invalidate();
   // Read the reading position FIRST - before any style write in this frame, so
   // the layout is clean and the read is free. See the block comment above.
   captureZoomAnchor();
@@ -3635,54 +3648,109 @@ window.folia.onPdfExportResult(async (data) => {
 });
 
 
-// Toggle edit mode
-//
-// Baseline for discarding an edit-mode session: the document, the history and
-// the dirty flag as they were when the session began. `originalMarkdown` alone
-// is NOT a safe restore target - switchToTab assigns it `tab.content`, which
-// carries the session's own unsaved text, so after a tab round-trip restoring
-// "from originalMarkdown" would restore the very edit being discarded and then
-// mark it clean. Both reviewers found that independently.
-//
-// Keyed BY FILE PATH, because the baseline belongs to the document rather than
-// to the global session. A single global baseline fails the same tab round trip
-// from the other side: re-capturing it on the way back into a tab adopts the
-// contaminated content as the new baseline, which is measurably no fix at all.
-const editSessionBaselines = new Map();
+// The visible editor is shared; its session is retained by the owning tab.
+let editSessionBaseline = null;
+let editorModeRevision = 0;
+let editorInteractionRevision = 0;
+let editorExitOperation = null;
+
+function setEditorPresentation(open, enabled = true) {
+  isEditMode = open;
+  contentWrapper.classList.toggle('split-view', open);
+  for (const button of [toggleEditBtn, openEditorBtn]) {
+    button.disabled = !enabled;
+    button.setAttribute('aria-expanded', String(open));
+  }
+  toggleEditBtn.style.background = open ? 'var(--primary-color)' : '';
+  toggleEditBtn.style.color = open ? '#ffffff' : '';
+}
+
+function captureDocumentEditor() {
+  return Object.freeze({
+    open: isEditMode,
+    rendererMarkdown: originalMarkdown,
+    history: historySnapshot(),
+    pendingHistory: historyDebounceTimer !== null && isEditMode ? markdownEditor.value : null,
+    selection: { start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
+      direction: markdownEditor.selectionDirection },
+    scrollTop: markdownEditor.scrollTop,
+    scrollLeft: markdownEditor.scrollLeft,
+    baseline: editSessionBaseline,
+  });
+}
+
+function historyForEditorState(state) {
+  const history = { undo: state.history.undo.slice(), redo: state.history.redo.slice() };
+  if (state.pendingHistory !== null && history.undo.at(-1) !== state.pendingHistory) {
+    history.undo.push(state.pendingHistory);
+    if (history.undo.length > MAX_UNDO_HISTORY) history.undo.shift();
+    history.redo = [];
+  }
+  return history;
+}
+
+function cancelEditorDeferredWork() {
+  clearTimeout(previewDebounceTimer);
+  clearTimeout(historyDebounceTimer);
+  previewDebounceTimer = historyDebounceTimer = null;
+}
+
+function retainCurrentDocumentEditor() {
+  const tab = window.CustomTabs?.getActiveTab();
+  if (tab) window.CustomTabs.setDocumentEditorState(tab.id, captureDocumentEditor());
+}
+
+function clearDocumentEditor() {
+  if (!mayMutateRendererDocument('clear-document-editor')) return;
+  cancelEditorDeferredWork();
+  editorModeRevision++;
+  editSessionBaseline = null;
+  originalMarkdown = '';
+  markdownEditor.value = '';
+  historyClear();
+  setEditorPresentation(false, false);
+  editorScroll.reset();
+  editorScroll.leave();
+}
+
+window.captureDocumentEditor = captureDocumentEditor;
+window.clearDocumentEditor = clearDocumentEditor;
 
 function captureEditSessionBaseline(force) {
-  const key = currentFilePath || '';
   // Coming back to a document mid-session must NOT overwrite the baseline that
   // document already has - that baseline is the only surviving copy of its
   // pre-session content.
-  if (!force && editSessionBaselines.has(key)) return;
-  editSessionBaselines.set(key, {
+  if (!force && editSessionBaseline) return;
+  editSessionBaseline = Object.freeze({
     history: historySnapshot(),
     document: originalMarkdown,
     dirty: hasUnsavedChanges,
   });
 }
-function invalidateBackgroundEditSessionBaseline(filePath) {
-  if (typeof filePath !== 'string' || !filePath) {
-    console.error('Cannot invalidate an edit baseline without a document path');
-    return false;
-  }
-  editSessionBaselines.delete(filePath);
-  return true;
-}
 // Called by custom-tabs.js when the active document changes while edit mode
 // stays on, so a discard restores THIS tab and never the previous tab's text.
 window.rebaseEditSession = () => captureEditSessionBaseline(false);
 
-// Set while the handler below is parked on an in-flight save. Without it a
-// second click during that wait would run the handler again and flip `isEditMode`
-// twice, landing the user back in edit mode with the exit half-performed.
-let toggleEditPending = false;
-
-toggleEditBtn.addEventListener('click', async () => {
+async function changeCurrentDocumentEditor(open) {
   if (!mayMutateRendererDocument('toggle-edit-mode')) return;
-  if (toggleEditPending) return;
   fileMenu.classList.remove('visible');
+  const tab = window.CustomTabs?.getActiveTab();
+  if (!tab || tab.filePath !== currentFilePath) {
+    console.warn('Cannot open an editor without an admitted document');
+    return;
+  }
+  if (open === isEditMode) return;
+  const sequence = fileOpenSequence, revision = editorModeRevision;
+  const generation = currentSaveDocumentIdentity()?.documentGeneration;
+  const operation = { tab, sequence, revision };
+  const isCurrent = () => window.CustomTabs.getActiveTab() === tab &&
+    fileOpenSequence === sequence && editorModeRevision === revision &&
+    currentSaveDocumentIdentity()?.documentGeneration === generation;
+  if (!open) {
+    if (editorExitOperation?.tab === tab && editorExitOperation.revision === revision) return;
+    editorExitOperation = operation;
+  }
+  try {
   // Leaving edit mode DISCARDS whatever is unsaved in the editor, and the
   // warning now says so. It has to actually happen: there is no view-mode save
   // path (the save button lives in the edit-only panel and Ctrl+S is gated on
@@ -3703,42 +3771,47 @@ toggleEditBtn.addEventListener('click', async () => {
   // Waiting for the write to land is enough to make every branch below correct
   // again, rather than teaching each of them about saves: on success the dirty
   // flag clears itself and there is nothing to warn about or discard; on
-  // failure (or if the main process never answers) the flag is still set and
-  // the normal confirm runs, now telling the truth.
+  // failure the normal confirm still applies. A timeout is not a settled write.
   if (isEditMode) {
     const inFlight = pendingSaveFor(currentFilePath);
     if (inFlight) {
-      toggleEditPending = true;
       let timer = null;
+      let settled;
       try {
-        await Promise.race([
-          inFlight,
+        settled = await Promise.race([
+          inFlight.then(() => true),
           new Promise((r) => {
-            timer = setTimeout(r, 5000);
+            timer = setTimeout(() => r(false), 5000);
           }),
         ]);
       } finally {
         // The loser of the race is not cancelled by Promise.race, so without
         // this the timer stays live for its full 5s after every save.
         if (timer) clearTimeout(timer);
-        toggleEditPending = false;
+      }
+      if (!isCurrent()) return;
+      if (!settled || hasPendingSaveFor(currentFilePath)) {
+        showNotification('Saving is still running. The editor was kept open.', 5000);
+        return;
       }
     }
   }
   if (!mayMutateRendererDocument('toggle-edit-mode-after-await')) return;
+  if (!isCurrent()) return;
   if (isEditMode && hasUnsavedChanges) {
     const consent = await confirmUnsavedAction(i18n('confirm.unsavedExit'), 'Discard and leave edit mode');
-    if (!consent.approved || !consent.isCurrent()) {
+    if (!consent.approved || !consent.isCurrent() || !isCurrent() ||
+        hasPendingSaveFor(currentFilePath)) {
       return;
     }
     discardOnExit = true;
   }
 
-  isEditMode = !isEditMode;
+  editorModeRevision++;
+  setEditorPresentation(open);
 
   if (isEditMode) {
     // Enter edit mode
-    contentWrapper.classList.add('split-view');
     // Entering edit mode halves the viewer's width, so any widened table is now
     // sized against space it no longer has. `resize` does not fire for a layout
     // change inside the window, so the recalculation is explicit here.
@@ -3748,6 +3821,7 @@ toggleEditBtn.addEventListener('click', async () => {
     // than unconditionally declaring it clean.
     captureEditSessionBaseline(true);
     markdownEditor.value = originalMarkdown;
+    if (!editorScroll.enter()) renderMarkdown(markdownEditor.value, 'full');
     // Do NOT unconditionally declare the document clean. Since notes auto-save,
     // there are exactly two ways view mode carries a dirty flag into edit mode,
     // and both mean the bytes on screen are not the bytes on disk:
@@ -3768,23 +3842,20 @@ toggleEditBtn.addEventListener('click', async () => {
           hasPendingSaveFor(currentFilePath) ||
           reloadConflictFor(currentFilePath))
     );
-    toggleEditBtn.style.background = 'var(--primary-color)';
-    toggleEditBtn.style.color = '#ffffff';
   } else {
+    const completionRevision = editorModeRevision;
     try {
     // Exit edit mode
-    contentWrapper.classList.remove('split-view');
+    editorScroll.leave();
     // Leaving edit mode gives the width back; tables widened against the narrow
     // split-view viewer must grow to match.
     applyTableBreakout();
-    toggleEditBtn.style.background = '';
-    toggleEditBtn.style.color = '';
-    clearTimeout(previewDebounceTimer);
+    const previewPending = previewDebounceTimer !== null;
+    cancelEditorDeferredWork();
     // The pending history push is guarded by `if (isEditMode)`, which is
     // already false here, but a timer left running can still fire inside a
     // NEXT session started within its 800ms window and plant a bogus first
     // undo step. Cancel it next to the preview timer it belongs with.
-    clearTimeout(historyDebounceTimer);
 
     if (discardOnExit) {
       // Restore the document, the history and the dirty flag to the baseline
@@ -3795,7 +3866,7 @@ toggleEditBtn.addEventListener('click', async () => {
       // Scroll is preserved for the reason historyUndo preserves it - a full
       // re-render otherwise throws the reader back to the top of the document.
       const scrollPos = contentWrapper.scrollTop;
-      const baseline = editSessionBaselines.get(currentFilePath || '');
+      const baseline = editSessionBaseline;
       if (baseline) {
         historyRestore(baseline.history);
         originalMarkdown = baseline.document;
@@ -3816,24 +3887,48 @@ toggleEditBtn.addEventListener('click', async () => {
           activeTab.originalContent !== originalMarkdown,
         );
       }
-      await renderMarkdown(originalMarkdown);
-      contentWrapper.scrollTop = scrollPos;
+      const rendered = renderMarkdown(originalMarkdown);
+      editSessionBaseline = null;
+      retainCurrentDocumentEditor();
+      if (currentFilePath) {
+        assertFileTrackingOwnership(currentFilePath, !hasUnsavedChanges, { adoptBaseline: false });
+      }
+      await rendered;
+      if (window.CustomTabs.getActiveTab() === tab && fileOpenSequence === sequence &&
+          editorModeRevision === completionRevision &&
+          mayMutateRendererDocument('editor-discard-scroll-restore')) {
+        contentWrapper.scrollTop = scrollPos;
+      }
+      return;
     }
     if (currentFilePath) {
       assertFileTrackingOwnership(currentFilePath, !hasUnsavedChanges, {
         adoptBaseline: false,
       });
     }
+    if (previewPending) await renderMarkdown(markdownEditor.value);
     } finally {
       // Even a failed discard render has ended this edit session.
-      editSessionBaselines.clear();
+      if (window.CustomTabs.getActiveTab() === tab && fileOpenSequence === sequence &&
+          editorModeRevision === completionRevision &&
+          mayMutateRendererDocument('editor-exit-cleanup')) {
+        editSessionBaseline = null;
+        retainCurrentDocumentEditor();
+      }
     }
   }
-});
+  retainCurrentDocumentEditor();
+  } finally {
+    if (editorExitOperation === operation) editorExitOperation = null;
+  }
+}
+
+toggleEditBtn.addEventListener('click', () => changeCurrentDocumentEditor(true));
+openEditorBtn.addEventListener('click', () => changeCurrentDocumentEditor(true));
 
 // Exit edit mode button (in editor header)
 exitEditBtn.addEventListener('click', () => {
-  if (isEditMode) toggleEditBtn.click();
+  if (isEditMode) changeCurrentDocumentEditor(false);
 });
 
 // Editor/viewer splitter - drag to resize the two panes in split view, and
@@ -3966,11 +4061,19 @@ markdownEditor.addEventListener('keydown', (e) => {
 
 // Push to undo history on significant changes (debounced)
 let historyDebounceTimer = null;
+for (const type of ['input', 'keydown', 'pointerdown', 'wheel']) {
+  markdownEditor.addEventListener(type, () => editorInteractionRevision++, { passive: true });
+}
 markdownEditor.addEventListener('input', () => {
   if (!mayMutateRendererDocument('editor-input-history')) return;
+  if (!isEditMode) return;
   clearTimeout(historyDebounceTimer);
+  const sequence = fileOpenSequence, revision = editorModeRevision;
   historyDebounceTimer = setTimeout(() => {
-    if (isEditMode) historyPush(markdownEditor.value);
+    historyDebounceTimer = null;
+    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {
+      historyPush(markdownEditor.value);
+    }
   }, 800);
 });
 
@@ -3984,9 +4087,12 @@ markdownEditor.addEventListener('input', () => {
   // Clear existing timer
   clearTimeout(previewDebounceTimer);
 
-  // Set new timer for 3 seconds
+  const sequence = fileOpenSequence, revision = editorModeRevision;
   previewDebounceTimer = setTimeout(() => {
-    renderMarkdown(markdownEditor.value);
+    previewDebounceTimer = null;
+    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {
+      renderMarkdown(markdownEditor.value);
+    }
   }, TIMING.previewDebounceDelay);
 });
 
@@ -4317,6 +4423,7 @@ function saveMarkdownFile() {
     identity: requestIdentity,
     identityKey,
     sequence,
+    editorHistory: historyForEditorState(captureDocumentEditor()),
     resolve: null,
     settled: false,
   };
@@ -4639,6 +4746,7 @@ function settleSaveResult(data, consume = true) {
       data.success === true && typeof data.savedContent === 'string'
         ? data.savedContent
         : entry.content,
+    editorHistory: entry.editorHistory,
     modifiedTime: data.modifiedTime,
     diskVersion: data.diskVersion || null,
     path: typeof data.path === 'string' ? data.path : null,
@@ -4679,6 +4787,9 @@ function applyRendererSaveResultDecision(decision) {
     reloadConflicts.delete(stateKey);
     if (!isForCurrent) return true;
     if (isEditMode) {
+      editSessionBaseline = Object.freeze({
+        document: decision.savedContent, history: decision.editorHistory, dirty: false,
+      });
       originalMarkdown = decision.savedContent;
       setDocumentDirtyState(
         !sameReloadDocument(markdownEditor.value, decision.savedContent)
@@ -4997,6 +5108,7 @@ function highlightCurrentMatch() {
   currentMatchEl = match || null;
   if (!match) return;
   match.classList.add('current');
+  editorScroll.previewNavigation();
   match.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -6077,7 +6189,7 @@ function _mermaidNode(el) {
 
 // Patch viewer's top-level children in-place — only replace nodes that actually changed.
 // Unchanged nodes (same hash) are left untouched, preserving scroll position and event listeners.
-function patchViewerDOM(newHtml) {
+function patchViewerDOM(newHtml, scrollSource = null) {
   // BEFORE flattenCollapsibleSections, not after, and not on exit. That call
   // mutates the live tree immediately, so an exception anywhere below would
   // leave #viewer half-rebuilt; an exit-only bump would then let a pending zoom
@@ -6088,6 +6200,7 @@ function patchViewerDOM(newHtml) {
 
   const temp = document.createElement('div');
   temp.innerHTML = newHtml;
+  const scrollBindings = scrollSource?.detach(temp, sanitizeHtml);
 
   // Stamp each new element with a hash of its content (computed before setting the attr)
   const newEls = Array.from(temp.children);
@@ -6207,6 +6320,7 @@ function patchViewerDOM(newHtml) {
   let ref = viewer.firstChild;
   for (let i = 0; i < newEls.length; i++) {
     const node = matchFor[i] || newEls[i];
+    scrollSource?.adopt(newEls[i], node, scrollBindings);
     if (node === ref) {
       ref = ref.nextSibling;
       continue;
@@ -6478,7 +6592,7 @@ function createBlockPlaceholders(prefix) {
         // A token bearing this render's nonce always indexes a block this
         // render lifted out. Out of range is unreachable rather than hostile,
         // so leave the text alone instead of inventing markup for it.
-        return index < blocks.length ? build(blocks[index]) : match;
+        return index < blocks.length ? build(blocks[index], index) : match;
       });
     },
   };
@@ -6505,37 +6619,36 @@ function mermaidPreMarkup(code) {
 // Light-format render: skip mermaid/prism, patch only changed DOM nodes
 function renderLightFormat(content, generation) {
   if (generation !== renderGeneration) return;
+  const scrollSource = editorScroll.source(content);
 
-  content = removeBOM(content);
-
-  // Deliberately at the SAME point as renderMarkdownFull's call - after
-  // removeBOM, before any block is lifted out into a placeholder. Matching the
+  // Deliberately at the SAME point as renderMarkdownFull's call - remove the
+  // BOM and expand emoji before any block is lifted into a placeholder. Matching the
   // full path rather than improving on it is the whole point: running it after
   // extraction would leave the two paths disagreeing, just in the other
   // direction. Without this an edit flips :star: between literal and emoji
   // depending only on which render path the diff happened to select. Same
   // two-path divergence that RAW_HTML_FENCE exists to prevent.
-  content = parseEmojis(content);
+  content = scrollSource.prepare(parseEmojis);
 
   // Extract and placeholder special blocks (same as full render)
   const mermaidBlocks = createBlockPlaceholders('MERMAID_BLOCK_');
-  content = content.replace(/```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) =>
+  content = scrollSource.replaceSpecial('mermaid', /```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) =>
     mermaidBlocks.take(code.trim()));
 
   // Extract @@@html blocks
   const rawHtmlBlocksLF = createBlockPlaceholders('RAWHTML_BLOCK_');
-  content = eachRawHtmlBlock(content, (code) => rawHtmlBlocksLF.take(code));
+  content = eachRawHtmlBlock(content, (code) => rawHtmlBlocksLF.take(code), scrollSource);
 
-  let html = marked.parse(content);
+  let html = scrollSource.parse(marked);
 
   // Restore mermaid placeholders — patchViewerDOM will keep existing SVGs for same source
-  html = mermaidBlocks.restore(html, mermaidPreMarkup, false);
+  html = scrollSource.restore(mermaidBlocks, 'mermaid', html, mermaidPreMarkup, false);
 
   // Restore @@@html placeholders as sandboxed iframes. The document itself is
   // attached after sanitization by applyRawHtmlDocuments(); see the comment on
   // buildRawHtmlDocument().
   rawHtmlDocuments = new Map();
-  html = rawHtmlBlocksLF.restore(html, rawHtmlIframeMarkup, true);
+  html = scrollSource.restore(rawHtmlBlocksLF, 'raw', html, rawHtmlIframeMarkup, true);
 
   // Sanitize last; nothing may be spliced in after this line. See the note on
   // the same call in renderMarkdownFull() for why data: image URIs need no
@@ -6544,7 +6657,7 @@ function renderLightFormat(content, generation) {
 
   if (generation !== renderGeneration) return;
 
-  patchViewerDOM(html);
+  patchViewerDOM(html, scrollSource);
   restoreMermaidSourceAttributes();
   applyRawHtmlDocuments();
   applyNoteStyles();
@@ -6562,6 +6675,7 @@ function renderLightFormat(content, generation) {
   updateNotesList();
   highlightNewElements();
   addCodeBlockCopyButtons();
+  editorScroll.commit(scrollSource);
 }
 
 // Highlight only elements not yet processed by Prism.
@@ -6582,6 +6696,7 @@ function highlightNewElements() {
 let _lastRenderedContent = null;
 async function renderMarkdown(content, forceMode = null) {
   const generation = ++renderGeneration;
+  editorScroll.start();
   const mode = forceMode || detectRenderMode(_lastRenderedContent, content);
 
   if (mode === 'light-format' && _lastRenderedContent !== null) {
@@ -6596,6 +6711,7 @@ async function renderMarkdown(content, forceMode = null) {
 
 // Full render pipeline
 async function renderMarkdownFull(content, generation) {
+  const scrollSource = editorScroll.source(content);
   // Show loading screen
   showLoadingScreenFor(generation);
 
@@ -6603,34 +6719,31 @@ async function renderMarkdownFull(content, generation) {
   await new Promise(resolve => setTimeout(resolve, 10));
 
   try {
-    // Remove BOM (Byte Order Mark) if present
-    content = removeBOM(content);
-
-    // Parse emoji shortcodes (e.g., :star: -> ⭐)
-    content = parseEmojis(content);
+    // Keep source positions while removing the BOM and expanding emoji.
+    content = scrollSource.prepare(parseEmojis);
 
     // First, extract mermaid blocks and replace with placeholders
     const mermaidBlocks = createBlockPlaceholders('MERMAID_BLOCK_');
 
     // Replace mermaid code blocks with placeholders (handle both \n and \r\n)
-    content = content.replace(/```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) =>
+    content = scrollSource.replaceSpecial('mermaid', /```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) =>
       mermaidBlocks.take(code.trim()));
 
     // Extract @@@html blocks and replace with placeholders (bypasses DOMPurify)
     const rawHtmlBlocks = createBlockPlaceholders('RAWHTML_BLOCK_');
-    content = eachRawHtmlBlock(content, (code) => rawHtmlBlocks.take(code));
+    content = eachRawHtmlBlock(content, (code) => rawHtmlBlocks.take(code), scrollSource);
 
     // Parse markdown with marked (allows HTML)
-    let html = marked.parse(content);
+    let html = scrollSource.parse(marked);
 
     // Replace placeholders with mermaid <pre> elements; see mermaidPreMarkup().
-    html = mermaidBlocks.restore(html, mermaidPreMarkup, false);
+    html = scrollSource.restore(mermaidBlocks, 'mermaid', html, mermaidPreMarkup, false);
 
     // Replace @@@html placeholders with iframes. The sandbox attribute is what
     // makes this safe to offer at all - it is also re-applied by a DOMPurify
     // hook, so an iframe written directly into the markdown cannot opt out.
     rawHtmlDocuments = new Map();
-    html = rawHtmlBlocks.restore(html, rawHtmlIframeMarkup, true);
+    html = scrollSource.restore(rawHtmlBlocks, 'raw', html, rawHtmlIframeMarkup, true);
 
   // Sanitize last, once everything has been assembled, so that nothing can be
   // spliced in behind the sanitizer's back.
@@ -6675,7 +6788,7 @@ async function renderMarkdownFull(content, generation) {
   // light-format path that never shows or hides the overlay - so the app booted
   // to a permanent "Loading..." screen with the document invisible behind it.
   if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }
-  patchViewerDOM(html);
+  patchViewerDOM(html, scrollSource);
   restoreMermaidSourceAttributes();
   applyRawHtmlDocuments();
 
@@ -6867,6 +6980,7 @@ async function renderMarkdownFull(content, generation) {
       updateShowNotesToggleVisibility();
       applyNoteStyles();
     }
+    editorScroll.commit(scrollSource);
   } catch (error) {
     console.error('Error rendering markdown:', error);
     // Replaces the whole tree without going through patchViewerDOM, so it needs
@@ -8210,16 +8324,20 @@ function beginFileOpen(data, options = {}) {
   const openedContent = data && data.content;
   const dirty = options.hasUnsavedChanges === true;
   const incomingSpelling = fileTrackingPathKey(openedPath);
+  const incomingEditor = Number.isSafeInteger(options.ownerTabId)
+    ? window.CustomTabs?.getDocumentEditorState(options.ownerTabId)
+    : null;
   const prior = {
     filePath: currentFilePath,
     markdown: originalMarkdown,
-    editorValue: isEditMode ? markdownEditor.value : null,
+    editorValue: markdownEditor.value,
+    editor: captureDocumentEditor(),
     dirty: hasUnsavedChanges,
     renderedContent: _lastRenderedContent,
     history: historySnapshot(),
     failures: new Set(failedSaves),
     conflicts: new Set(reloadConflicts),
-    editBaselines: new Map(editSessionBaselines),
+    editBaseline: editSessionBaseline,
     trackingActive: isFileTrackingActive,
     pauseOwner: fileTrackingPauseOwner,
     selectionGeneration: fileSelectionGeneration,
@@ -8293,8 +8411,8 @@ function beginFileOpen(data, options = {}) {
       reloadPathAliases.set(incomingSpelling, approval.pathKey);
     }
   }
-  // Clear undo/redo history on new file
-  historyClear();
+  if (incomingEditor) historyRestore(historyForEditorState(incomingEditor));
+  else historyClear();
   _lastRenderedContent = null;
 
   // Core ownership changes as one synchronous boundary before rendering:
@@ -8302,7 +8420,12 @@ function beginFileOpen(data, options = {}) {
   // any asynchronous work can let phase two observe a mixed old/new state.
   updateFileInfo(openedPath);
   // Store original markdown for editor
-  originalMarkdown = openedContent;
+  originalMarkdown = incomingEditor?.open ? incomingEditor.rendererMarkdown : openedContent;
+  markdownEditor.value = openedContent;
+  setEditorPresentation(incomingEditor?.open === true, !!incomingEditor);
+  editSessionBaseline = incomingEditor?.open ? incomingEditor.baseline : null;
+  const selection = incomingEditor?.selection;
+  if (selection) markdownEditor.setSelectionRange(selection.start, selection.end, selection.direction);
   let trackingDecision;
   try {
   withFileTrackingResumeHeld(() => {
@@ -8316,17 +8439,8 @@ function beginFileOpen(data, options = {}) {
         reloadConflicts.delete(openedStateKey);
       }
     }
-    if (!isEditMode) {
-      setDocumentDirtyState(dirty);
-    }
-    // If in edit mode, update editor content
-    if (isEditMode) {
-      markdownEditor.value = originalMarkdown;
-      setDocumentDirtyState(dirty);
-      // A different document is now open underneath the edit session, so the
-      // session's baseline describes a file the user is no longer editing.
-      captureEditSessionBaseline(options.preserveEditBaseline ? false : true);
-    }
+    setDocumentDirtyState(dirty);
+    if (isEditMode && !editSessionBaseline) captureEditSessionBaseline(true);
 
     trackingDecision = assertFileTrackingOwnership(
       openedPath,
@@ -8363,17 +8477,17 @@ function beginFileOpen(data, options = {}) {
     _lastRenderedContent = prior.renderedContent;
     updateFileInfo(prior.filePath);
     originalMarkdown = prior.markdown;
-    if (isEditMode && markdownEditor) {
-      markdownEditor.value = prior.editorValue;
-    }
+    setEditorPresentation(prior.editor.open, !!prior.filePath);
+    markdownEditor.value = prior.editorValue;
+    markdownEditor.setSelectionRange(prior.editor.selection.start, prior.editor.selection.end,
+      prior.editor.selection.direction);
+    markdownEditor.scrollTop = prior.editor.scrollTop;
+    markdownEditor.scrollLeft = prior.editor.scrollLeft;
     failedSaves.clear();
     for (const key of prior.failures) failedSaves.add(key);
     reloadConflicts.clear();
     for (const key of prior.conflicts) reloadConflicts.add(key);
-    editSessionBaselines.clear();
-    for (const [key, value] of prior.editBaselines) {
-      editSessionBaselines.set(key, value);
-    }
+    editSessionBaseline = prior.editBaseline;
     hasUnsavedChanges = prior.dirty;
     isFileTrackingActive = prior.trackingActive;
     fileSelectionGeneration = prior.selectionGeneration;
@@ -8422,6 +8536,16 @@ function beginFileOpen(data, options = {}) {
     return null;
   }
 
+  cancelEditorDeferredWork();
+  editorModeRevision++;
+  editorScroll.reset();
+  if (!isEditMode) editorScroll.leave();
+  if (incomingEditor) {
+    markdownEditor.scrollTop = incomingEditor.scrollTop;
+    markdownEditor.scrollLeft = incomingEditor.scrollLeft;
+    window.CustomTabs.setDocumentEditorState(options.ownerTabId, captureDocumentEditor());
+  }
+  applyTableBreakout();
   if (options.deletionAdoptionApproval && trackingDecision.owner) {
     for (const spelling of [
       incomingSpelling,
@@ -8494,6 +8618,9 @@ function beginFileOpen(data, options = {}) {
 
   return Object.freeze({
     sequence: openSequence,
+    editorInteraction: editorInteractionRevision,
+    editorScroll: incomingEditor?.open
+      ? { top: incomingEditor.scrollTop, left: incomingEditor.scrollLeft } : null,
     path: openedPath,
     postRenderScroll,
     unresolvedEvidence:
@@ -8564,6 +8691,11 @@ function completeFileOpen(context, visualCompletion = null) {
     return false;
   }
 
+  if (context.editorScroll && isEditMode &&
+      context.editorInteraction === editorInteractionRevision) {
+    markdownEditor.scrollTop = context.editorScroll.top;
+    markdownEditor.scrollLeft = context.editorScroll.left;
+  }
   if (context.postRenderScroll.type === 'restore') {
     // Small delay preserves the existing navigation behavior while retaining
     // both ownership checks at the actual visual mutation.
@@ -9216,6 +9348,10 @@ documentEvents.on('file-reload-result', async (event, data) => {
       reloadConflicts.delete(acceptedStateKey);
     }
     originalMarkdown = data.content;
+    cancelEditorDeferredWork();
+    historyClear();
+    editorModeRevision++;
+    editSessionBaseline = null;
     withFileTrackingResumeHeld(() => {
       // The document was just re-read from disk, so whatever the last write
       // did or failed to do is no longer what is on screen - for this path.
@@ -13070,8 +13206,6 @@ window.dismissFileUpdateNotification = dismissFileUpdateNotification;
 window.requestCurrentFileReload = reloadCurrentFile;
 window.beginFileOpen = beginFileOpen;
 window.completeFileOpen = completeFileOpen;
-window.invalidateBackgroundEditSessionBaseline =
-  invalidateBackgroundEditSessionBaseline;
 window.preflightFileOpen = preflightFileOpen;
 window.cancelPendingNavigation = cancelPendingNavigation;
 // Read-only product API used by shutdown approval and tab ownership. Callers

@@ -5,6 +5,7 @@ require("./test-userdata-isolation");
 const { app, BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const { admitTestDocument } = require("./test-visual-utils");
 require("../src/main.js");
 
 const evidence = process.env.FOLIA_LAYOUT_EVIDENCE ||
@@ -52,6 +53,8 @@ app.whenReady().then(async () => {
   try {
     await waitFor(exec, "typeof renderMarkdown==='function' && !!window.CustomTabs");
     fs.mkdirSync(evidence, { recursive: true });
+    const fixture = path.resolve(evidence, "responsive-reading.md");
+    await admitTestDocument(win, fixture, markdown);
     win.unmaximize();
     for (const scenario of [
       { name: "roomy-closed", width: 1500, toc: false, split: false, zoom: 100 },
@@ -62,7 +65,7 @@ app.whenReady().then(async () => {
     ]) {
       win.setSize(scenario.width, 850);
       await waitFor(exec, `Math.abs(innerWidth-${win.getContentBounds().width})<=1`);
-      await exec(`if(isEditMode!==${scenario.split})document.getElementById('toggleEdit').click();
+      await exec(`if(isEditMode!==${scenario.split})document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
         document.documentElement.style.setProperty('--toc-width','520px');
         setIndexVisible(${scenario.toc});zoomLevel=${scenario.zoom};updateZoom();true`);
       await exec(`renderMarkdown(${JSON.stringify(markdown)},'full')`);
@@ -122,7 +125,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(evidence, "geometry.json"), JSON.stringify(results, null, 2));
     win.setSize(1000, 850);
     const splitter = await exec(`(async()=>{
-      if(!isEditMode)document.getElementById('toggleEdit').click();
+      if(!isEditMode)document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       setIndexVisible(true);zoomLevel=100;updateZoom();
       await renderMarkdown(${JSON.stringify(markdown)},'full');
       await new Promise(r=>setTimeout(r,250));
@@ -158,7 +161,7 @@ app.whenReady().then(async () => {
     const codeToken = "versionIdentifier".repeat(7);
     const richTable = table.replace(description,
       `[${longToken}](${longToken}) and \`${codeToken}\` with explanatory text`);
-    await exec("if(isEditMode)document.getElementById('toggleEdit').click();setIndexVisible(true);zoomLevel=100;updateZoom();true");
+    await exec("if(isEditMode)document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();setIndexVisible(true);zoomLevel=100;updateZoom();true");
     win.setSize(1000, 850);
     await exec(`renderMarkdown(${JSON.stringify("# Links and code\n\n" + richTable +
       "\n\n```text\n  preserve  exact  spacing\n```")},'full')`);
@@ -202,7 +205,7 @@ app.whenReady().then(async () => {
     ]) {
       win.setSize(scenario.width, 850);
       await sleep(300);
-      await exec(`if(isEditMode!==${scenario.split})document.getElementById('toggleEdit').click();
+      await exec(`if(isEditMode!==${scenario.split})document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
         setIndexVisible(${scenario.toc});zoomLevel=${scenario.zoom};updateZoom();true`);
       await exec(`renderMarkdown(${JSON.stringify(diagramMarkdown)},'full')`);
       await waitFor(exec, "viewer.querySelectorAll('.mermaid svg g.node').length===5");
@@ -258,7 +261,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(evidence, "diagrams.json"), JSON.stringify(diagrams, null, 2));
     const authoredSource = '%%{init: {"flowchart": {"wrappingWidth": 120}}}%%\n' +
       diagram + "\nstyle A stroke:#ff0000,stroke-width:3px";
-    await exec("if(isEditMode)document.getElementById('toggleEdit').click();setIndexVisible(false);true");
+    await exec("if(isEditMode)document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();setIndexVisible(false);true");
     win.setSize(1500, 850);
     await exec(`renderMarkdown(${JSON.stringify("# Authored diagram\n\n```mermaid\n" + authoredSource + "\n```")},'full')`);
     await waitFor(exec, "viewer.querySelectorAll('.mermaid svg g.node').length===5");

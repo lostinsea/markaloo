@@ -37,7 +37,7 @@ require("./test-userdata-isolation");
 
 require("../src/main.js");
 
-const { captureScreenshot, startErrorSentinel, proveSentinelAlive, trapExternalOpens } = require("./test-visual-utils");
+const { admitTestDocument, captureScreenshot, startErrorSentinel, proveSentinelAlive, trapExternalOpens } = require("./test-visual-utils");
 
 const results = [];
 function check(name, ok, detail) {
@@ -422,7 +422,8 @@ async function run(win) {
   await resizeWindow({ x: 40, y: 40, width: 2000, height: 1100 });
 
   await exec("localStorage.clear(); null");
-  await exec(`renderMarkdown(${JSON.stringify(DOC)}, "full")`);
+  await admitTestDocument(win, path.join(__dirname, "..", "tmp", "document-editor-tables.md"), DOC);
+  await exec("setIndexVisible(false);true");
   await sleep(1800);
 
   const m = JSON.parse(await exec(MEASURE));
@@ -808,11 +809,11 @@ async function run(win) {
     await exec(`(async () => {
       const t = document.querySelectorAll('#viewer .table-container')[4].querySelector('table');
       const before = t.classList.contains('wrap-anyway');
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 600));
       const inSplit = document.querySelector('.content-wrapper').classList.contains('split-view');
       const after = t.classList.contains('wrap-anyway');
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 600));
       return JSON.stringify({ before, inSplit, after });
     })()`),
@@ -918,7 +919,7 @@ async function run(win) {
         broken: c.classList.contains('table-breakout'),
         width: c.getBoundingClientRect().width,
       };
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       // Read SYNCHRONOUSLY, before yielding. No task boundary has occurred, so
       // the 120ms debounce provably cannot have run: whatever is true here was
       // done by the transition handler itself. getBoundingClientRect() forces
@@ -966,7 +967,7 @@ async function run(win) {
         hiddenBySection: !!(c.closest('.collapsible-section') || {}).classList
           && c.closest('.collapsible-section').classList.contains('collapsed'),
       };
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       const syncExitWidth = c.getBoundingClientRect().width;
       await new Promise(r => setTimeout(r, 500));
       const restored = c.getBoundingClientRect().width;
@@ -2057,12 +2058,12 @@ async function run(win) {
       }
 
       // Same again in split view, where #viewer owns the scrollbar.
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 600));
       out.inSplitView = wrapper.classList.contains('split-view');
       out.modes.splitOpen = await measure();
 
-      document.getElementById('toggleEdit').click();
+      document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 600));
       document.getElementById('closeIndex').click();
       await new Promise(r => setTimeout(r, 450));
@@ -2478,7 +2479,7 @@ async function run(win) {
           // WRONG-GUARD - the guard was reading its own setup.
           localStorage.setItem('editorSplitRatio', '0.65');
           applyEditorSplitRatio(0.65);
-          if (!isEditMode) toggleEditBtn.click();
+          if (!isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
           await sleep(800);
           // Re-applied after the mode switch as well, so the seed cannot be
           // undone by anything the transition does to the panel's width.
@@ -2577,7 +2578,7 @@ async function run(win) {
           await sleep(150);
           res.afterDblClick = ep.getBoundingClientRect().width / wr.width;
           res.storedAfterDblClick = localStorage.getItem('editorSplitRatio');
-          toggleEditBtn.click();
+          (isEditMode ? exitEditBtn : toggleEditBtn).click();
           await sleep(700);
           res.hiddenOutsideSplitView = getComputedStyle(sp).display === 'none';
           return JSON.stringify(res);
@@ -2665,11 +2666,11 @@ async function run(win) {
           const sleep = (ms) => new Promise(r => setTimeout(r, ms));
           localStorage.setItem('editorSplitRatio', '0.25');
           applyEditorSplitRatio(0.25);
-          if (!isEditMode) toggleEditBtn.click();
+          if (!isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
           await sleep(800);
           const wrap = document.querySelector('.content-wrapper').getBoundingClientRect();
           const ratio = document.getElementById('editorPanel').getBoundingClientRect().width / wrap.width;
-          toggleEditBtn.click();
+          (isEditMode ? exitEditBtn : toggleEditBtn).click();
           await sleep(700);
           localStorage.setItem('editorSplitRatio', '0.5');
           applyEditorSplitRatio(0.5);
@@ -2729,7 +2730,7 @@ async function run(win) {
     await exec(`
       (async () => {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-        if (isEditMode) { toggleEditBtn.click(); await sleep(700); }
+        if (isEditMode) { (isEditMode ? exitEditBtn : toggleEditBtn).click(); await sleep(700); }
         await renderMarkdown(${JSON.stringify(DOC)}, "full");
         await sleep(1800);
 
@@ -3103,11 +3104,13 @@ async function run(win) {
     const ratio = c.from > 0 ? c.till / c.from : 1;
     return c.drift - c.offset * (ratio - 1);
   };
+  await admitTestDocument(win, path.join(__dirname, "..", "tmp", "document-editor-table-zoom.md"),
+    ZOOM_ANCHOR_DOC);
   const zoomAnchor = JSON.parse(
     await exec(`
       (async () => {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-        if (isEditMode) { toggleEditBtn.click(); await sleep(900); }
+        if (isEditMode) { (isEditMode ? exitEditBtn : toggleEditBtn).click(); await sleep(900); }
         await renderMarkdown(${JSON.stringify(ZOOM_ANCHOR_DOC)}, "full");
         await sleep(1500);
 
@@ -3312,7 +3315,7 @@ async function run(win) {
         // measured step spans 230->260%, so both ends are past the threshold.
         await run('normal', 0.50, +1, false, 13);
 
-        if (!isEditMode) toggleEditBtn.click();
+        if (!isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await sleep(900);
         const splitScroller = getViewerScroller();
         await run('split', 0.00, +1);
@@ -3328,7 +3331,7 @@ async function run(win) {
         // Only where the reading measure narrows - split view - does a tall
         // block re-wrap and stop scaling in step with its own text.
         await run('split', 0.50, +1, true);
-        toggleEditBtn.click();
+        (isEditMode ? exitEditBtn : toggleEditBtn).click();
         await sleep(900);
 
         // THE BREAKOUT LEG. Normal view only, and that is not a shortcut:

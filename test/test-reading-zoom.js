@@ -164,7 +164,7 @@ if (typeof electron === "string") {
     await settle();
   }
   async function mode(split) {
-    await exec(`if(isEditMode!==${split})document.getElementById('toggleEdit').click();true`);
+    await exec(`if(isEditMode!==${split})document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true`);
     await wait("mode", `isEditMode===${split}&&!loadingScreen.classList.contains('active')`);
     await settle();
   }

@@ -77,7 +77,7 @@ async function open(name, body) {
   return chosen;
 }
 async function edit(body) {
-  await exec(`if(!isEditMode)document.getElementById('toggleEdit').click();
+  await exec(`if(!isEditMode)document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
     markdownEditor.value=${JSON.stringify(body)};
     markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
   await pageWait("edited document", `hasUnsavedChanges&&currentReloadSnapshot()===${JSON.stringify(body)}`);
@@ -240,12 +240,12 @@ async function run() {
   const file = await open("dialog-document.md", baseline);
   await edit("# Dialog document\n\nUnsaved text.\n");
   await captureRootMatrix("action", async () => {
-    await exec("document.getElementById('toggleEdit').click();true");
+    await exec("document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true");
     await rootQuestion("Discard unsaved changes?");
   }, () => rootChoice("cancel"));
   check("cancelling exit-edit keeps genuine unsaved edits and edit mode",
     await exec("isEditMode&&hasUnsavedChanges&&currentReloadSnapshot().includes('Unsaved text.')"));
-  await exec("document.getElementById('toggleEdit').click();true");
+  await exec("document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true");
   await rootQuestion("Discard unsaved changes?");
   await edit("# Dialog document\n\nNewer edit during the question.\n");
   await sleep(180);
@@ -254,7 +254,7 @@ async function run() {
     staleExitClosed && await exec("isEditMode&&hasUnsavedChanges&&currentReloadSnapshot().includes('Newer edit during')"));
   if (!staleExitClosed) await rootChoice("cancel");
   await settle();
-  await exec("document.getElementById('toggleEdit').click();true");
+  await exec("document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();true");
   await rootQuestion("Discard unsaved changes?");
   await rootChoice("proceed");
   await pageWait("explicit edit discard", `!isEditMode&&!hasUnsavedChanges&&currentReloadSnapshot()===${JSON.stringify(baseline)}`);
