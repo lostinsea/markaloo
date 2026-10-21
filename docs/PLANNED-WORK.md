@@ -38,6 +38,25 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `menu-toolbar-grouping` - **REVIEWED LOCALLY; NOT INTEGRATED** (2026-10-21).
+  - Sole writer: isolated `users/vinma-microsoft/menu-and-toolbar-grouping`,
+    based on canonical main `e6a9d11b`, including released source `853c4f2a`.
+  - About sits immediately above History, separated above and below.
+    Toolbar: Reload/Open editor | TOC | menu; separators wrap with their actions.
+  - Sol 6.1/high implementation; fresh independent Sol 6.1/high and Luna 6/high
+    reviews both found no significant issues. No disagreement remains.
+    No push, integration, upgrade or release.
+  - Toolbar `47/47`, update state `42/42`, About `143/143`, focused About
+    `33/33`, responsive `28/28`, theme `404/404`, document editor `60/60`,
+    panels `59/59`, TOC `30/30`, reload `56/56` and zoom `54/54` pass.
+    Source packaging is `427/0`, with built-ASAR checks skipped.
+  - New R1064/R1065 and coupled R1049/R990/R1026 are individually exact PROVEN.
+    All anchors resolve. Normal/narrow/high-reading-zoom toolbar captures and
+    normal/narrow/150% web-zoom menus were viewed in light and dark.
+  - Evidence: session `c224c61c`, `files/menu-toolbar-receipt.json`,
+    `toolbar-r1.log`, `updates-r1.log`, `updates-ui-r2.log` and `exact-proofs-r1.log`.
+    No full-suite, packaged-app, performance or cross-platform certification.
+  - Dependency assessment is read-only and kept in separate session artifacts.
 - `release-0.9.0` - **PUBLISHED AND VERIFIED** (2026-10-21).
   - Release: [Markaloo 0.9.0](https://github.com/lostinsea/markaloo/releases/tag/v0.9.0).
   - Exact tagged source: `853c4f2a29375187147c3219c795c3f209ec95d7`.

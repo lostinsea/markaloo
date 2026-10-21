@@ -139,7 +139,8 @@
             </svg>
           </button>
         </div>
-        <div class="controls">
+        <div class="controls" role="group" aria-label="Application menu">
+          <span class="nav-separator header-menu-separator" aria-hidden="true"></span>
           <div class="tools-dropdown" id="menuDropdown">
             <button
               class="btn hamburger-btn"
@@ -196,9 +197,6 @@
                 aria-controls="editorPanel" aria-expanded="false" disabled>
                 <span data-i18n="editMode">Open editor</span>
               </button>
-              <button type="button" class="tools-menu-item" id="aboutMenuItem">
-                <span>About Markaloo</span>
-              </button>
               <div class="tools-menu-item" id="toggleNotes" aria-controls="notesPanel" aria-expanded="false">
                 <span data-i18n="allNotes">All Notes</span>
               </div>
@@ -207,7 +205,11 @@
               <div class="tools-menu-item" id="exportPdf">
                 <span data-i18n="exportPdf">Export as PDF</span>
               </div>
-              <div class="tools-menu-separator"></div>
+              <div class="tools-menu-separator" aria-hidden="true"></div>
+              <button type="button" class="tools-menu-item" id="aboutMenuItem">
+                <span>About Markaloo</span>
+              </button>
+              <div class="tools-menu-separator" aria-hidden="true"></div>
               <div class="tools-menu-header" data-i18n="history">History</div>
               <div class="tools-menu-recent" id="fileMenuRecent">
                 <div class="tools-menu-recent-empty" data-i18n="noRecentFiles">

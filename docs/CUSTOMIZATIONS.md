@@ -41,13 +41,14 @@ This approach means after an upstream merge, you only need to ensure these files
 - Reload and Open editor act on the current document and stay in one group.
 - Both are natively disabled without an admitted document, including Welcome
   and last-tab close. TOC stays available. Empty admitted files remain actionable.
-- A noninteractive separator marks the app-wide TOC toggle. Its pressed state
+- Noninteractive separators divide Reload/Open editor, TOC and the menu.
+  The app-wide TOC toggle's pressed state
   follows the same drawer state as the menu, close button, Escape and All Notes.
 - TOC visibility applies to every open tab. Toggling it keeps document editors,
   drafts, selection and undo history unchanged.
 - The toolbar keeps focus on its TOC button. The menu still focuses the opened
   drawer. Both use `readingSidePanel`, including Welcome and startup choices.
-- Action groups wrap within narrow windows; the separator stays with TOC.
+- Action groups wrap within narrow windows; separators stay with TOC and menu.
 - `npm run test:toc-toolbar` covers real tab switches, retained drafts, keyboard
   input, process restarts and split/zoom drawer reflow through the production
   preload. Missing cases, failures and timeouts fail the run.
@@ -117,7 +118,8 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ### About and application updates
 
-- Menu: File > About Markaloo, directly after the existing Edit Mode item.
+- Menu: File > About Markaloo, immediately above History, with separators
+  above and below About. All Notes and Export keep their earlier order.
 - The themed card shows the rainbow feather, product name and Main's running
   version. Status and actions stay below Check for updates.
 - Opening or reopening About reads local state, not the network.

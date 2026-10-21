@@ -23783,6 +23783,44 @@ const REVERTS = [
           requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
         {
+          id: "R1064", what: "put About back before All Notes without its History boundaries",
+          file: HTML,
+          from: '              <div class="tools-menu-separator" aria-hidden="true"></div>\n' +
+            '              <button type="button" class="tools-menu-item" id="aboutMenuItem">\n' +
+            '                <span>About Markaloo</span>\n' +
+            '              </button>\n' +
+            '              <div class="tools-menu-separator" aria-hidden="true"></div>',
+          to: '              <div class="tools-menu-separator"></div>',
+          also: [{
+            from: '              <div class="tools-menu-item" id="toggleNotes"',
+            to: '              <button type="button" class="tools-menu-item" id="aboutMenuItem">\n' +
+              '                <span>About Markaloo</span>\n' +
+              '              </button>\n' +
+              '              <div class="tools-menu-item" id="toggleNotes"',
+          }],
+          suite: "test:updates-ui",
+          expect: [/^About is isolated immediately above History after All Notes and Export$/,
+            /^About boundaries stay visible above History in light dark normal narrow and high web zoom menus$/],
+          mustPass: [/^native keyboard reaches and activates About across both menu separators and restores menu focus$/,
+            /^menu placement checks do not check download or install updates$/,
+            /^About displays Main runtime version rather than package version$/,
+            /^About keyboard dismissal restores a visible toolbar control$/],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R1065", what: "hide the toolbar boundary between TOC and the hamburger menu",
+          file: HTML,
+          from: '          <span class="nav-separator header-menu-separator" aria-hidden="true"></span>',
+          to: '          <span class="nav-separator header-menu-separator" aria-hidden="true" style="display:none"></span>',
+          suite: "test:toc-toolbar-grouping",
+          expect: [/^toolbar keeps a second visible noninteractive boundary with the menu after the TOC group at every width$/],
+          mustPass: [/^toolbar groups keep a visible noninteractive separator beside the global TOC at every width$/,
+            /^normal narrow and minimum-width toolbar buttons remain inside the viewport and hit-testable$/,
+            /^minimum-width grouping probe actually wraps the document and app action rows$/,
+            /^TOC toolbar scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
           id: "R1046", what: "leave the global TOC toolbar button without its click handler",
           file: RENDERER,
           from: "toggleTocBtn.addEventListener('click', () => toggleTableOfContents());",
@@ -24103,7 +24141,7 @@ const REVERTS = [
           suite: "test:updates-ui",
           expect: [/^About displays Main runtime version rather than package version$/],
           mustPass: [
-            /^About follows the actual Edit Mode menu item$/,
+            /^About is isolated immediately above History after All Notes and Export$/,
             /^About and startup notice show the same available version$/,
           ],
           requireMustPassAssertions: true, requireExactFailures: true,

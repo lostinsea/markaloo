@@ -270,6 +270,65 @@ if (typeof electron === "string") {
     await exec("window.MarkalooDialogs.closeAbout();true");
     await sleep(30);
   }
+  async function menuPlacement() {
+    await closeAbout();
+    await click("laterUpdateBtn");
+    await pageWait("fixture notice dismissed", "!document.getElementById('appUpdateToast').classList.contains('show')");
+    const samples = [], before = { ...counts };
+    const key = async keyCode => {
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode });
+      if (keyCode === "Enter") win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode });
+      await sleep(50);
+    };
+    for (const theme of ["clarity", "abyss"]) for (const [width, zoom] of [[1280, 1], [480, 1], [620, 1.5]]) {
+      win.setContentSize(width, 800);
+      win.webContents.setZoomFactor(zoom);
+      await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});menuBtn.focus();true`);
+      await sleep(100);
+      await key("Enter");
+      await key("Tab");
+      const fileFocused = await exec("document.activeElement===fileBtn&&mainMenu.classList.contains('visible')");
+      await key("Enter");
+      await key("Tab");
+      const tocFocused = await exec("document.activeElement===toggleIndexBtn&&fileMenu.classList.contains('visible')");
+      await key("Tab");
+      const aboutFocused = await exec("document.activeElement===document.getElementById('aboutMenuItem')");
+      const geometry = await exec(`(() => {
+        const about=document.getElementById('aboutMenuItem'),above=about.previousElementSibling,
+          below=about.nextElementSibling,history=below?.nextElementSibling,
+          menu=document.getElementById('fileMenu').getBoundingClientRect(),r=about.getBoundingClientRect();
+        const separators=[above,below].every(s=>{
+          const b=s.getBoundingClientRect();
+          return s.classList.contains('tools-menu-separator')&&s.getAttribute('aria-hidden')==='true'&&
+            s.tabIndex<0&&!s.matches('button,a,input,select,textarea,[contenteditable="true"]')&&
+            b.width>0&&b.height>=1&&b.left>=menu.left&&b.right<=menu.right;
+        });
+        const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        return {separators,inside:menu.left>=0&&menu.top>=0&&menu.right<=innerWidth+1&&menu.bottom<=innerHeight+1,
+          ordered:above.getBoundingClientRect().bottom<=r.top&&r.bottom<=below.getBoundingClientRect().top&&
+            history?.dataset.i18n==='history'&&below.getBoundingClientRect().bottom<=history.getBoundingClientRect().top,
+          reachable:about.contains(hit)};
+      })()`);
+      fs.writeFileSync(path.join(batch, `menu-${theme}-${width}-${zoom}.png`),
+        (await win.webContents.capturePage()).toPNG());
+      await key("Enter");
+      await pageWait("native About activation", "document.getElementById('aboutDialog').open");
+      await key("Escape");
+      await pageWait("native About dismissal", "!document.getElementById('aboutDialog').open");
+      samples.push({ theme, width, zoom, geometry, fileFocused, tocFocused, aboutFocused,
+        restored: await exec("document.activeElement===menuBtn&&!mainMenu.classList.contains('visible')&&!fileMenu.classList.contains('visible')") });
+    }
+    check("About boundaries stay visible above History in light dark normal narrow and high web zoom menus",
+      samples.every(s => s.geometry.separators && s.geometry.inside && s.geometry.ordered && s.geometry.reachable), samples);
+    check("native keyboard reaches and activates About across both menu separators and restores menu focus",
+      samples.every(s => s.fileFocused && s.tocFocused && s.aboutFocused && s.restored), samples);
+    check("menu placement checks do not check download or install updates",
+      counts.checks === before.checks && counts.downloads === before.downloads && counts.launches === before.launches);
+    fs.writeFileSync(path.join(batch, "menu-placement.json"), JSON.stringify(samples, null, 2));
+    win.webContents.setZoomFactor(1);
+    win.setContentSize(1100, 780);
+  }
   async function question() {
     let target;
     await wait("Main-owned shutdown question", async () => {
@@ -554,8 +613,13 @@ if (typeof electron === "string") {
     check("About uses frozen production preload without Node or raw IPC",
       await exec("Object.isFrozen(window.folia)&&typeof require==='undefined'&&typeof window.folia.invoke==='undefined'"));
     await openAbout();
-    check("About follows the actual Edit Mode menu item",
-      await exec("document.getElementById('toggleEdit').nextElementSibling===document.getElementById('aboutMenuItem')"));
+    check("About is isolated immediately above History after All Notes and Export",
+      await exec(`(() => {
+        const menu=document.getElementById('fileMenu'),children=[...menu.children],
+          ids=children.map(e=>e.id||(e.classList.contains('tools-menu-separator')?'separator':e.dataset.i18n));
+        return ids.join('|')==='openFile|toggleIndex|toggleEdit|toggleNotes|separator|export|exportPdf|separator|aboutMenuItem|separator|history|fileMenuRecent'&&
+          document.querySelectorAll('#aboutMenuItem').length===1;
+      })()`));
     check("About displays Main runtime version rather than package version",
       await exec(`document.getElementById('aboutVersion').textContent===${JSON.stringify("Version " + runtimeVersion)}`));
     check("About status and update actions follow Check for updates",
@@ -672,6 +736,8 @@ if (typeof electron === "string") {
       checkMode = "available";
       await click("aboutCheckUpdates");
       await pageWait("retry successful", "document.getElementById('aboutCheckUpdates').disabled===false&&document.getElementById('aboutDownloadUpdate').hidden===false");
+      await menuPlacement();
+      await openAbout();
       for (const theme of ["clarity", "abyss"]) {
         await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});true`);
         await sleep(150);

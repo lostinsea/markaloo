@@ -253,6 +253,9 @@ if (typeof electron === "string") {
             bottom:r.bottom,reachable:!!hit&&b.contains(hit)};
         });
         const d=document.querySelector('.header-document-actions'),a=document.querySelector('.header-app-actions');
+        const controls=document.querySelector('.header > .controls'),menu=document.getElementById('menuBtn'),
+          menuSeparator=controls?.querySelector('.header-menu-separator'),
+          mr=menuSeparator?.getBoundingClientRect(),mb=menu.getBoundingClientRect();
         const separator=a?.querySelector('.nav-separator'),r=separator?.getBoundingClientRect(),
           toc=document.getElementById('toggleTocBtn').getBoundingClientRect();
         return {width:innerWidth,buttons,grouped:d?.getAttribute('role')==='group'&&
@@ -261,11 +264,25 @@ if (typeof electron === "string") {
           d.contains(document.getElementById('openEditorBtn'))&&a.contains(document.getElementById('toggleTocBtn')),
           separator:!!separator&&separator.getAttribute('aria-hidden')==='true'&&separator.tabIndex<0&&
             !separator.matches('button,a,input,select,textarea,[contenteditable="true"]')&&r.width>=1&&r.height>0&&
-            r.right<=toc.left&&r.top<toc.bottom&&r.bottom>toc.top};
+            r.right<=toc.left&&r.top<toc.bottom&&r.bottom>toc.top,
+          menuBoundary:controls?.getAttribute('role')==='group'&&
+            controls.getAttribute('aria-label')==='Application menu'&&
+            controls.previousElementSibling===a&&a.previousElementSibling===d&&
+            [...controls.children].map(e=>e.id||e.className).join('|')===
+              'nav-separator header-menu-separator|menuDropdown'&&
+            a.lastElementChild.id==='toggleTocBtn'&&
+            document.querySelectorAll('.header .nav-separator').length===2&&
+            !!menuSeparator&&menuSeparator.getAttribute('aria-hidden')==='true'&&menuSeparator.tabIndex<0&&
+            !menuSeparator.matches('button,a,input,select,textarea,[contenteditable="true"]')&&
+            mr.width>=1&&mr.height>0&&mr.left>=0&&mr.right<=mb.left&&
+            mr.top<mb.bottom&&mr.bottom>mb.top&&
+            (Math.abs(toc.top-mb.top)>4||toc.right<=mr.left)};
       })()`));
     }
     check("toolbar groups keep a visible noninteractive separator beside the global TOC at every width",
       samples.every(value => value.grouped && value.separator), samples);
+    check("toolbar keeps a second visible noninteractive boundary with the menu after the TOC group at every width",
+      samples.every(value => value.menuBoundary), samples);
     check("normal narrow and minimum-width toolbar buttons remain inside the viewport and hit-testable",
       samples.every(value => value.buttons.every(button => button.width > 0 && button.height > 0 &&
         button.left >= 0 && button.right <= value.width + 1 && button.reachable)), samples);
@@ -284,7 +301,7 @@ if (typeof electron === "string") {
       await key("Tab");
       focus.push(await exec("document.activeElement.id"));
     }
-    check("native Tab order runs Reload Open editor TOC menu without stopping on the separator",
+    check("native Tab order runs Reload Open editor TOC menu without stopping on the separators",
       focus.join("|") === "openEditorBtn|toggleTocBtn|menuBtn", focus);
     await exec("toggleTocBtn.focus();true");
     const before = await state();
@@ -380,6 +397,23 @@ if (typeof electron === "string") {
         zoomLevel=${zoom};updateZoom();getViewerScroller().scrollTop=0;true`);
       if (!(await state()).toc) await click("toggleTocBtn");
       await settle();
+      const layout = await exec(`(() => {
+        const ids=['refreshBtn','openEditorBtn','toggleTocBtn','menuBtn'];
+        const controls=ids.map(id=>{
+          const b=document.getElementById(id),r=b.getBoundingClientRect(),
+            hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+          return r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth+1&&b.contains(hit);
+        });
+        const separators=[...document.querySelectorAll('.header .nav-separator')].map(s=>{
+          const r=s.getBoundingClientRect(),button=s.nextElementSibling.querySelector('button')||s.nextElementSibling,
+            b=button.getBoundingClientRect(),c=getComputedStyle(s);
+          return s.getAttribute('aria-hidden')==='true'&&s.tabIndex<0&&r.width>=1&&r.height>0&&
+            r.right<=b.left&&r.top<b.bottom&&r.bottom>b.top&&c.backgroundColor===getComputedStyle(document.querySelector('.header')).borderBottomColor;
+        });
+        return {controls,separators};
+      })()`);
+      check(`toolbar ${dark ? "dark" : "light"} ${width} reading zoom ${zoom} keeps both separators themed and controls reachable`,
+        layout.controls.every(Boolean) && layout.separators.length === 2 && layout.separators.every(Boolean), layout);
       const name = `toc-toolbar-${dark ? "dark" : "light"}-${width}-${zoom}`;
       await capture(name);
       captures.push(name);
