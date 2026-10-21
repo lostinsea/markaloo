@@ -38,6 +38,35 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `release-0.9.1` - **REVIEWED; READY FOR PUBLICATION** (2026-10-21).
+  - Sole serial main/tag/release writer: this isolated menu/toolbar worktree.
+  - Accepted UI source: `cc3326e7`, based on canonical main `e6a9d11b`.
+    Release changes are version/lock metadata, two-fix notes and this register.
+    Product bytes and the dependency graph stay unchanged from accepted UI.
+  - Existing owner access resolves to `lostinsea` with repository write access.
+    Canonical main is `e6a9d11b`; `v0.9.1` is unused; `v0.9.0` stays fixed.
+  - Runtime/About/menu/startup checks, local portable/NSIS builds, strict ASAR
+    equivalence, isolated unpacked UI and independent Sol/Luna review precede
+    the atomic non-force canonical main/tag push.
+  - The existing tag workflow builds all platforms and attests before publishing.
+    Downloaded asset, exact updater-role and hosted provenance checks follow.
+    After workflow success, `gh release edit` applies the reviewed 0.9.1 notes
+    before the final verifier checks the public release body.
+  - Fresh independent Sol 6.1/high and Luna 6/high accept the release.
+    Luna flagged the notes-publication step; both accept the explicit sequence.
+    No blocker remains. Publication and hosted verification are still pending.
+  - Dependency maintenance is a separate queued unit after verified publication.
+    No dependency upgrade, primary-checkout change, installation or live upgrade.
+  - Update state `42/42`, About `143/143` (including actual-runtime equal `9/9`),
+    startup `13/13` and toolbar `47/47` pass on the prepared version.
+    R986/R990 are exact PROVEN; all anchors resolve.
+  - Local portable and NSIS builds pass with publishing disabled. Strict built-
+    ASAR packaging is `439/0`, without skips; every source file matches.
+  - Actual unpacked 0.9.1 uses the frozen preload, clears equal availability
+    in Main and on disk, keeps Welcome Reload/Edit disabled and TOC enabled,
+    and passes native keyboard/menu/About checks. Both captures were viewed.
+  - Existing exact platform updater-role controls are reused for publication.
+    No new timing, full legacy-chain or cross-platform runtime claim.
 - `menu-toolbar-grouping` - **REVIEWED LOCALLY; NOT INTEGRATED** (2026-10-21).
   - Sole writer: isolated `users/vinma-microsoft/menu-and-toolbar-grouping`,
     based on canonical main `e6a9d11b`, including released source `853c4f2a`.
@@ -45,7 +74,7 @@ section is kept here so the register has a visible edge.
     Toolbar: Reload/Open editor | TOC | menu; separators wrap with their actions.
   - Sol 6.1/high implementation; fresh independent Sol 6.1/high and Luna 6/high
     reviews both found no significant issues. No disagreement remains.
-    No push, integration, upgrade or release.
+    UI acceptance is complete; authorized 0.9.1 publication is tracked above.
   - Toolbar `47/47`, update state `42/42`, About `143/143`, focused About
     `33/33`, responsive `28/28`, theme `404/404`, document editor `60/60`,
     panels `59/59`, TOC `30/30`, reload `56/56` and zoom `54/54` pass.
