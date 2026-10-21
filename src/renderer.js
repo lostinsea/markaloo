@@ -840,6 +840,7 @@ const UI_STRINGS = {
   'title.searchClose': 'Close (Esc)',
   'title.note': 'Title',
   'tableOfContents': 'Table of Contents',
+  'title.toggleToc': 'Toggle table of contents for all documents',
   'title.tocClose': 'Close table of contents',
   'rawMarkdown': 'Raw Markdown', 'loading': 'Loading...',
   'searchPlaceholder': 'Search in document...', 'noRecentFiles': 'No recent files',
@@ -991,6 +992,7 @@ const searchPrevBtn = document.getElementById('searchPrev');
 const searchNextBtn = document.getElementById('searchNext');
 const searchCloseBtn = document.getElementById('searchClose');
 const toggleIndexBtn = document.getElementById('toggleIndex');
+const toggleTocBtn = document.getElementById('toggleTocBtn');
 const closeIndexBtn = document.getElementById('closeIndex');
 const indexPanel = document.getElementById('indexPanel');
 const indexList = document.getElementById('indexList');
@@ -5774,6 +5776,8 @@ function setSidePanel(mode, { restoring = false, persist = true } = {}) {
   indexPanel.classList.toggle('visible', visible);
   indexPanel.inert = !visible;
   toggleIndexBtn.setAttribute('aria-expanded', String(visible));
+  toggleTocBtn.setAttribute('aria-expanded', String(visible));
+  toggleTocBtn.setAttribute('aria-pressed', String(visible));
   tocTracking.setEnabled(visible);
   notesPanel.classList.toggle('visible', notesVisible);
   notesPanel.inert = !notesVisible;
@@ -5796,12 +5800,14 @@ function setIndexVisible(visible) {
 }
 
 closeIndexBtn.setAttribute('aria-label', i18n('title.tocClose'));
-toggleIndexBtn.addEventListener('click', () => {
+function toggleTableOfContents({ focusPanel = false } = {}) {
   fileMenu.classList.remove('visible');
   const visible = !indexPanel.classList.contains('visible');
   setSidePanel(visible ? 'toc' : 'closed');
-  if (visible) closeIndexBtn.focus({ preventScroll: true });
-});
+  if (visible && focusPanel) closeIndexBtn.focus({ preventScroll: true });
+}
+toggleIndexBtn.addEventListener('click', () => toggleTableOfContents({ focusPanel: true }));
+toggleTocBtn.addEventListener('click', () => toggleTableOfContents());
 
 closeIndexBtn.addEventListener('click', () => {
   setSidePanel('closed');

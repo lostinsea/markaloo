@@ -89,7 +89,15 @@ if (typeof electron === "string") {
   }
   const panelState = `({toc:indexPanel.classList.contains('visible'),notes:notesPanel.classList.contains('visible'),
     inertToc:indexPanel.inert,inertNotes:notesPanel.inert,saved:localStorage.getItem('readingSidePanel'),
-    focused:document.activeElement?.id,inline:localStorage.getItem('notesVisible')})`;
+    focused:document.activeElement?.id,inline:localStorage.getItem('notesVisible'),
+    toolbarPressed:document.getElementById('toggleTocBtn').getAttribute('aria-pressed'),
+    toolbarExpanded:document.getElementById('toggleTocBtn').getAttribute('aria-expanded'),
+    menuExpanded:toggleIndexBtn.getAttribute('aria-expanded')})`;
+  function checkToolbar(label, state) {
+    check(label + " TOC toolbar agrees with the actual lifecycle drawer",
+      state.toolbarPressed === String(state.toc) && state.toolbarExpanded === String(state.toc) &&
+      state.menuExpanded === String(state.toc), state);
+  }
   function markdown() {
     const row = i => `| ${i} | A readable description with several words for row ${i}. | pending |`;
     const table = ["| Number | Description with a multiline heading | State |", "| --- | --- | --- |",
@@ -793,6 +801,7 @@ if (typeof electron === "string") {
     await wait("argument document painted", "viewer.querySelector('h1')?.textContent==='Startup outline'&&!loadingScreen.classList.contains('active')");
     await settle();
     const state = await exec(panelState);
+    checkToolbar("argument startup", state);
     check("fresh launch with a document argument defaults to visible exclusive accessible TOC",
       state.toc && !state.notes && !state.inertToc && state.inertNotes, state);
     check("argument document has actual TOC headings and a tracked current heading",
@@ -808,6 +817,7 @@ if (typeof electron === "string") {
     check("fresh profile has no saved panel or documents and keeps the welcome open action",
       await exec("localStorage.getItem('readingSidePanel')===null&&window.CustomTabs.getTabs().length===0&&!!viewer.querySelector('.welcome')&&!!document.getElementById('welcomeOpenBtn')"));
     const welcome = await exec(panelState);
+    checkToolbar("fresh Welcome", welcome);
     check("fresh Welcome keeps both drawers closed before the first document",
       !welcome.toc && !welcome.notes && welcome.inertToc && welcome.inertNotes, welcome);
     fs.writeFileSync(first, "# First outline\n\nOpening text.\n\n## Details\n\n" +
@@ -822,6 +832,7 @@ if (typeof electron === "string") {
       current:indexList.querySelector('[aria-current="location"]')?.textContent,
       expanded:toggleIndexBtn.getAttribute('aria-expanded'),
       beside:indexPanel.getBoundingClientRect().right<=getViewerScroller().getBoundingClientRect().left+1})`);
+    checkToolbar("fresh first document", state);
     check("fresh document defaults to visible TOC with real headings tracking and exclusive accessible panels",
       state.toc && !state.notes && !state.inertToc && state.inertNotes && state.expanded === "true" &&
       state.headings.join("|") === "First outline|Details|Final section" && state.current === "First outline" && state.beside, state);
@@ -843,6 +854,7 @@ if (typeof electron === "string") {
   }
   async function welcomeChoice() {
     const before = await exec(panelState);
+    checkToolbar("Welcome before explicit Notes", before);
     check("Welcome choice starts with no preference and closed drawers",
       before.saved === null && !before.toc && !before.notes, before);
     await exec("document.getElementById('toggleNotes').click();true");
@@ -853,6 +865,7 @@ if (typeof electron === "string") {
     await exec("document.getElementById('welcomeOpenBtn').click();true");
     await wait("Welcome choice document painted", "viewer.querySelector('h1')?.textContent==='Welcome choice document'&&!loadingScreen.classList.contains('active')");
     const after = await exec(panelState);
+    checkToolbar("Welcome explicit Notes after admission", after);
     check("explicit Welcome choice wins over the pending first-document TOC default",
       after.notes && !after.toc && !after.inertNotes && after.inertToc && after.saved === "notes", after);
     check("Welcome choice opens the actual admitted document",
@@ -862,6 +875,7 @@ if (typeof electron === "string") {
     const expected = ["invalid", "missing", "unreadable"].includes(phase) ? "toc" :
       phase === "freshClosed" ? "closed" : phase;
     const state = await exec(panelState);
+    checkToolbar(phase + " restart", state);
     check(`${phase} restores actual drawer visibility across process exit`, state.toc === (expected === "toc") && state.notes === (expected === "notes"), state);
     check(`${phase} restore preserves hidden drawer accessibility`, state.inertToc === (expected !== "toc") && state.inertNotes === (expected !== "notes"), state);
     check(`${phase} restore never focuses a drawer`, !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);

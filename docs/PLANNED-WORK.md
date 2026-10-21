@@ -38,6 +38,36 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `grouped-toc-toolbar` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+  - Isolated toolbar stream based on reviewed editor/scroll `e8b41f8b`.
+    The separate About unit is not included.
+  - Reload and Open editor remain document-scoped. A separated TOC button
+    changes the shared drawer choice across all tabs.
+  - Reuses `setSidePanel` and `readingSidePanel`; preserves Welcome's pending
+    default, Notes exclusivity and independent document editors.
+  - Sol 6.1/high implementation and fresh independent Sol 6.1/high and Luna
+    6/high acceptance are complete. Neither final review has a blocker.
+  - Both reviewers accept the shared-state design and final behavioral coverage.
+    Sol's first-round reverse-scroll concern is corrected: distinct targets
+    require real movement in both panes after every drawer/zoom change.
+    No final disagreement remains.
+  - Gates: real production-preload multi-tab/lifecycle tests, responsive and
+    split/zoom geometry checks, individual exact revert proofs, viewed light/
+    dark captures and a clean reviewed local commit. No push or integration.
+  - Production-preload toolbar is `37/37`, panel lifecycle `59/59` and theme
+    `404/404`. TOC `30/30`, responsive `28/28`, document editor `45/45`,
+    editor scrolling `182/182`, zoom `54/54`, reload `56/56` and dialogs
+    `53/53` pass. Source packaging is `416/0`; built-asar checks are skipped.
+  - R1046-R1050 and inherited wrapping R1026 are individually exact PROVEN.
+    All anchors resolve. Light/dark normal/narrow/high-zoom captures were viewed.
+  - Standard toolbar command runs before the legacy chain in Windows CI and
+    inside `npm test`. No full-chain, packaged-app or cross-platform claim.
+  - The first keyboard probe omitted Enter's native character event and failed;
+    the corrected native-input probe passes without changing product behavior.
+    The original failure receipt is retained.
+  - Evidence: session `b98cc07c`, `files/toc-toolbar-accepted.log`,
+    `toc-toolbar-final-r2.log`, `toolbar-final-exact-proofs.log` and
+    `toc-toolbar-*.png`.
 - `document-owned-editor` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
   - User-directed priority ahead of scroll acceptance, in this same worktree.
   - Each document owns whether its editor is open. Switching tabs restores
@@ -65,7 +95,7 @@ section is kept here so the register has a visible edge.
     No full-suite, packaged-app or cross-platform certification.
   - Evidence: session `bcd79899`, `files/editor-scroll-final-receipt.json`
     and `files/document-editor-*`.
-  - The separate TOC toolbar toggle remains queued. About is not included.
+  - The separate TOC toolbar unit is tracked above. About is not included.
 - `content-aware-editor-scroll` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
   - Sole writer: this isolated scroll stream, stacked on reviewed TOC `02108b98`
     and canonical main `4d614ee2`. The separate About unit is not included.

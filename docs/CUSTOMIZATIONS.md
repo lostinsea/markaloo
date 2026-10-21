@@ -27,6 +27,22 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Grouped toolbar actions
+
+- Reload and Open editor act on the current document and stay in one group.
+- A noninteractive separator marks the app-wide TOC toggle. Its pressed state
+  follows the same drawer state as the menu, close button, Escape and All Notes.
+- TOC visibility applies to every open tab. Toggling it keeps document editors,
+  drafts, selection and undo history unchanged.
+- The toolbar keeps focus on its TOC button. The menu still focuses the opened
+  drawer. Both use `readingSidePanel`, including Welcome and startup choices.
+- Action groups wrap within narrow windows; the separator stays with TOC.
+- `npm run test:toc-toolbar` covers real tab switches, retained drafts, keyboard
+  input, process restarts and split/zoom drawer reflow through the production
+  preload. Missing cases, failures and timeouts fail the run.
+- The command runs in `npm test` and before the legacy test chain in Windows CI.
+  Panel lifecycle and theme suites also check the new button's state and colors.
+
 ### Document-owned editors
 
 - The toolbar's Open editor button and the menu action only open the current

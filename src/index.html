@@ -71,9 +71,9 @@
   <body>
     <div class="container">
       <!--
-        ONE bar. The tab strip is the left-hand content, then the reload button,
-        then the hamburger - there is no logo, product name or file-path row any
-        more. The product name still reaches the user through <title>, which is
+        ONE bar. The tab strip is followed by document actions, the app-wide TOC
+        toggle, then the hamburger - there is no logo, product name or file-path
+        row. The product name still reaches the user through <title>, which is
         what the window frame and the taskbar show, and which test:packaging
         pins to package.json's productName.
       -->
@@ -81,42 +81,63 @@
         <div id="tabsContainer" class="tabs-container">
           <div id="tabs" class="tabs"></div>
         </div>
-        <button
-          id="refreshBtn"
-          class="nav-btn header-reload"
-          data-i18n-title="title.refresh"
-          title="Reload the active document (Ctrl+R)"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+        <div class="header-document-actions" role="group" aria-label="Current document">
+          <button
+            id="refreshBtn"
+            class="nav-btn header-reload"
+            data-i18n-title="title.refresh"
+            title="Reload the active document (Ctrl+R)"
           >
-            <path
-              d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"
-            ></path>
-          </svg>
-        </button>
-        <button
-          id="openEditorBtn"
-          class="nav-btn header-editor"
-          type="button"
-          data-i18n-title="title.openEditor"
-          title="Open editor for this document"
-          aria-label="Open editor for this document"
-          aria-controls="editorPanel"
-          aria-expanded="false"
-          disabled
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 20H4V4h8"></path>
-            <path d="m14 5 4-4 4 4-12 12-5 1 1-5Z"></path>
-          </svg>
-        </button>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"
+              ></path>
+            </svg>
+          </button>
+          <button
+            id="openEditorBtn"
+            class="nav-btn header-editor"
+            type="button"
+            data-i18n-title="title.openEditor"
+            title="Open editor for this document"
+            aria-label="Open editor for this document"
+            aria-controls="editorPanel"
+            aria-expanded="false"
+            disabled
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 20H4V4h8"></path>
+              <path d="m14 5 4-4 4 4-12 12-5 1 1-5Z"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="header-app-actions" role="group" aria-label="All documents">
+          <span class="nav-separator" aria-hidden="true"></span>
+          <button
+            id="toggleTocBtn"
+            class="nav-btn header-toc"
+            type="button"
+            data-i18n-title="title.toggleToc"
+            title="Toggle table of contents for all documents"
+            aria-label="Toggle table of contents for all documents"
+            aria-controls="indexPanel"
+            aria-expanded="false"
+            aria-pressed="false"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M9 5h12M9 12h12M9 19h12M3 5h.01M3 12h.01M3 19h.01"></path>
+            </svg>
+          </button>
+        </div>
         <div class="controls">
           <div class="tools-dropdown" id="menuDropdown">
             <button

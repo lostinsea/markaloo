@@ -27,7 +27,8 @@ div.container div.header,
    ============================================
 
    The bar holds, left to right: the tab strip (which grows and scrolls), the
-   reload and Open editor buttons, then the hamburger. There is no logo, product name or
+   grouped reload/Open editor buttons, a separated app-wide TOC toggle, then the
+   hamburger. There is no logo, product name or
    file-path row - the product name reaches the user through <title> (window
    frame + taskbar) and a document's location through its tab tooltip and the
    tab right-click menu. */
@@ -37,7 +38,7 @@ div.container div.header,
   flex-wrap: wrap;
 }
 
-/* The strip takes all the space the two buttons do not, and the tab-system
+/* The strip takes all the space the action groups do not, and the tab-system
    block further down owns its appearance - see "CUSTOM: Tab System Styles".
    Layering a second .tabs-container rule up here would lose to it on source
    order, which is exactly what happened while building this bar: an earlier
@@ -49,6 +50,31 @@ div.container div.header,
 
 .header-editor {
   flex-shrink: 0;
+}
+
+.header-document-actions,
+.header-app-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+/* Keep the separator with its app-wide action when the toolbar wraps.
+   The document group can itself wrap at the OS minimum window width. */
+.header-document-actions {
+  flex-wrap: wrap;
+}
+
+.header-app-actions .nav-separator {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.header-toc[aria-pressed="true"] {
+  background: var(--accent-tint);
+  color: var(--primary-color);
 }
 
 /* Hamburger: icon only, so the .btn horizontal padding is wrong for it. */

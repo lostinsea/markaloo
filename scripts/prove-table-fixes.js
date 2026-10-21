@@ -141,6 +141,26 @@ const TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL = Object.freeze([
   "Shutdown approval renderer unusable: webContents destroyed",
 ]);
 const VIRTUAL_SUITES = Object.freeze({
+  "test:toc-toolbar-handler": Object.freeze({
+    npmScript: "test:toc-toolbar",
+    environment: Object.freeze({ MARKALOO_TOC_TOOLBAR_PROOF: "handler" }),
+  }),
+  "test:toc-toolbar-state": Object.freeze({
+    npmScript: "test:toc-toolbar",
+    environment: Object.freeze({ MARKALOO_TOC_TOOLBAR_PROOF: "state" }),
+  }),
+  "test:toc-toolbar-owner": Object.freeze({
+    npmScript: "test:toc-toolbar",
+    environment: Object.freeze({ MARKALOO_TOC_TOOLBAR_PROOF: "owner" }),
+  }),
+  "test:toc-toolbar-grouping": Object.freeze({
+    npmScript: "test:toc-toolbar",
+    environment: Object.freeze({ MARKALOO_TOC_TOOLBAR_PROOF: "grouping" }),
+  }),
+  "test:toc-toolbar-welcome": Object.freeze({
+    npmScript: "test:toc-toolbar",
+    environment: Object.freeze({ MARKALOO_TOC_TOOLBAR_PROOF: "welcome" }),
+  }),
   "test:document-editor-toolbar": Object.freeze({
     npmScript: "test:document-editor",
     environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "toolbar" }),
@@ -23729,6 +23749,74 @@ const REVERTS = [
             /^scroll scenarios introduce no renderer or visible document errors$/],
           requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
+        {
+          id: "R1046", what: "leave the global TOC toolbar button without its click handler",
+          file: RENDERER,
+          from: "toggleTocBtn.addEventListener('click', () => toggleTableOfContents());",
+          to: "",
+          suite: "test:toc-toolbar-handler",
+          expect: [/^toolbar click toggles shared TOC visibility in both directions across existing tabs$/],
+          mustPass: [/^fresh toolbar uses the isolated production preload and a genuinely empty Welcome$/,
+            /^toolbar scope fixture really has two admitted documents and the current document outline$/,
+            /^TOC toolbar sentinel proves both error channels are alive$/,
+            /^all required TOC toolbar scenarios executed$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1047", what: "leave the global TOC toolbar pressed state stale after common panel changes",
+          file: RENDERER,
+          from: "  toggleTocBtn.setAttribute('aria-pressed', String(visible));",
+          to: "  toggleTocBtn.setAttribute('aria-pressed', 'false');",
+          suite: "test:toc-toolbar-state",
+          expect: [/^TOC toolbar pressed expanded and exclusive panel state agree after every entry and exit$/],
+          mustPass: [/^fresh Welcome TOC toolbar starts unpressed unexpanded and with both drawers closed$/,
+            /^toolbar scope fixture really has two admitted documents and the current document outline$/,
+            /^TOC toolbar scenarios introduce no renderer or visible document errors$/,
+            /^all required TOC toolbar scenarios executed$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1048", what: "make common TOC toggles transient instead of remembering the shared user choice",
+          file: RENDERER,
+          from: "  setSidePanel(visible ? 'toc' : 'closed');",
+          to: "  setSidePanel(visible ? 'toc' : 'closed', { persist: false });",
+          suite: "test:toc-toolbar-owner",
+          expect: [/^toolbar writes the common reading panel preference after repeated multi-document choices$/,
+            /^toolbar-open preference and pressed state survive actual process restart$/,
+            /^toolbar-closed preference and pressed state survive actual process restart$/],
+          mustPass: [/^Open editor remains scoped to Alpha rather than enabling every document$/,
+            /^TOC scope probe really owns two different dirty editors with selection and undo history$/,
+            /^repeat global TOC toggles preserve both owning drafts selection undo dirty state and headings$/,
+            /^(savedToc|savedClosed) restart restores both actual fixture tabs rather than a synthetic drawer$/,
+            /^toolbar test saves both fixture drafts without touching nonfixture documents$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+        },
+        {
+          id: "R1049", what: "hide the visual scope boundary between document actions and the global TOC",
+          file: HTML,
+          from: '          <span class="nav-separator" aria-hidden="true"></span>',
+          to: '          <span class="nav-separator" aria-hidden="true" style="display:none"></span>',
+          suite: "test:toc-toolbar-grouping",
+          expect: [/^toolbar groups keep a visible noninteractive separator beside the global TOC at every width$/],
+          mustPass: [/^normal narrow and minimum-width toolbar buttons remain inside the viewport and hit-testable$/,
+            /^minimum-width grouping probe actually wraps the document and app action rows$/,
+            /^toolbar scope fixture really has two admitted documents and the current document outline$/,
+            /^TOC toolbar scenarios introduce no renderer or visible document errors$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R1050", what: "override the explicit Welcome toolbar choice with a pending first-document default",
+          file: RENDERER,
+          from: "  if (!restoring && persist) {\n    defaultSidePanelPending = false;",
+          to: "  if (!restoring && persist) {",
+          suite: "test:toc-toolbar-welcome",
+          expect: [/^explicit Welcome toolbar close cancels the pending first-document TOC default$/],
+          mustPass: [/^fresh Welcome TOC toolbar starts unpressed unexpanded and with both drawers closed$/,
+            /^Welcome toolbar choice really opens then closes and saves the global drawer$/,
+            /^toolbar scope fixture really has two admitted documents and the current document outline$/,
+            /^all required TOC toolbar scenarios executed$/],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
       ];
 
 // These are release exceptions, not passing or withdrawn proofs. An explicit
@@ -24809,7 +24897,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") === "R319" &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount))
       .map((r) => r.id)
-      .join(",") === "R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045";
+      .join(",") === "R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,

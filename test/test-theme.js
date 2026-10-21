@@ -2556,8 +2556,8 @@ app.whenReady().then(async () => {
     // EXCUSED BY NAME with the reason, and a stale excusal fails, so the map
     // cannot quietly grow into a way of ignoring the control.
     //
-    // ALL THREE ENTRIES WERE MEASURED, not assumed: the probe named them and
-    // each consumer was then read out of the stylesheet. Every one is a
+    // These remaining entries were measured, not assumed: the probe named them
+    // and each consumer was then read out of the stylesheet. Every one is a
     // :hover-only or ::selection paint, i.e. exactly the class of surface
     // getComputedStyle over document.querySelectorAll('*') structurally cannot
     // reach - which is why 10f (glow replay) and 10g (hover replay) exist
@@ -2565,16 +2565,46 @@ app.whenReady().then(async () => {
     // rather than a hole. Their DECLARATION is separately required of every
     // scheme by 10b.
     const NEEDLE_EXCUSALS = {
-      "rgba(61, 189, 198":
-        "--accent-tint (.nav-btn:hover only) and --code-selection-bg (::selection, a pseudo-element no computed-style sweep can read)",
       "rgba(59, 191, 204":
         "--welcome-accent-tint, consumed only by .welcome-readme-btn:hover",
       "rgb(31, 138, 146)":
         "--welcome-solid-hover, consumed only by .welcome-open-btn:hover",
     };
+    // The pressed toolbar now paints --accent-tint at rest. Exercise both
+    // states through the real handler before scanning that newly reachable
+    // consumer; a new control has no frozen appearance, but still has a palette.
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 400 });
+    const checkTocPalette = async (label) => {
+      const samples = [];
+      for (const visible of [false, true]) {
+        await exec(`if(indexPanel.classList.contains('visible')!==${visible})
+          document.getElementById('toggleTocBtn').click();true`);
+        for (let i = 0; i < 60; i++) {
+          if (await settleTransitions() === 0) break;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        samples.push(await exec(`(() => {
+          const b=document.getElementById('toggleTocBtn'),svg=b.querySelector('svg'),c=getComputedStyle(b);
+          const probe=document.createElement('span');
+          probe.style.color='var(${visible ? "--primary-color" : "--text-secondary"})';
+          probe.style.background=${JSON.stringify(visible ? "var(--accent-tint)" : "transparent")};
+          b.parentElement.append(probe);const expected=getComputedStyle(probe);
+          const value={visible:indexPanel.classList.contains('visible'),pressed:b.getAttribute('aria-pressed'),
+            expanded:b.getAttribute('aria-expanded'),hover:b.matches(':hover'),color:c.color,background:c.backgroundColor,
+            stroke:getComputedStyle(svg).stroke,expectedColor:expected.color,expectedBackground:expected.backgroundColor};
+          probe.remove();return value;
+        })()`));
+      }
+      check(`${label}: TOC toolbar closed and pressed states paint their own palette tokens`,
+        samples.every((value, index) => value.visible === !!index && value.pressed === String(!!index) &&
+          value.expanded === String(!!index) && !value.hover && value.color === value.expectedColor &&
+          value.stroke === value.expectedColor && value.background === value.expectedBackground),
+        JSON.stringify(samples));
+    };
     const ctlNeedles = {};
     for (const mode of ["light", "dark"]) {
       await applySettled(mode, null, mode + " default (accent control)");
+      await checkTocPalette(mode + " default");
       const ctl = JSON.parse(await exec(ACCENT_PROBE));
       for (const [k, v] of Object.entries(ctl.needles)) ctlNeedles[k] = (ctlNeedles[k] || 0) + v;
       check(
@@ -2599,6 +2629,7 @@ app.whenReady().then(async () => {
     );
     for (const [mode, scheme] of SCHEME_STATES) {
       const applied = await applySettled(mode, scheme, scheme + " (accent)");
+      await checkTocPalette(scheme);
       check(
         `${scheme}: applying the scheme really moved the document into it`,
         applied === scheme + "/" + mode,
@@ -4319,6 +4350,7 @@ app.whenReady().then(async () => {
       "styles.css": gitShow("src/styles.css"),
       "custom-styles.css": gitShow("src/custom-styles.css"),
     };
+    const headHasTocToolbar = gitShow("src/index.html").includes('id="toggleTocBtn"');
     /* MEASURED THROUGH THE REAL CASCADE, NOT THROUGH THE REPLAY, and the
        difference is the whole reason this assertion needed a second
        instrument. The replay above writes ONE rule's declarations onto an
@@ -4923,6 +4955,9 @@ app.whenReady().then(async () => {
       ...(!headSheets["styles.css"].includes(".note-dialog-btn.danger") ? {
         "button.note-dialog-btn.danger": "New shared destructive action",
       } : {}),
+      ...(!headHasTocToolbar ? {
+        "#toggleTocBtn > svg": "New global TOC control; both states are checked against live palette tokens",
+      } : {}),
     };
     const driftExcusalUsed = new Set();
     const realDrift = drift.filter((d) => {
@@ -4973,10 +5008,11 @@ app.whenReady().then(async () => {
       `no longer drifting, so the entries must go: ${staleDriftExcusals.join(", ")}`,
     );
     check(
-      "default-drift excusals cover only the new dialog action absent from HEAD",
+      "default-drift excusals cover only specifically named controls absent from HEAD",
       Object.keys(DEFAULT_DRIFT_EXCUSALS).every(key =>
-        key === "button.note-dialog-btn.danger" &&
-        !headSheets["styles.css"].includes(".note-dialog-btn.danger")),
+        (key === "button.note-dialog-btn.danger" &&
+          !headSheets["styles.css"].includes(".note-dialog-btn.danger")) ||
+        (key === "#toggleTocBtn > svg" && !headHasTocToolbar)),
       `excusals present: ${Object.keys(DEFAULT_DRIFT_EXCUSALS).join(", ")}`,
     );
 
