@@ -38,19 +38,42 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `release-0.9.0` - **PREPARING AUTHORIZED RELEASE** (2026-10-21).
-  - Sole serial release writer: the existing combined isolated worktree.
-  - Accepted combined source: `670ef3e8`. Only version, notes, release records
-    and a real-runtime cache-clearing test are added for this release.
-  - Existing owner credentials resolve to `lostinsea` with repository write
-    permission. Canonical main is `4d614ee2`; `v0.9.0` is unused.
-  - Independent Sol/Luna metadata review, version/update regressions, local
-    build and strict built-ASAR checks precede publication.
-  - Publication uses the existing tag workflow, followed by downloaded asset,
-    updater-manifest and hosted provenance verification.
-  - No primary-checkout/shared-auth changes, installation or live upgrade.
-- `combined-final-review` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
-  - Local-only combination: TOC `02108b98`, editor/scroll `e8b41f8b`,
+- `release-0.9.0` - **PUBLISHED AND VERIFIED** (2026-10-21).
+  - Release: [Markaloo 0.9.0](https://github.com/lostinsea/markaloo/releases/tag/v0.9.0).
+  - Exact tagged source: `853c4f2a29375187147c3219c795c3f209ec95d7`.
+    Annotated tag object: `f288e87bdc7d0263997d3dcdc450ae8719899e0f`.
+  - [Workflow 39686726745, attempt 1](https://github.com/lostinsea/markaloo/actions/runs/39686726745)
+    succeeded for Windows, Linux, macOS, provenance and stable publication.
+  - All nine downloaded assets match API sizes and SHA256. All three updater
+    manifests match version, intended platform artifacts, primary path, sizes
+    and SHA512. All five runnable assets have verified hosted attestations
+    bound to this exact source, tag, workflow and run attempt.
+  - Sol 6.1/high and Luna 6/high independently accepted release metadata.
+    Only versions, notes, release records and the real-runtime cache fixture
+    differ from accepted combined source `670ef3e8`; dependencies and runtime
+    source bytes are unchanged.
+  - Release checks: update state `42/42`, About `140/140`, startup `13/13`,
+    exact R986/R990 and local Windows portable/NSIS builds pass. Strict built-
+    ASAR packaging is `439/0`, with no skips; every source file matches.
+  - The actual unpacked app ran with a fresh isolated profile: About shows
+    `0.9.0`, obsolete availability is cleared on disk, Welcome disables Reload/
+    Edit and keeps TOC enabled. Its About screenshot was viewed.
+  - Sol found a verifier gap that Luna initially missed: a manifest could select
+    the wrong asset role. Exact platform/primary checks now reject substitutions
+    and duplicates. Both reviewers accept the correction; actual release files
+    pass. This changed session tooling, not release source.
+  - Evidence: session `7c3d5e2b`, `files/release-090-source.json`,
+    `release-090-asset-verification.json`, CLI attestation results and retained
+    downloads/logs. Public notes match `docs/RELEASE-NOTES-0.9.0.md`.
+  - Known legacy tab failures still prevent a full `npm test` pass. Release
+    builds are separate evidence, not a hosted full-suite claim. The accepted
+    combined R5 performance limits still apply to unchanged runtime bytes.
+  - Windows/macOS are unsigned; macOS updates remain manual. No installer,
+    live installation/upgrade, personal-profile access or Linux/macOS UI test.
+    Primary checkout, other worktrees, origin and shared auth remain unchanged.
+  - This release record is a docs-only follow-up; the release tag stays fixed.
+- `combined-final-review` - **PUBLISHED IN 0.9.0** (2026-10-21).
+  - Included units: TOC `02108b98`, editor/scroll `e8b41f8b`,
     toolbar `9ff824bc` and About `1e446a38`, based on canonical `4d614ee2`.
   - The isolated combined worktree owns this entry. Earlier unit entries describe
     their individual snapshots; all four units are included here.
@@ -88,9 +111,9 @@ section is kept here so the register has a visible edge.
     and disabled-Welcome screenshots were actually viewed.
   - Evidence: session `7c3d5e2b`, `files/final-combined-result.json`,
     `final-review-manifest.json` and the preserved immutable review snapshots.
-  - User authorized **0.9.0 as the next release after all acceptance work**.
-    This gate does not push, merge main, tag, dispatch, publish or run installers.
-- `grouped-toc-toolbar` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+  - Published with the accepted release above. Earlier unit entries retain
+    their isolated gate evidence; final packaged/release checks are above.
+- `grouped-toc-toolbar` - **PUBLISHED IN 0.9.0** (2026-10-21).
   - Isolated toolbar stream based on reviewed editor/scroll `e8b41f8b`.
     The separate About unit is not included.
   - Reload and Open editor remain document-scoped. A separated TOC button
@@ -105,7 +128,7 @@ section is kept here so the register has a visible edge.
     No final disagreement remains.
   - Gates: real production-preload multi-tab/lifecycle tests, responsive and
     split/zoom geometry checks, individual exact revert proofs, viewed light/
-    dark captures and a clean reviewed local commit. No push or integration.
+    dark captures and a clean reviewed local commit.
   - Production-preload toolbar is `37/37`, panel lifecycle `59/59` and theme
     `404/404`. TOC `30/30`, responsive `28/28`, document editor `45/45`,
     editor scrolling `182/182`, zoom `54/54`, reload `56/56` and dialogs
@@ -120,7 +143,7 @@ section is kept here so the register has a visible edge.
   - Evidence: session `b98cc07c`, `files/toc-toolbar-accepted.log`,
     `toc-toolbar-final-r2.log`, `toolbar-final-exact-proofs.log` and
     `toc-toolbar-*.png`.
-- `document-owned-editor` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+- `document-owned-editor` - **PUBLISHED IN 0.9.0** (2026-10-21).
   - User-directed priority ahead of scroll acceptance, in this same worktree.
   - Each document owns whether its editor is open. Switching tabs restores
     that document's state; it does not enable editing in every tab.
@@ -128,7 +151,7 @@ section is kept here so the register has a visible edge.
     Repeated activation keeps edits, selection and history. The editor's
     explicit exit action retains save, discard and cancel protections.
   - Multiple documents may keep editors open. No forced closure of another
-    document, shared-config change, publication or integration is authorized.
+    document or shared-config change.
   - Bounded Astra/high lifecycle design, Sol implementation and fresh independent
     Sol 6.1/high and Luna 6/high review are complete.
   - Production-preload lifecycle coverage is `45/45`, including refused dirty
@@ -148,7 +171,7 @@ section is kept here so the register has a visible edge.
   - Evidence: session `bcd79899`, `files/editor-scroll-final-receipt.json`
     and `files/document-editor-*`.
   - The separate TOC toolbar unit is tracked above. About is not included.
-- `content-aware-editor-scroll` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+- `content-aware-editor-scroll` - **PUBLISHED IN 0.9.0** (2026-10-21).
   - Sole writer: this isolated scroll stream, stacked on reviewed TOC `02108b98`
     and canonical main `4d614ee2`. The separate About unit is not included.
   - Parser-bound source spans, measured textarea layout, cached bidirectional
@@ -162,7 +185,7 @@ section is kept here so the register has a visible edge.
     whichever is larger, on the same mixed-height and existing plain fixtures.
   - Gates: reproduced mismatch, viewed before/after content landmarks in both
     directions, lifecycle/layout regressions, exact individual revert proofs,
-    bounded timings and clean local commit. No publication or integration.
+    bounded timings and clean local commit.
   - Current TOC `30/30`, responsive `28/28`, panels `47/47`, zoom `54/54`,
     reload `56/56` and shared visual helpers `34/34` pass. Source packaging is
     `416/0`, with built-asar checks skipped.
@@ -191,16 +214,17 @@ section is kept here so the register has a visible edge.
     Method, samples and honest limits are in `docs/PERF-AUDIT.md`.
   - Evidence: session `bcd79899`, `files/editor-scroll-final-receipt.json`
     and `files/scroll-*`. No full-suite, packaged or cross-platform claim.
-- `toc-default-visible` - **REVIEWED LOCALLY, UNPUBLISHED** (2026-10-21).
+- `toc-default-visible` - **PUBLISHED IN 0.9.0** (2026-10-21).
   - Sole writer: this isolated TOC stream, based on canonical main `4d614ee2`.
   - Missing, invalid or unreadable `readingSidePanel` uses TOC. Valid saved
     `closed`, `toc` and `notes` choices keep their behavior.
-  - Sol/high owns the focused fallback, existing reading-fixture updates and
-    current-state docs. Fresh independent Sol/high and Luna/high review follows.
+  - Sol/high implemented the focused fallback, reading-fixture updates and
+    current-state docs. Fresh independent Sol/high and Luna/high reviews are
+    complete.
   - Gates: disposable-profile first open/restart, exclusive panels, headings,
     accessibility, storage refusal, exact revert proofs and viewed fresh capture.
-  - No preference migration, per-document state, About feature, push or release.
-  - Corrected fallback and focused fixture are ready. Panel route is `47/47`
+  - This unit adds no preference migration, per-document state or About feature.
+  - Corrected fallback and focused fixture pass. Panel route is `47/47`
     (`panels-final.log`); TOC is `30/30` (`toc-final.log`); source packaging is
     `414/0`, with built-asar checks skipped (`packaging-final.log`).
   - R932 and R1000-R1004 are individually exact PROVEN
@@ -221,9 +245,8 @@ section is kept here so the register has a visible edge.
   - Fresh GPT-6.1 Sol/high and GPT-6 Luna/high round-two reviews both found no
     significant issues. No remaining disagreement. Failure/supersession during
     open was reviewed from control flow, not newly exercised by this unit.
-  - Ready as one local commit on `users/vinma-microsoft/toc-visible-by-default`.
-    No integration or publication is authorized.
-- `about-update-status` — **COMPLETE LOCALLY; NOT INTEGRATED** (2026-10-20).
+  - Unit commit `02108b98` is included in the combined release above.
+- `about-update-status` — **PUBLISHED IN 0.9.0** (2026-10-21).
   - Sole writer: isolated `users/vinma-microsoft/about-and-update-status`,
     based on canonical main `4d614ee2`. No primary-checkout changes.
   - Design: GPT-6 Astra/high. Implementation/evidence: GPT-6.1 Sol/high.
@@ -264,9 +287,9 @@ section is kept here so the register has a visible edge.
     on canonical baseline and candidate. Both were explicitly terminated after
     no progress. Old event-only/raw-IPC updater fixtures are not a protection
     certificate; the readiness gate remains intact.
-  - No full-suite, packaged UI, live installation or macOS/Linux runtime
-    certification. No real profiles/documents/logs, installer execution,
-    push, tag or release.
+  - These isolated unit checks do not certify the full suite, packaged UI,
+    live installation or macOS/Linux runtime. Final release checks are above.
+    No real profiles/documents/logs or installer execution.
 - `release-0.8.1` — **PUBLISHED AND VERIFIED** (2026-10-19).
   - Release: [Markaloo 0.8.1](https://github.com/lostinsea/markaloo/releases/tag/v0.8.1).
   - Exact tag source: `5633221d4205fc59fb84f80256a74083418add30`.
