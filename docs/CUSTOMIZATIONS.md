@@ -94,6 +94,30 @@ This approach means after an upstream merge, you only need to ensure these files
 - Both editor suites run in `npm test`, including the existing Windows CI job.
   Missing required scroll scenarios, assertion failures and timeouts fail the run.
 
+### About and application updates
+
+- Menu: File > About Markaloo, directly after the existing Edit Mode item.
+- The themed card shows the rainbow feather, product name and Main's running
+  version. Status and actions stay below Check for updates.
+- Opening or reopening About reads local state, not the network.
+- Main owns one state for About and the bottom-right startup notice.
+  Explicit checks and downloads coalesce; there is no periodic polling.
+- `window-state.json` keeps only `updateAvailability: { schema: 1, version }`.
+  Main validates it and uses semantic version ordering. Running the same or
+  a newer version removes the notice, including after a manual installation.
+- A later failed or no-update check does not erase a known newer version.
+  Failure and unconfirmed remembered availability have separate messages.
+- Cached availability never means an installer is ready. Explicit Download
+  resolves provider metadata, completes validation, then enables installation.
+- Download never installs on ordinary quit. Restart & install uses Main's
+  existing document, deletion and shutdown checks. Cancel keeps unsaved work.
+- Portable launch failures show a retry action only when safe. An uncertain
+  handoff asks for a restart and blocks another installer launch.
+- Unsigned macOS uses the fixed official release-download page, not automatic
+  download or installation. Platform signature warnings remain unchanged.
+- `npm run test:updates` uses controlled providers and disposable profiles.
+  No real update, installer, browser, personal document or profile is used.
+
 ### Reading zoom
 
 - One app-wide percentage is saved in `readingZoom`, not in document history.

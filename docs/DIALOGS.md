@@ -39,6 +39,7 @@
 | Image, Mermaid and table popouts | Existing child windows with canonical app palette and bundled fonts | Existing popup preload, CSP, navigation and export safeguards |
 | Note, Find Note, text, Mermaid and table input editors | Existing themed editors | Existing editing actions retained; responsive scrolling, font and preview-color alignment |
 | File Updated, updater and ordinary notifications | Existing themed toasts | Existing notification and update behavior retained |
+| File > About Markaloo | Shared themed card with persistent update controls | Main runtime version and shared updater snapshot; opening the card does not check or install |
 
 ## Authority and lifecycle
 
@@ -83,6 +84,7 @@
 - `npm run test:reload-dialog`: protected reload through the production preload.
 - `npm run test:owned-dialogs`: isolated Main dialog host and authority contracts.
 - `npm run test:dialogs`: production document-window actions and shared queues.
+- `npm run test:updates`: About, shared updater state and disposable-profile restart.
 - `npm run test:theme`: canonical theme coverage.
 - `npm run test:packaging`: source references and shipped assets.
 - Use the revert harness's exact record IDs to prove sensitivity. An anchor

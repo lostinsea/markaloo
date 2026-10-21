@@ -255,11 +255,17 @@ the other platforms are launched directly.
 > installer can be rebuilt from it. Build provenance (below) does not remove
 > this warning — it is not a code signature.
 
-Markaloo checks for updates against this fork's own GitHub releases feed: once a
-few seconds after launch in packaged builds, and on request from the menu. That
-check downloads release *metadata* automatically — it has to, to know whether a
-newer version exists — but it never downloads or installs the update itself
-without asking.
+- Open **Menu > File > About Markaloo**, directly after Edit Mode.
+- About shows the rainbow feather, name, running version and **Check for updates**.
+  Update status appears below the button.
+- Packaged builds check this fork's GitHub releases once after startup.
+  Manual checks share that state; opening About itself does not contact GitHub.
+- A newer version stays visible across windows and restarts, even offline.
+  The notice disappears when the running version is equal to or newer than it.
+- Choose **Download**, then **Restart & install** when the download is verified.
+  Unsaved-document protections still apply. Later and ordinary quit do not install.
+- Unsigned macOS uses the official release downloads for manual installation.
+- Automatic checks fetch release metadata only. There is no periodic polling.
 
 The request is deliberately uninformative. It does not carry the current
 version at all: the published version is fetched and compared locally.

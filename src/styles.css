@@ -3292,6 +3292,97 @@ body.dark-mode .context-menu {
   white-space: pre-wrap;
 }
 
+.about-dialog {
+  width: 400px;
+}
+
+.about-dialog .note-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.about-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.about-product {
+  font-size: 24px;
+}
+
+.about-version,
+.about-description {
+  color: var(--text-secondary);
+}
+
+.about-update-status {
+  white-space: pre-line;
+}
+
+.about-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.about-dialog progress {
+  width: 100%;
+  accent-color: var(--primary-color);
+}
+
+.about-dialog button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+@media (max-height: 520px) {
+  .about-dialog .note-dialog-body {
+    gap: 10px;
+  }
+
+  .about-identity {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 0;
+    text-align: left;
+  }
+
+  .about-identity img {
+    grid-row: span 2;
+    width: 48px;
+    height: 48px;
+  }
+
+  .about-product {
+    font-size: 18px;
+  }
+
+  .about-description {
+    display: none;
+  }
+}
+
+.about-dialog [hidden],
+.app-update-toast [hidden] {
+  display: none !important;
+}
+
+.app-update-toast .app-update-text p {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.app-update-toast {
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
 .owned-dialog-host .note-dialog-header {
   -webkit-app-region: drag;
 }

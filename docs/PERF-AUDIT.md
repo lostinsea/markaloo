@@ -66,6 +66,36 @@
   sample arrays, logs and `measure-panel-open.cjs`. No product source remained
   mutated after sampling.
 
+## About and updater state - bounded check, 2026-10-20
+
+- Command: `node test\test-about-updates.js --perf`, five fresh-profile launches
+  per source on the same Windows x64 desktop and Electron 43.4.1.
+- Baseline: canonical main `4d614ee2`, archived inside this worktree's `tmp`.
+  Baseline and candidate share the same installed dependencies and vendored assets.
+  Runs are sequential; no other suite runs in this worktree during measurement.
+- Startup starts immediately before Main is required and ends after the empty
+  reader paints. It excludes process launch, module imports in the harness,
+  and OS-cold-cache qualification.
+- Open uses the existing 64 KiB prose generator, real file-open admission and
+  the painted document, followed by two animation frames. Polling is 30 ms.
+- Budgets fixed before measurement: startup p50/p95 at most +100/+200 ms;
+  representative prose open p50/p95 at most +30/+60 ms.
+
+| Measurement | Baseline p50 / p95 (ms) | Candidate p50 / p95 (ms) |
+|---|---:|---:|
+| Empty reader from Main load | 1076.6 / 1603.4 | 1144.5 / 1249.1 |
+| Admitted prose through painted DOM | 153.4 / 164.9 | 146.4 / 165.9 |
+
+- Both bounded measurements stay within budget. With five samples, p95 is
+  the maximum. These results do not establish a speedup or zero added cost.
+- Functional fixtures count provider calls: opening/reopening About and
+  restoring cached availability make no network check or download.
+- Receipts: session `4d62cd4c`, `files/perf-final-baseline.log`,
+  `perf-final-candidate.log`;
+  per-launch JSON and `performance.json` remain in `tmp/about-updates`.
+- This is not a packaged-app, full cold-start, large-document or cross-platform
+  performance certificate. No full-suite or installed-upgrade claim.
+
 ## Reading zoom preference - 2026-10-16
 
 - Command: `node test\test-reading-zoom.js --perf`, before and after on the

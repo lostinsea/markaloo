@@ -570,7 +570,7 @@ async function main() {
     /Explicit update installation is unavailable on macOS/.test(
       macExplicitInstallBlock,
     ) &&
-      /status:\s*"error"/.test(macExplicitInstallBlock) &&
+      /updateState\.fail\(new Error\(error\)\)/.test(macExplicitInstallBlock) &&
       /replayAbsorbedUserShutdownAfterUpdaterCancel\(\s*"unsupported-macos-explicit-install"/.test(
         macExplicitInstallBlock,
       ) &&
@@ -1129,6 +1129,8 @@ async function main() {
     }),
   );
   const rendererSource = stripJsComments(read("src/renderer.js"));
+  const updaterUiSource = stripJsComments(read("src/app-updates.js"));
+  const documentUiSource = rendererSource + "\n" + updaterUiSource;
   const themeHarness = stripJsComments(read("test/test-theme.js"));
   const themeFinish = themeHarness.slice(themeHarness.indexOf("async function finish()"),
     themeHarness.indexOf("const watchdog ="));
@@ -1155,17 +1157,19 @@ async function main() {
     onImageSelected: 1,
   };
   const uiPortObserved = Object.fromEntries(Object.keys(uiPortCounts).map(method => [
-    method, (rendererSource.match(new RegExp(`window\\.folia\\.${method}\\(`, "g")) || []).length,
+    method, (documentUiSource.match(new RegExp(`window\\.folia\\.${method}\\(`, "g")) || []).length,
   ]));
   check(
     "SEC-08 renderer uses all fixed UI request and response ports without raw channel access",
     Object.entries(uiPortCounts).every(([method, count]) => uiPortObserved[method] === count) &&
-      !/ipcRenderer\.(?:on|once|send|invoke)\(\s*["'](?:open-file-dialog|open-image-dialog|export-pdf|pdf-export-ready|open-mermaid-popup|open-image-popup|open-table-popup|download-update|install-update|get-version|prepare-for-pdf-export|pdf-export-result|image-selected)["']/.test(rendererSource),
+      !/ipcRenderer\.(?:on|once|send|invoke)\(\s*["'](?:open-file-dialog|open-image-dialog|export-pdf|pdf-export-ready|open-mermaid-popup|open-image-popup|open-table-popup|download-update|install-update|get-version|prepare-for-pdf-export|pdf-export-result|image-selected)["']/.test(documentUiSource),
     JSON.stringify(uiPortObserved),
   );
   const controlPortCounts = {
     renderer: { acknowledgeFileDeletion: 1, onFileDeleted: 1, onFileNotFound: 1,
-      onExternalFileOpenRequest: 1, onError: 1, onUpdateStatus: 1 },
+      onExternalFileOpenRequest: 1, onError: 1 },
+    "app-updates": { onUpdateStatus: 1, getUpdateState: 2, checkForUpdates: 1,
+      openUpdateRelease: 1 },
     "custom-tabs": { getQuitApprovalGeneration: 1, announceQuitApprovalReady: 1,
       respondToQuitApproval: 3, respondToQuitCommit: 1, respondToQuitVerification: 1,
       requestQuitApprovalRetry: 1, reportQuitApprovalOverflow: 1,
@@ -6764,12 +6768,9 @@ async function main() {
     // Stated as a bound rather than an exact set so that adding a dependency
     // is a deliberate act with a visible cost, not a silent one.
     check(
-      "the tree still declares exactly one production dependency",
-      Object.keys(pkg.dependencies || {}).length === 1 &&
-        Object.prototype.hasOwnProperty.call(
-          pkg.dependencies || {},
-          "electron-updater",
-        ),
+      "the production dependencies are updater and semantic version comparison only",
+      JSON.stringify(Object.keys(pkg.dependencies || {}).sort()) ===
+        JSON.stringify(["electron-updater", "semver"]),
       JSON.stringify(Object.keys(pkg.dependencies || {})),
     );
 

@@ -10,6 +10,8 @@
   let disposed = false;
   let poll = null;
   let messageSurface = null;
+  let aboutSurface = null;
+  let aboutJob = null;
   const reloadRoot = document.getElementById("reloadDocumentDialog");
   const reloadSurface = reloadRoot && {
     dialog: reloadRoot,
@@ -55,6 +57,44 @@
   }
 
   function surfaceFor(spec) {
+    if (spec.surface === "about") {
+      if (!aboutSurface) {
+        const dialog = element("dialog", "note-dialog reload-document-dialog about-dialog", undefined, "aboutDialog");
+        const header = element("div", "note-dialog-header");
+        const title = element("h2", "", "About Markaloo", "aboutTitle");
+        const close = element("button", "reload-document-close", "\u00d7");
+        const body = element("div", "note-dialog-body");
+        const identity = element("div", "about-identity");
+        const icon = element("img");
+        icon.src = "../assets/app-icon.png";
+        icon.alt = "";
+        icon.width = 72;
+        icon.height = 72;
+        const product = element("strong", "about-product", "Markaloo");
+        const version = element("p", "about-version", "Reading installed version\u2026", "aboutVersion");
+        identity.append(icon, product, version);
+        const name = element("p");
+        const message = element("p", "about-description");
+        const check = element("button", "note-dialog-btn primary", "Check for updates", "aboutCheckUpdates");
+        const status = element("p", "about-update-status", "", "aboutUpdateStatus");
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        const progress = element("progress", "", undefined, "aboutUpdateProgress");
+        progress.max = 100;
+        const actions = element("div", "about-update-actions");
+        const download = element("button", "note-dialog-btn primary", "Download", "aboutDownloadUpdate");
+        const install = element("button", "note-dialog-btn primary", "Restart & install", "aboutInstallUpdate");
+        actions.append(download, install);
+        const footer = element("div", "note-dialog-footer");
+        header.append(title, close);
+        body.append(identity, name, message, check, status, progress, actions);
+        dialog.append(header, body, footer);
+        document.body.append(dialog);
+        aboutSurface = { dialog, title, close, name, message, footer };
+        window.MarkalooUpdates.bindAbout({ version, check, status, progress, download, install });
+      }
+      return aboutSurface;
+    }
     if (spec.surface !== "reload") return defaultSurface();
     return reloadSurface;
   }
@@ -145,6 +185,7 @@
     active = job;
     job.previousFocus ||= document.activeElement;
     const spec = job.spec;
+    if (spec.surface === "about") job.previousFocus = document.getElementById("menuBtn");
     try {
       const surface = surfaceFor(spec);
       job.surface = surface;
@@ -153,7 +194,7 @@
       }
       const { dialog, title, name, message, detail, close, footer } = surface;
       close.setAttribute("aria-label", spec.buttons.find(button => button.id === spec.cancelId).label);
-      dialog.setAttribute("role", "alertdialog");
+      dialog.setAttribute("role", spec.surface === "about" ? "dialog" : "alertdialog");
       dialog.dataset.dialogTitle = spec.title;
       title.textContent = spec.title;
       name.textContent = spec.fileName || "";
@@ -232,7 +273,7 @@
         (spec.fileName !== undefined && typeof spec.fileName !== "string") ||
         (spec.isCurrent !== undefined && typeof spec.isCurrent !== "function") ||
         (spec.expiresAt !== undefined && (!Number.isSafeInteger(spec.expiresAt) || spec.expiresAt <= 0)) ||
-        ![undefined, "reload"].includes(spec.surface) ||
+        ![undefined, "reload", "about"].includes(spec.surface) ||
         !Array.isArray(spec.buttons) || spec.buttons.length < 1 || spec.buttons.length > 4 ||
         spec.buttons.some(button => !button || typeof button.id !== "string" ||
           !button.id || button.id.length > 64 || typeof button.label !== "string" ||
@@ -304,7 +345,24 @@
     }
     updatePolling();
   });
-  window.MarkalooDialogs = Object.freeze({ show, applyTheme, setMainDialogActive });
+  function closeAbout() {
+    for (const job of [active, ...queue]) {
+      if (job?.spec.surface === "about") settle(job, job.spec.cancelId, "cancel");
+    }
+  }
+
+  function showAbout() {
+    if (aboutJob) return aboutJob;
+    aboutJob = show({
+      surface: "about", title: "About Markaloo",
+      message: "A fast, offline markdown viewer.",
+      buttons: [{ id: "close", label: "Close", style: "secondary" }],
+      defaultId: "close", cancelId: "close",
+    }).finally(() => { aboutJob = null; });
+    return aboutJob;
+  }
+
+  window.MarkalooDialogs = Object.freeze({ show, showAbout, closeAbout, applyTheme, setMainDialogActive });
   if (typeof window.folia?.onMainDialogVisibility === "function") {
     window.folia.onMainDialogVisibility(setMainDialogActive);
   }

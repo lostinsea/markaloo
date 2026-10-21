@@ -850,7 +850,6 @@ const UI_STRINGS = {
   'welcome.subtitle': 'Press Ctrl+O to open a markdown file',
   'fileUpdated': 'File Updated',
   'fileModifiedExternally': 'This file has been modified externally',
-  'updateAvailable': 'Update Available',
   'downloadUpdate': 'Download Update', 'restartInstall': 'Restart & Install',
   'ctx.copy': 'Copy', 'ctx.copyPlain': 'Copy as Plain Text',
   'ctx.bold': 'Bold', 'ctx.italic': 'Italic', 'ctx.code': 'Code Block',
@@ -918,13 +917,6 @@ const UI_STRINGS = {
   'alert.noFileOpen': 'No file is currently open.',
   'alert.pdfFailed': 'Failed to export PDF: ',
   'alert.saveFailed': 'Failed to save file: ',
-  'update.downloading': 'Downloading Update',
-  'update.ready': 'Update Ready',
-  'update.error': 'Update Error',
-  'update.versionReady': 'Version ${version} is ready to download',
-  'update.versionInstall': 'Version ${version} is ready to install',
-  'update.failed': 'Failed to check for updates',
-  'update.download': 'Download',
   'search.counter': '${current} of ${total}',
   'search.zero': '0 of 0',
   'table.invalidFormat': '\u26A0 Invalid table format. Check the markdown table syntax (columns separated by | are required).',
@@ -9461,118 +9453,6 @@ window.folia.onError(message => {
 
 // Update zoom on load
 updateZoom({ persist: false });
-
-// ============================================
-// Auto-Update UI Handler
-// ============================================
-
-const appUpdateToast = document.getElementById('appUpdateToast');
-const updateTitle = document.getElementById('updateTitle');
-const updateMessage = document.getElementById('updateMessage');
-const updateProgress = document.getElementById('updateProgress');
-const progressFill = document.getElementById('progressFill');
-const progressText = document.getElementById('progressText');
-const updateActions = document.getElementById('updateActions');
-const downloadUpdateBtn = document.getElementById('downloadUpdateBtn');
-const installUpdateBtn = document.getElementById('installUpdateBtn');
-const laterUpdateBtn = document.getElementById('laterUpdateBtn');
-const closeUpdateToast = document.getElementById('closeUpdateToast');
-
-let pendingUpdateVersion = null;
-
-function showUpdateToast() {
-  appUpdateToast.classList.add('show');
-}
-
-function hideUpdateToast() {
-  appUpdateToast.classList.remove('show');
-}
-
-// formatBytes is imported from utils.js
-
-// Update status handler
-window.folia.onUpdateStatus(data => {
-  switch (data.status) {
-    case 'checking':
-      // Silent check, don't show UI
-      break;
-
-    case 'available':
-      pendingUpdateVersion = data.version;
-      updateTitle.textContent = i18n('updateAvailable');
-      updateMessage.textContent = i18n('update.versionReady', {version: data.version});
-      updateProgress.style.display = 'none';
-      downloadUpdateBtn.style.display = 'flex';
-      downloadUpdateBtn.textContent = i18n('update.download');
-      installUpdateBtn.style.display = 'none';
-      laterUpdateBtn.style.display = 'block';
-      updateActions.style.display = 'flex';
-      showUpdateToast();
-      break;
-
-    case 'not-available':
-      // Silent, no update available
-      break;
-
-    case 'downloading':
-      updateTitle.textContent = i18n('update.downloading');
-      updateMessage.textContent = `${formatBytes(data.transferred)} / ${formatBytes(data.total)}`;
-      updateProgress.style.display = 'flex';
-      progressFill.style.width = `${data.percent}%`;
-      progressText.textContent = `${Math.round(data.percent)}%`;
-      downloadUpdateBtn.style.display = 'none';
-      laterUpdateBtn.style.display = 'none';
-      updateActions.style.display = 'none';
-      break;
-
-    case 'downloaded':
-      updateTitle.textContent = i18n('update.ready');
-      updateMessage.textContent = i18n('update.versionInstall', {version: data.version});
-      updateProgress.style.display = 'none';
-      downloadUpdateBtn.style.display = 'none';
-      installUpdateBtn.style.display = 'flex';
-      laterUpdateBtn.style.display = 'block';
-      updateActions.style.display = 'flex';
-      showUpdateToast();
-      break;
-
-    case 'error':
-      updateTitle.textContent = i18n('update.error');
-      updateMessage.textContent = data.error || i18n('update.failed');
-      updateProgress.style.display = 'none';
-      downloadUpdateBtn.style.display = 'none';
-      installUpdateBtn.style.display = 'none';
-      laterUpdateBtn.style.display = 'block';
-      laterUpdateBtn.textContent = i18n('dismiss');
-      updateActions.style.display = 'flex';
-      showUpdateToast();
-      break;
-
-    case 'dev-mode':
-      // Silent in dev mode
-      console.log('Auto-updater:', data.message);
-      break;
-  }
-});
-
-// Update button handlers
-downloadUpdateBtn.addEventListener('click', () => {
-  window.folia.downloadUpdate();
-});
-
-installUpdateBtn.addEventListener('click', () => {
-  window.folia.installUpdate();
-});
-
-laterUpdateBtn.addEventListener('click', () => {
-  hideUpdateToast();
-  laterUpdateBtn.textContent = i18n('later'); // Reset text
-});
-
-closeUpdateToast.addEventListener('click', () => {
-  hideUpdateToast();
-  laterUpdateBtn.textContent = i18n('later'); // Reset text
-});
 
 // ============================================
 // Context Menu

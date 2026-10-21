@@ -499,22 +499,26 @@ function loadWindowState() {
 }
 
 let _saveStateTimer = null;
+function writeWindowStatePatch(patch) {
+  const state = { ...(loadWindowState() || {}), ...patch };
+  const temporary = WINDOW_STATE_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(state));
+  fs.renameSync(temporary, WINDOW_STATE_FILE);
+}
+
 function saveWindowState() {
   if (!mainWindow) return;
   clearTimeout(_saveStateTimer);
   _saveStateTimer = setTimeout(() => {
     try {
       const bounds = mainWindow.getNormalBounds();
-      fs.writeFileSync(
-        WINDOW_STATE_FILE,
-        JSON.stringify({
+      writeWindowStatePatch({
           x: bounds.x,
           y: bounds.y,
           width: bounds.width,
           height: bounds.height,
           isMaximized: mainWindow.isMaximized(),
-        }),
-      );
+        });
     } catch (_) {
       // non-fatal
     }
@@ -10889,13 +10893,9 @@ app.on("window-all-closed", () => {
 //    matters most - a renderer that has crashed. One dialog, one wording, both
 //    paths, and ESC cancels rather than approving (`cancelId`).
 //
-// AND ONE FACT THAT MAKES THE ORDINARY QUIT PATH LOAD-BEARING RATHER THAN
-// TIDY: where `autoInstallOnAppQuit` is enabled, electron-updater registers its
-// own quit handler and installs a downloaded update however the app was asked
-// to quit. Windows installed builds deliberately disable that hook because
-// Markaloo's owned NSIS launcher is the only verified install route there;
-// portable builds never used it. Other installed platforms retain it, so every
-// route out still passes through this approval protocol.
+// Downloads never install on ordinary quit. Every platform disables the
+// updater's install-on-quit hook; explicit installation still passes through
+// this approval protocol.
 const QUIT_APPROVAL_REQUEST = "quit-approval-request";
 const QUIT_APPROVAL_RESPONSE = "quit-approval-response";
 const QUIT_APPROVAL_READY = "quit-approval-ready";
@@ -11244,7 +11244,10 @@ function finishFailedUpdaterInstallAttempt(attempt) {
   if (activeUpdaterInstallAttempt === attempt) {
     activeUpdaterInstallAttempt = null;
   }
-  if (owned) updateInstallStarted = false;
+  if (owned) {
+    updateInstallStarted = false;
+    updateState.publish();
+  }
   // BaseUpdater leaves this protected latch set when doInstall returned true,
   // even if its child emitted an error before the scheduled quit. Once that
   // exact quit has been consumed (or proved impossible), clearing the latch is
@@ -13545,6 +13548,48 @@ app.on("before-quit", (event) => {
 const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR;
 let downloadedUpdatePath = null; // path to downloaded installer, set in update-downloaded event
 let updaterDownloadInFlight = false;
+let updateInstallApprovalPending = false;
+const { createUpdateState } = require("./update-state");
+const updateState = createUpdateState({
+  installedVersion: app.getVersion(),
+  platform: process.platform,
+  enabled: () => app.isPackaged,
+  getUpdater: getAutoUpdater,
+  readAvailability: () => loadWindowState()?.updateAvailability,
+  writeAvailability: value => writeWindowStatePatch({ updateAvailability: value }),
+  log,
+  isInstalling: () => updateInstallApprovalPending || updateInstallStarted,
+  canInstall: () => !activeUpdaterInstallAttempt ||
+    activeUpdaterInstallAttempt.retrySafe === true,
+  validateReady: artifact => {
+    const helper = autoUpdater?.downloadedUpdateHelper;
+    return isExistingRegularFile(artifact.path) &&
+      helper?.file === artifact.path &&
+      helper?.versionInfo?.version === artifact.version;
+  },
+  onDownloadStart: () => {
+    updaterDownloadInFlight = true;
+    downloadedUpdatePath = null;
+  },
+  onDownloadReady: file => { downloadedUpdatePath = file; },
+  onDownloadEnd: () => { updaterDownloadInFlight = false; },
+  publish: state => {
+    if (mainWindow && !mainWindow.isDestroyed() &&
+        !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send("update-status", state);
+    }
+  },
+});
+
+function isUpdaterSender(event) {
+  return !!event && isApprovalSender(event) &&
+    event.senderFrame.url === pathToFileURL(path.join(__dirname, "index.html")).href;
+}
+
+ipcMain.handle("get-update-state", event => {
+  if (!isUpdaterSender(event)) throw new Error("Invalid update request");
+  return updateState.snapshot();
+});
 
 // Called once by getAutoUpdater() on first use. These handlers used to be
 // attached at module load; deferring them is safe because nothing can emit
@@ -13556,10 +13601,9 @@ function configureAutoUpdater(autoUpdater) {
   // Leaving this enabled would let BaseUpdater's ordinary quit hook call its
   // unverified NsisUpdater.install path, bypassing Markaloo's positive process-
   // start proof and reviving the ENOENT/openPath false hand-off. Portable
-  // builds have never used it. Other installed platforms retain their prior
-  // behavior, including macOS where explicit Install remains fail-closed.
-  autoUpdater.autoInstallOnAppQuit =
-    !isPortable && process.platform !== "win32";
+  // builds have never used it. All platforms require the explicit, protected
+  // install action; choosing Later must not install on an ordinary quit.
+  autoUpdater.autoInstallOnAppQuit = false;
 
   // PRIVACY: electron-updater mints a random UUID, persists it to
   // userData/.updaterId and sends it as `x-user-staging-id` on EVERY update
@@ -13572,28 +13616,19 @@ function configureAutoUpdater(autoUpdater) {
   // setHeader() and throws `value` required, which kills the check outright.
   autoUpdater.requestHeaders = { "x-user-staging-id": "" };
 
+  updateState.attach(autoUpdater);
   // Auto-updater event handlers
   autoUpdater.on("checking-for-update", () => {
     log("Auto-updater: Checking for updates...");
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", { status: "checking" });
-    }
   });
 
   autoUpdater.on("update-available", (info) => {
     log(
       "Auto-updater: Update available:",
-      info.version,
+      info?.version,
       isPortable ? "(portable)" : "(installer)",
     );
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "available",
-        version: info.version,
-        releaseNotes: info.releaseNotes,
-        releaseDate: info.releaseDate,
-      });
-    }
+    updateState.observeAvailable(info);
   });
 
   autoUpdater.on("update-not-available", (info) => {
@@ -13601,43 +13636,6 @@ function configureAutoUpdater(autoUpdater) {
       "Auto-updater: No updates available. Current version:",
       app.getVersion(),
     );
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "not-available",
-        currentVersion: app.getVersion(),
-      });
-    }
-  });
-
-  autoUpdater.on("download-progress", (progressObj) => {
-    log(`Auto-updater: Download progress: ${progressObj.percent.toFixed(1)}%`);
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "downloading",
-        percent: progressObj.percent,
-        bytesPerSecond: progressObj.bytesPerSecond,
-        transferred: progressObj.transferred,
-        total: progressObj.total,
-      });
-    }
-  });
-
-  autoUpdater.on("update-downloaded", (info) => {
-    // This event is inside executeDownload's `done` callback, before its final
-    // blockmap/path bookkeeping. Keep updaterDownloadInFlight raised until the
-    // downloadUpdate promise settles; this event alone is not completion.
-    log(
-      "Auto-updater: Update downloaded:",
-      info.version,
-      info.downloadedFile || "",
-    );
-    downloadedUpdatePath = info.downloadedFile || null;
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "downloaded",
-        version: info.version,
-      });
-    }
   });
 
   autoUpdater.on("error", (err, context) => {
@@ -13670,6 +13668,7 @@ function configureAutoUpdater(autoUpdater) {
     // its setImmediate turn. Ordinary close intents remain owned by the
     // ordinary shutdown state machine.
     cancelUpdateOriginShutdownState("updater-error", autoUpdater);
+    updateState.fail(err);
     // A failed explicit install is quarantined for one check phase, then
     // retired completely. BaseUpdater 6.8.9 queues no lifecycle pair when
     // install() errors or returns false, so there is no valid late boundary
@@ -13702,78 +13701,21 @@ function getReadmePath() {
 ipcMain.handle("get-readme-path", getReadmePath);
 
 // IPC handlers for update actions
-ipcMain.on("check-for-updates", () => {
-  log("Manual update check requested");
-  const updater = getAutoUpdater();
-  if (!updater) {
-    log("Auto-updater not available");
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "error",
-        error: "Auto-updater not available",
-      });
-    }
-    return;
-  }
-  if (app.isPackaged) {
-    // Without a `.catch()` this rejects unhandled if the feed cannot be
-    // reached - a network failure, or a repository with no published release
-    // yet, which returns 404. Route it through the same status channel the
-    // renderer already handles instead of leaving an unhandled rejection.
-    Promise.resolve(updater.checkForUpdates()).catch((err) => {
-      log("Manual update check failed:", err.message);
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("update-status", {
-          status: "error",
-          error: err.message,
-        });
-      }
-    });
-  } else {
-    log("Skipping update check in development mode");
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "dev-mode",
-        message: "Update check is disabled in development mode",
-      });
-    }
-  }
+ipcMain.on("check-for-updates", event => {
+  if (!isUpdaterSender(event)) return;
+  void updateState.check();
 });
 
-ipcMain.on("download-update", () => {
-  log("Download update requested");
-  const updater = getAutoUpdater();
-  if (!updater || updaterDownloadInFlight || updateInstallStarted) return;
-  updaterDownloadInFlight = true;
-  try {
-    Promise.resolve(updater.downloadUpdate())
-      .catch((err) => {
-        // update-downloaded is emitted before executeDownload's final cache
-        // bookkeeping. A rejected tail means the download as a whole did not
-        // complete, even if that earlier event supplied a path.
-        downloadedUpdatePath = null;
-        log("Download update failed:", err.message);
-        if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send("update-status", {
-            status: "error",
-            error: err.message,
-          });
-        }
-      })
-      .finally(() => {
-        updaterDownloadInFlight = false;
-      });
-  } catch (err) {
-    updaterDownloadInFlight = false;
-    downloadedUpdatePath = null;
-    log("Download update failed:", err.message);
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "error",
-        error: err.message,
-      });
-    }
-  }
+ipcMain.on("download-update", event => {
+  if (!isUpdaterSender(event)) return;
+  void updateState.download();
+});
+
+ipcMain.on("open-update-release", event => {
+  if (!isUpdaterSender(event)) return;
+  // No renderer URL: this is the canonical manual fallback for unsigned macOS.
+  shell.openExternal("https://github.com/lostinsea/markaloo/releases/latest")
+    .catch(error => updateState.fail(error));
 });
 
 // Installing an update is a shutdown: it quits the app, either through
@@ -13788,7 +13730,11 @@ ipcMain.on("download-update", () => {
 // discard-your-changes dialog on screen for an action that was never going to
 // happen. (F22)
 ipcMain.on("install-update", (event) => {
-  if (!isApprovalSender(event)) return;
+  if (!isUpdaterSender(event)) return;
+  if (updateInstallApprovalPending || !updateState.snapshot().canInstall) {
+    updateState.publish();
+    return;
+  }
   log("Install update requested");
   const updater = getAutoUpdater();
   if (!updater) return;
@@ -13809,8 +13755,21 @@ ipcMain.on("install-update", (event) => {
     log("Install update requested while an install attempt is already active");
     return;
   }
-  requestShutdown("update-install", () => performUpdateInstall(updater), {
+  updateInstallApprovalPending = true;
+  updateState.beginInstall();
+  const releaseApproval = () => {
+    updateInstallApprovalPending = false;
+    updateState.publish();
+  };
+  requestShutdown("update-install", () => {
+    try {
+      return performUpdateInstall(updater);
+    } finally {
+      releaseApproval();
+    }
+  }, {
     forceFresh: true,
+    onDeclined: releaseApproval,
   });
 });
 
@@ -13908,14 +13867,9 @@ function reportInstalledUpdateLaunchFailure(attempt, why, retrySafe) {
     `Installed update launch failed (${retrySafe ? "retry-safe" : "ambiguous"}):`,
     why,
   );
-  if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send("update-status", {
-      status: "error",
-      error: retrySafe
+  updateState.fail(new Error(retrySafe
         ? "The update installer could not be started. You can try again."
-        : "Markaloo could not verify whether the update installer started. Restart Markaloo before trying again.",
-    });
-  }
+        : "Markaloo could not verify whether the update installer started. Restart Markaloo before trying again."));
   if (!retrySafe) {
     // A child/helper that disappeared ambiguously may have created NSIS. Keep
     // the attempt, duplicate-install latch and committed document freeze. It
@@ -14079,12 +14033,7 @@ function performWindowsInstalledUpdate(updater) {
     plan = windowsInstalledUpdateLaunchPlan(updater);
   } catch (err) {
     log("Installed update preflight failed:", err.message);
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "error",
-        error: "The downloaded update is incomplete. Download it again.",
-      });
-    }
+    updateState.fail(new Error("The downloaded update is incomplete. Download it again."));
     replayAbsorbedUserShutdownAfterUpdaterCancel(
       "installed-update-preflight-failed",
     );
@@ -14452,6 +14401,7 @@ function performUpdateInstall(updater) {
           if (!startedNothing || retryLatchReleased) return;
           retryLatchReleased = true;
           updateInstallStarted = false;
+          updateState.publish();
         };
         const releaseAfterClose = () => {
           releaseRetryLatch();
@@ -14471,6 +14421,13 @@ function performUpdateInstall(updater) {
           log("Portable update batch could not be stopped:", err.message);
         }
         cancelUpdateOriginShutdownState(message);
+        if (options.userCancelled !== true) {
+          updateState.fail(new Error(startedNothing
+            ? "The update installer could not be started. You can try again."
+            : "Markaloo could not confirm whether the update installer started. Restart Markaloo before trying again."));
+        } else {
+          updateState.publish();
+        }
       };
 
       // THE CHILD CAN DIE ON ITS OWN, AND SILENCE IS NOT AN OUTCOME. `cmd.exe`
@@ -14672,6 +14629,7 @@ function performUpdateInstall(updater) {
           onDeclined: (why) =>
             cancelPortableHandoff(
               `Portable update: the commit approval was not given (${why})`,
+              { userCancelled: true },
             ),
         });
       });
@@ -14703,6 +14661,7 @@ function performUpdateInstall(updater) {
       if (stopLeaseHeartbeat) stopLeaseHeartbeat();
       updateInstallStarted = false;
       revokeShutdownAuthorization();
+      updateState.fail(new Error("The update installer could not be started. You can try again."));
       if (batchDir) {
         try {
           fs.rmSync(batchDir, { recursive: true, force: true });
@@ -14730,7 +14689,7 @@ function performUpdateInstall(updater) {
   // no explicit-install attempt identity. This state machine cannot safely
   // bind that delayed quit to the approval that entered quitAndInstall(), so
   // the shipped DMG path fails closed rather than pretending it installed.
-  // Ordinary approved quits still retain autoInstallOnAppQuit behavior.
+  // Ordinary quits never install; the manual release fallback remains available.
   if (process.platform === "darwin") {
     const error =
       "Explicit update installation is unavailable on macOS because the updater quit cannot be attributed safely.";
@@ -14738,12 +14697,7 @@ function performUpdateInstall(updater) {
       "Installed update:",
       error,
     );
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-status", {
-        status: "error",
-        error,
-      });
-    }
+    updateState.fail(new Error(error));
     replayAbsorbedUserShutdownAfterUpdaterCancel(
       "unsupported-macos-explicit-install",
     );
@@ -14799,16 +14753,7 @@ function performUpdateInstall(updater) {
 // Check for updates after app is ready (only in production)
 function checkForUpdatesOnStartup() {
   if (!app.isPackaged) return;
-  const updater = getAutoUpdater();
-  if (updater) {
-    // Wait a few seconds after app starts before checking for updates
-    setTimeout(() => {
-      log("Checking for updates on startup...");
-      updater.checkForUpdates().catch((err) => {
-        log("Error checking for updates:", err.message);
-      });
-    }, 5000);
-  }
+  setTimeout(() => { void updateState.startup(); }, 5000);
 }
 
 // Call update check after window is ready

@@ -14509,8 +14509,15 @@ const REVERTS = [
     what: "install the update the moment the button is pressed, before anyone is asked",
     file: MAIN,
     from:
-      '  requestShutdown("update-install", () => performUpdateInstall(updater), {\n' +
+      '  requestShutdown("update-install", () => {\n' +
+      "    try {\n" +
+      "      return performUpdateInstall(updater);\n" +
+      "    } finally {\n" +
+      "      releaseApproval();\n" +
+      "    }\n" +
+      "  }, {\n" +
       "    forceFresh: true,\n" +
+      "    onDeclined: releaseApproval,\n" +
       "  });",
     to: "  performUpdateInstall(updater);",
     expect: [
@@ -14784,12 +14791,17 @@ const REVERTS = [
       "  if (updateInstallStarted) {\n" +
       '    log("Install update requested while an install attempt is already active");\n' +
       "    return;\n" +
-      "  }\n" +
-      '  requestShutdown("update-install", () => performUpdateInstall(updater), {\n' +
-      "    forceFresh: true,\n" +
-      "  });",
+      "  }",
     to:
-      '  requestShutdown("update-install", () => performUpdateInstall(updater), { forceFresh: true }); /* reverted for proof */',
+      "  /* reverted for proof: repeated install reaches shutdown */",
+    also: {
+      file: MAIN,
+      from: "  if (updateInstallApprovalPending || !updateState.snapshot().canInstall) {\n" +
+        "    updateState.publish();\n" +
+        "    return;\n" +
+        "  }",
+      to: "  /* reverted for proof: shared busy-state guard removed */",
+    },
     expect: [
       /^a repeated install press is refused before it opens a second approval question$/,
       /^a portable pre-spawn duplicate is latched before one temp batch hand-off$/,
@@ -15377,8 +15389,15 @@ const REVERTS = [
       "begin the portable batch hand-off before the reader has answered the install approval",
     file: MAIN,
     from:
-      '  requestShutdown("update-install", () => performUpdateInstall(updater), {\n' +
+      '  requestShutdown("update-install", () => {\n' +
+      "    try {\n" +
+      "      return performUpdateInstall(updater);\n" +
+      "    } finally {\n" +
+      "      releaseApproval();\n" +
+      "    }\n" +
+      "  }, {\n" +
       "    forceFresh: true,\n" +
+      "    onDeclined: releaseApproval,\n" +
       "  });",
     to:
       "  performUpdateInstall(updater); /* reverted for proof: portable approval bypassed */",
@@ -15517,6 +15536,7 @@ const REVERTS = [
       "          onDeclined: (why) =>\n" +
       "            cancelPortableHandoff(\n" +
       "              `Portable update: the commit approval was not given (${why})`,\n" +
+      "              { userCancelled: true },\n" +
       "            ),\n" +
       "        });",
     to:
@@ -16019,7 +16039,7 @@ const REVERTS = [
     file: MAIN,
     from:
       'ipcMain.on("install-update", (event) => {\n' +
-      "  if (!isApprovalSender(event)) return;",
+      "  if (!isUpdaterSender(event)) return;",
     to:
       'ipcMain.on("install-update", (event) => {\n' +
       "  /* reverted for proof: any sender may install */",
@@ -16584,8 +16604,8 @@ const REVERTS = [
     suite: "test:tabs",
     what: "re-enable electron-updater's ordinary Windows quit hook, bypassing Folia's NSIS launch proof",
     file: MAIN,
-    from: "    !isPortable && process.platform !== \"win32\";",
-    to: "    !isPortable; /* reverted for proof: Windows auto-install is enabled */",
+    from: "  autoUpdater.autoInstallOnAppQuit = false;",
+    to: "  autoUpdater.autoInstallOnAppQuit = !isPortable; /* reverted for proof */",
     expect: [
       /^a direct NSIS spawn proves one exact launcher hand-off under final phase-two approval and blocks duplicate auto-install$/,
     ],
@@ -23816,6 +23836,226 @@ const REVERTS = [
             /^toolbar scope fixture really has two admitted documents and the current document outline$/,
             /^all required TOC toolbar scenarios executed$/],
           requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+        },
+        {
+          id: "R985", what: "forget to persist newly confirmed update availability",
+          file: path.join(SRC, "update-state.js"),
+          from: "      availableVersion = version;\n      persist();",
+          to: "      availableVersion = version;",
+          suite: "test:update-state",
+          expect: [
+            /^availability persists only schema and version$/,
+            /^storage failure retains live availability but reports missing durability$/,
+          ],
+          mustPass: [
+            /^semantic 0.10 availability is newer than installed 0.9$/,
+            /^failed check retains known availability and exposes retry$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R986", what: "retain availability even when the running semantic version is equal",
+          file: path.join(SRC, "update-state.js"),
+          from: "semver.gt(cached.version, installedVersion)",
+          to: "semver.gte(cached.version, installedVersion)",
+          suite: "test:update-state",
+          expect: [
+            /^installed 0.10.0 removes obsolete availability$/,
+            /^installed 0.10.0\+build removes obsolete availability$/,
+            /^build metadata alone does not create an update$/,
+          ],
+          mustPass: [
+            /^installed 0.11.0 removes obsolete availability$/,
+            /^prerelease ordering uses semantic precedence$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R987", what: "repeat the scheduled startup check after a completed manual check",
+          file: path.join(SRC, "update-state.js"),
+          from: "startup() { return checked ? Promise.resolve(snapshot()) : check(); }",
+          to: "startup() { return check(); }",
+          suite: "test:update-state",
+          expect: [/^scheduled startup does not repeat a completed manual check$/],
+          mustPass: [
+            /^startup and concurrent manual checks coalesce while disabled$/,
+            /^duplicate Downloads share one real download$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R988", what: "trust a ready artifact without rechecking that it still exists",
+          file: path.join(SRC, "update-state.js"),
+          from: "const readyValid = !!ready && options.validateReady(ready);",
+          to: "const readyValid = !!ready;",
+          suite: "test:update-state",
+          expect: [/^missing artifact revokes install readiness$/],
+          mustPass: [
+            /^successful completion with validated artifact permits install$/,
+            /^restored availability is immediate without check download or install authority$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R989", what: "erase remembered newer availability on a later no-update result",
+          file: path.join(SRC, "update-state.js"),
+          from: '          lastCheck = "not-available";\n          phase = availableVersion ? "available" : "up-to-date";',
+          to: '          lastCheck = "not-available";\n          availableVersion = null;\n          phase = "up-to-date";',
+          suite: "test:update-state",
+          expect: [/^no-update result retains the newer known version honestly$/],
+          mustPass: [
+            /^failed check retains known availability and exposes retry$/,
+            /^a successful current-version check reports up to date$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R990", what: "replace the runtime installed version with a hardcoded release",
+          file: path.join(SRC, "app-updates.js"),
+          from: "about.version.textContent = `Version ${state.installedVersion}`;",
+          to: 'about.version.textContent = "Version 0.8.1";',
+          suite: "test:updates-ui",
+          expect: [/^About displays Main runtime version rather than package version$/],
+          mustPass: [
+            /^About follows the actual Edit Mode menu item$/,
+            /^About and startup notice show the same available version$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R991", what: "re-enable automatic installation when the user chooses Later",
+          file: MAIN,
+          from: "  autoUpdater.autoInstallOnAppQuit = false;",
+          to: "  autoUpdater.autoInstallOnAppQuit = true;",
+          suite: "test:updates-ui",
+          expect: [/^Download and Later cannot enable ordinary-quit installation$/],
+          mustPass: [
+            /^checking availability never downloads automatically$/,
+            /^canceling install preserves dirty content disk and shutdown protection$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R992", what: "accept cached availability carrying forged readiness or path fields",
+          file: path.join(SRC, "update-state.js"),
+          from: "Object.keys(cached).length === 2 && cached.schema === 1 &&",
+          to: "cached.schema === 1 &&",
+          suite: "test:update-state",
+          expect: [/^malformed availability 4 is cleared without readiness$/],
+          mustPass: [
+            /^restored availability is immediate without check download or install authority$/,
+            /^malformed availability 6 is cleared without readiness$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R993", what: "treat a rejected download finalization as a ready installer",
+          file: path.join(SRC, "update-state.js"),
+          from: "const paths = await updater.downloadUpdate();",
+          to: "const paths = await updater.downloadUpdate().catch(() => [downloadEvent?.path]);",
+          suite: "test:update-state",
+          expect: [/^rejected download tail cannot become install ready$/],
+          mustPass: [
+            /^download event is finalizing not ready until promise completion$/,
+            /^successful completion with validated artifact permits install$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R994", what: "never retry a failed availability write for the same version",
+          file: path.join(SRC, "update-state.js"),
+          from: "    } else if (storageError) {\n      persist();",
+          to: "    ",
+          suite: "test:update-state",
+          expect: [/^checking again retries failed availability persistence$/],
+          mustPass: [
+            /^storage failure retains live availability but reports missing durability$/,
+            /^failed check retains known availability and exposes retry$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R995", what: "put update status above the manual Check button",
+          file: APP_DIALOGS,
+          from: "body.append(identity, name, message, check, status, progress, actions);",
+          to: "body.append(identity, name, message, status, check, progress, actions);",
+          suite: "test:updates-ui",
+          expect: [/^About status and update actions follow Check for updates$/],
+          mustPass: [
+            /^About displays Main runtime version rather than package version$/,
+            /^About and startup notice show the same available version$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R996", what: "log portable launch failures without publishing their shared UI error",
+          file: MAIN,
+          from: 'updateState.fail(new Error(startedNothing\n' +
+            '            ? "The update installer could not be started. You can try again."\n' +
+            '            : "Markaloo could not confirm whether the update installer started. Restart Markaloo before trying again."));',
+          to: "updateState.publish();",
+          also: {
+            file: MAIN,
+            from: '      updateState.fail(new Error("The update installer could not be started. You can try again."));',
+            to: "      updateState.publish();",
+          },
+          suite: "test:updates-portable",
+          expect: [
+            /^portable launch failure is visible and safely retryable$/,
+            /^portable synchronous launch failure is visible and safely retryable$/,
+            /^portable ambiguous handoff requires restart and forbids retry$/,
+          ],
+          mustPass: [
+            /^portable fixture proves the release boundary before cancellation$/,
+            /^portable commit cancellation is not reported as failure$/,
+            /^portable commit cancellation preserves genuine unsaved edits and disk$/,
+            /^portable ambiguous handoff cannot launch a second child$/,
+            /^portable failures retain availability and revoke shutdown approval$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R997", what: "leave the previous install error visible during an accepted retry",
+          file: MAIN,
+          from: "  updateState.beginInstall();",
+          to: "  updateState.publish();",
+          suite: "test:updates-portable",
+          expect: [/^portable accepted retry clears the previous failure while pending$/],
+          mustPass: [
+            /^portable launch failure is visible and safely retryable$/,
+            /^portable commit cancellation preserves genuine unsaved edits and disk$/,
+            /^portable ambiguous handoff requires restart and forbids retry$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R998", what: "confirm the remembered newer version from a lower live offer",
+          file: path.join(SRC, "update-state.js"),
+          from: 'lastCheck = offerVersion === availableVersion ? "available" : "not-available";',
+          to: 'lastCheck = "available";',
+          suite: "test:update-state",
+          expect: [/^a lower live offer does not confirm newer remembered availability$/],
+          mustPass: [
+            /^a lower live offer cannot download as the newer remembered version$/,
+            /^no-update result retains the newer known version honestly$/,
+            /^semantic 0.10 availability is newer than installed 0.9$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
+        },
+        {
+          id: "R999", what: "run the Windows portable fixtures on Linux and macOS",
+          file: path.join(ROOT, "test", "test-about-updates.js"),
+          from: 'const portablePhases = process.platform === "win32" ? ["portable-failure", "portable-throw",\n' +
+            '    "portable-cancel", "portable-ambiguous"] : [];',
+          to: 'const portablePhases = ["portable-failure", "portable-throw",\n' +
+            '    "portable-cancel", "portable-ambiguous"];',
+          suite: "test:update-state",
+          expect: [/^update controller excludes Windows portable fixtures on Linux and macOS$/],
+          mustPass: [
+            /^update controller keeps Windows portable fixtures on Windows$/,
+            /^macOS exposes manual fallback without automatic download or install$/,
+          ],
+          requireMustPassAssertions: true, requireExactFailures: true,
         },
       ];
 

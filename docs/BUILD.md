@@ -329,6 +329,14 @@ nothing in the release workflow depends on it.
 
 ## Auto-update
 
+- About and the startup notice share Main-owned state and fixed preload commands.
+- Only validated availability metadata persists in the existing profile settings.
+  It cannot restore downloaded readiness or grant installation permission.
+- Automatic download and install-on-quit are disabled on every platform.
+  Explicit installation retains the existing save/discard/cancel shutdown gates.
+- Unsigned macOS uses **Open release downloads** for manual installation.
+  No signature checks or platform warnings are bypassed.
+
 `build.publish` targets this fork's own GitHub releases:
 
 ```json

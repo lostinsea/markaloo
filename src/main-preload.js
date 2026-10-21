@@ -349,7 +349,9 @@ const DOCUMENT_EVENT_FIELDS = {
   "external-file-open-request": ["filePath", "documentOpenTicket"],
   "show-error": [],
   "update-status": ["status", "version", "transferred", "total", "percent",
-    "error", "message"],
+    "error", "message", "revision", "installedVersion", "availableVersion",
+    "readyVersion", "storageError", "manualOnly", "lastCheck",
+    "canCheck", "canDownload", "canInstall"],
 };
 const DOCUMENT_EVENT_RECORD_FIELDS = {
   diskVersion: ["dev", "ino", "size", "mtimeMs", "ctimeMs"],
@@ -839,6 +841,19 @@ const api = Object.freeze({
   },
   downloadUpdate() {
     ipcRenderer.send("download-update");
+  },
+  checkForUpdates() {
+    ipcRenderer.send("check-for-updates");
+  },
+  openUpdateRelease() {
+    ipcRenderer.send("open-update-release");
+  },
+  async getUpdateState() {
+    const state = await ipcRenderer.invoke("get-update-state");
+    if (!state || !Number.isSafeInteger(state.revision) ||
+        typeof state.installedVersion !== "string" ||
+        typeof state.status !== "string") throw new TypeError("Invalid update state");
+    return projectDocumentEventRecord(state, DOCUMENT_EVENT_FIELDS["update-status"]);
   },
   installUpdate() {
     ipcRenderer.send("install-update");

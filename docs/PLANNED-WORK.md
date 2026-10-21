@@ -171,6 +171,50 @@ section is kept here so the register has a visible edge.
     open was reviewed from control flow, not newly exercised by this unit.
   - Ready as one local commit on `users/vinma-microsoft/toc-visible-by-default`.
     No integration or publication is authorized.
+- `about-update-status` — **COMPLETE LOCALLY; NOT INTEGRATED** (2026-10-20).
+  - Sole writer: isolated `users/vinma-microsoft/about-and-update-status`,
+    based on canonical main `4d614ee2`. No primary-checkout changes.
+  - Design: GPT-6 Astra/high. Implementation/evidence: GPT-6.1 Sol/high.
+    Final fresh GPT-6.1 Sol/high and GPT-6 Luna/high reviews found no significant
+    issues and no remaining disagreements.
+  - Actual menu: File and View flyouts; Edit Mode is in File. About follows
+    that existing Edit Mode item. No native menu or unrelated menu redesign.
+  - About and the startup notice share Main-owned state. Only validated newer
+    version metadata persists in the existing profile settings file.
+    Cached availability never grants download readiness or install permission.
+  - Opening About does not check. Explicit checks, downloads and protected
+    installation use fixed commands; concurrent actions coalesce. A lower live
+    offer leaves a newer remembered version explicitly unconfirmed.
+  - All platforms disable ordinary-quit installation. Safe installer failures
+    allow a retry with fresh status. Ambiguous portable handoffs require restart
+    and block another launch. Genuine cancellation preserves dirty documents.
+  - Disposable-profile/provider tests use the production preload. State is
+    42/42; Windows UI/provider/restart/portable phases are 119/119. Shared dialogs
+    are 53/53; independent Main host is 104/104; startup is 11/11.
+  - Source packaging is 419 passed, 0 failed, with two built-archive checks
+    skipped. Controlled diagnostic FAIL lines are intentional negative controls,
+    not failed packaging assertions.
+  - R169 and R985-R999 are individually exact PROVEN. All anchors resolve.
+    R997 first hit a fixture watchdog; its clean rerun is exact PROVEN. The
+    failed receipt is retained rather than counted as a pass.
+  - Light/dark and narrow 150% screenshots are viewed. Compact About keeps
+    Check, status and Download visible, with keyboard dismissal/focus covered.
+  - Fixed measurement budgets: startup p50/p95 no more than +100/+200 ms;
+    representative plain-document open p50/p95 no more than +30/+60 ms.
+    Final samples stay within them; PERF-AUDIT records the method and limits.
+  - Reviews agreed on Main authority, safe/ambiguous portable boundaries and
+    disabling install-on-quit. Sol's retry/platform findings and Luna's lower-
+    offer finding are corrected and independently accepted.
+  - Evidence: session `4d62cd4c`, `files/final-*.log`,
+    `review-fixes-proofs.log`, `retry-proof-final.log` and retained screenshot/
+    JSON batches under this worktree's `tmp/about-updates`.
+  - The legacy tab suite stopped at the same SEC-08 control-subscription point
+    on canonical baseline and candidate. Both were explicitly terminated after
+    no progress. Old event-only/raw-IPC updater fixtures are not a protection
+    certificate; the readiness gate remains intact.
+  - No full-suite, packaged UI, live installation or macOS/Linux runtime
+    certification. No real profiles/documents/logs, installer execution,
+    push, tag or release.
 - `release-0.8.1` — **PUBLISHED AND VERIFIED** (2026-10-19).
   - Release: [Markaloo 0.8.1](https://github.com/lostinsea/markaloo/releases/tag/v0.8.1).
   - Exact tag source: `5633221d4205fc59fb84f80256a74083418add30`.

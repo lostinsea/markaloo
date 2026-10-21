@@ -38,7 +38,7 @@
 const isolation = require("./test-userdata-isolation");
 
 const { app } = require("electron");
-const { ipcMain } = require("electron");
+const { BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
@@ -57,7 +57,19 @@ function cachedModulePaths(needle) {
   );
 }
 
-function finish() {
+let finishing = false;
+async function finish() {
+  if (finishing) return;
+  finishing = true;
+  clearTimeout(watchdog);
+  const keepalive = new BrowserWindow({ show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  await Promise.all(BrowserWindow.getAllWindows().filter(win => win !== keepalive)
+    .map(win => new Promise(resolve => {
+      win.webContents.once("destroyed", resolve);
+      win.destroy();
+    })));
+  await new Promise(resolve => setImmediate(resolve));
   results.push(`=== ${results.length - failed}/${results.length} passed ===`);
   const text = results.join("\n") + "\n";
   // Electron drops buffered stdout on app.exit() when redirected, so the file
@@ -69,7 +81,7 @@ function finish() {
 
 const watchdog = setTimeout(() => {
   check("harness completed within 120s", false, "watchdog fired");
-  finish();
+  void finish();
 }, 120000);
 
 // Loading main.js starts the real application in this process.
@@ -202,10 +214,6 @@ app.whenReady().then(async () => {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
 
-  // Drives the real product path: this handler calls getAutoUpdater(), which
-  // is what runs configureAutoUpdater() exactly once.
-  ipcMain.emit("check-for-updates");
-
   const { autoUpdater } = require("electron-updater");
   autoUpdater.logger = null;
   autoUpdater.forceDevUpdateConfig = true; // dev builds have no app-update.yml
@@ -214,10 +222,27 @@ app.whenReady().then(async () => {
     url: `http://127.0.0.1:${server.address().port}/`,
   });
   let checkDetail = "";
+  const packagedDescriptor = Object.getOwnPropertyDescriptor(app, "isPackaged");
+  const completed = new Promise(resolve => {
+    autoUpdater.once("update-available", resolve);
+    autoUpdater.once("error", error => {
+      checkDetail = error.message.slice(0, 120);
+      resolve();
+    });
+  });
   try {
-    await autoUpdater.checkForUpdates();
+    // Exercise the real document frame and production preload. A synthetic
+    // ipcMain event has no sender identity and must be refused.
+    Object.defineProperty(app, "isPackaged", { configurable: true, get: () => true });
+    const win = BrowserWindow.getAllWindows().find(candidate =>
+      candidate.webContents.getURL().endsWith("index.html"));
+    await win.webContents.executeJavaScript("window.folia.checkForUpdates();true");
+    await completed;
   } catch (e) {
     checkDetail = e.message.slice(0, 120);
+  } finally {
+    if (packagedDescriptor) Object.defineProperty(app, "isPackaged", packagedDescriptor);
+    else delete app.isPackaged;
   }
   server.close();
 
