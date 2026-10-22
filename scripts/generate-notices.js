@@ -435,8 +435,8 @@ const VENDORED_ROOTS = [
   "marked",
   "mermaid",
   "dompurify",
-  // Committed under libs/prismjs/ rather than copied, so vendor-libs.js does
-  // not name it either. index.html loads libs/prismjs/prism-bundle.js.
+  // The legacy bundle and generated official components share one committed
+  // file. index.html loads libs/prismjs/prism-bundle.js.
   "prismjs",
 ];
 

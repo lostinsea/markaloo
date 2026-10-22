@@ -145,7 +145,13 @@ scaling and font settings.
 ### Core rendering
 - **Full HTML support** - HTML inside markdown, sanitized with DOMPurify
 - **Mermaid diagrams** - all diagram types, with an interactive pan/zoom pop-out viewer
-- **Syntax highlighting** - PrismJS, offline, 11+ languages
+- **Syntax highlighting** - PrismJS, offline, with explicit fenced-code languages:
+  HTML/XML/SVG/MathML, CSS, JavaScript/JSX, TypeScript/TSX, C/C++, C#, Java,
+  Python, JSON, SQL, Bash, Rust, Go, PHP, Ruby, Swift, Kotlin, Dart, R,
+  PowerShell, YAML, TOML and Markdown.
+- Fence aliases include `js`, `ts`, `py`, `cs`, `dotnet`, `sh`, `shell`,
+  `rb`, `kt`, `kts`, `yml` and `md`. Unknown or unlabelled fences stay plain.
+  The source editor and ordinary inline backticks stay plain; no autodetection.
 - **Interactive tables** - Tabulator integration with sorting, filtering, pagination and CSV/JSON export
 
 ### Tabs
@@ -339,7 +345,7 @@ nvm use (Get-Content .nvmrc)
 ```
 
 ```bash
-npm install      # also vendors marked, Mermaid, DOMPurify and Fira Code
+npm install      # also vendors runtime libraries, Prism components and Fira Code
 npm start
 ```
 
@@ -348,6 +354,14 @@ and fonts out of `node_modules` into `libs/vendor/` and `fonts/`. Those
 directories are generated, not committed. The application loads them from disk
 and deliberately fetches nothing at runtime, so it renders fully offline and the
 versions you audit are the versions you ship.
+
+- `npm run vendor` also regenerates the official Prism component suffix in
+  checked-in `libs/prismjs/prism-bundle.js`.
+- `scripts/vendor-prism.js` pins Prism 1.30.0 and the legacy bundle's normalized
+  SHA256. Existing grammars keep their order and bytes; PHP's required markup
+  templating component precedes PHP, and YAML precedes Markdown.
+- Markdown highlighting applies inside a `markdown` or `md` fence. It does not
+  add frontmatter handling to the Markdown document parser.
 
 ### Build installers
 

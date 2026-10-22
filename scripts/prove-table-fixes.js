@@ -86,6 +86,16 @@ const FILE_HELPERS = path.join(SRC, "file-helpers.js");
 // The harness restores from its own pre-run snapshot, not from git, so a
 // gitignored file is as recoverable as a tracked one.
 const VENDOR_MARKED = path.join(ROOT, "libs", "vendor", "marked.min.js");
+const PRISM_BUNDLE = path.join(ROOT, "libs", "prismjs", "prism-bundle.js");
+const PRISM_VENDOR = path.join(ROOT, "scripts", "vendor-prism.js");
+const SYNTAX_COMPONENT_REVERTS = [
+  ["R1066", "rust"], ["R1067", "go"], ["R1068", "markup-templating"], ["R1069", "php"],
+  ["R1070", "ruby"], ["R1071", "swift"], ["R1072", "kotlin"], ["R1073", "dart"],
+  ["R1074", "r"], ["R1075", "powershell"], ["R1076", "yaml"], ["R1077", "toml"],
+  ["R1078", "markdown"],
+];
+const SYNTAX_REVERT_IDS = SYNTAX_COMPONENT_REVERTS.map(([id]) => id)
+  .concat(["R1079", "R1080", "R1081", "R1082", "R1083"]);
 const TABULATOR_JS = path.join(ROOT, "libs", "tabulator", "tabulator.min.js");
 const VENDOR_VERSIONS = path.join(ROOT, "libs", "vendor", "VERSIONS.json");
 const BUILD_DOC = path.join(ROOT, "docs", "BUILD.md");
@@ -141,6 +151,12 @@ const TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL = Object.freeze([
   "Shutdown approval renderer unusable: webContents destroyed",
 ]);
 const VIRTUAL_SUITES = Object.freeze({
+  ...Object.fromEntries(SYNTAX_COMPONENT_REVERTS.map(([, language]) => [
+    "test:syntax-" + language, Object.freeze({
+      npmScript: "test:syntax-source",
+      environment: Object.freeze({ MARKALOO_SYNTAX_PROOF: language }),
+    }),
+  ])),
   "test:toc-toolbar-handler": Object.freeze({
     npmScript: "test:toc-toolbar",
     environment: Object.freeze({ MARKALOO_TOC_TOOLBAR_PROOF: "handler" }),
@@ -440,6 +456,89 @@ const VIRTUAL_SUITES = Object.freeze({
 });
 
 const REVERTS = [
+  ...SYNTAX_COMPONENT_REVERTS.map(([id, language]) => ({
+    id, what: "omit the official Prism " + language + " component from the shipped bundle",
+    file: PRISM_BUNDLE,
+    from: "/* prism-" + language + ".min.js */\n" + fs.readFileSync(
+      path.join(ROOT, "node_modules", "prismjs", "components", "prism-" + language + ".min.js"),
+      "utf8").replace(/\r\n/g, "\n").trimEnd(),
+    to: "/* Official " + language + " component omitted for proof. */",
+    suite: "test:syntax-" + language,
+    expect: [new RegExp("^syntax " + (language === "markup-templating" ? "php" : language) +
+      " official tokens and aliases retain exact source$")].concat(language === "markup-templating"
+      ? [/^syntax every legacy grammar and alias retains its original token output$/] : []),
+    mustPass: [/^syntax legacy prefix remains byte-for-byte unchanged$/,
+      /^syntax legacy runtime inventory is the measured complete baseline$/,
+      /^syntax unsupported Dockerfile and invented Rust aliases remain absent$/].concat(language === "markup-templating"
+      ? [] : [/^syntax every legacy grammar and alias retains its original token output$/]),
+    // PHP's global hook calls the templating helper before checking language.
+    // Removing that dependency also breaks legacy highlighting, not its setup.
+    requireMustPassAssertions: true, requireExactFailures: true,
+    expectedFailureCount: language === "markup-templating" ? 2 : 1,
+  })),
+  {
+    id: "R1079", what: "accept a different installed or locked Prism version during vendoring",
+    file: PRISM_VENDOR,
+    from: "  if (installed !== VERSION || locked !== VERSION) {",
+    to: "  if (false) {",
+    suite: "test:syntax-source",
+    expect: [/^syntax bundle rejects installed lock mismatch and coordinated Prism downgrade$/],
+    mustPass: [/^syntax bundle invalid-input fixture first reproduces the exact real bundle$/,
+      /^syntax official bundle is reproducible and idempotent$/,
+      /^syntax every legacy grammar and alias retains its original token output$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1080", what: "append components to changed legacy bytes or a suffix whose markers were lost",
+    file: PRISM_VENDOR,
+    from: '  if (createHash("sha256").update(normalize(prefix)).digest("hex") !== LEGACY_SHA256) {',
+    to: "  if (false) {",
+    suite: "test:syntax-source",
+    expect: [/^syntax bundle rejects altered and markerless already-expanded legacy input$/],
+    mustPass: [/^syntax legacy prefix remains byte-for-byte unchanged$/,
+      /^syntax official bundle is reproducible and idempotent$/,
+      /^syntax bundle rejects malformed incomplete duplicate and nonterminal boundaries$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1081", what: "emit an official component before its required grammar is loaded",
+    file: PRISM_VENDOR,
+    from: "      if (!loaded.has(dependency)) {",
+    to: "      if (false) {",
+    suite: "test:syntax-source",
+    expect: [/^syntax bundle refuses a component whose official dependency is not loaded first$/],
+    mustPass: [/^syntax bundle invalid-input fixture first reproduces the exact real bundle$/,
+      /^syntax suffix contains the exact official components once in dependency order$/,
+      /^syntax php official tokens and aliases retain exact source$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1082", what: "silently emit an empty required official grammar",
+    file: PRISM_VENDOR,
+    from: "    if (!source) throw new Error(`vendor-prism: empty official component ${id}`);",
+    to: "    // Empty required official components are incorrectly accepted.",
+    suite: "test:syntax-source",
+    expect: [/^syntax bundle refuses an empty required official component$/],
+    mustPass: [/^syntax bundle invalid-input fixture first reproduces the exact real bundle$/,
+      /^syntax bundle refuses a missing required official component$/,
+      /^syntax yaml official tokens and aliases retain exact source$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1083", what: "accept malformed repeated or nonterminal generated component markers",
+    file: PRISM_VENDOR,
+    from: "  if ((start === -1) !== (end === -1) ||\n" +
+      "      (start !== -1 && (original.indexOf(BEGIN, start + BEGIN.length) !== -1 ||\n" +
+      "        original.indexOf(END, end + END.length) !== -1 ||\n" +
+      '        end < start || original.slice(end + END.length).trim() !== ""))) {',
+    to: "  if (false) {",
+    suite: "test:syntax-source",
+    expect: [/^syntax bundle rejects malformed incomplete duplicate and nonterminal boundaries$/],
+    mustPass: [/^syntax bundle invalid-input fixture first reproduces the exact real bundle$/,
+      /^syntax official bundle is reproducible and idempotent$/,
+      /^syntax bundle rejects altered and markerless already-expanded legacy input$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
   {
     id: "R49",
     what: "table-layout: auto -> fixed (the equal-split the user complained about)",
@@ -25359,7 +25458,13 @@ function proveCompanionTranscriptRoles() {
     REVERTS.filter((r) => exactShutdownTailForMutation(r) === R319_MERMAID_SCOPE_TAIL)
       .map((r) => r.id)
       .join(",") === "R319" &&
-    REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount))
+    // The historical ordered inventory remains frozen. New syntax records are
+    // independently pinned to exact named failures with surviving setup controls.
+    REVERTS.filter((r) => SYNTAX_REVERT_IDS.includes(r.id)).length === SYNTAX_REVERT_IDS.length &&
+    REVERTS.filter((r) => SYNTAX_REVERT_IDS.includes(r.id)).every((r) =>
+      r.expectedFailureCount === (r.id === "R1068" ? 2 : 1) && r.requireExactFailures === true &&
+      r.requireMustPassAssertions === true && r.mustPass.length > 0) &&
+    REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
       .join(",") === "R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
   const toolbarAllowanceIsRecordScoped =

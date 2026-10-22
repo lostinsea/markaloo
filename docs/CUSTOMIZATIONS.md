@@ -27,6 +27,16 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Offline fenced-code languages
+
+- One local Prism bundle keeps the existing grammars and adds official Prism
+  1.30.0 components for Rust, Go, PHP, Ruby, Swift, Kotlin, Dart, R, PowerShell,
+  YAML, TOML and Markdown fences, plus PHP's markup-templating dependency.
+- `npm run vendor` reproduces the component suffix without rebuilding the
+  legacy prefix. Missing sources, version drift and damaged boundaries fail.
+- No grammar autodetection, runtime downloads, editor coloring or theme changes.
+  Dockerfile is not included.
+
 ### Combined feature regression gate
 
 - `npm run test:features` runs updates, grouped toolbar, document editors,

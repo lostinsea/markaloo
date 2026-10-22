@@ -38,6 +38,37 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `offline-popular-languages` - **REVIEWED LOCAL REVISION; PERFORMANCE BLOCKED** (2026-10-22 UTC).
+  - Sole writer: isolated `users/vinma-microsoft/offline-rust-highlighting`,
+    based on canonical main `bb78080f`; published release records stay fixed.
+  - User scope: official existing Prism 1.30.0 components for Rust, Go, PHP,
+    Ruby, Swift, Kotlin, Dart, R, PowerShell, YAML, TOML and Markdown fences.
+    Dockerfile is explicitly excluded; dependency upgrades remain postponed.
+  - Accepted prior research reused. Independent Sol 6.1/high and Luna 6/high
+    plan feedback agrees on preserving the legacy bundle and using a separate
+    fixture so the frozen theme census remains unchanged.
+  - Sol owns the bundle/vendor flow; separate Sol owns test/evidence automation.
+    Syntax `78/78`, frozen theme `404/404`, startup `13/13` and source packaging
+    `427/0` pass; built-ASAR checks are skipped. R1066-R1083 are exact PROVEN.
+    Default light/dark and source/preview captures were viewed.
+  - Actual matched Electron first-open observed p95 adds 52.30 ms against the
+    fixed 50 ms limit; median adds 47.00 ms. Other measured gates pass.
+    Three pairs do not certify the tail or justify a waiver. No samples removed.
+    See `docs/PERF-AUDIT.md`; all observations remain in session `5850f9b8`,
+    `files/language-perf-r2/results.json`.
+  - Fresh independent Sol 6.1/high and Luna 6/high reviews accept the source and
+    corrected evidence docs, but agree performance remains blocked. Neither
+    found a measurement mismatch or a justified targeted product correction.
+    Luna's stale register-status finding is corrected; no disagreement remains.
+  - The complete affected feature command passes: syntax `78/78`, update state
+    `42/42`, About `143/143`, toolbar `47/47`, document editor `60/60`,
+    scrolling `221/221` and reading panels `59/59`.
+    No performance acceptance, loading redesign or automatic timing rerun.
+  - Fixed budgets: startup adds at most 100 ms p50 / 200 ms p95; document
+    open/edit adds at most 20% or 50 ms, whichever is larger. Source-only
+    checks do not certify packaged, hosted or cross-platform behavior.
+  - Local reviewed commit only. No push, integration, release, installer,
+    version bump, tag, workflow dispatch or publication.
 - `release-0.9.1` - **PUBLISHED AND VERIFIED** (2026-10-21).
   - Release: [Markaloo 0.9.1](https://github.com/lostinsea/markaloo/releases/tag/v0.9.1).
   - Exact tagged source: `2d8a92e827d1ec50b564c2d150161efe5b662f86`.

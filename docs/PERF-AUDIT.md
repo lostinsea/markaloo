@@ -1,5 +1,57 @@
 # Performance Audit
 
+## Offline language coverage - performance gate pending, 2026-10-22 UTC
+
+- Adds official Prism 1.30.0 grammars for the requested languages; no dependency
+  upgrade, autodetection or loading redesign. Dockerfile is excluded.
+- Same Windows x64 desktop, AMD EPYC 7763, Node 24.18.1 and Electron 43.4.1.
+  Three fresh isolated profiles per variant, alternating baseline/candidate.
+  The baseline is canonical `bb78080f`'s unchanged Prism bundle.
+- Fixed budgets: startup +100 ms p50 / +200 ms observed p95; new document
+  open/split/edit +max(20%, 50 ms); settled scroll callback p95 <=4 ms.
+  The separate existing 64 KiB prose +30/+60 ms budget was not measured or changed.
+- Startup runs from Main-script entry through Welcome, fonts and two frames;
+  it excludes Electron binary bootstrap. Document open waits for actual token
+  markup and copy buttons. Native textarea edits wait for updated preview and
+  current scroll geometry. These are app timings, not Node string benchmarks.
+
+| Measurement | Baseline p50 / observed p95 (ms) | Added languages p50 / observed p95 (ms) |
+|---|---:|---:|
+| Empty-reader startup | 1437.72 / 1475.38 | 1401.26 / 1568.28 |
+| Representative first open | 138.70 / 156.20 | 185.70 / 208.50 |
+| Representative warm open | 65.80 / 68.60 | 62.50 / 63.10 |
+| Code-heavy first document open | 166.90 / 172.60 | 158.90 / 188.30 |
+| Code-heavy warm document open | 73.60 / 74.50 | 78.60 / 81.90 |
+| Code-heavy native edit | 451.90 / 454.20 | 466.00 / 475.10 |
+| Mixed first document open | 82.90 / 85.00 | 87.60 / 88.00 |
+| Mixed native edit | 443.60 / 446.80 | 449.70 / 455.00 |
+
+- **Not performance-accepted:** representative first-open observed p95 adds
+  52.30 ms against the fixed 50 ms limit. Its median adds 47.00 ms and passes.
+  All other measured open/split/edit/startup gates pass. No threshold waiver,
+  discarded observation or repeat-until-green run.
+- With three process samples, observed p95 is the maximum, not a reliable tail
+  estimate. Later workload first opens are not cold grammar contexts.
+- Separate isolated Chromium measurements: bundle compile/registration median
+  17.40 -> 27.20 ms; first highlighting of all requested sample languages
+  0.00 -> 22.60 ms. The baseline renders those missing grammars plain, so this
+  measures added coverage cost, not equivalent-output engine performance.
+- Candidate warm highlighting takes 0.60-3.80 ms across fifteen observations
+  of the same sample set. CPU measurements exclude DOM insertion and paint;
+  native open/edit timings include the app path. Timer zeros are resolution
+  limits, not proof of zero work.
+- Settled scroll callback p95 is 0.20 -> 0.10 ms, without geometry rebuilds or
+  source Range reads. No speedup claim: small samples and desktop scheduling
+  limit comparisons. No packaged, installed or cross-platform certification.
+- Bundle size: 98,270 -> 130,330 bytes; gzip growth 9,947 bytes. Size is separate
+  from measured startup/render cost. Existing grammar prefix bytes are identical.
+- Evidence: session `5850f9b8`, `files/language-perf.js`,
+  `language-perf-r2/declaration.json`, `language-perf-r2/results.json`,
+  per-process logs and `bundle-provenance.json`. All raw observations and
+  earlier setup failures remain preserved. Independent Sol/Luna source and
+  measurement reviews agree the gate remains blocked; neither found a
+  measurement mismatch or a justified targeted product correction.
+
 ## Combined feature gate - bounded check, 2026-10-21
 
 - Includes About/update state, default TOC, document editors, content-aware

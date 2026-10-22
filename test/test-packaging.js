@@ -2838,6 +2838,7 @@ async function main() {
   // Electron controllers that the older direct-electron census cannot see.
   {
     const featureCommands = {
+      "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
       "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js",

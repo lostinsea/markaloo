@@ -30,6 +30,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { createBundle } = require("./vendor-prism");
 
 const ROOT = path.join(__dirname, "..");
 const OUT = path.join(ROOT, "libs", "vendor");
@@ -63,6 +64,13 @@ function copy(from, to, label) {
 }
 
 function main() {
+  const prismBundle = path.join(ROOT, "libs", "prismjs", "prism-bundle.js");
+  const originalPrism = fs.readFileSync(prismBundle, "utf8");
+  const generatedPrism = createBundle(ROOT, originalPrism);
+  if (generatedPrism !== originalPrism) {
+    fs.writeFileSync(prismBundle, generatedPrism, "utf8");
+  }
+  console.log("Vendored official Prism components into libs/prismjs/prism-bundle.js");
   console.log("Vendoring runtime libraries into libs/vendor ...");
   const versions = {};
 
