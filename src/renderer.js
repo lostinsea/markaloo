@@ -1130,6 +1130,8 @@ function snapScrollerScale(raw, local) {
 // Upstream fixed the same class of bug the same way in 80646de.
 function scrollElementIntoView(el, block = 'start') {
   if (!el) return;
+  // Explicit navigation supersedes the saved tab anchor, including resize retries.
+  window.dispatchEvent(new Event('preview-navigation-intent'));
   editorScroll.previewNavigation();
   el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });
 }
@@ -5110,8 +5112,7 @@ function highlightCurrentMatch() {
   currentMatchEl = match || null;
   if (!match) return;
   match.classList.add('current');
-  editorScroll.previewNavigation();
-  match.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  scrollElementIntoView(match, 'center');
 }
 
 // A disabled button swallows clicks, so the nav buttons must not be disabled

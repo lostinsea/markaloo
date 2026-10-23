@@ -1541,6 +1541,9 @@
   window.addEventListener('editor-scroll-intent', () => {
     if (cancelActiveRestore) cancelActiveRestore();
   });
+  window.addEventListener('preview-navigation-intent', () => {
+    if (cancelActiveRestore) cancelActiveRestore();
+  });
 
   function restorePosition(anchor) {
     if (cancelActiveRestore) {

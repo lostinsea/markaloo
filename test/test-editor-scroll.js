@@ -280,6 +280,164 @@ async function nativeWheel(side, deltaY, selector = null) {
   win.webContents.sendInputEvent({ type: "mouseWheel", ...point, deltaX: 0, deltaY });
   await settle();
 }
+async function nativeClick(selector) {
+  const point = await exec(`(() => {
+    const el=document.querySelector(${JSON.stringify(selector)}),r=el.getBoundingClientRect();
+    const x=Math.round(r.left+r.width/2),y=Math.round(r.top+r.height/2);
+    if(!el.contains(document.elementFromPoint(x,y)))throw new Error('Navigation control is not exposed');
+    return {x,y};
+  })()`);
+  win.focus();
+  win.webContents.focus();
+  win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
+  win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
+}
+async function restorationNavigation() {
+  await exec(`(() => {
+    let prototype=viewer,descriptor;
+    while(prototype&&!descriptor){descriptor=Object.getOwnPropertyDescriptor(prototype,'scrollTop');prototype=Object.getPrototypeOf(prototype);}
+    if(!descriptor?.get||!descriptor?.set)throw new Error('Missing native scrollTop accessor');
+    const w=window.__restoreNavigation={own:Object.getOwnPropertyDescriptor(viewer,'scrollTop'),
+      width:editorPanel.style.width,phase:'setup',writes:[]};
+    Object.defineProperty(viewer,'scrollTop',{configurable:true,get(){return descriptor.get.call(this);},
+      set(value){descriptor.set.call(this,value);w.writes.push({phase:w.phase,value,stack:new Error().stack});}});
+    w.position=()=>{
+      const {ready,pendingGeometry,owner,matchesSource,selection,mappedSelection}=getEditorScrollDiagnostics();
+      return {top:viewer.scrollTop,path:currentFilePath,sequence:fileOpenSequence,generation:renderGeneration,
+        source:originalMarkdown===markdownEditor.value,
+        sourceHeading:window.__scrollOracle.sourceTop('# Scroll correspondence')-markdownEditor.scrollTop,
+        previewHeading:(viewer.querySelector('h1').getBoundingClientRect().top-viewer.getBoundingClientRect().top)/scrollerScale(viewer),
+        ready,pendingGeometry,owner,matchesSource,selection,mappedSelection};
+    };
+    w.resize=()=>{w.phase='resize';w.pendingAtResize=window.CustomTabs.__scrollRestorePending();
+      w.withinWindow=performance.now()<w.deadline;w.beforeWidth=viewer.getBoundingClientRect().width;
+      editorPanel.style.width=(editorPanel.getBoundingClientRect().width+32)+'px';};
+    w.observer=new ResizeObserver(()=>{if(w.phase==='resize')w.resized=true;});
+    w.observer.observe(viewer);
+    return true;
+  })()`);
+  const legs = [];
+  try {
+    for (const navigate of [false, "TOC", "search"]) {
+      await exec(`editorPanel.style.width=window.__restoreNavigation.width;
+        if(searchPanel.classList.contains('visible'))toggleSearchPanel();
+        ${navigate === "search" ? "toggleSearchPanel();" : ""}
+        true`);
+      await nativeWheel("preview", -1);
+      await exec("viewer.scrollTop=400;true");
+      await frames();
+      const saved = await exec("viewer.scrollTop");
+      await exec(`(async()=>{
+        const w=window.__restoreNavigation;w.deadline=performance.now()+1100;
+        const tabs=window.CustomTabs.getTabs();
+        await window.CustomTabs.switchToTab(tabs.find(t=>t.filePath===${JSON.stringify(second)}).id);
+        await window.CustomTabs.switchToTab(tabs.find(t=>t.filePath===${JSON.stringify(first)}).id);
+        return true;
+      })()`);
+      await wait("controlled tab restoration", `currentFilePath===${JSON.stringify(first)}&&
+        viewer.querySelector('h1')?.textContent==='Scroll correspondence'&&isEditMode&&
+        getEditorScrollDiagnostics().ready&&!getEditorScrollDiagnostics().pendingGeometry&&
+        window.CustomTabs.__scrollRestorePending()&&Math.abs(viewer.scrollTop-${saved})<1`);
+      const setup = await exec(`({pending:window.CustomTabs.__scrollRestorePending(),
+        scroller:window.CustomTabs.__getScroller()===viewer,...window.__restoreNavigation.position()})`);
+      const armed = saved > 300 && setup.pending && setup.scroller && setup.source &&
+        setup.matchesSource && setup.selection === setup.mappedSelection && Math.abs(setup.top - saved) < 1;
+      check(`controlled ${navigate || "restoration"} leg has the real current-source restore armed`, armed, setup);
+      if (!armed) throw new Error("Controlled restoration setup was not reached");
+      await exec(`(() => {
+        const w=window.__restoreNavigation;w.writes=[];w.resized=false;w.stopped=false;w.phase='navigation';
+        w.completed=false;w.reached=null;w.current=false;w.pendingAfterNavigation=null;
+        w.heading=viewer.querySelector('h1');w.start=w.position();w.progress=false;w.trustedClick=false;
+        w.target=${navigate === "search" ? "searchNextBtn" : "indexList.querySelector('.index-item')"};
+        w.beforeClick=()=>{w.pendingBeforeNavigation=window.CustomTabs.__scrollRestorePending();};
+        w.clicked=event=>{w.trustedClick=event.isTrusted;w.pendingAfterNavigation=window.CustomTabs.__scrollRestorePending();};
+        w.moved=event=>{if(event.target===viewer&&event.isTrusted)w.progress=true;};
+        w.ended=event=>{
+          if(event.target!==viewer||!event.isTrusted)return;
+          const finish=()=>{
+            if(w.stopped)return;
+            const position=w.position();
+            if(!position.ready||position.pendingGeometry){requestAnimationFrame(finish);return;}
+            w.reached=position;
+            w.current=w.heading.isConnected&&w.heading===viewer.querySelector('h1')&&
+              w.start.sequence===fileOpenSequence&&w.start.generation===renderGeneration&&
+              w.start.path===currentFilePath&&(${navigate === "search"}
+                ?searchMatches.length===1&&currentMatchEl?.closest('h1')===w.heading
+                :indexList.querySelector('.index-item.active')?.dataset.headerId===w.heading.id);
+            w.resize();w.completed=true;
+          };
+          requestAnimationFrame(finish);
+        };
+        if(${!!navigate}){
+          w.target.addEventListener('click',w.beforeClick,{once:true,capture:true});
+          w.target.addEventListener('click',w.clicked,{once:true});
+          viewer.addEventListener('scroll',w.moved);
+          viewer.addEventListener('scrollend',w.ended,{once:true});
+          if(${navigate === "search"}){
+            searchInput.value='Scroll correspondence';searchInput.dispatchEvent(new Event('input',{bubbles:true}));
+          }
+        }else w.resize();
+        return true;
+      })()`);
+      if (navigate) {
+        await nativeClick(navigate === "search" ? "#searchNext" : "#indexList .index-item");
+        await wait("native current navigation completion", "window.__restoreNavigation.completed");
+      }
+      await wait("controlled actual resize", "window.__restoreNavigation.resized&&getEditorScrollDiagnostics().ready&&!getEditorScrollDiagnostics().pendingGeometry");
+      await frames();
+      const result = await exec(`(() => {const w=window.__restoreNavigation;return {
+        beforeWidth:w.beforeWidth,afterWidth:viewer.getBoundingClientRect().width,withinWindow:w.withinWindow,
+        pendingAtResize:w.pendingAtResize,pendingAfterNavigation:w.pendingAfterNavigation,
+        pendingBeforeNavigation:w.pendingBeforeNavigation,
+        progress:w.progress,trustedClick:w.trustedClick,current:w.current,reached:w.reached,
+        writes:w.writes,position:w.position()};})()`);
+      const restoreWrites = result.writes.filter(write => write.phase === "resize" &&
+        /custom-tabs\.js/.test(write.stack) && /\bapply\b/.test(write.stack));
+      legs.push({ navigate, saved, setup, ...result, restoreWrites });
+      check(`controlled ${navigate || "restoration"} leg changes the actual viewer box inside the restore window`,
+        result.withinWindow && Math.abs(result.afterWidth - result.beforeWidth) > 10, result);
+      check(`controlled ${navigate || "restoration"} leg retains current source and geometry`,
+        result.position.source && result.position.path === first && result.position.ready &&
+        result.position.matchesSource && result.position.selection === result.position.mappedSelection &&
+        result.position.sequence === setup.sequence && result.position.generation === setup.generation, result.position);
+      if (navigate) {
+        const reached = result.reached;
+        check(`${navigate} navigation completes native travel to its current-source heading before resize`,
+          result.pendingBeforeNavigation && result.trustedClick && result.progress && result.current && reached.source &&
+          reached.path === first && reached.owner === "preview" && reached.matchesSource &&
+          reached.selection === reached.mappedSelection &&
+          Math.abs(reached.top - saved) > 200 &&
+          (navigate === "search" ? reached.top < 1 && Math.abs(reached.sourceHeading - reached.previewHeading) < 36
+            : reached.top < 120 && Math.abs(reached.previewHeading) < 36 && Math.abs(reached.sourceHeading) < 36), result);
+        check(`explicit ${navigate} navigation immediately retires the old tab restoration`,
+          result.pendingAfterNavigation === false, result);
+        const destination = navigate === "search"
+          ? result.position.top < 1 && Math.abs(result.position.sourceHeading - result.position.previewHeading) < 36
+          : result.position.top < 120 && Math.abs(result.position.sourceHeading) < 36 && Math.abs(result.position.previewHeading) < 36;
+        check(`a real resize after completed ${navigate} navigation cannot restore the old reading position`,
+          restoreWrites.length === 0 && result.position.owner === "preview" && destination, result);
+        await capture("restore-navigation-" + navigate.toLowerCase());
+      } else {
+        check("a real resize still runs ordinary tab restoration at its saved reading position",
+          result.pendingAtResize && restoreWrites.length > 0 && Math.abs(result.position.top - saved) < 1, result);
+      }
+      await exec(`(() => {const w=window.__restoreNavigation;
+        w.stopped=true;w.target.removeEventListener('click',w.clicked);viewer.removeEventListener('scroll',w.moved);
+        w.target.removeEventListener('click',w.beforeClick,true);
+        viewer.removeEventListener('scrollend',w.ended);return true;})()`);
+    }
+  } finally {
+    receipt.restorationNavigation = legs;
+    await exec(`(() => {const w=window.__restoreNavigation;w.stopped=true;w.observer.disconnect();
+      w.target?.removeEventListener('click',w.clicked);viewer.removeEventListener('scroll',w.moved);
+      w.target?.removeEventListener('click',w.beforeClick,true);
+      viewer.removeEventListener('scrollend',w.ended);
+      if(searchPanel.classList.contains('visible'))toggleSearchPanel();editorPanel.style.width=w.width;
+      if(w.own)Object.defineProperty(viewer,'scrollTop',w.own);else delete viewer.scrollTop;
+      delete window.__restoreNavigation;return true;})()`);
+    await nativeWheel("preview", -1);
+  }
+}
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
   win.setSize(1440, 920);
@@ -764,12 +922,34 @@ async function run() {
       await mode(true);
       await exec("setIndexVisible(true);true");
       await settle();
-      await exec("indexList.querySelector('.index-item').click();true");
-      await sleep(600);
+      await exec(`(() => {
+        window.__tocCompletion={sequence:fileOpenSequence,generation:renderGeneration,
+          heading:viewer.querySelector('h1'),source:originalMarkdown,path:currentFilePath,progress:false};
+        const w=window.__tocCompletion;
+        w.moved=event=>{if(event.target===viewer&&event.isTrusted)w.progress=true;};
+        w.ended=event=>{if(event.target===viewer&&event.isTrusted)w.completed=true;};
+        viewer.addEventListener('scroll',w.moved);viewer.addEventListener('scrollend',w.ended,{once:true});
+        return true;
+      })()`);
+      await nativeClick("#indexList .index-item");
+      await wait("TOC native completion and current-source geometry", `(() => {
+        const w=window.__tocCompletion,d=getEditorScrollDiagnostics();
+        return w.completed&&d.ready&&!d.pendingGeometry&&d.matchesSource&&d.selection===d.mappedSelection;
+      })()`);
+      const tocCompletion = await exec(`(() => {const w=window.__tocCompletion;
+        viewer.removeEventListener('scroll',w.moved);viewer.removeEventListener('scrollend',w.ended);
+        return {progress:w.progress,current:w.sequence===fileOpenSequence&&w.generation===renderGeneration&&
+          w.heading.isConnected&&w.heading===viewer.querySelector('h1')&&w.source===originalMarkdown&&
+          w.source===markdownEditor.value&&w.path===currentFilePath};})()`);
       const tocNavigation = await exec("({owner:getEditorScrollDiagnostics().owner,top:viewer.scrollTop,sourceHeading:window.__scrollOracle.sourceTop('# Scroll correspondence')-markdownEditor.scrollTop,previewHeading:(viewer.querySelector('h1').getBoundingClientRect().top-viewer.getBoundingClientRect().top)/scrollerScale(viewer)})");
+      check("TOC navigation completes real preview travel for the same admitted heading",
+        tocCompletion.progress && tocCompletion.current, tocCompletion);
       check("TOC navigation takes preview ownership without an old editor frame undoing the jump",
         tocNavigation.owner === "preview" && tocNavigation.top < 120 &&
         Math.abs(tocNavigation.sourceHeading) < 36 && Math.abs(tocNavigation.previewHeading) < 36, tocNavigation);
+      await restorationNavigation();
+      await exec("indexList.querySelector('.index-item').click();true");
+      await wait("TOC cleanup destination", "viewer.scrollTop<120&&getEditorScrollDiagnostics().ready&&!getEditorScrollDiagnostics().pendingGeometry");
       await exec("viewer.querySelector('h1').click();true");
       await settle();
       await exec("markdownEditor.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));markdownEditor.scrollTop=2000;true");

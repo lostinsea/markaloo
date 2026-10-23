@@ -109,6 +109,12 @@ This approach means after an upstream merge, you only need to ensure these files
   It does not scroll past visible content to manufacture a pixel-for-pixel match.
 - Wheel, scrollbar and keyboard input choose the driving pane. Follower scroll
   events cannot take ownership. TOC, search and zoom explicitly use the preview.
+- Explicit TOC, document search, internal-link and note navigation cancel the
+  saved tab restore before smooth scrolling. Later layout changes cannot replay
+  that old reading position. Ordinary tab restoration still follows layout.
+- The editor-scroll `transitions` route checks real tab returns, native TOC and
+  search-button clicks, completed current-source destinations and actual pane
+  resizing. It waits for native scrolling and source geometry, not a fixed delay.
 - Scroll-only actions do not change text, focus, selection, undo or dirty state.
   Horizontal scrolling and nested scrollports remain independent.
 - New input suspends mapping until the matching preview commits. Layout changes,
