@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEPS 1-2 ACCEPTED; STEP 3 DEFINITION COMPLETE; COORDINATOR HANDOFF; COLLECTION AND STEPS 4-6 NOT STARTED** (2026-10-23).
+- `performance-architecture` - **STEPS 1-2 AND STEP 3 DEFINITION ACCEPTED; COLLECTION STOPPED AT METHOD GAP; STEPS 4-6 NOT STARTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -82,7 +82,7 @@ section is kept here so the register has a visible edge.
   - Step 3 starts from that clean local commit. Astra guides source-qualified
     workload, retained-evidence and minimal-method definition; Sol/high owns
     the same document, then independent Sol/Luna review its actual contract.
-    No runtime collection or optimization selection is authorized in this unit.
+    That definition did not authorize runtime collection or optimization selection.
     The draft fixes three existing prose/code/rich constructions and separates
     observed text/layout, required presentation, actual typing, current-source
     preview/mapping and driver/follower movement. Retained receipts are limited
@@ -105,10 +105,39 @@ section is kept here so the register has a visible edge.
     Step 3 exits with workloads/endpoints, evidence-use limits, fixed method,
     unchanged gates and one proposed missing-baseline unit. No runtime result
     is claimed, and no behavior decision blocks this definition.
-  - This unit is local documentation only: no product/harness edits, app or
-    test execution, measurements, dependencies, push, integration or release.
-    Step 3 ends at reviewed local documentation and coordinator handoff.
-    Any missing-baseline collection and Steps 4-6 need later sequential handoffs.
+  - Coordinator accepted the definition at
+    `66519d8e5098de7187218f217fb76d921020f129` and authorized its one bounded
+    collection unit. This session solely owns app/input/collection.
+    Session-owned glue and a path-only copy of the retained 1 Hz host sampler
+    require exact executable/declaration Sol/Luna review before Electron.
+    Missing `electron`/`electron-updater` and vendored outputs were observed;
+    `npm ci` restored the locked dependencies without tracked changes.
+    Initial executable reviews both rejected ambiguous wheel delivery and
+    serialized presentation timing. Sol also found the wrong copy-button
+    container, repeated source splitting and a final-journey host check gap.
+    The bounded correction adds independent Main milestone receipts, exact
+    trusted pane delivery, cached witnesses and post-journey host checks.
+    Sol accepted that correction. Luna found that final sampler failure could
+    still leave the overall result complete; clean sampler exit now gates
+    completion too. Both approve the exact final executable/declaration.
+    The single invocation stopped at code admission preflight: the collector
+    expected a preload path from `getLastWebPreferences()`, received no field
+    and called `path.resolve(undefined)`. Its absent-observer teardown also
+    errored. This does not establish a missing product preload.
+    **1/2** admission launches used; mixed admission not reached; **0/9**
+    sample journeys ran. No Open/input actions, endpoint/control receipts, screenshot
+    or response-latency result. No retry or replacement.
+    All four host rows retained, including the disk peak; no load exclusions
+    or causal claims. Sampler exited cleanly; recorded owned PIDs were absent.
+    [Result, limits and raw evidence pointer](PERFORMANCE-ARCHITECTURE.md#bounded-collection-result-method-gap).
+    Independent Sol/Luna agree on raw counts, host math and outcome limits.
+    The host wording now makes the absent page observer explicit. Astra
+    agrees this supplies no response baseline or replacement advantage.
+    Its wording corrections remove live execution permission and distinguish
+    collector activity from an observer that never installed.
+    Step 3 observations are unfinished.
+    No product/repository harness changes, comparison, optimization, push,
+    integration or release. Stop at local reviewed commit/coordinator handoff.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,

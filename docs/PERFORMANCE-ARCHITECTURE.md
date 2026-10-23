@@ -7,8 +7,9 @@
 - Do not start a whole-app language/framework rewrite. Do not choose a language,
   worker, package, cache or virtualization strategy before comparing the options.
 - Work through one deliverable at a time. Steps 1 and 2 are accepted.
-  Step 3's definition and independent reviews are complete in the same isolated
-  worktree, ready for coordinator handoff. No observations run here.
+  Step 3's definition is accepted at `66519d8e`. One bounded collection unit
+  stopped at its first admission launch with a collector preflight error.
+  No response samples were collected; Step 3 observations remain unfinished.
   Steps 4-6 have not started.
 - These are documentation deliverables, not runtime qualification or permission
   to choose or implement an optimization.
@@ -44,9 +45,11 @@ flowchart LR
 - Preserve existing performance gates in
   [PLANNED-WORK](PLANNED-WORK.md#performance-acceptance-gates).
   Step 3 adds decision-specific criteria; it does not quietly replace them.
-- No app, tests, builds, benchmarks, samplers, profiling or dependency commands
-  run for this documentation unit. No real profiles/logs, product/harness edits,
-  PoC imports, pushes, PRs, tags, integration or publication.
+- Steps 1-3 definition ran no app/tests/builds/benchmarks/samplers/profiling.
+  The coordinator authorized one bounded collection unit; it stopped below.
+  No further app or collection runs are authorized.
+  No real profiles/logs, product/repository harness edits, PoC imports, pushes,
+  PRs, tags, integration or publication.
 - Dependency maintenance remains separate and on hold through October 28, 2026,
   subject to approved feed availability. Do not bundle it into architecture work.
 
@@ -257,12 +260,14 @@ flowchart LR
 ```
 
 - This is a proposed, frozen collection contract for coordinator handoff, not
-  observations, agreed product SLOs or a selected optimization.
+  agreed product SLOs or a selected optimization. The coordinator accepted the
+  definition and authorized its one bounded collection unit.
 - Priority: current readable content, actual text entry and effective scrolling.
   Highlight/copy/overlay completion is a separate outcome, not a substitute.
 - Retained evidence protects named functionality and preserves failed gates.
   It does not establish released input effects while current work is pending.
-  Propose **one** missing-baseline unit below; do not start it here.
+  Only the **one** missing-baseline unit below is authorized; no comparisons
+  or Step 4 choice.
 
 ### Three workloads and their user journeys
 
@@ -371,6 +376,20 @@ flowchart LR
   observations, including injection/bridge/observer overhead. Renderer-local
   event-to-DOM intervals may be reported only if actually captured cheaply.
   Never subtract timestamps from different processes.
+- **Shared-host context:** reuse the retained `canonical-final-completion-r1`
+  `comparison\sampler.ps1` from session `5850f9b8-b9de-40a3-9c51-0398a8ada7d9`.
+  Copy it into this session's `files\step3-observation`; change only its output
+  and stop-file path literals. The frozen declaration pins original/configured
+  hashes and verifies that exact delta before execution.
+- Its existing 1 Hz Windows counters record total CPU, available memory,
+  aggregate disk bytes/sec and disk queue, including status values and UTC.
+  Keep every row, including busy periods, beside all slow/failed attempts.
+  Counter validity is a method check, not a quiet-host filter.
+- The sampler/observer consume resources too. Record their identities/cadence,
+  logs and observer work; do not subtract guessed overhead or attribute elapsed
+  delay to host load. Coarse host UTC context is not a cross-process latency
+  clock. No new per-process monitoring, calibration framework or unrelated
+  process changes.
 - Existing test-side `executeJavaScript` access can install temporary input/wheel
   listeners and DOM observers without changing product source. Paired
   event/effect timing is not an already-qualified helper; admission must prove
@@ -446,6 +465,40 @@ flowchart LR
   semantics. A later proposal for partial/degraded output, changed debounce or
   scroll ownership needs a specific behavior decision; none is made here.
 
+### Bounded collection result: method gap
+
+- **Source:** unchanged released `f5d380786fb895bf783e263f79aea6316f303ad1`;
+  documentation base `66519d8e5098de7187218f217fb76d921020f129`.
+  Locked Electron `43.4.1`; declared code fixture `26,351` bytes.
+- **Exact reviewed executable:** `d8991b6db4e32935d03b52af1bed445f839644da0ffe3590afbaf68224137b1f`.
+  **Declaration:** `7c2be5496d0a4f3ee5a9fd194c808edb83fdc744e7c60acfa8a44accd54f9638`.
+  Independent Sol/Luna approved both before the single invocation.
+
+| Outcome | What was actually reached | Evidence limit |
+|---|---|---|
+| **One failed admission launch; no samples** | Code process exited `2`. Mixed admission was not reached: **1/2** allowed admission launches, **0/9** sample journeys. No retry or replacement. | Launching an admission process is not admitting its document. Native Open, typing and wheel actions were not reached. |
+| **Collector preflight failed** | `getLastWebPreferences()` supplied no `preload` field; the collector passed `undefined` to `path.resolve`. Isolation, sandbox and disabled page Node were recorded, but the full preflight did not pass. | This is not proof that production preload is missing. [Main configures it](../src/main.js#L3289-L3300); the collector assumed that introspection would return its path. |
+| **No qualified response endpoints** | No observer installation, viewport receipt, sentinel liveness proof, timed endpoint or positive control. Teardown then queried the absent observer, causing a second error. No screenshot was produced. | No latency, no-effect, pending-input, physical-paint or product-failure conclusion. Not a slow sample or a 30-second cutoff. |
+| **Host context retained** | All four counter rows/statuses retained, UTC `22:19:45.3306426` to `22:19:48.6085170` on 2026-10-23. CPU `3.44-26.18%`; available memory `73,386-73,821 MiB`; peak disk `192,884,238 bytes/s`, queue `7.247`. | Coarse context overlaps the sampler and failed Electron startup/teardown; no Step 3 page observer installed. No rows excluded, overhead subtracted or failure attributed to host load. |
+| **Owned processes stopped** | Sampler exited `0` cleanly; no watchdog or forced stop. Child destroyed its windows. All four recorded browser/renderer/utility/sampler PIDs were absent at `22:20:29Z`. | Fresh run-owned profile/raw files retained. No real profile or unrelated process changed. |
+
+- The entry script was session-owned: `app.getAppPath()` pointed there and
+  `app.getVersion()` returned Electron's `43.4.1`. This was not a packaged
+  Markaloo launch; no packaged/startup fidelity is claimed.
+- Raw evidence is under
+  `C:\Users\vinma\.copilot\session-state\301ba72b-7659-4969-acb2-ac1d3ace6632\files\step3-observation`.
+  `result.json` and `admission-code.json` retain the failed attempt;
+  `declaration.json`, `executable-review.json`, `host.jsonl` and `cleanup.json`
+  retain the pins, gate, complete host rows and scoped cleanup.
+- **Step 3 observations remain unfinished.** Existing source/release evidence
+  keeps its stated scope; this attempt supplies no new response-cost baseline
+  for ranking replacements. Steps 4-6 have not started.
+- **Coordinator handoff:** resolve only the collector's preload witness and
+  absent-observer teardown before considering another bounded authorization.
+  The [existing production-bridge witness](../test/test-language-highlighting.js#L296-L301)
+  is prior art, not permission to change production or retry now. Recheck the
+  entry-mode limits too; unused launch slots are not replacement attempts.
+
 ## Open gaps and decision limits
 
 - **Responsiveness:** full rendering can resolve before its idle highlighting,
@@ -495,9 +548,13 @@ flowchart LR
   Coordinator accepted local `3da5324dcefeca57327e6631929afa30bd4575f9`.
   Agreements, differences and corrections are recorded in the
   [work register](PLANNED-WORK.md#current-workset).
-- Step 3 is documentation only: define concrete workloads/outcomes, qualify
-  reusable evidence and freeze minimal methods/stop rules. Its three-workload
-  contract and independent Sol/Luna correction checks are complete; no blocker
-  or unresolved disagreement remains. The one proposed collection unit has
-  not run. Stop after this reviewed local commit and coordinator handoff;
-  do not collect observations or start Steps 4-6 here.
+- Step 3 defines concrete workloads/outcomes, qualifies reusable evidence and
+  freezes minimal methods/stop rules before observations. Its three-workload
+  contract and independent Sol/Luna correction checks were accepted at
+  `66519d8e`. The coordinator authorized only its one bounded collection.
+  Independent Sol/Luna checks approved the exact executable/declaration and
+  shared-host addition. That unit stopped at its first admission preflight;
+  the result above is a method gap, not a response baseline.
+  No further app or collection runs are authorized.
+  Stop after the reviewed result/local commit and coordinator handoff;
+  Steps 4-6 remain unstarted.
