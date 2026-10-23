@@ -10,6 +10,8 @@
   Step 3's definition is accepted at `66519d8e`. One bounded collection unit
   stopped at its first admission launch with a collector preflight error.
   No response samples were collected; Step 3 observations remain unfinished.
+  A separate user-authorized one-code recheck reached Open/reading controls,
+  then stopped at the collector's split-width check. No sample journeys ran.
   Steps 4-6 have not started.
 - These are documentation deliverables, not runtime qualification or permission
   to choose or implement an optimization.
@@ -47,7 +49,8 @@ flowchart LR
   Step 3 adds decision-specific criteria; it does not quietly replace them.
 - Steps 1-3 definition ran no app/tests/builds/benchmarks/samplers/profiling.
   The coordinator authorized one bounded collection unit; it stopped below.
-  No further app or collection runs are authorized.
+  The separate one-code recheck below also stopped. No further app/collection
+  runs, mixed admission, sample journeys or automatic continuation are authorized.
   No real profiles/logs, product/repository harness edits, PoC imports, pushes,
   PRs, tags, integration or publication.
 - Dependency maintenance remains separate and on hold through October 28, 2026,
@@ -493,11 +496,59 @@ flowchart LR
 - **Step 3 observations remain unfinished.** Existing source/release evidence
   keeps its stated scope; this attempt supplies no new response-cost baseline
   for ranking replacements. Steps 4-6 have not started.
-- **Coordinator handoff:** resolve only the collector's preload witness and
-  absent-observer teardown before considering another bounded authorization.
+- **Gap at that handoff:** collector preload witness and absent-observer teardown.
   The [existing production-bridge witness](../test/test-language-highlighting.js#L296-L301)
-  is prior art, not permission to change production or retry now. Recheck the
-  entry-mode limits too; unused launch slots are not replacement attempts.
+  is prior art, not permission to change production. That unit is closed;
+  the separate authorization below does not reuse its unused launch slots.
+
+### Separate one-code admission recheck
+
+- User selected bounded collector repair and **one code admission only**.
+  That one launch exited `2` with a collector setup gap. **This authorization:
+  1/1 launch, zero sample journeys. Cumulative: two code-process launches,
+  zero mixed admissions and zero sample journeys.** No replacement or further run.
+- Base `85e3f40720d4425b01520346e5d6eef5381b10f2`; runtime remains released f5.
+  Exact reviewed executable
+  `f63373d4864915bc26e1e04bd4a9093b504abddd1a29f34a9545096acf09a233`;
+  declaration `f5967a860d5b16ddf16d30a34fd21dae91c214f3365e022813e94c46376c7621`.
+  Sol/Luna approved both before execution. Parent/child hard fences permit
+  only one code job, even if its controls pass.
+- Repair was limited to the preload witness and early-failure cleanup: pinned
+  production Main/preload configuration plus existing isolation/frozen-bridge
+  checks, not a missing introspection field; guard uninstalled-observer teardown.
+  The renderer observer and declared actions/endpoints remain unchanged.
+
+| Reached or stopped | Actual evidence | Limit |
+|---|---|---|
+| **Native Open and presentation reached** | Fresh Welcome, isolation/bridge and both live error sentinels passed. Code opened through Main with current `documentRef`/source guards. Availability and required code/text/token/copy-control presentation milestones settled. Viewport `1428 x 890`, DPR `1.25`; light/100% setup. | DOM/layout and control presence, not physical paint, clipboard permission or full product certification. Both milestones preceded the early wheel's delivery; naturally pending presentation response was **not observed**. |
+| **Reading movement observed** | One trusted, intended-pane early wheel moved reading `scrollTop` **0 -> 100**. Same-process settled reading control moved **100 -> 200**. | Actual driver movement, not just event receipt. Reading-mode `pendingGeometry` is not proof of pending render/input. No editor/follower claim. |
+| **Edit setup stopped** | Editor entry's mapping reported ready/current source, no pending source/geometry and equal selection IDs. Then `editorPanel.style.width !== "50.00%"` raised **Split ratio mismatch**. The actual serialized width was not retained. | Mapping readiness is not correspondence certification: its initial mirror/Range diagnostic was **140.05 px**. The later split-wheel correspondence controls never ran. The width error does not prove an incorrect product split or a serialization cause. |
+| **Typing/follower controls not reached** | No caret/marker insertions, source wheel, latest edited preview or post-edit text/split controls; revisions remained empty. | Full admission method remains **unqualified**. Not a typing no-response sample or a performance pass. |
+
+- Astra's source trace supports these **source-entry controls**, not package
+  equivalence: [page/resources](../src/main.js#L3384-L3405) resolve from production
+  source/document paths. Do not override `app.getAppPath()` or version metadata.
+  Welcome's version label differs; unpackaged updater/startup behavior and
+  [source-only diagnostics](../src/main.js#L3293-L3296) differ too.
+  No packaged/startup/updater/export or physical-input/paint claim.
+- All **three** host rows/statuses retained: CPU `4.53-23.12%`, available memory
+  `72,989-73,095 MiB`, peak disk `27,450,676 bytes/s`, queue `0.1983`.
+  Pre-capture observer snapshot: **11 checks, 18.0 ms frame-body elapsed,
+  one presentation census**. This excludes event listeners, MutationObserver,
+  bridge/Main, sampler and later capture/teardown; not total overhead or CPU.
+  No exclusions, overhead subtraction or host-load blame.
+- Sampler exited `0`; owned windows destroyed. All five recorded PIDs were
+  absent at `22:56:44Z`; no watchdog or forced stop. No observer receipt/teardown
+  error. Captured screenshot was viewed: split source/colored preview exists,
+  but that is not a numeric split-ratio or timed-paint proof.
+- Raw evidence is in the same session's `files\step3-admission-repair`:
+  `result.json`, `admission-code.json`, `host.jsonl`, declaration/review and
+  cleanup receipts. Elapsed intervals remain admission diagnostics, not a
+  representative baseline. The failed `step3-observation` directory's pinned
+  bytes, including its executable/declaration/marker, remained unchanged.
+- **Remaining gap:** the split-width setup check failed without recording its
+  actual value. Full source-input/follower admission is not established.
+  Stop here; no further repair, launch, sample journeys or Step 4 authorized.
 
 ## Open gaps and decision limits
 
@@ -555,6 +606,7 @@ flowchart LR
   Independent Sol/Luna checks approved the exact executable/declaration and
   shared-host addition. That unit stopped at its first admission preflight;
   the result above is a method gap, not a response baseline.
-  No further app or collection runs are authorized.
+  A separate user decision permitted only the repaired one-code admission
+  above. It too stopped at a setup gap; no further runs are authorized.
   Stop after the reviewed result/local commit and coordinator handoff;
   Steps 4-6 remain unstarted.

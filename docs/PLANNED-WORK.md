@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEPS 1-2 AND STEP 3 DEFINITION ACCEPTED; COLLECTION STOPPED AT METHOD GAP; STEPS 4-6 NOT STARTED** (2026-10-23).
+- `performance-architecture` - **STEP 3 OBSERVATIONS UNFINISHED; ONE-CODE RECHECK STOPPED AT SETUP GAP; STEPS 4-6 NOT STARTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -138,6 +138,29 @@ section is kept here so the register has a visible edge.
     Step 3 observations are unfinished.
     No product/repository harness changes, comparison, optimization, push,
     integration or release. Stop at local reviewed commit/coordinator handoff.
+  - User separately authorized minimal collector repair and **one code admission
+    only** from accepted `85e3f40720d4425b01520346e5d6eef5381b10f2`.
+    Prior attempt remains immutable; new files/profile/counters live under
+    session `files\step3-admission-repair`. No mixed admission, sample journeys
+    or replacement. Stop after the single launch regardless of result.
+    Sol repairs only the preload witness and early-failure cleanup, with a hard
+    parent/child one-code fence. Astra's source assessment accepts named
+    source-entry controls with metadata/diagnostic limits, not packaged fidelity.
+    No metadata override or product change. Independent Sol/Luna approved the
+    exact executable/declaration and failure paths before the one launch.
+    Native Open, presentation and reading wheels reached actual movement.
+    Initial mapping was ready, but does not certify correspondence. The exact
+    split-width string check then failed; its actual value was not retained.
+    Typing/source-wheel/follower/post-edit controls were not reached.
+    **This authorization: 1/1 launch, zero sample journeys. Cumulative:
+    two code-process launches, zero mixed admissions, zero sample journeys.**
+    Prior directory bytes remain unchanged; all three new host rows retained.
+    Observer snapshot/entry limits and viewed screenshot are scoped in the
+    [one-code result](PERFORMANCE-ARCHITECTURE.md#separate-one-code-admission-recheck).
+    Sampler/windows stopped; five recorded PIDs absent. Independent Sol/Luna
+    approve the raw-outcome interpretation and actual documentation; both agree
+    on partial reading evidence, unfinished input/follower admission and limits.
+    No unresolved review disagreement. No further repair/run.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
