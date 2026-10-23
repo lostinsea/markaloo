@@ -6,10 +6,11 @@
   Improve a component or replace a subsystem when evidence supports it.
 - Do not start a whole-app language/framework rewrite. Do not choose a language,
   worker, package, cache or virtualization strategy before comparing the options.
-- Work through one deliverable at a time. This assignment covers the plan and
-  source-based Step 1 only. Steps 2-6 have not started.
-- Step 1 inventory and independent Sol/Luna review are complete. Coordinator
-  handoff comes next; no runtime qualification or Step 2 execution is claimed.
+- Work through one deliverable at a time. Step 1 is accepted; source-based
+  Step 2 and its independent reviews are complete in the same isolated
+  worktree, ready for coordinator handoff. Steps 3-6 have not started.
+- These are documentation deliverables, not runtime qualification or permission
+  to choose or implement an optimization.
 
 ```mermaid
 flowchart LR
@@ -110,6 +111,136 @@ flowchart LR
   after an edit; highlighted-token search/copy; full export while work is pending.
   Do not create hundreds of new cases or a second proof catalog by default.
 
+## Step 2: actual architecture map
+
+```mermaid
+flowchart TD
+    N["Native open / trusted gesture"] --> M["Main: disk receipt + admission"]
+    M --> B["Preload + shared document event"]
+    B --> T["Tabs: verify owner; retain each document"]
+    T --> O["beginFileOpen: selected stores + tracking"]
+    O --> R["renderMarkdown dispatch"]
+    I["Textarea input"] --> D["Dirty/source witness + history/preview timers"]
+    D --> R
+    R --> L["Light: synchronous parse, patch, highlight, copy"]
+    R --> F["Full: timer; parse/patch; awaited Mermaid; rich DOM"]
+    F -. "scheduled, not awaited" .-> H["Idle highlight + copy + overlay release"]
+    L --> C["Mapping commit"]
+    F --> C
+    C --> G["Scheduled geometry and pane synchronization"]
+    R -. "separate completion chain" .-> A["Tab completion / bounded restore"]
+    V["TOC / search / link / note"] --> X["Retire old restore; request smooth scroll"]
+    X --> G
+    U["Explicit Save / view-edit save"] --> S["Save exact bytes + owning request"]
+    D -. "current source" .-> S
+    S --> W["Main write queue + guarded write/readback"]
+    W --> Z["Owning saved baseline; keep newer draft"]
+    E["PDF request"] --> P["Main destination dialog"]
+    P --> Q["Renderer theme hold + Mermaid settlement + two frames"]
+    Q --> Y["Main prints live page; writes file; sends result"]
+    Y --> K["Release theme hold; restore current preference"]
+```
+
+- Source-only map from accepted Step 1 commit
+  `eb493dd8ccbb4f05933a715f9137097c142e44ab`; product bytes still match v0.10.0.
+  The diagram shows control flow, not measured duration or guaranteed completion.
+- Scope: central admission, selection, editor render, late results,
+  navigation/resize and export. P1-P13 remain the preservation inventory.
+  Main's trusted file/update authority and narrow preload capabilities remain
+  boundaries, not replacement-design proposals.
+
+### Owners and identities
+
+| Owner / coordinate | What the current code owns or checks |
+|---|---|
+| **Main: admission and disk authority** | Admission includes random document `ref`, persistent `entryId`, logical spelling, physical target/path key, disk receipt and sender/page scope. A path alone is not authority. File delivery has its own epoch; watcher selection has another generation. [Admission](../src/main.js#L3011-L3104), [delivery scope](../src/main.js#L4461-L4489). P1/P2/P7/P13. |
+| **Preload and document events** | Preload validates/projects fixed payloads and captures private trusted gestures. Document events make one page-local clone shared by subscribers; dispatch does not await subscriber promises. Neither layer certifies rendering. [Preload events](../src/main-preload.js#L322-L401), [shared dispatch](../src/document-events.js#L41-L52). P1/P3/P7. |
+| **CustomTabs: per-document state** | Owns current tab bytes, written baseline, editor/history/selection/scroll state and conflict witnesses. `snapshotActiveTab()` folds the shared live editor/source into its owning cache. Document identity combines page session, Main renderer epoch, tab/document generation and path key; it includes `documentRef` when the tab has an admission. Not every local identity lookup checks that ref. [State](../src/custom-tabs.js#L392-L451), [snapshot](../src/custom-tabs.js#L2426-L2520), [identity](../src/custom-tabs.js#L3639-L3670), [local lookup](../src/custom-tabs.js#L3887-L3910). P2/P4/P5. |
+| **Same-document source/mutation** | Ordinary typing does not replace document generation. Mutation revisions, captured text/cache and operation-specific sequences provide additional checks. There is no universal captured source-revision token across every path. Textarea text is the live source while editing; `originalMarkdown` can remain the saved/discard baseline underneath newer typing. [Consent revisions](../src/custom-tabs.js#L480-L555), [live source](../src/custom-tabs.js#L649-L668), [Save comparison](../src/renderer.js#L4790-L4803). P3/P4/P5. |
+| **Renderer: selected stores and visual work** | `fileOpenSequence` owns selected-file completion; editor mode has its own revision. Renderer `renderGeneration` advances on render dispatch, not raw input. CustomTabs has a **different, locally scoped counter also named `renderGeneration`** for visual continuations. Neither counter is document generation or a universal source revision. [Open boundary](../src/renderer.js#L8326-L8361), [renderer dispatch](../src/renderer.js#L6704-L6719), [tab counter/completion](../src/custom-tabs.js#L2522-L2525), [tab continuation](../src/custom-tabs.js#L2906-L2955). P3/P6/P8/P9. |
+| **Editor-scroll: correspondence and geometry** | A source mapping captures `fileOpenSequence` as its selection identity. Committed source, exact textarea match, pending-source state and geometry state are separate checks. This identity is not the watcher selection generation. [Wiring](../src/renderer.js#L1011-L1016), [source capture](../src/editor-scroll.js#L119-L137), [usable geometry](../src/editor-scroll.js#L509-L619), [commit/diagnostics](../src/editor-scroll.js#L841-L886). P6/P12. |
+
+### Central flow and asynchronous boundaries
+
+| Flow | Work, suspension points and actual guards |
+|---|---|
+| **Open and select — P1-P4** | Main asynchronously opens/reads/stats a stable disk snapshot; path validation and some metadata work remain synchronous. Delivery checks survive disk reads and large-document consent. Tabs can wait for ownership handshake, pending Save, conditional refresh and adoption. Before selection, switch intent, selected tab, existence, freeze, generation and mutation/text witnesses can invalidate the attempt. `beginFileOpen()` then moves selected path/source/editor/history/tracking coherently, with rollback on refusal; tracking includes **synchronous IPC**. [Disk read](../src/main.js#L3208-L3248), [delivery/admission](../src/main.js#L4604-L4821), [refresh witnesses](../src/custom-tabs.js#L2040-L2210), [switch](../src/custom-tabs.js#L2613-L2740), [begin](../src/renderer.js#L8326-L8643), [sync tracking bridge](../src/main-preload.js#L998-L1025). |
+| **Input and render — P3/P4/P6-P10** | Input marks dirty/mutation state and suspends old geometry. History and preview timers check captured open/mode revisions, then read the **current textarea**. Preview delay is configured at 400 ms; history at 800 ms: scheduling settings, not measured response bounds. Switching cancels editor timers. Mode selection scans previous/new source; only `light-format` takes the light path. Both paths parse/sanitize/verify/patch on renderer JS. Light also highlights/copies synchronously. Full first awaits a 10 ms timer, can await local Mermaid load and the shared Mermaid queue, then schedules an optional idle highlight/copy/overlay tail without awaiting it. [Input/timers](../src/renderer.js#L4066-L4100), [mode selection](../src/renderer.js#L6098-L6116), [light/full](../src/renderer.js#L6627-L7000). |
+| **Late render/reload — P2/P3/P6/P8** | Render generation checks reject selected stale commits and callbacks, not every earlier computation. Module loading/queued or running Mermaid work is not universally aborted. Raw typing can precede the next render dispatch; generation checks alone are not a captured-text check. Reload carries owner/ref, selection, request sequence and source snapshot; adoption and completion add path/current-source checks. Background results update their owner without repainting another foreground tab. [Mermaid adoption](../src/renderer.js#L2727-L2815), [reload request](../src/renderer.js#L3522-L3598), [reload validation/adoption](../src/custom-tabs.js#L4887-L4969), [visual completion](../src/custom-tabs.js#L5395-L5518). |
+| **Save completion — P3-P5** | Save captures exact bytes, owner, sequence and editor history. Main queues writes per physical target and rechecks scope. The descriptor write/truncate/fsync loop is **synchronous Main work**, surrounded by asynchronous open/stat/close/readback. One memoized result decision separates pending-request settlement from permission to mutate a baseline. An accepted older Save advances written bytes, not newer draft text; background adoption stays document-owned. [Request](../src/custom-tabs.js#L3835-L3885), [renderer dispatch](../src/renderer.js#L4390-L4457), [Save queue](../src/main.js#L5818-L5848), [synchronous write/truncate/fsync](../src/main.js#L6630-L6642), [write/readback path](../src/main.js#L6389-L6748), [result settlement](../src/renderer.js#L4683-L4762), [baseline adoption](../src/custom-tabs.js#L3977-L4031). |
+| **Navigate, resize and scroll — P6/P10/P12** | TOC/search/internal-link/note navigation retires old restoration, claims preview ownership, then requests native smooth scrolling; it returns no movement-completion promise. Ordinary restore uses heading text/occurrence/delta or raw offset, applies now and through bounded frame/resize retries. Mapping commit schedules geometry; rebuild checks selection, exact source, pending state and active/frozen state. Resize, DOM/media/font changes can invalidate it again. Driver intent is distinct from actual vertical change; follower events cannot take ownership. [Navigation](../src/renderer.js#L1131-L1136), [restore](../src/custom-tabs.js#L1484-L1617), [geometry](../src/editor-scroll.js#L509-L772), [input filters/writes](../src/editor-scroll.js#L775-L886). |
+| **Export lifetime — P11** | Main awaits destination choice, sends prepare, then waits for pathless `pdf-export-ready`. Renderer holds export appearance, awaits Mermaid theme settlement and signals after two animation frames. Main prints the **live page**, writes bytes and sends the result; the OS-open request is started, not awaited before success. Final theme-hold release restores the reader's current stored preference. No per-export/document identity makes this a snapshot barrier. Pending highlight/media/fonts, all-page content and cancellation/destruction/concurrent lifetime remain uncertified. [Main export](../src/main.js#L4986-L5091), [theme/hold](../src/renderer.js#L3347-L3452), [prepare/result](../src/renderer.js#L3605-L3645), [Mermaid settlement](../src/renderer.js#L2838-L2864). |
+
+### Work placement, reuse and invalidation
+
+- **Renderer synchronous compute:** mode scans, normalization/emoji/placeholders,
+  Marked parsing, block hashes and LCS matching. Mapping creates canonical HTML
+  and a separate annotated parse; failed equivalence can trigger a coarse retry.
+- **Renderer DOM/layout:** DOMPurify, detached-tree verification, live patch and
+  binding transfer, rich-content controls, TOC/collapse, table measurements,
+  Prism token spans and textarea-mirror/Range geometry. These are not pure
+  string work or an off-thread path.
+- **Deferred does not mean off-thread:** a timer, idle callback or promise queue
+  changes scheduling. Once synchronous parse/highlight/measurement starts, it
+  occupies its JS thread until it returns. Invalidation can reject later
+  adoption without cancelling that work.
+- **Reuse existing mechanisms:** LCS patching keeps matching DOM/processed code;
+  Mermaid reuses source-keyed SVGs and a shared render/theme queue. Inert source
+  metadata is verified before binding to adopted nodes; geometry uses cached
+  coordinates until invalidated. Do not design a second cache/state machine
+  merely to describe these mechanisms.
+- **Helpers already available:** `beginFileOpen`/`completeFileOpen`,
+  `captureDialogContext`, `snapshotActiveTab`, `settleSaveResult`,
+  `scrollElementIntoView`, `queueMermaidWork`/`whenMermaidSettled` and
+  `getEditorScrollDiagnostics`. Their scope differs; none is global readiness.
+- Sources: [patch/reuse](../src/renderer.js#L6199-L6260),
+  [metadata verification](../src/editor-scroll.js#L318-L506),
+  [rich stages](../src/renderer.js#L6930-L6998),
+  [table layout](../src/renderer.js#L7453-L7506),
+  [Mermaid scheduling/adoption](../src/renderer.js#L2727-L2864).
+- **Guard limits, not reproduced failures:** some Undo/Redo and view-edit
+  completion callbacks restore scroll without an explicit captured owner/source
+  check. P8's table tie/dialog gaps remain; Mermaid's render-generation and
+  target/current-source-uniqueness checks are not captured source revision.
+  [Undo/Redo](../src/renderer.js#L1196-L1247),
+  [view-edit continuation](../src/renderer.js#L2455-L2466).
+
+### Readiness: what each signal actually means
+
+| Signal | Established / still not established |
+|---|---|
+| **Admission or native ticket accepted** | Scoped authority or an open request has started, not selected/adopted/displayed content. Ticket acceptance starts `openFile()` without awaiting it. [Ticket handling](../src/main.js#L2526-L2573). |
+| **Successful `beginFileOpen()`** | Selected stores/tracking moved coherently; no DOM/paint wait. `completeFileOpen()` is also synchronous: checks its sequence/freeze/approval, then applies or schedules positioning. Its caller arranges any preceding render wait. [Completion](../src/renderer.js#L8645-L8742). |
+| **`await switchToTab()`** | The selection path returned, possibly without selecting. It launches `renderMarkdown(...).then(...)` without awaiting that chain. It is **not render completion**. [Detached chain and return](../src/custom-tabs.js#L2906-L3021). |
+| **`await renderMarkdown()`** | Light synchronous work or full awaited stages returned. Stale exits and displayed-error paths can also resolve. Full idle highlight/copy/overlay may remain. It does not establish expected document/source DOM or physical paint by itself. [Dispatcher/full tail](../src/renderer.js#L6704-L7000). |
+| **Matching DOM; highlight/copy installed; overlay released** | Distinct observable stages, not one promise. A matching heading alone need not prove every block. Clipboard completion separately awaits its write; search decoration separately walks/modifies text nodes. None certifies stable geometry or complete export. [Copy](../src/renderer.js#L7658-L7757), [search](../src/renderer.js#L5009-L5230), [overlay ownership](../src/renderer.js#L3465-L3495). |
+| **Mapping committed / diagnostics ready** | Commit installs correspondence and schedules geometry. Check current source/selection **and** pending geometry; later layout can invalidate it. TOC/table tracking also has separate observers/frames. [Commit/diagnostics](../src/editor-scroll.js#L841-L886), [TOC/table tracking](../src/renderer.js#L5327-L5618). |
+| **Input delivered or driver claimed** | An event/intent was accepted, not actual movement, current-source preview text, or a follower write. Nested/horizontal/prevented wheel cases have different routing. [Input ownership](../src/editor-scroll.js#L775-L840). |
+| **PDF ready / result** | Ready means theme preparation reached its signal; two frames do not certify physical paint. Result reports the device/write outcome, not every page's content, document correlation or successful OS viewer launch. See P11 and the export flow above. |
+
+### Questions carried to Step 3, not investigated here
+
+- Which current-source outcome is delayed for each selected workload: admission,
+  readable DOM, overlay release, usable geometry or visible typing/scroll effect?
+- Which part is elapsed waiting versus synchronous Main/renderer occupancy?
+  Source placement identifies boundaries, not their cost or the bottleneck.
+- How much obsolete work survives rapid input/tab changes before its result is
+  rejected? Raw input, render dispatch and mapping readiness are different times.
+- What proves effective native input and sufficiently stable geometry for the
+  chosen scenario? Delivery, ownership and first rebuild are insufficient alone.
+- What complete-output/lifetime evidence is needed if export is affected?
+  The ready signal and nonempty/stub PDF bytes cannot prove every output page.
+- Which retained evidence matches the exact lifecycle/endpoint? Existing
+  [held-idle checks](../test/test-language-highlighting.js#L309-L340),
+  [native navigation/resize controls](../test/test-editor-scroll.js#L299-L437),
+  [late Save cases](../test/test-document-editor.js#L480-L535) and
+  [PDF-device checks](../test/test-language-highlighting.js#L407-L428) are useful
+  starting points, not new results. The [existing benchmark](../bench/run.js#L1363-L1458)
+  observes direct render return and later mutations/census; its labels do not
+  certify native open, paint, input effect, media or all background work.
+- No workload set, new method/SLO, observation or optimization is selected here.
+  Step 3 must freeze its own decision method before collecting missing evidence.
+
 ## Open gaps and decision limits
 
 - **Responsiveness:** full rendering can resolve before its idle highlighting,
@@ -146,15 +277,18 @@ flowchart LR
   mapping precision, bring that specific behavior choice to the user. Do not
   invent a contract or silently widen this plan.
 
-## Step 1 exit and next handoff
+## Step exits and next handoff
 
 - Inventory gate: released source identified; central flows grouped above;
   representative regression signals tied to source/tests; coverage and unknowns
   stated separately. This is source-based completion, not runtime qualification.
-- Review gate: fresh independent Sol/Luna review the plan and inventory before
-  the local documentation commit. Record agreements, differences and corrections
-  in the [work register](PLANNED-WORK.md#current-workset).
-- Stop after the reviewed local commit and coordinator handoff. Step 2's next
-  objective is only to map actual open/edit/render/export ownership, revisions,
-  cancellation and readiness against P1-P13. It must not choose or implement
-  an optimization, collect runtime observations or start Steps 3-6.
+- Step 1's source inventory and independent reviews are accepted by the
+  coordinator at `eb493dd8`. Existing gaps remain gaps, not new product fixes.
+- Step 2 exits with source-backed owners, work/suspension boundaries, actual
+  guards, readiness meanings and decision-critical unknowns against P1-P13.
+  Independent Sol/Luna reviews and correction checks accept the actual map.
+  Agreements, differences and corrections are recorded in the
+  [work register](PLANNED-WORK.md#current-workset).
+- Stop after that reviewed local commit and coordinator handoff. Step 3 would
+  agree user-visible workloads/outcomes, qualify reusable evidence and freeze
+  methods/stop rules before any missing observation. It has not started here.

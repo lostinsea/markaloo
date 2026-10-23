@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEP 1 COMPLETE; COORDINATOR HANDOFF; STEPS 2-6 NOT STARTED** (2026-10-23).
+- `performance-architecture` - **STEP 1 ACCEPTED; STEP 2 COMPLETE; COORDINATOR HANDOFF; STEPS 3-6 NOT STARTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -61,12 +61,30 @@ section is kept here so the register has a visible edge.
     read-only; no runtime result is newly claimed.
   - Step 1 exits with grouped preservation contracts, representative regression
     signals, source/test references and explicit coverage gaps. Coordinator
-    acceptance is the next handoff, not permission to execute Step 2 here.
-    Next objective: actual open/edit/render/export ownership, source revisions,
-    cancellation and readiness, without optimization or runtime collection.
+    accepted local `eb493dd8ccbb4f05933a715f9137097c142e44ab`.
+  - Step 2 starts from that clean local commit in the same isolated worktree.
+    Astra completed the bounded source trace; Sol/high added the map to the
+    same document. Independent Sol/Luna reviews and correction checks accept
+    the map; no blocker or unresolved disagreement remains. Both agree on
+    ownership, scheduling, readiness and evidence limits. Luna requested that
+    admission refs be conditional, not universally included/checked; corrected.
+    Sol's reference corrections distinguish the Save queue, synchronous write
+    loop and memoized result settlement.
+    It separates selected stores, detached tab render completion, full-path
+    idle tail, mapping/geometry, actual input effects and live-page PDF lifetime.
+    Two locally scoped render counters are distinct from document generation;
+    no universal captured source revision or global readiness is claimed.
+    Sync Main writes/tracking IPC and sync renderer computation/DOM/layout are
+    distinguished from queued/awaited work. No costs were measured or ranked.
+  - Step 2 exits with the current-state diagram, owner/identity/work/readiness
+    notes, preservation links and focused unknowns. Coordinator handoff is next.
+    Step 3 would agree user-visible workloads/outcomes, qualify reusable
+    evidence and freeze methods/stop rules before collecting missing evidence.
+    No Step 3 method, SLO, workload set or observation is selected here.
   - This unit is local documentation only: no product/harness edits, app or
     test execution, measurements, dependencies, push, integration or release.
-    Steps 2-6 require later sequential handoffs; they are not authorized here.
+    Step 2 is authorized documentation only. Steps 3-6 remain unstarted and
+    need later sequential handoffs.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
