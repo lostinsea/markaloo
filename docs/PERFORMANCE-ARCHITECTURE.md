@@ -12,7 +12,9 @@
   No response samples were collected; Step 3 observations remain unfinished.
   A separate user-authorized one-code recheck reached Open/reading controls,
   then stopped at the collector's split-width check. No sample journeys ran.
-  Steps 4-6 have not started.
+  Collection is closed with a **method gap**; observations remain unfinished.
+  Step 4 is a source-based options assessment, not a performance ranking.
+  Steps 5-6 have not started.
 - These are documentation deliverables, not runtime qualification or permission
   to choose or implement an optimization.
 
@@ -33,13 +35,17 @@ flowchart LR
 | **1. Preservation contracts** | The inventory below: released behavior, a representative regression scenario, source/test references and known gaps. | Identify the released source. Every group has a supported contract or an explicit uncertainty. Independent Sol/Luna review, then coordinator handoff. | Product/test changes, runtime collection, architecture selection or performance claims. |
 | **2. Actual architecture map** | One open/edit/render/export flow diagram and ownership notes. Identify state/result owners, source revisions, invalidation/cancellation, compute versus DOM/layout work, and each readiness signal. Separate source facts from hypotheses. | Accepted Step 1. Trace each boundary and suspension point needed for the next decision; explain what can still be unfinished when a promise resolves. | Replacement design, a full profiling campaign or assuming a large file is itself the bottleneck. |
 | **3. Decision baselines** | Agreed user-visible outcomes and workloads; reusable qualified evidence; a short list of decision-critical missing observations. | Accepted map. Freeze workloads, start/end conditions, comparison method, acceptance criteria and stop rules before experiments. Use existing qualified tooling where possible. | Arbitrary new SLOs, new benchmark infrastructure by default, or collecting everything that could be measured. |
-| **4. Options, return and one slice** | Compare improving the current component with selective replacement; recommend **one** next slice. Weigh the expected user-visible benefit against functionality/security risk, validation/maintenance complexity, CPU/memory cost and likely time-to-value without invented estimates. | Baselines support the comparison. Bring significant architecture, behavior or scope tradeoffs to the user; record the selected slice and its bounds. | Predetermined technology, whole-app rewrite, invented hours/dollars/speedups, or several combined experiments. |
+| **4. Options, return and one slice** | Compare current-component improvements, selective replacement and a whole-app rewrite; propose at most **one** bounded slice. Separate architectural value, preservation risk and engineering cost from unproven speed. | Qualified baselines are required for performance ranking. Without them, compare source-backed ownership/testability, migration and maintenance costs only. Bring significant architecture, behavior or scope tradeoffs to the user. | Predetermined technology, implementing a whole-app rewrite, invented hours/dollars/speedups, or several combined experiments. |
 | **5. Implement and qualify one change** | Isolated Sol/high implementation; relevant durable tests and individually sensitive revert proofs; independent Sol/Luna feedback; fair comparison with the released baseline. | Selected, authorized slice and frozen method. Demonstrate the intended visible effect and complete output. Protect ownership, current-source results, errors and affected contracts. Keep slow/failing samples and setup failures. | Retry-until-green, sample filtering, unrelated fixes/dependencies, or treating an earlier callback as improvement. |
 | **6. Adoption and next iteration** | Adopt, reject or park with demonstrated benefit, costs and limits. Keep the released fallback during qualification; remove the losing shipping path after the decision. | Qualification and reviews complete. Useful improvement must be demonstrated; otherwise reject/park. Coordinator reviews the outcome before another slice is chosen. | Permanent two-renderer complexity by default, automatic next-slice execution, integration or publication without separate authorization. |
 
 - Coordinator reviews sequential handoffs; this is not a user-approval prompt
   for every mechanical action. Ask the user about real design/scope/behavior
   choices, unresolved preservation expectations and meaningful tradeoffs.
+- Continue small, reversible, behavior/security/data-preserving work autonomously
+  only when existing tools can meaningfully qualify it. Routine handoffs do not
+  require another approval. This does not reopen stopped collection, waive gates
+  or authorize a dependency strategy, rewrite, behavior change or publication.
 - Roles for this continuation: latest Astra for design/investigation; latest
   Sol/high for documentation and implementation; fresh independent Sol/high
   and Luna/high review the actual deliverable. Correct material findings and
@@ -50,7 +56,7 @@ flowchart LR
 - Steps 1-3 definition ran no app/tests/builds/benchmarks/samplers/profiling.
   The coordinator authorized one bounded collection unit; it stopped below.
   The separate one-code recheck below also stopped. No further app/collection
-  runs, mixed admission, sample journeys or automatic continuation are authorized.
+  runs, mixed admission or sample journeys are authorized, including unused slots.
   No real profiles/logs, product/repository harness edits, PoC imports, pushes,
   PRs, tags, integration or publication.
 - Dependency maintenance remains separate and on hold through October 28, 2026,
@@ -262,15 +268,16 @@ flowchart LR
     G --> D
 ```
 
-- This is a proposed, frozen collection contract for coordinator handoff, not
-  agreed product SLOs or a selected optimization. The coordinator accepted the
-  definition and authorized its one bounded collection unit.
+- This frozen method remains below to interpret its retained receipts, not as
+  live execution permission. Its bounded collection and separate one-code
+  recheck are closed with a **method gap**. Observations remain unfinished;
+  no representative response baseline was established.
 - Priority: current readable content, actual text entry and effective scrolling.
   Highlight/copy/overlay completion is a separate outcome, not a substitute.
 - Retained evidence protects named functionality and preserves failed gates.
   It does not establish released input effects while current work is pending.
-  Only the **one** missing-baseline unit below is authorized; no comparisons
-  or Step 4 choice.
+  No further collection, unused launch slots or comparison is authorized.
+  Step 4 may assess engineering tradeoffs, not claim responsiveness benefits.
 
 ### Three workloads and their user journeys
 
@@ -495,7 +502,7 @@ flowchart LR
   retain the pins, gate, complete host rows and scoped cleanup.
 - **Step 3 observations remain unfinished.** Existing source/release evidence
   keeps its stated scope; this attempt supplies no new response-cost baseline
-  for ranking replacements. Steps 4-6 have not started.
+  for ranking replacements.
 - **Gap at that handoff:** collector preload witness and absent-observer teardown.
   The [existing production-bridge witness](../test/test-language-highlighting.js#L296-L301)
   is prior art, not permission to change production. That unit is closed;
@@ -548,7 +555,90 @@ flowchart LR
   bytes, including its executable/declaration/marker, remained unchanged.
 - **Remaining gap:** the split-width setup check failed without recording its
   actual value. Full source-input/follower admission is not established.
-  Stop here; no further repair, launch, sample journeys or Step 4 authorized.
+  No further collector repair, launch or sample journeys are authorized.
+
+## Step 4: source-based options assessment
+
+```mermaid
+flowchart LR
+    S["Released source map + P1-P13"] --> E["Compare engineering cost and behavior risk"]
+    R["Qualified functional evidence + failed gates"] --> E
+    G["Response baseline: method gap"] --> U["Responsiveness benefits unproven"]
+    E --> N["At most one bounded next slice"]
+    U -. "no speed ranking" .-> N
+    N --> Q["Preserving, reversible and qualifiable with allowed tools?"]
+    Q -->|yes| L["Small local work may continue autonomously"]
+    Q -->|no| D["State the critical decision or evidence limit"]
+```
+
+- Assess the released f5 implementation, not parked PoC internals. Collection
+  is closed; the partial reading observation is not a representative input
+  baseline. Existing release checks retain only their named functional scope.
+- Compare build/validation effort, ownership clarity, testability, maintenance,
+  migration risk and reversibility. Do not rank speed, performance return or a
+  supposed bottleneck. Intended benefits below are hypotheses, not results.
+- Cost labels are relative engineering judgments, not elapsed estimates:
+  **small** keeps one existing boundary and its consumers; **medium** changes
+  shared render work or a component adapter; **large** crosses several feature,
+  security or platform boundaries. Validation and migration can dominate build
+  effort. No CPU, memory or responsiveness saving is measured.
+- Preserve P1-P13 and the [existing gates](PLANNED-WORK.md#performance-acceptance-gates).
+  An internal-only rationale does not waive qualification. Original R2/R3
+  failures and the scoped release exception remain unchanged.
+
+### Practical options
+
+| Option / existing boundary to reuse | Intended value and evidence limit | Relative effort, risk and rollback | Preservation and adoption evidence |
+|---|---|---|---|
+| **Organize the current preparation code.** Full/light source preparation, special blocks, parse, restoration and final sanitization are parallel: [light](../src/renderer.js#L6627-L6663), [full](../src/renderer.js#L6729-L6781). | One shared helper could reduce duplicated rules and make equivalence easier to test. No new divergence or concrete maintenance obstacle was found. A file move does not remove work or change its thread. Preparation also touches mutable source metadata and `rawHtmlDocuments`; it is not already a pure worker function. | Small build/migration **if** lifecycle and mutable ownership stay in place; medium validation. Could reduce duplicate maintenance, but extracting the wrong boundary spreads shared state. A narrow extraction is readily reversible. | P3/P6-P8. Keep sanitizer/restoration order, canonical HTML and inert metadata equivalent. Existing equivalence/security tests plus applicable before/after regression gates; a test-only green is insufficient. |
+| **Change scheduling or completion reporting.** Reuse [input/open/mode witnesses](../src/renderer.js#L4066-L4100), render generations and [owned idle highlight/copy/overlay tail](../src/renderer.js#L6950-L6991). | Could make particular completion states clearer or leave more opportunities for input between tasks. No natural pending-input baseline justifies a specific timer, chunk or readiness change. A timer still runs its callback on the same thread. | Medium build/migration; large lifecycle validation. More completion states add maintenance. Rollback is local only if caller expectations and source/owner checks stay unchanged. Awaiting more work can serialize callers; earlier overlay release can change interaction. | P1-P4/P6/P8-P10; P11 if shared readiness/export is affected. [Held-idle cases](../test/test-language-highlighting.js#L309-L340) prove narrow stale-generation behavior, not natural response. Qualify current-source effects and late completion. Changed debounce/partial output/scroll ownership needs a user decision. |
+| **Reduce live DOM/layout work.** Reuse [matching-node/processed-block patching](../src/renderer.js#L6199-L6260), rich-content handlers and [cached geometry/invalidation](../src/editor-scroll.js#L509-L772). | Read/write batching or removing a demonstrated repeat could help. No current redundant pass was established here. Generic new caches duplicate existing reuse unless a missing case is named. No CPU or memory saving is established. | Medium build/migration for a bounded pass; large validation across layout and reuse. Caches add invalidation/memory costs. Removing off-screen DOM is a larger virtualization change, not a local batching edit. Rollback is easier without a second shipping cache/render path. | P3/P6/P8-P10; P11 for off-screen/export effects. Verify node bindings, repeated-block identity, navigation/resize, rich content and current-source mapping. Virtualization additionally needs complete search/export evidence; it is not selected. |
+| **Move suitable computation off-thread.** Consider only a separable source-normalization, key/diff or parse stage; keep renderer sanitization, DOM adoption and geometry at their proper boundaries. [Mapping preparation](../src/editor-scroll.js#L318-L389) combines parsing/restoration with later DOM verification. | The renderer could handle other work while computation runs elsewhere. Benefit is unknown against startup, message/copy and result-adoption costs. An async wrapper is not off-thread execution; another language is not a worker strategy. | Medium-to-large build/migration; large validation and ongoing protocol/lifetime maintenance. Source/result copies can increase memory. A narrow temporary qualification fallback is reversible; permanent competing paths are not the default. | P3/P6-P9 plus owner/tab cases in P1/P2/P4. Need immutable source and document/operation identity, stale-result rejection, bounded obsolete work, errors/teardown, offline assets and unchanged authority. Compare actual effects and complete output; no worker/language/transport selected. |
+| **Replace one component/package.** Syntax tokenization, Markdown parsing and the textarea editor have different boundaries; keep Main/preload authority. Reuse the [language fixture/output checks](../test/test-language-highlighting.js#L341-L448), source equivalence and per-document editor contracts. | A different implementation may improve support, cost or capability. None is demonstrated here. Syntax has a narrower compatibility surface than parser/editor replacement; that does not prove it faster or easier to qualify. No missing editor-widget capability was identified as the present problem. | Syntax: medium build/migration; parser/editor: large. Validation is substantial for all. Adapters, vendoring, licenses and package support add maintenance. Retain a released fallback during qualification; do not keep two shipping engines indefinitely. | Syntax P7/P9/P10; parser P6-P11; editor P2-P6/P12, with affected shared contracts too. Preserve exact languages/aliases/plain fallback/copy/search; HTML/security/mapping; or draft/history/save/selection/scroll semantics. Pin released expected output, not just a candidate comparing against itself. Dependency hold remains; no package resolution/install/upgrade. |
+| **New UI framework, language or full runtime.** A renderer framework still crosses the current DOM bindings; a runtime rewrite also replaces file/window/preload/platform integration. | Might address a separately established long-term requirement. No current evidence makes that commitment proportionate to this responsiveness question. A different framework/language does not prove less DOM/layout work. | Large build, validation, migration and maintenance commitment. Existing Electron/DOM/preload tests need adaptation; they cannot simply certify a new runtime. Rollback becomes harder once saved state, packaging or platform integration changes. | Nearly all P1-P13. Require a separately justified requirement, migration/rollback design and broad equivalent behavior/security/platform qualification. Neither a rewrite nor framework/dependency strategy is authorized or selected. |
+
+- **Why these are different:** organization changes where code lives;
+  scheduling changes when work runs; off-thread computation changes where
+  suitable work executes; DOM/layout changes browser work and reuse. Replacing
+  a package or language can change semantics as well as cost. Do not bundle
+  these into one experiment or infer one benefit from another.
+- **A replacement-test trap:** the existing
+  [canonical-HTML oracle](../test/test-editor-scroll.js#L1034-L1082) uses the
+  currently loaded parser. Updating both parser and oracle can stay green while
+  changing released output. Retain independent released expectations before
+  claiming compatibility. Existing source-inspected tests are not new executions.
+- P8 table ownership/ambiguous-target and P11 export/lifetime gaps remain
+  uncovered current paths, not behavior to copy or new reproduced failures.
+  Qualify them if an actual slice touches them; no repair campaign follows here.
+
+### Recommendation and current stopping point
+
+- **Keep the current implementation; no product slice is selected.** Selective
+  internal change remains the proportionate direction when a concrete need is
+  established. This is a scope/risk recommendation, not a performance winner.
+- The one small maintenance candidate examined was shared full/light preparation.
+  Its architectural value would be fewer duplicated rules and clearer testing,
+  not faster rendering. No current divergence or maintenance obstacle makes it
+  necessary now. It also touches sanitization/mapping and still needs applicable
+  repeated, representative before/after evidence; source/equivalence tests alone
+  do not qualify adoption. Do not create refactor work merely to keep moving.
+- Scheduling, workers, extra caches, replacement engines and virtualization
+  lack a demonstrated user-visible return for this release. The source map
+  cannot identify a bottleneck; partial reading movement cannot establish typing
+  response or prove any alternative better.
+- Autonomy permits useful small work, not speculative product edits or a gate
+  exemption. No compelling small slice **and** sufficient allowed qualification
+  were identified together. Steps 5-6 therefore remain unstarted; this is not a
+  request to approve a routine handoff.
+- The critical limit is selecting a meaningful objective with suitable evidence,
+  not choosing syntax for an implementation. A future concrete maintenance or
+  functionality need may be qualified with existing tools after checking their
+  scope; it need not revive this collector. A responsiveness claim additionally
+  needs comparable current-source, actual-effect observations and complete-output
+  checks under unchanged applicable gates. No new collection is authorized.
+- Substantial rewrite/dependency strategy, changed behavior/output/debounce/scroll
+  ownership, weakened protection/gates, significant tooling/scope or publication
+  still needs a real user decision. No such change is silently chosen here.
 
 ## Open gaps and decision limits
 
@@ -608,5 +698,14 @@ flowchart LR
   the result above is a method gap, not a response baseline.
   A separate user decision permitted only the repaired one-code admission
   above. It too stopped at a setup gap; no further runs are authorized.
-  Stop after the reviewed result/local commit and coordinator handoff;
-  Steps 4-6 remain unstarted.
+  Coordinator accepted local `cb94b77a`; collection closes with a method gap,
+  not an established response baseline.
+- Step 4 assesses source-supported engineering tradeoffs with responsiveness
+  benefits unproven. The user ended the collector loop and permits autonomous
+  small, preserving, reversible work when existing allowed tools can qualify it.
+  No option may bypass existing gates or the explicit collector/dependency/
+  publication limits. Significant behavior, scope or architecture decisions
+  still need the user. Independent Sol/Luna approve the actual options and
+  recommendation, with no material findings or unresolved disagreement.
+  Source-supported boundaries and risks are assessed; no product slice is
+  selected and Steps 5-6 have not started.

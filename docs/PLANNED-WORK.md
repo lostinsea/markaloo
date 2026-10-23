@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEP 3 OBSERVATIONS UNFINISHED; ONE-CODE RECHECK STOPPED AT SETUP GAP; STEPS 4-6 NOT STARTED** (2026-10-23).
+- `performance-architecture` - **STEP 3 CLOSED WITH METHOD GAP; STEP 4 ASSESSMENT REVIEWED; NO PRODUCT SLICE SELECTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -161,6 +161,30 @@ section is kept here so the register has a visible edge.
     approve the raw-outcome interpretation and actual documentation; both agree
     on partial reading evidence, unfinished input/follower admission and limits.
     No unresolved review disagreement. No further repair/run.
+  - Coordinator accepted local `cb94b77a1e41cfeb721295661ae004afab3ef315`.
+    User chose source-based architecture options assessment with speed benefits
+    unproven; collection is closed, not a completed response baseline.
+    [Step 4 options and recommendation](PERFORMANCE-ARCHITECTURE.md#step-4-source-based-options-assessment).
+    Astra completed the source-based assessment; Sol/high wrote the same two
+    documents; independent Sol/Luna approved actual options and recommendation.
+    Compare current implementation, selective replacement and rewrite costs,
+    ownership, testability, preservation risks and reversibility, not speed.
+    User permits autonomous small, reversible, preserving slices only when
+    existing tools can qualify them; routine handoffs need no extra approval.
+    Critical behavior/security/data/dependency/rewrite/scope or publication
+    decisions still need the user. No collector repair/run, unused launch slots,
+    PoC adoption, dependency upgrade, push, PR, integration or release.
+    Recommendation: retain current implementation; no product slice selected.
+    Shared full/light preparation is a plausible maintenance boundary, not a
+    demonstrated speed fix or necessary repair. Its mapping/sanitizer/gate
+    obligations remain; no compelling small need and sufficient allowed
+    qualification were identified together. Do not invent cleanup merely to
+    continue. No new runtime result; Steps 5-6 remain unstarted.
+    Both reviewers agree on the source boundaries, relative engineering-risk
+    comparison, parser-oracle warning, unchanged gates and no-product-slice
+    recommendation. No material finding, correction or unresolved disagreement.
+    Future concrete small work remains eligible for autonomous qualification;
+    the current evidence gap is not a blanket ban or permission to collect again.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
