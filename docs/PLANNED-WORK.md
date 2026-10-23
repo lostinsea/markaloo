@@ -38,11 +38,20 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `release-0.10.0` - **REVIEWED AND QUALIFIED; PUBLICATION PENDING** (2026-10-23).
+- `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
+  - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
+    Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
+    tree `45eb10efd93e6dee7dc583a80488bad1e6cdda5a`.
+    Annotated tag object: `36a475b39b078599362dbd1beeba83319d3dc08b`.
+  - [Workflow 40010077772, attempt 1](https://github.com/lostinsea/markaloo/actions/runs/40010077772)
+    succeeded for Windows, Linux, macOS, provenance and stable publication.
+    The tag push started it; no duplicate dispatch or workflow rerun.
+    Hosted Windows strict built-ASAR packaging is `439/0`, without skips.
   - Sole repository/release writer: isolated
     `users/vinma-microsoft/markaloo-0-10-0-release`, starting at reviewed
     `8f79aefa`, tree `cde3dc8c`, directly on original Prism `c6ad6dfa`.
-    Canonical main is `bb78080f`; the primary checkout stays untouched.
+    Canonical main was `bb78080f` before the non-force atomic main/tag push.
+    The primary checkout and shared local main stay untouched.
   - User authorized version 0.10.0, required qualification, normal integration,
     annotated tag and established hosted stable publication. No PR is required.
   - Includes only the original twelve-language offline Prism feature, the
@@ -70,18 +79,32 @@ section is kept here so the register has a visible edge.
     window pass in the package; ordinary resize restoration also passes.
     About/version, equal update-cache clearing and both error sentinels pass.
     Source light/dark, navigation and packaged screenshots were viewed.
-  - Fresh independent Sol 6.1/high and Luna 6/high accept the release preparation
-    and publication sequence. Neither found a blocker; no disagreement remains.
-    Next: non-force atomic canonical main/tag push, one tag-triggered hosted
-    workflow, then exact public title/notes and download/update/provenance checks.
-    The workflow does not set reviewed notes/title; apply them after it succeeds.
-    Publication is not yet complete; no full-suite pass is claimed.
+  - Fresh independent Sol 6.1/high and Luna 6/high accepted release preparation
+    and the publication sequence. Neither found a blocker; no disagreement remains.
+  - Public title is `Markaloo 0.10.0`; notes match
+    `docs/RELEASE-NOTES-0.10.0.md`. The latest stable API selects this release.
+    The public URL returns HTTP 200.
+  - All nine downloaded assets match API sizes and SHA256. All three updater
+    manifests match version, exact platform roles, primary paths, sizes and
+    actual base64 SHA512. Windows selects Setup, not the portable executable.
+    The legacy Folia updater redirect returns the same 0.10.0 manifest bytes.
+  - All five runnable downloads have cryptographically verified GitHub-hosted
+    attestations bound to this source, tag, signer, issuer and exact run attempt.
+    Platform-positive and wrong-role/missing/duplicate manifest controls pass.
+    Initial parallel verifier-initialization failures are retained; sequential
+    verification passed without changing trust, authentication or TLS settings.
   - Evidence: session `54f84d1f`, `files/release-0100-source-gates.json`,
-    `release-0100-built-archive.json`, `release-0100-packaged.json`,
-    retained logs/captures and the scoped performance-exception receipt.
+    `release-0100-source.json`, `release-0100-built-archive.json`,
+    `release-0100-packaged.json`, `release-0100-asset-verification.json`,
+    retained downloads, attestation results, logs/captures and the scoped
+    performance-exception receipt.
+  - Known legacy failures still prevent a full-suite-green claim. Hosted builds
+    are not cross-platform UI or performance certification.
+    Windows/macOS remain unsigned; macOS updates are manual.
   - No dependency upgrades, scheduling changes, installer execution, live
     upgrade or real-profile access. Architecture discussion follows release.
-- `offline-popular-languages` - **REVIEWED; SCOPED 0.10.0 RELEASE EXCEPTION** (2026-10-23).
+    This docs-only completion record leaves the published tag fixed.
+- `offline-popular-languages` - **PUBLISHED IN 0.10.0; PERFORMANCE EXCEPTION** (2026-10-23).
   - Original feature is `c6ad6dfa`, based on canonical main `bb78080f`.
     The preserved feature ref stays fixed; performance PoCs are not included.
   - User scope: official existing Prism 1.30.0 components for Rust, Go, PHP,
