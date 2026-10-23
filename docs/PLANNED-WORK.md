@@ -38,6 +38,35 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `performance-architecture` - **STEP 1 COMPLETE; COORDINATOR HANDOFF; STEPS 2-6 NOT STARTED** (2026-10-23).
+  - User direction: make a clear plan, then work through it one step at a time.
+    Preserve functionality; consider selective subsystem replacement, not a
+    whole-app rewrite. Judge readable output and scrolling/typing effects,
+    not earlier callbacks.
+  - Sole documentation writer: isolated
+    `users/vinma-microsoft/performance-architecture-plan`, based on canonical
+    main `90111cfa30f35a39515072b3258265d8f32528ee`.
+    Released source is `f5d380786fb895bf783e263f79aea6316f303ad1`.
+  - [Sequential plan and preservation inventory](PERFORMANCE-ARCHITECTURE.md).
+    Astra supplied the plan structure; Sol/high completed the source-based
+    inventory. Independent Sol/Luna reviews and correction checks accept the
+    final document; no blocker or unresolved disagreement remains.
+    Sol found overclaimed table-edit/dialog protections; both accepted the
+    explicit table gap and precise Mermaid render-generation wording.
+    Print expansion, benefit versus cost and the retained 48/48 package result
+    are explicit.
+    Luna's initial role objection is withdrawn: this unit explicitly assigns
+    Astra design/investigation, Sol/high authorship and independent Sol/Luna review.
+    Source identities and the retained release receipt hash were checked
+    read-only; no runtime result is newly claimed.
+  - Step 1 exits with grouped preservation contracts, representative regression
+    signals, source/test references and explicit coverage gaps. Coordinator
+    acceptance is the next handoff, not permission to execute Step 2 here.
+    Next objective: actual open/edit/render/export ownership, source revisions,
+    cancellation and readiness, without optimization or runtime collection.
+  - This unit is local documentation only: no product/harness edits, app or
+    test execution, measurements, dependencies, push, integration or release.
+    Steps 2-6 require later sequential handoffs; they are not authorized here.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
