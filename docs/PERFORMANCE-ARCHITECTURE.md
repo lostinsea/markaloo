@@ -7,16 +7,14 @@
 - Do not start a whole-app language/framework rewrite. Do not choose a language,
   worker, package, cache or virtualization strategy before comparing the options.
 - Work through one deliverable at a time. Steps 1 and 2 are accepted.
-  Step 3's definition is accepted at `66519d8e`. One bounded collection unit
-  stopped at its first admission launch with a collector preflight error.
-  No response samples were collected; Step 3 observations remain unfinished.
-  A separate user-authorized one-code recheck reached Open/reading controls,
-  then stopped at the collector's split-width check. No sample journeys ran.
-  Collection is closed with a **method gap**; observations remain unfinished.
+  Step 3's definition is accepted at `66519d8e`. Two prior code-admission
+  attempts closed with method gaps and no sample journeys. The separately
+  authorized reopened campaign completed two admissions and nine baseline
+  journeys below. Its allowance is closed; no further collection follows.
   Step 4 is a source-based options assessment, not a performance ranking.
   Steps 5-6 have not started.
-- These are documentation deliverables, not runtime qualification or permission
-  to choose or implement an optimization.
+- These documents record only the named observations, not full runtime
+  qualification or permission to choose or implement an optimization.
 
 ```mermaid
 flowchart LR
@@ -54,9 +52,9 @@ flowchart LR
   [PLANNED-WORK](PLANNED-WORK.md#performance-acceptance-gates).
   Step 3 adds decision-specific criteria; it does not quietly replace them.
 - Steps 1-3 definition ran no app/tests/builds/benchmarks/samplers/profiling.
-  The coordinator authorized one bounded collection unit; it stopped below.
-  The separate one-code recheck below also stopped. No further app/collection
-  runs, mixed admission or sample journeys are authorized, including unused slots.
+  Both earlier collection units stopped below; their unused slots are closed.
+  The reopened campaign completed its two admissions and nine journeys.
+  No further app/collection runs follow from its unused corrective slot.
   No real profiles/logs, product/repository harness edits, PoC imports, pushes,
   PRs, tags, integration or publication.
 - Dependency maintenance remains separate and on hold through October 28, 2026,
@@ -268,15 +266,18 @@ flowchart LR
     G --> D
 ```
 
-- This frozen method remains below to interpret its retained receipts, not as
-  live execution permission. Its bounded collection and separate one-code
-  recheck are closed with a **method gap**. Observations remain unfinished;
-  no representative response baseline was established.
+- This original frozen method remains below to interpret retained receipts.
+  Its original collection and separate one-code recheck closed with a **method
+  gap**. The reopened campaign below retains its principles and declares small
+  collector-check amendments before execution. The result below supplies a
+  small source-entry baseline for these journeys, not a universal responsiveness
+  or physical-input/paint certificate.
 - Priority: current readable content, actual text entry and effective scrolling.
   Highlight/copy/overlay completion is a separate outcome, not a substitute.
 - Retained evidence protects named functionality and preserves failed gates.
   It does not establish released input effects while current work is pending.
-  No further collection, unused launch slots or comparison is authorized.
+  Old unused launch slots and comparisons remain unauthorized. Only the new
+  finite campaign below permits collection.
   Step 4 may assess engineering tradeoffs, not claim responsiveness benefits.
 
 ### Three workloads and their user journeys
@@ -500,7 +501,7 @@ flowchart LR
   `result.json` and `admission-code.json` retain the failed attempt;
   `declaration.json`, `executable-review.json`, `host.jsonl` and `cleanup.json`
   retain the pins, gate, complete host rows and scoped cleanup.
-- **Step 3 observations remain unfinished.** Existing source/release evidence
+- **At this handoff, Step 3 observations remained unfinished.** Source/release evidence
   keeps its stated scope; this attempt supplies no new response-cost baseline
   for ranking replacements.
 - **Gap at that handoff:** collector preload witness and absent-observer teardown.
@@ -553,9 +554,129 @@ flowchart LR
   cleanup receipts. Elapsed intervals remain admission diagnostics, not a
   representative baseline. The failed `step3-observation` directory's pinned
   bytes, including its executable/declaration/marker, remained unchanged.
-- **Remaining gap:** the split-width setup check failed without recording its
-  actual value. Full source-input/follower admission is not established.
-  No further collector repair, launch or sample journeys are authorized.
+- **Gap at this handoff:** the split-width setup check failed without recording
+  its actual value. Full source-input/follower admission was not established.
+  This one-code authorization ended; its unused slots did not carry forward.
+
+### Reopened finite campaign
+
+- User chose **reopen bounded measurement; handle routine fixes autonomously**.
+  New base `3f6dea9065784e4465b48567de9c27cc1332b385`; exact f5 product,
+  runtime, fixtures and journey settings remain unchanged.
+- At most **three admission Electron launches total**, including smoke/self-tests:
+  code and mixed must qualify; only one corrective admission within that cap.
+  Then the original **nine serial fresh-process journeys**, no replacements or
+  retries. Maximum twelve launches this campaign; prior two code launches stay
+  separate. Static Node checks consume no Electron launch.
+- Artifacts/reviewed revisions live under the same session's
+  `files\step3-reopened`. Both prior attempt directories and each invoked
+  revision remain byte-pinned and unchanged.
+- Fix the defective CSS-string check semantically against production reset and
+  layout; retain actual inline, computed and bounds values whether it passes
+  or fails. Do not lower correspondence tolerance or change product source.
+- The old first-paragraph offset comparison is not valid at arbitrary scroll
+  positions. Keep timed native-wheel endpoints unchanged. Replace only the
+  defective untimed correspondence check with two separately labelled anchored
+  controls, using the [existing mirror/Range method](../test/test-editor-scroll.js#L173-L207)
+  and [driver-only positioning](../test/test-editor-scroll.js#L255-L272).
+  Freeze the unique `middle` landmark; reset before each direction, require
+  actual movement in both panes and unchanged **error <36 px**. Programmatic
+  anchor positioning is not native movement and does not certify arbitrary
+  native-wheel final-position correspondence. Astra assessed this as a small
+  control repair, not a new timed method; no passing-landmark search.
+- Independent Sol/Luna review actual executable/declaration changes plus
+  whole-method safety before launch-relevant revisions. Keep all controls,
+  failures/lifecycle outcomes, host rows and observer costs. No manufactured
+  pending work, successful-only aggregates or host-load attribution.
+- Stop for substantial tooling, a materially different endpoint/method,
+  exhausted caps, unsafe identity/sentinels/observer/fidelity or evidence that
+  this method cannot answer the question. Hand off the bounded unit before
+  product work; no automatic Step 4 rewrite, integration or publication.
+
+### Reopened campaign result
+
+- **Completed within bounds:** 2/3 admission slots used; code and mixed both
+  qualified. **9/9** fresh-process sample journeys, three per workload;
+  **11 launches** total. No corrective admission, retry, replacement, excluded
+  sample, cutoff, no-delivery/no-effect, error-sentinel hit or observer failure.
+  Prior two failed code launches remain separate: thirteen launches across
+  the distinct units, not thirteen samples. No further collection follows.
+- Unchanged released **f5**, locked Electron **43.4.1**, exact fixture hashes
+  above. Outer `1440 x 920`, actual viewport `1428 x 890`, DPR `1.25`,
+  light/100%; production reset recorded inline **`50%`**, ratio `0.5`,
+  computed/bounds editor width `564 px` against `1128 px` container content.
+  This does not recover the missing width value from the prior attempt.
+- Exact reviewed executable:
+  `47badac58f230eb6e79148888ac79d5ca9c95399c6a874f27ecddfe1b096ca20`;
+  declaration `5cd1a27965f6c348218134b56231d3246fd556b7894154b6e1038b14a9d4de5a`.
+  Independent Sol/Luna approved both before the single invocation.
+
+**Main-clock median (min-max), milliseconds; all three samples per workload:**
+
+| Workload | Native Open -> available DOM/layout | Open -> required presentation | Second insertion -> latest preview/current mapping |
+|---|---|---|---|
+| Prose | 127.8 (120.7-129.2) | 126.7 (119.4-128.1) | 461.9 (461.2-463.2) |
+| Code-rich | 189.9 (185.5-191.9) | 188.6 (184.4-190.4) | 465.7 (465.1-466.2) |
+| Mixed rich | 513.4 (509.5-548.5) | 511.9 (508.3-546.8) | 496.6 (490.7-496.7) |
+
+- Availability/presentation have independent Main receipts; receipt ordering is
+  not physical-stage ordering. Intervals include injection/bridge/observer work.
+  No p95, startup result, CPU time, accepted SLO or candidate speedup.
+- **Text versus preview:** all **18/18** native marker insertions reached exact
+  textarea value/selection; Main intervals ranged **6.7-29.3 ms**. The first
+  revision's preview was superseded in **9/9** journeys; latest-source preview
+  and mapping settled **9/9**. Short-text entry is not the ~462-497 ms preview
+  interval, and neither is physical paint.
+- **Actual native movement:** reading and editor drivers moved **0 -> 100** in
+  every sample. Reading's Main dispatch-to-movement interval was **36.4-62.5 ms**;
+  its same-process settled control moved **100 -> 200**.
+  The editor wheel arrived with source pending/mapping not current **9/9**;
+  driver event-to-movement was **30.6-32.6 ms**, follower **406.0-447.4 ms** on
+  the renderer's clock. Main wheel-to-driver-plus-current-follower interval was
+  **412.9-450.5 ms**. Do not subtract across clocks or call that whole interval
+  blocked typing/driver scrolling. All delivered events were trusted and in
+  the intended pane; current admitted identity/source guards held.
+- All settled text/native split controls and both separate anchored controls
+  qualified in each process. Independent anchored error was **0.050-0.250 px**
+  in each pane's own viewport coordinates, under unchanged **<36 px**.
+  These synthetic/programmatic controls do not certify every arbitrary native
+  wheel endpoint's semantic precision.
+- **First-open limit:** required presentation had finished before the early
+  reading wheel arrived in **9/9** samples. Naturally pending first-open
+  presentation response was **not observed**; reading-mode `pendingGeometry`
+  does not change that. Availability and presentation were seen in the same
+  observer frame; no separate pre-highlight readable interval was exposed.
+  Pending-source edit interaction was observed, not held. Markers were inserted
+  into prose within each document, not into the code-fence bodies.
+- **Host/overhead:** all **61** 1 Hz rows/statuses retained across admissions
+  and samples: CPU **2.94-27.67%**, available **71,501-72,143 MiB**, peak disk
+  **22,164,036 bytes/s**, queue **0.1304**. Sample observer snapshots:
+  **85-93** frame checks, **13.6-33.2 ms** frame-body elapsed, one census each.
+  Listener/MutationObserver, bridge/Main, sampler and untimed geometry work are
+  outside that subtotal. No overhead subtraction, row exclusions or load blame.
+- Sampler exited `0` cleanly; each launch destroyed its windows and recorded
+  all owned PIDs absent before the next process. No watchdog/forced stop.
+  All eleven final screenshots were viewed; they show the named source/preview
+  landmark and split UI, not timed paint or all-page export.
+- **Raw evidence:** same session, `files\step3-reopened\r1`; `result.json`,
+  individual receipts/PNGs, `host.jsonl`, immutable declaration/executable and
+  review/cleanup receipts. Result SHA256
+  `8fee21d10d5dfb160e3b1a9d24614ca4ee94fb86cf8e0d95f6ed232316c86d43`.
+  Both prior directories remain byte-pinned, including their failed results.
+- **Independent review:** Sol and Luna recalculated the raw counts/figures and
+  agree on control scope and baseline-only limits. Luna found one Step 4 phrase
+  saying "three journeys"; corrected to three workloads with nine samples.
+  No numerical disagreement or unresolved material finding.
+- **What changes for options:** the observed gap is between prompt source/driver
+  effects and later current preview/follower, across all three workloads. The
+  source's configured 400 ms preview delay is relevant context, not isolated
+  proof of the delay's cause or a reason to call the remainder Prism CPU.
+  Prioritize that outcome in a later decision, not decoration callbacks alone.
+  No worker/package/rewrite or debounce change is selected by these baseline-only
+  observations. Original R2/R3 failures and the release exception are unchanged.
+- Limits remain source-entry metadata/startup/diagnostic differences, three
+  samples per workload, fixed viewport/actions and no OS-input, physical-paint,
+  cross-platform UI, full-suite or complete-export certification.
 
 ## Step 4: source-based options assessment
 
@@ -563,7 +684,7 @@ flowchart LR
 flowchart LR
     S["Released source map + P1-P13"] --> E["Compare engineering cost and behavior risk"]
     R["Qualified functional evidence + failed gates"] --> E
-    G["Response baseline: method gap"] --> U["Responsiveness benefits unproven"]
+    G["Scoped baseline observed; no candidate comparison"] --> U["Responsiveness benefits unproven"]
     E --> N["At most one bounded next slice"]
     U -. "no speed ranking" .-> N
     N --> Q["Preserving, reversible and qualifiable with allowed tools?"]
@@ -571,9 +692,10 @@ flowchart LR
     Q -->|no| D["State the critical decision or evidence limit"]
 ```
 
-- Assess the released f5 implementation, not parked PoC internals. Collection
-  is closed; the partial reading observation is not a representative input
-  baseline. Existing release checks retain only their named functional scope.
+- Assess the released f5 implementation, not parked PoC internals. The new
+  baseline covers three workloads, three sample journeys each (nine samples;
+  admissions excluded). It does not establish an alternative's benefit or a
+  CPU bottleneck. Existing release checks retain only their named functional scope.
 - Compare build/validation effort, ownership clarity, testability, maintenance,
   migration risk and reversibility. Do not rank speed, performance return or a
   supposed bottleneck. Intended benefits below are hypotheses, not results.
@@ -591,7 +713,7 @@ flowchart LR
 | Option / existing boundary to reuse | Intended value and evidence limit | Relative effort, risk and rollback | Preservation and adoption evidence |
 |---|---|---|---|
 | **Organize the current preparation code.** Full/light source preparation, special blocks, parse, restoration and final sanitization are parallel: [light](../src/renderer.js#L6627-L6663), [full](../src/renderer.js#L6729-L6781). | One shared helper could reduce duplicated rules and make equivalence easier to test. No new divergence or concrete maintenance obstacle was found. A file move does not remove work or change its thread. Preparation also touches mutable source metadata and `rawHtmlDocuments`; it is not already a pure worker function. | Small build/migration **if** lifecycle and mutable ownership stay in place; medium validation. Could reduce duplicate maintenance, but extracting the wrong boundary spreads shared state. A narrow extraction is readily reversible. | P3/P6-P8. Keep sanitizer/restoration order, canonical HTML and inert metadata equivalent. Existing equivalence/security tests plus applicable before/after regression gates; a test-only green is insufficient. |
-| **Change scheduling or completion reporting.** Reuse [input/open/mode witnesses](../src/renderer.js#L4066-L4100), render generations and [owned idle highlight/copy/overlay tail](../src/renderer.js#L6950-L6991). | Could make particular completion states clearer or leave more opportunities for input between tasks. No natural pending-input baseline justifies a specific timer, chunk or readiness change. A timer still runs its callback on the same thread. | Medium build/migration; large lifecycle validation. More completion states add maintenance. Rollback is local only if caller expectations and source/owner checks stay unchanged. Awaiting more work can serialize callers; earlier overlay release can change interaction. | P1-P4/P6/P8-P10; P11 if shared readiness/export is affected. [Held-idle cases](../test/test-language-highlighting.js#L309-L340) prove narrow stale-generation behavior, not natural response. Qualify current-source effects and late completion. Changed debounce/partial output/scroll ownership needs a user decision. |
+| **Change scheduling or completion reporting.** Reuse [input/open/mode witnesses](../src/renderer.js#L4066-L4100), render generations and [owned idle highlight/copy/overlay tail](../src/renderer.js#L6950-L6991). | Could make particular completion states clearer or leave more opportunities for input between tasks. New pending-source observations identify a delayed outcome, not a justified timer, chunk or readiness change. A timer still runs its callback on the same thread. | Medium build/migration; large lifecycle validation. More completion states add maintenance. Rollback is local only if caller expectations and source/owner checks stay unchanged. Awaiting more work can serialize callers; earlier overlay release can change interaction. | P1-P4/P6/P8-P10; P11 if shared readiness/export is affected. [Held-idle cases](../test/test-language-highlighting.js#L309-L340) prove narrow stale-generation behavior, not natural response. Qualify current-source effects and late completion. Changed debounce/partial output/scroll ownership needs a user decision. |
 | **Reduce live DOM/layout work.** Reuse [matching-node/processed-block patching](../src/renderer.js#L6199-L6260), rich-content handlers and [cached geometry/invalidation](../src/editor-scroll.js#L509-L772). | Read/write batching or removing a demonstrated repeat could help. No current redundant pass was established here. Generic new caches duplicate existing reuse unless a missing case is named. No CPU or memory saving is established. | Medium build/migration for a bounded pass; large validation across layout and reuse. Caches add invalidation/memory costs. Removing off-screen DOM is a larger virtualization change, not a local batching edit. Rollback is easier without a second shipping cache/render path. | P3/P6/P8-P10; P11 for off-screen/export effects. Verify node bindings, repeated-block identity, navigation/resize, rich content and current-source mapping. Virtualization additionally needs complete search/export evidence; it is not selected. |
 | **Move suitable computation off-thread.** Consider only a separable source-normalization, key/diff or parse stage; keep renderer sanitization, DOM adoption and geometry at their proper boundaries. [Mapping preparation](../src/editor-scroll.js#L318-L389) combines parsing/restoration with later DOM verification. | The renderer could handle other work while computation runs elsewhere. Benefit is unknown against startup, message/copy and result-adoption costs. An async wrapper is not off-thread execution; another language is not a worker strategy. | Medium-to-large build/migration; large validation and ongoing protocol/lifetime maintenance. Source/result copies can increase memory. A narrow temporary qualification fallback is reversible; permanent competing paths are not the default. | P3/P6-P9 plus owner/tab cases in P1/P2/P4. Need immutable source and document/operation identity, stale-result rejection, bounded obsolete work, errors/teardown, offline assets and unchanged authority. Compare actual effects and complete output; no worker/language/transport selected. |
 | **Replace one component/package.** Syntax tokenization, Markdown parsing and the textarea editor have different boundaries; keep Main/preload authority. Reuse the [language fixture/output checks](../test/test-language-highlighting.js#L341-L448), source equivalence and per-document editor contracts. | A different implementation may improve support, cost or capability. None is demonstrated here. Syntax has a narrower compatibility surface than parser/editor replacement; that does not prove it faster or easier to qualify. No missing editor-widget capability was identified as the present problem. | Syntax: medium build/migration; parser/editor: large. Validation is substantial for all. Adapters, vendoring, licenses and package support add maintenance. Retain a released fallback during qualification; do not keep two shipping engines indefinitely. | Syntax P7/P9/P10; parser P6-P11; editor P2-P6/P12, with affected shared contracts too. Preserve exact languages/aliases/plain fallback/copy/search; HTML/security/mapping; or draft/history/save/selection/scroll semantics. Pin released expected output, not just a candidate comparing against itself. Dependency hold remains; no package resolution/install/upgrade. |
@@ -624,8 +746,8 @@ flowchart LR
   do not qualify adoption. Do not create refactor work merely to keep moving.
 - Scheduling, workers, extra caches, replacement engines and virtualization
   lack a demonstrated user-visible return for this release. The source map
-  cannot identify a bottleneck; partial reading movement cannot establish typing
-  response or prove any alternative better.
+  cannot identify a CPU bottleneck. New observations establish named text/driver
+  effects separately from later preview/follower, not an alternative's benefit.
 - Autonomy permits useful small work, not speculative product edits or a gate
   exemption. No compelling small slice **and** sufficient allowed qualification
   were identified together. Steps 5-6 therefore remain unstarted; this is not a
@@ -635,7 +757,8 @@ flowchart LR
   functionality need may be qualified with existing tools after checking their
   scope; it need not revive this collector. A responsiveness claim additionally
   needs comparable current-source, actual-effect observations and complete-output
-  checks under unchanged applicable gates. No new collection is authorized.
+  checks under unchanged applicable gates. This assessment does not authorize
+  collection; only the explicit reopened campaign above does.
 - Substantial rewrite/dependency strategy, changed behavior/output/debounce/scroll
   ownership, weakened protection/gates, significant tooling/scope or publication
   still needs a real user decision. No such change is silently chosen here.
@@ -698,8 +821,10 @@ flowchart LR
   the result above is a method gap, not a response baseline.
   A separate user decision permitted only the repaired one-code admission
   above. It too stopped at a setup gap; no further runs are authorized.
-  Coordinator accepted local `cb94b77a`; collection closes with a method gap,
-  not an established response baseline.
+  Coordinator accepted local `cb94b77a`; those two units closed with method
+  gaps. The separately authorized reopened campaign completed two admissions
+  and nine journeys; it supplies the limited source-entry baseline above.
+  Hand off this bounded unit before further work; no extra collection follows.
 - Step 4 assesses source-supported engineering tradeoffs with responsiveness
   benefits unproven. The user ended the collector loop and permits autonomous
   small, preserving, reversible work when existing allowed tools can qualify it.

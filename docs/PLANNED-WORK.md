@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEP 3 CLOSED WITH METHOD GAP; STEP 4 ASSESSMENT REVIEWED; NO PRODUCT SLICE SELECTED** (2026-10-23).
+- `performance-architecture` - **STEP 3 REOPENED OBSERVATIONS COMPLETE: REVIEWED LOCAL RESULTS; NO PRODUCT SLICE SELECTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -135,7 +135,7 @@ section is kept here so the register has a visible edge.
     agrees this supplies no response baseline or replacement advantage.
     Its wording corrections remove live execution permission and distinguish
     collector activity from an observer that never installed.
-    Step 3 observations are unfinished.
+    Step 3 observations were unfinished at that handoff.
     No product/repository harness changes, comparison, optimization, push,
     integration or release. Stop at local reviewed commit/coordinator handoff.
   - User separately authorized minimal collector repair and **one code admission
@@ -185,6 +185,49 @@ section is kept here so the register has a visible edge.
     recommendation. No material finding, correction or unresolved disagreement.
     Future concrete small work remains eligible for autonomous qualification;
     the current evidence gap is not a blanket ban or permission to collect again.
+  - User explicitly reopened one bounded measurement effort from reviewed
+    `3f6dea9065784e4465b48567de9c27cc1332b385`; this replaces the prior
+    no-further-collector gate, not product semantics or performance gates.
+    New campaign: at most **three admission Electron launches total**, including
+    smoke/self-tests; code and mixed must qualify. One corrective admission fits
+    within that same cap. Then the original **nine serial fresh-process journeys**,
+    no sample replacements/retries; at most twelve launches. Prior two code
+    launches remain separate and both old directories stay immutable.
+    Sol minimally repaired semantic split qualification and recorded actual
+    inline/computed/bounds values on success/failure. Static Node checks ran first;
+    independent Sol/Luna review each launch-relevant executable/declaration.
+    Node syntax/pure budget/split checks passed without Electron.
+    Astra found the old remote-first-paragraph offset invalid for arbitrary
+    wheel positions. The correction keeps native timed endpoints and separately
+    qualifies fixed-landmark correspondence outside timings with the existing
+    mirror/Range method, both directions and unchanged <36 px tolerance.
+    Independent Sol/Luna approved exact r1 executable/declaration before launch;
+    earlier admission intervals are not comparable samples.
+    Keep source/fixtures/settings/actions, actual effects/current ownership,
+    host rows, all failures, observer cost and PID-scoped cleanup. No product
+    fixes, new framework or dependency strategy. Stop for substantial tooling,
+    materially different endpoints, exhausted caps or unsafe/unqualified method.
+    Hand off actual campaign outcomes before any further product work.
+    Campaign completed: both admissions qualified on the first attempt,
+    nine/nine original journeys completed; eleven launches, no corrective
+    admission, retry, replacement, excluded sample, cutoff or sentinel failure.
+    Prior two failed code launches remain separate and unchanged.
+    [Results and raw pointer](PERFORMANCE-ARCHITECTURE.md#reopened-campaign-result).
+    Current-source text/driver effects were observed separately from later
+    preview/follower; pending-source editor interaction occurred in nine/nine.
+    No pending-presentation first-open interaction was observed. Separate
+    anchored correspondence controls passed without relaxing tolerance.
+    Astra's source-aware analysis identifies the edit-to-current-preview/
+    follower boundary for later evaluation, not a proven CPU cause, new timer
+    policy or reason to replace an engine. Existing 400 ms scheduling is
+    context, not measured CPU or a waived behavior gate.
+    All 61 host rows retained; sampler exited cleanly. Each launch recorded
+    owned PIDs absent; all eleven final screenshots were viewed. Source-entry,
+    observer and small-sample limits remain. Independent Sol/Luna checked
+    actual raw controls/math and the two-document record; both agree on the
+    figures and scope. Luna caught "three journeys" in one Step 4 sentence:
+    corrected to three workloads with nine samples. No numerical disagreement.
+    Local documentation only; no product slice, comparison or further collection.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
