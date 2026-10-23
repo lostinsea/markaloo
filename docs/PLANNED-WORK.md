@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEP 1 ACCEPTED; STEP 2 COMPLETE; COORDINATOR HANDOFF; STEPS 3-6 NOT STARTED** (2026-10-23).
+- `performance-architecture` - **STEPS 1-2 ACCEPTED; STEP 3 DEFINITION COMPLETE; COORDINATOR HANDOFF; COLLECTION AND STEPS 4-6 NOT STARTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -77,14 +77,38 @@ section is kept here so the register has a visible edge.
     Sync Main writes/tracking IPC and sync renderer computation/DOM/layout are
     distinguished from queued/awaited work. No costs were measured or ranked.
   - Step 2 exits with the current-state diagram, owner/identity/work/readiness
-    notes, preservation links and focused unknowns. Coordinator handoff is next.
-    Step 3 would agree user-visible workloads/outcomes, qualify reusable
-    evidence and freeze methods/stop rules before collecting missing evidence.
-    No Step 3 method, SLO, workload set or observation is selected here.
+    notes, preservation links and focused unknowns. Coordinator accepted local
+    `3da5324dcefeca57327e6631929afa30bd4575f9`.
+  - Step 3 starts from that clean local commit. Astra guides source-qualified
+    workload, retained-evidence and minimal-method definition; Sol/high owns
+    the same document, then independent Sol/Luna review its actual contract.
+    No runtime collection or optimization selection is authorized in this unit.
+    The draft fixes three existing prose/code/rich constructions and separates
+    observed text/layout, required presentation, actual typing, current-source
+    preview/mapping and driver/follower movement. Retained receipts are limited
+    by exact source/lifecycle/endpoint; unpinned handoff observations stay context.
+    It proposes one bounded method-admission/observation unit, not a framework:
+    at most two admission launches, then nine fresh-process journeys only if
+    effects/controls can be observed. Cutoffs are administrative, not SLOs.
+    No-effect, superseded, unobserved lifecycle and method failure stay distinct.
+    Applicable original gates and failed R2/R3 results remain unchanged.
+    Initial Sol/Luna reviews both found a hidden Open target and unfixed action
+    parameters. The draft now uses the exposed Welcome button and fixed
+    window/edit/wheel/observer rules. Luna also required separate document and
+    mapping identity, removal of settled helper tails from measured attempts,
+    per-process controls and accurate incomplete-Rust wording; corrected.
+    Luna's correction check additionally required a same-process reading-mode
+    wheel control, not only split-pane controls; added outside timings before
+    editing. Final independent Sol/Luna checks accept the actual contract;
+    both agree the method is source-grounded, finite and limited to the named
+    outcomes. No blocker or unresolved disagreement remains.
+    Step 3 exits with workloads/endpoints, evidence-use limits, fixed method,
+    unchanged gates and one proposed missing-baseline unit. No runtime result
+    is claimed, and no behavior decision blocks this definition.
   - This unit is local documentation only: no product/harness edits, app or
     test execution, measurements, dependencies, push, integration or release.
-    Step 2 is authorized documentation only. Steps 3-6 remain unstarted and
-    need later sequential handoffs.
+    Step 3 ends at reviewed local documentation and coordinator handoff.
+    Any missing-baseline collection and Steps 4-6 need later sequential handoffs.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,

@@ -6,9 +6,10 @@
   Improve a component or replace a subsystem when evidence supports it.
 - Do not start a whole-app language/framework rewrite. Do not choose a language,
   worker, package, cache or virtualization strategy before comparing the options.
-- Work through one deliverable at a time. Step 1 is accepted; source-based
-  Step 2 and its independent reviews are complete in the same isolated
-  worktree, ready for coordinator handoff. Steps 3-6 have not started.
+- Work through one deliverable at a time. Steps 1 and 2 are accepted.
+  Step 3's definition and independent reviews are complete in the same isolated
+  worktree, ready for coordinator handoff. No observations run here.
+  Steps 4-6 have not started.
 - These are documentation deliverables, not runtime qualification or permission
   to choose or implement an optimization.
 
@@ -218,7 +219,7 @@ flowchart TD
 | **Input delivered or driver claimed** | An event/intent was accepted, not actual movement, current-source preview text, or a follower write. Nested/horizontal/prevented wheel cases have different routing. [Input ownership](../src/editor-scroll.js#L775-L840). |
 | **PDF ready / result** | Ready means theme preparation reached its signal; two frames do not certify physical paint. Result reports the device/write outcome, not every page's content, document correlation or successful OS viewer launch. See P11 and the export flow above. |
 
-### Questions carried to Step 3, not investigated here
+### Questions carried from the source map
 
 - Which current-source outcome is delayed for each selected workload: admission,
   readable DOM, overlay release, usable geometry or visible typing/scroll effect?
@@ -238,8 +239,212 @@ flowchart TD
   starting points, not new results. The [existing benchmark](../bench/run.js#L1363-L1458)
   observes direct render return and later mutations/census; its labels do not
   certify native open, paint, input effect, media or all background work.
-- No workload set, new method/SLO, observation or optimization is selected here.
-  Step 3 must freeze its own decision method before collecting missing evidence.
+- The source map does not select a workload set, method/SLO or optimization.
+  Step 3 freezes a decision method before any missing observation is collected.
+
+## Step 3: decision baseline definition
+
+```mermaid
+flowchart LR
+    R["Reuse qualified evidence"] --> Q["Name the missing user-visible outcome"]
+    W["Three existing workloads"] --> Q
+    Q --> A["One bounded method-admission check"]
+    A -->|effects observable| O["Nine released-baseline journeys"]
+    A -->|controls fail| G["Record method gap; stop"]
+    O --> H["Keep every outcome and its limits"]
+    H --> D["Step 4 may compare options"]
+    G --> D
+```
+
+- This is a proposed, frozen collection contract for coordinator handoff, not
+  observations, agreed product SLOs or a selected optimization.
+- Priority: current readable content, actual text entry and effective scrolling.
+  Highlight/copy/overlay completion is a separate outcome, not a substitute.
+- Retained evidence protects named functionality and preserves failed gates.
+  It does not establish released input effects while current work is pending.
+  Propose **one** missing-baseline unit below; do not start it here.
+
+### Three workloads and their user journeys
+
+| Workload / existing construction | Required journey and preservation links |
+|---|---|
+| **Ordinary prose:** `# Plain corpus` plus `generate("prose", 50 * 1024)`. The generator finishes a whole iteration, so the target is not an exact byte count. [Definition](../test/test-editor-scroll.js#L60-L66), [prose](../bench/corpus.js#L70-L75), [generation](../bench/corpus.js#L220-L257). | Fresh-process first open; enter editing; insert two distinct short markers in ordinary prose without waiting for preview settlement; observe latest preview/mapping and actual scroll effects. P1/P3/P4/P6/P7/P12. This does not replace the separate 64 KiB performance control. |
+| **Code-rich:** existing multi-language fixture, including aliases, plain-fence controls, incomplete Rust string/comment payloads inside complete fences, long Rust text, editable prose and tail paragraphs. [Fixture](../test/fixtures/language-highlighting.js#L5-L110). | Same journey. Keep exact code text, representative tokens and copy controls as separate presentation checks. P3/P6/P7/P9/P10. It is not the original R2/R3 representative workload. |
+| **Mixed rich:** existing repeated prose, Mermaid flowchart, tall images, table, JavaScript fence and wrapped paragraphs; retain its `short.svg` sibling. [Construction](../test/test-editor-scroll.js#L32-L65). | Same journey, with the fixture's rich-content structure and loaded local images, not just its first heading. P3/P6-P9/P12. No size multiplier or new network resource. |
+
+- Each workload opens **first in its own fresh process**. Three documents opened
+  in one process do not give three fresh module/grammar contexts.
+- Use the fixed parameters below; record the resulting viewport/runtime and
+  keep them identical in later comparisons.
+- Current-source replacement is required now. Cross-tab late completion stays
+  a preservation constraint, not another collection journey. Add qualification
+  if a selected slice changes shared scheduling, caches, workers or cancellation.
+- Navigation/resize checks become required if mapping/restoration/layout changes.
+  P11 complete pages/lifetime become required if export is affected. No PDF,
+  platform, theme or file-size campaign is part of this unit.
+
+### Which retained evidence can be reused
+
+- **Valid baseline** below means valid only for the named claim and lifecycle.
+  It does not turn functional results into a timing baseline.
+- All current runtime/test references describe released source
+  `f5d380786fb895bf783e263f79aea6316f303ad1`. Older observations stay attached
+  to their older sources. An unpinned receipt cannot establish a fresh claim.
+
+| Evidence / source and retained reference | Method, workload and endpoint | Permitted use / limit |
+|---|---|---|
+| **Release receipt:** f5, exact tree/hash and receipt in [Step 1](#source-and-evidence-boundary); [release register](PLANNED-WORK.md#current-workset). | Source gates, strict ASAR checks and fresh-profile actual Windows package checks: languages/copy, direct search, TOC/navigation/resize and listed UI controls. | **Valid functional baseline** for those exercised cases. **Context only** for responsiveness. No full-suite, cross-platform UI, installed upgrade, pending-input latency or physical-paint certificate. |
+| **Original Prism R2/R3:** `c6ad6dfa902561b021d6d6f099b7b64c1de11871` versus `bb78080f677a8d12a11e351a14fa463c759da127`; [method and receipts](PERF-AUDIT.md#L3-L73), session `5850f9b8`, `files/language-perf-r2/results.json` and `files/language-perf-r3-20pairs/results.json`. | R2 has three fresh-profile observations per variant; R3 has twenty alternating matched pairs. Original representative first-open endpoint, not this contract's visible/input endpoints. | **Valid historical gate evidence**, not current f5 latency. R2 remains failed at +52.3 ms; R3 remains failed at +51.3 ms, observed p95 151.8 -> 203.1 ms against 50 ms. The accepted release exception does not pass or change the gate. |
+| **Held idle callbacks:** f5 [test](../test/test-language-highlighting.js#L309-L340), retained release syntax result. | Direct renders hold real highlight callbacks; release stale then current work. Observe plain text, tokens and owner-specific overlay cleanup. | **Valid narrow functional baseline** for the exercised generation/overlay behavior. **Unusable for natural latency**, same-generation source freshness or effective input while work runs. Held work is not naturally scheduled work. |
+| **Settled admission:** handoff receipt/harness/workload not pinned here. Existing [pane/source/stable-frame checks](../test/test-editor-scroll.js#L137-L173); older [scroll comparison](PERF-AUDIT.md#L128-L169) names source `02108b98`. | Settled open/split preconditions and later scrolling, not input while current work is unfinished. | **Context only** for setup/method reuse. No transfer to f5 absolute latency or pending interaction. Pin a retained receipt before making any stronger claim; do not recollect it by default. |
+| **Early wheel:** corrected `8f79aefa5905f3d8f87d907412f397094d593626` versus parked `a566081028563abe9dfed73cb2c93ba629f2afe8`; handoff-only receipt/harness identity not pinned here. | Eight paired early attempts had zero actual effects; baseline overlay events and candidate preview events did not establish motion. A later single probe did not isolate native readiness from pre-dispatch interaction. | **Unusable as response latency** or release performance. Retain as negative method evidence. No Chromium/user-scroll diagnosis; no parked PoC time transferred to f5; no repair by settling only one variant. |
+| **One idle interval:** `8f79aefa5905f3d8f87d907412f397094d593626`; handoff-only receipt/harness identity not pinned here. | One 16-block observation: queue wait versus callback elapsed for highlight **plus copy and overlay**, not isolated Prism CPU. | **Context only**. Too small/indeterminate for scheduling changes, CPU attribution or released input response. Do not add a measurement merely to enlarge it. |
+| **Direct benchmark:** f5 [current method](../bench/run.js#L1363-L1458); [retained corpus results](../bench/BASELINE.md#L1353-L1407) use Electron 43.2.0 without an exact product commit in that result block. | Direct render-return interval, resolve-side counts, later mutations and final census. Different lifecycle from native first open. | **Context only** for separating returned versus later work. Labels do not prove readable paint, effective input, all background work or f5 absolute latency. No new benchmark run. |
+
+### One proposed missing-baseline collection unit
+
+- **Question:** which observable boundary delays current useful content or
+  interaction on f5, and can the existing input methods observe real effects?
+- **Exit:** either usable, source-pinned observations with limits, or a bounded
+  method-gap finding. Neither chooses a subsystem or proves a CPU bottleneck.
+- Reuse small existing mechanisms, not entire suites: production-preload
+  [Open witnesses](../test/test-editor-scroll.js#L129-L141),
+  [picker-device substitution](../test/test-editor-scroll.js#L110),
+  [native hit-tested click](../test/test-editor-scroll.js#L284-L295),
+  [text insertion](../test/test-language-highlighting.js#L429-L448),
+  [wheel helper](../test/test-editor-scroll.js#L274-L284),
+  [actual scroll effects](../test/test-editor-scroll.js#L674-L697),
+  [current-source diagnostics](../src/editor-scroll.js#L841-L890) and
+  [native-action interval/failure handling](../bench/native-actions.js#L234-L392).
+  No replacement harness, product instrumentation or broad dependency/tooling work.
+- Do not call those whole helpers for measured endpoints: `open()` uses a
+  synthetic click then waits for Mermaid/settlement; `nativeWheel()` also
+  settles after dispatch. Reuse only the specified dispatch/witness mechanics.
+  The measured observer is non-settling; existing settled tails belong only
+  to controls. This extraction is proposed, not an already-qualified helper.
+- Open uses the exposed Welcome control `#welcomeOpenBtn`, through its
+  [production handler](../src/renderer.js#L3300-L3307),
+  [narrow bridge](../src/main-preload.js#L797-L799) and
+  [Main admission path](../src/main.js#L4751-L4830).
+  Hit-test it before timing. The separate `#openFile` menu item starts hidden;
+  do not consume admission by trying to click it without opening its menus.
+  Direct `renderMarkdown()` is not a first-open action.
+
+| Fixed parameter | Rule before collection |
+|---|---|
+| **Window and mode** | Use `win.setSize(1440, 920)`, as in the [existing suite](../test/test-editor-scroll.js#L443). This fixes window size, not inner viewport; record the actual content bounds. Light theme, 100% reading zoom, production throttling policy, initially reading mode; no resize/zoom/theme changes during a journey. |
+| **Enter editing** | Start only after the first-open presentation endpoint and the untimed reading-scroll control below. If either is not reached/passed, retain that outcome and mark dependent edit actions not reached; do not invent successful setup. Use the existing Edit action, then the [splitter reset](../src/renderer.js#L4045-L4047) to `0.5`. Verify editor width `50.00%`; the viewer has the remainder minus splitter/borders, not equal inner pixels. [Ratio/layout](../src/renderer.js#L3955-L3982). |
+| **Source edits** | All three constructions start with a heading, blank line and prose. Focus/hit-test `#markdownEditor`; verify it is the active element. Set the collapsed caret at `source.indexOf('\n\n') + 2`, the start of that existing prose. Insert `step3one ` then `step3two ` at the advancing caret, with a value/selection checkpoint but no preview-settlement wait. Expected latest first paragraph starts `step3one step3two ` and retains the original text. Precompute exact source/selection after each insertion. |
+| **Scroll targets** | Reading mode: `.content-wrapper`; split preview: `#viewer`; source: `#markdownEditor`. Use the center of the exposed scroll pane and verify the hit target is inside it. Record its actual bounds/scroll extent. [Mode-specific preview scroller](../src/renderer.js#L1018-L1030). |
+| **Wheel and trigger** | One Electron `mouseWheel` attempt per declared action: `deltaX: 0`, `deltaY: -100`, no Ctrl/Meta. This is the existing downward injection sign, not DOM `WheelEvent.deltaY`. [Positive control](../test/test-editor-scroll.js#L680-L689). Preview trigger is the first observation of current text, exposed pane and positive vertical overflow; edit trigger follows the second input checkpoint with no source/geometry-settlement wait. Record lifecycle at actual delivery. Driver effect means `scrollTop` increased from the captured value; follower effect requires its actual position change plus current-source correspondence, not only a write counter. |
+| **Observation cadence** | One lightweight rAF check per frame while the journey is active. Main independently enforces the cutoff/watchdog; a stalled renderer must not disable the stop. Record check count and elapsed observer work. Expensive validation/captures do not run every frame. |
+
+| Action / start | Observable endpoints and ownership |
+|---|---|
+| **First open:** ready Welcome, no admitted document; start immediately before native mouse dispatch to the hit-tested Open control, substituting only the file-picker device. | Record current heading/ordinary viewport text, nonzero exposed layout and no opaque cover or hit-blocking element; this is a DOM/layout observation, not physical readability/paint. Separately check fixture beginning/middle/end and rich structures, exact code text, relevant tokens/copy controls, local images/Mermaid and overlay release. Verify admitted active owner, expected path and exact source. Fixture witnesses are not a certificate of every possible document/output page. |
+| **Type current source:** admitted editor and fixed caret/markers above; start each interval immediately before `webContents.insertText`, without waiting for preview settlement between insertions. | Observe each actual textarea value/selection and the newest markers with original prose in the first preview paragraph. Separately verify active admitted document identity below. Mapping requires `ready`, `matchesSource`, `selection === mappedSelection`, and no pending source/geometry. Use live textarea text, not saved `originalMarkdown`. First revision may be superseded; its stale preview is not success for the second. |
+| **Scroll:** one first-open preview attempt when current content/overflow is first observable; one editor attempt after latest input, without a settle delay. | Record actual hit target, input delivery, lifecycle at delivery and before/after positions. Require driver movement in the intended direction, not event/driver claims. In split view, track follower movement/current-source correspondence separately. Source-pending protection may correctly delay follower movement. No programmatic `scrollTop` write may manufacture native success. An already-settled trigger does not measure pending response. |
+
+- Capture active `CustomTabs` tab/path identity and its Main-issued `documentRef`
+  after admission; verify that same admitted identity at each later action and
+  endpoint. Also compare the exact expected source. No path-only substitution.
+- Mapping diagnostics are a separate check: `owner` names the scroll-driving
+  pane, not the document; `selection`/`mappedSelection` refer to file-open
+  sequence, not document identity. [Identity](../src/custom-tabs.js#L3639-L3670),
+  [mapping wiring](../src/renderer.js#L1011-L1017),
+  [diagnostics](../src/editor-scroll.js#L880-L889).
+- Early scrolling belongs to this interactive first-open journey; it is not an
+  isolated file-load measurement. Do not reuse an old zero-effect wheel trigger
+  as a proven response oracle.
+- A settled positive control must establish focus/target, overflow away from
+  boundaries, real text changes, real driver/follower movement and live error
+  sentinels. Failed control or unproven delivery is a **method gap**, not proof
+  that product input is blocked.
+- With a valid control, an early attempt with no movement remains a no-effect
+  result for that attempt, not a fabricated response time or general diagnosis.
+  Covered/misdirected input is reported separately. If no natural pending
+  lifecycle occurs, record **not observed**; do not hold work or slow one variant.
+
+### Clocks, outcomes and finite stops
+
+- Use Main-clock dispatch-to-observed-effect intervals as honest end-to-end
+  observations, including injection/bridge/observer overhead. Renderer-local
+  event-to-DOM intervals may be reported only if actually captured cheaply.
+  Never subtract timestamps from different processes.
+- Existing test-side `executeJavaScript` access can install temporary input/wheel
+  listeners and DOM observers without changing product source. Paired
+  event/effect timing is not an already-qualified helper; admission must prove
+  it. Do not expand instrumentation to rescue it.
+- One lightweight observer at a time; retain check count, observer elapsed work
+  and frame/poll granularity. Avoid full-source/census/Range scans on every poll.
+  Validate exact source at endpoints and disclose that observation cost; do not
+  subtract a guessed overhead. View captures outside timed intervals.
+- The Step 2 map separates synchronous work from waits. These observations
+  measure elapsed response, not CPU or numeric synchronous occupation.
+  Unmeasured phase cost stays unknown; do not call a promise gap Prism CPU.
+- Electron-injected input is not physical OS input. DOM/rAF observation is not
+  physical paint; geometry readiness can still be invalidated later.
+- Keep every attempt with source/owner, action, delivery evidence and positions:
+  **pending**, **settled at the declared endpoint**, **cancelled/superseded**, or
+  **no response by cutoff**. Record no delivery, delivered/no movement,
+  driver-only movement and missing latest-source completion separately.
+  Setup refusal, observer failure and crash are retained errors.
+- Allow **at most two admission launches**, one code-rich and one mixed.
+  If the existing method cannot establish its controls, stop with the specific
+  gap; no alternate-input/framework search or retry-until-green.
+- After admission, **three fresh-process journeys per workload: nine launches**.
+  This screens repeatability and gives individual values/median/range, not a
+  reliable p95, universal workload result or acceptance certificate.
+- In every measured process, verify Welcome/no admission and live error
+  sentinels before timing; remove the sentinel probes without warming a
+  document/grammar. After the first-open endpoints, before editing and outside
+  timings, make one settled downward wheel control on `.content-wrapper`.
+  Require actual reading-mode movement and the same target/delivery checks
+  before treating the early reading attempt as proved no-effect. A passing
+  split-pane control cannot qualify this different scroller.
+- After the timed edit journey, make one settled text control
+  (`step3control ` at the same source insertion rule) and one downward wheel
+  control in each split pane, outside timings. Verify actual text/preview and
+  driver/follower effects. Failed controls leave that process's input claims
+  unqualified; retain its observations and stop, without replacement launches.
+  If opening/editing was not reached, retain that failure and mark dependent
+  controls not reached. Do not warm a first-open sample with input controls.
+- Use the existing native-action **30-second observation cutoff** and syntax
+  harness **120-second launch watchdog** as administrative caps, not SLOs.
+  A cutoff is an unfinished/lower-bound result, not a 30-second completion.
+  Stop for unsafe dialogs, identity mismatch, dead sentinels, observer failure
+  or crash. Ordinary slow/no-response attempts remain results, not retries.
+- Keep failures and supersessions beside successful response intervals; show
+  denominators and conditional summaries. Do not hide failures inside a
+  successful-only aggregate or pool these samples with historical R2/R3.
+- Use fresh profiles, fixture copies and outputs under one run-owned directory.
+  Pin product, fixture bytes and observation method; record runtime/platform.
+  Track/stop only created process IDs. No real profiles, unrelated Electron
+  processes, external apps or unapproved dialogs.
+
+### Comparison criteria and Step 4 use
+
+- No new numeric performance SLO is agreed. Screening succeeds as a **method**
+  only when controls/identity/endpoint observation are valid; it can still
+  report poor, absent or unobserved interaction.
+- Later comparisons use identical fixture bytes, actions/lifecycle triggers,
+  endpoints, viewport/zoom/theme/split settings, runtime and observer policy.
+  Alternate serial baseline/candidate order and apply admission symmetrically.
+  Retain slow/failing samples; no candidate-only settling or retrying.
+- Existing [performance gates](PLANNED-WORK.md#performance-acceptance-gates)
+  retain their original scope and budgets: applicable startup +100/+200 ms,
+  separate 64 KiB prose +30/+60 ms, open/edit/split max(20%, 50 ms), and the
+  scoped cached-geometry callback <=4 ms with no rebuild/source-Range-read
+  controls. They are not universal input/CPU SLOs. Map applicability at Step 4;
+  the original R2/R3 results remain failed.
+- Step 4 can compare options against the demonstrated delayed outcome and the
+  affected P-contracts, validation/maintenance risk and costs. If useful input
+  already works before decoration finishes, earlier decoration callbacks alone
+  have no demonstrated interaction benefit. If effects cannot be observed,
+  options needing that claim remain unranked.
+- No user decision blocks this definition. Keep current output and ownership
+  semantics. A later proposal for partial/degraded output, changed debounce or
+  scroll ownership needs a specific behavior decision; none is made here.
 
 ## Open gaps and decision limits
 
@@ -287,8 +492,12 @@ flowchart TD
 - Step 2 exits with source-backed owners, work/suspension boundaries, actual
   guards, readiness meanings and decision-critical unknowns against P1-P13.
   Independent Sol/Luna reviews and correction checks accept the actual map.
+  Coordinator accepted local `3da5324dcefeca57327e6631929afa30bd4575f9`.
   Agreements, differences and corrections are recorded in the
   [work register](PLANNED-WORK.md#current-workset).
-- Stop after that reviewed local commit and coordinator handoff. Step 3 would
-  agree user-visible workloads/outcomes, qualify reusable evidence and freeze
-  methods/stop rules before any missing observation. It has not started here.
+- Step 3 is documentation only: define concrete workloads/outcomes, qualify
+  reusable evidence and freeze minimal methods/stop rules. Its three-workload
+  contract and independent Sol/Luna correction checks are complete; no blocker
+  or unresolved disagreement remains. The one proposed collection unit has
+  not run. Stop after this reviewed local commit and coordinator handoff;
+  do not collect observations or start Steps 4-6 here.
