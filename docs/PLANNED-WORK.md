@@ -38,9 +38,52 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `offline-popular-languages` - **REVIEWED LOCAL REVISION; PERFORMANCE BLOCKED** (2026-10-22 UTC).
-  - Sole writer: isolated `users/vinma-microsoft/offline-rust-highlighting`,
-    based on canonical main `bb78080f`; published release records stay fixed.
+- `release-0.10.0` - **REVIEWED AND QUALIFIED; PUBLICATION PENDING** (2026-10-23).
+  - Sole repository/release writer: isolated
+    `users/vinma-microsoft/markaloo-0-10-0-release`, starting at reviewed
+    `8f79aefa`, tree `cde3dc8c`, directly on original Prism `c6ad6dfa`.
+    Canonical main is `bb78080f`; the primary checkout stays untouched.
+  - User authorized version 0.10.0, required qualification, normal integration,
+    annotated tag and established hosted stable publication. No PR is required.
+  - Includes only the original twelve-language offline Prism feature, the
+    independent TOC/search restore fix, and version/release metadata and docs.
+    Staged/async/header performance PoCs remain parked and unadopted.
+  - User accepted the original Prism first-open regression as a scoped release
+    tradeoff: R3 observed p95 151.8 -> 203.1 ms, +51.3 ms against 50 ms.
+    R2 remains failed at +52.3 ms. Budgets are unchanged; this is not a passing
+    performance gate or a claim that responsiveness is proven.
+  - Correctness, security and packaging requirements remain. The legacy search
+    harness fails before functional assertions on both `c6ad6dfa` and `8f79aefa`;
+    it is not counted as passing. Direct packaged search checks pass.
+  - Coupled source: syntax `78/78`, updates `42/42` and About `143/143`,
+    toolbar `47/47`, document editor `60/60`, scroll transitions `45/45`,
+    layout `14/14`, input `20/20`, panels `59/59`, TOC `30/30`,
+    responsive `28/28` and startup `13/13`. All anchors resolve.
+  - Local portable and NSIS builds pass with publishing disabled. Strict
+    built-ASAR packaging is `439/0` without skips. Every source file and the
+    original Prism bundle match; app ID and canonical update feed are unchanged.
+  - Actual unpacked 0.10.0 uses a fresh isolated profile and production preload.
+    All language fences, aliases, plain fallback, inert source tags and native
+    code-copy pass. Search checks cover Enter/Shift-Enter, next/previous,
+    pending-term flush, token text, no match and closing pending search.
+  - Trusted TOC/search navigation and actual resize inside an armed restoration
+    window pass in the package; ordinary resize restoration also passes.
+    About/version, equal update-cache clearing and both error sentinels pass.
+    Source light/dark, navigation and packaged screenshots were viewed.
+  - Fresh independent Sol 6.1/high and Luna 6/high accept the release preparation
+    and publication sequence. Neither found a blocker; no disagreement remains.
+    Next: non-force atomic canonical main/tag push, one tag-triggered hosted
+    workflow, then exact public title/notes and download/update/provenance checks.
+    The workflow does not set reviewed notes/title; apply them after it succeeds.
+    Publication is not yet complete; no full-suite pass is claimed.
+  - Evidence: session `54f84d1f`, `files/release-0100-source-gates.json`,
+    `release-0100-built-archive.json`, `release-0100-packaged.json`,
+    retained logs/captures and the scoped performance-exception receipt.
+  - No dependency upgrades, scheduling changes, installer execution, live
+    upgrade or real-profile access. Architecture discussion follows release.
+- `offline-popular-languages` - **REVIEWED; SCOPED 0.10.0 RELEASE EXCEPTION** (2026-10-23).
+  - Original feature is `c6ad6dfa`, based on canonical main `bb78080f`.
+    The preserved feature ref stays fixed; performance PoCs are not included.
   - User scope: official existing Prism 1.30.0 components for Rust, Go, PHP,
     Ruby, Swift, Kotlin, Dart, R, PowerShell, YAML, TOML and Markdown fences.
     Dockerfile is explicitly excluded; dependency upgrades remain postponed.
@@ -63,12 +106,16 @@ section is kept here so the register has a visible edge.
   - The complete affected feature command passes: syntax `78/78`, update state
     `42/42`, About `143/143`, toolbar `47/47`, document editor `60/60`,
     scrolling `221/221` and reading panels `59/59`.
-    No performance acceptance, loading redesign or automatic timing rerun.
+    No performance acceptance, loading redesign or timing rerun to seek a pass.
   - Fixed budgets: startup adds at most 100 ms p50 / 200 ms p95; document
     open/edit adds at most 20% or 50 ms, whichever is larger. Source-only
     checks do not certify packaged, hosted or cross-platform behavior.
-  - Local reviewed commit only. No push, integration, release, installer,
-    version bump, tag, workflow dispatch or publication.
+  - User authorized the scoped 0.10.0 release despite the documented failed
+    first-open gate. See the release entry above and `docs/PERF-AUDIT.md`.
+  - Independent TOC/search fix `8f79aefa` retires stale tab restoration before
+    native preview navigation. Its ordinary-resize restore control passes.
+    Source transitions are `45/45`; R1111/R1112/R1113 are exact PROVEN.
+    Fresh independent Sol/Luna accepted the fix; no PoC source was imported.
 - `release-0.9.1` - **PUBLISHED AND VERIFIED** (2026-10-21).
   - Release: [Markaloo 0.9.1](https://github.com/lostinsea/markaloo/releases/tag/v0.9.1).
   - Exact tagged source: `2d8a92e827d1ec50b564c2d150161efe5b662f86`.

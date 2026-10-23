@@ -1,6 +1,26 @@
 # Performance Audit
 
-## Offline language coverage - performance gate pending, 2026-10-22 UTC
+## Offline language coverage - scoped 0.10.0 release exception, 2026-10-23
+
+- User accepted the original twelve-language Prism feature's known first-open
+  regression for release 0.10.0. This exception does not change any budget,
+  waive correctness/security/packaging, or prove responsiveness.
+- Original-feature R3: twenty matched pairs, alternating order, separate fresh
+  processes/profiles. Representative first-open observed p95 is
+  **151.8 -> 203.1 ms: +51.3 ms against the 50 ms allowance, FAILED**.
+  Nearest-rank p95 is rank 19 of 20, not a tail guarantee.
+- R2 below remains failed at +52.3 ms. Neither batch is discarded or pooled.
+  No timing rerun is authorized to obtain a pass.
+- R3 evidence: session `5850f9b8`,
+  `files/language-perf-r3-20pairs/results.json`, including its declaration,
+  raw observations and gate results.
+- Release source is original feature `c6ad6dfa` plus independent TOC/search
+  restore fix `8f79aefa` and release metadata. Staged/async/header PoCs remain
+  unadopted; their results are not the original feature's release cost.
+- No loading/scheduling redesign or new packaged/cross-platform performance
+  claim. Architecture work is a discussion after release.
+
+### R2 retained measurement, 2026-10-22 UTC
 
 - Adds official Prism 1.30.0 grammars for the requested languages; no dependency
   upgrade, autodetection or loading redesign. Dockerfile is excluded.
@@ -28,8 +48,8 @@
 
 - **Not performance-accepted:** representative first-open observed p95 adds
   52.30 ms against the fixed 50 ms limit. Its median adds 47.00 ms and passes.
-  All other measured open/split/edit/startup gates pass. No threshold waiver,
-  discarded observation or repeat-until-green run.
+  All other measured open/split/edit/startup gates pass. The scoped release
+  exception above leaves this result failed; no observation was discarded.
 - With three process samples, observed p95 is the maximum, not a reliable tail
   estimate. Later workload first opens are not cold grammar contexts.
 - Separate isolated Chromium measurements: bundle compile/registration median
