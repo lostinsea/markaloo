@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STRATEGY CLOSED; 200 MS NOT ADOPTED; RELEASED 400 MS UNCHANGED** (2026-10-24).
+- `performance-architecture` - **REOPENED; COMPARISON METHOD REPAIR; 200 MS UNADOPTED** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -381,14 +381,28 @@ section is kept here so the register has a visible edge.
     the post-exit process fence stopped on its first PowerShell query timeout
     (1,000 ms query limit, 3,000 ms overall fence). All four pair rows remain
     unstarted. All 14 host rows remain; sampler clean, screenshot viewed.
-    Honor the final stop rule: no retry or further collector campaign.
-    Final owner decision: do not adopt 200 ms; finish this strategy and keep
-    released 400 ms. R4's narrow preview benefit and typing/render tradeoffs
-    remain valid; expensive-edit comparison and applicable adoption gates
-    remain unqualified. Further tooling cost is not justified for this small
-    policy change. This is not proof of a product fault or a numeric ROI claim.
-    Preserve the candidate and all evidence; no speculative next strategy,
-    product/dependency change, integration or publication is selected.
+    User correction supersedes the closure/no-further-campaign decision:
+    fix our comparison tooling and obtain valid numbers before assessing the
+    strategy. R6 stays closed and immutable, not retroactively qualified.
+    Its failure is not a product-effectiveness or ROI result.
+    R7 first repairs and tests the actual cold PowerShell/CIM query path:
+    20-second CIM operation, 30-second subprocess, 35-second fence; no retry.
+    Three real read-only controls precede Electron. Preserve complete response,
+    exact PID/profile/job/descendant ownership and unknown/error rejection.
+    Record each fixture's actual warning estimate and expected open/tab prompt.
+    The user authorizes an affirmative large-document choice only for these
+    exact generated files, through the validated production owned dialog.
+    Observe expected absence too; no guard bypass or generic dialog approval.
+    Include any consent in the open interval and retain separate timestamps.
+    Independent Sol/Luna review the actual repair and real controls.
+    Then at most ten launches: two code admissions and four alternating
+    heavy-edit pairs on unchanged fixtures/actions. Validate every receipt
+    and cleanup before the next launch. Retain all failed/unstarted rows.
+    A method fault closes that batch; a small tested repair uses a separate
+    declared unit, never silent replacement or a product-ROI conclusion.
+    Keep R4 findings, all nine historical roots and protected refs intact.
+    Candidate 200 ms remains unadopted; released 400 ms unchanged. Decide
+    only after valid product evidence and applicable qualification.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,

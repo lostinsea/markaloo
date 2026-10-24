@@ -30,14 +30,14 @@
   qualification justify validation, resource and maintenance costs. Separate
   measured results from engineering ROI judgments. Leaving the product unchanged
   is a valid outcome; promising partial timings alone do not justify adoption.
-- Final decision: finish this strategy without adopting 200 ms; keep released
-  400 ms. R4 demonstrates earlier previews and real input-response/render
-  tradeoffs, not safe global-policy adoption. R5 and final R6 did not reach
-  an expensive-edit comparison. R6's portable receipt worked, but its post-exit
-  process query timed out. Honor the frozen stop rule: no retry or further
-  collector campaign. This is insufficient adoption evidence, not proof that
-  the candidate is defective. No other strategy is selected without a concrete
-  unmet need and a small, credible way to evaluate it.
+- Current direction: repair the comparison method and obtain valid heavy-edit
+  results before deciding on 200 ms. The user superseded the earlier closure:
+  a tooling failure is not evidence against the product's benefit or ROI.
+  R4's measured benefits and tradeoffs remain valid. R5/R6 stay closed and
+  immutable; neither reached a heavy-edit comparison. R6's portable receipt
+  worked, but its post-exit process query timed out. Test the real Windows
+  query path before another bounded batch. Keep 200 ms unadopted and released
+  400 ms unchanged while comparison and applicable qualification continue.
 
 ```mermaid
 flowchart LR
@@ -1195,17 +1195,48 @@ flowchart LR
   (1,000 ms query limit, 3,000 ms overall fence). Exit zero and valid receipt
   did not override that failure. All four pair rows remain unstarted; all
   14 host rows remain and the sampler exited cleanly. The screenshot was viewed.
-- Decision: end this strategy without adoption or another collector repair.
-  R4's narrow benefit remains valid, but expensive-edit benefit/cost and
-  applicable adoption gates remain unqualified. The accumulated validation
-  cost does not justify more tooling for this small global-policy change.
-  This is an engineering ROI decision, not a numeric ROI estimate, a new
-  typing budget or evidence of a product fault. Keep the candidate and raw
-  evidence for reference; leave released 400 ms unchanged.
+- The earlier closure decision is superseded by the user's correction below.
+  The failed method supplies no heavy-edit product comparison or ROI verdict.
+  Its raw outcome remains unchanged; released 400 ms remains in place.
 - Evidence: session `301ba72b`, `files\pause-trial\r6\result.json`
   (`3157ff32...881e713`) and `method-outcome.json`. No R6 retry, replacement,
   sample exclusion, pooling, product change or new functional-suite run.
   Independent retention checks do not retroactively pass the failed fence.
+
+### Reopened heavy-edit comparison - r7 method repair
+
+- Fix the collector, not the product. R6's one-second cold PowerShell query
+  limit was an administrative bound, not a product requirement. Its later
+  independent checks completed with a 20-second CIM operation limit; the
+  exact cause of the earlier delay is not established.
+- Reuse that query mechanism with a 30-second subprocess limit and a
+  35-second fence deadline. Keep complete response validation, exact owned
+  PID/profile/job/descendant checks and explicit errors. A timeout or unknown
+  result must never count as absence. No automatic retry or unrelated kill.
+- Before Electron, run three real executions of the actual query path and
+  retain timing, response validation, an owned-PID positive control and
+  absent/unrelated controls. Keep the existing rejecting Node checks.
+  These checks qualify the method, not product latency or reliability tails.
+- For each pinned fixture, record the production cost estimate, warning
+  threshold and expected prompt in both open and selected-tab paths.
+  Observe the real owned-dialog flow. Approve only an expected large-document
+  question for the exact run-owned file, through its actual button after
+  validating owner, current request, wording and choices. Record consent
+  timing separately; the open interval still includes it. If no warning is
+  predicted, require its absence rather than forcing one. Unexpected questions
+  or refusals stop explicitly; never disable the guard or accept all dialogs.
+- After independent Sol/Luna review, freeze at most ten fresh Electron
+  launches: baseline/candidate code admissions, then four alternating pairs,
+  two each on the unchanged heavy prose/code fixtures. Keep native actions,
+  source pins, all intervals and output/caret/owner/mapping controls.
+  Decode and validate every receipt and complete cleanup before the next launch.
+- Keep every failed or unstarted row. A method fault closes its batch, not
+  the strategy: repair and test a small fault in a separately declared unit.
+  Do not retry or replace product samples, pool failed batches, or label a
+  real product failure as tooling without investigation.
+- Decide only after valid comparison and relevant qualification. Tool repair
+  cost may be reported separately; it cannot replace missing product evidence.
+  No dependency, product-policy, primary-profile, integration or release change.
 
 ## Open gaps and decision limits
 
