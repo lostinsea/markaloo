@@ -12,7 +12,7 @@ fs.mkdirSync(evidence, { recursive: true });
 const baseline = process.argv.includes("--baseline");
 const perfOnly = process.argv.includes("--perf");
 const proof = process.env.FOLIA_SCROLL_PROOF;
-if (proof && !["core", "blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty"].includes(proof)) {
+if (proof && !["core", "blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty", "mirror"].includes(proof)) {
   console.error("Unsupported editor-scroll proof route: " + proof);
   app.exit(2);
 }
@@ -438,6 +438,190 @@ async function restorationNavigation() {
     await nativeWheel("preview", -1);
   }
 }
+async function mirrorRetention() {
+  const saved = await exec(`({
+    source:markdownEditor.value,history:historySnapshot(),
+    start:markdownEditor.selectionStart,end:markdownEditor.selectionEnd,direction:markdownEditor.selectionDirection,
+    width:editorPanel.style.width,editorTop:markdownEditor.scrollTop,previewTop:viewer.scrollTop,
+    selection:getEditorScrollDiagnostics().selection,pendingHistory:historyDebounceTimer!==null
+  })`);
+  check("mirror probe starts with settled original history", !saved.pendingHistory);
+  if (saved.pendingHistory) throw new Error("Mirror proof cannot discard pending original history");
+  const repeated = ("Mirror repeated paragraph. " + "Combining e\u0301 and a rocket \uD83D\uDE80 keep positions current. ".repeat(5)).trimEnd();
+  const long = "x".repeat(511) + "\uD83D\uDE80" + "x".repeat(1200);
+  const body = [
+    "# Mirror retention fixture",
+    "Mirror edit anchor. Small edits keep the rest of this document unchanged.",
+    long,
+    ...Array.from({ length: 8 }, (_, i) => (`Mirror before ${i}. ` + "A source and preview landmark. ".repeat(10)).trimEnd()),
+    ...Array(6).fill(repeated),
+    ...Array.from({ length: 12 }, (_, i) => (`Mirror after ${i}. ` + "A separate ending landmark. ".repeat(10)).trimEnd()),
+    "Terminal line.\n\u200b",
+  ].join("\n\n");
+  const partition = source => {
+    const slices = [], blocks = source.split("\n\n");
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      if (block === long) {
+        slices.push(block.slice(0, 511), block.slice(511, 1023), block.slice(1023, 1535), block.slice(1535));
+      } else if (block === "Terminal line.\n\u200b") {
+        slices.push("Terminal line.\n", "\u200b");
+      } else {
+        if (block.length > 512 || block.includes("\n") || block !== block.trimEnd())
+          throw new Error("Mirror fixture escaped its independently defined simple partition");
+        slices.push(block);
+      }
+      if (i < blocks.length - 1) slices.push("\n\n");
+    }
+    slices.push("");
+    let offset = 0;
+    const offsets = slices.map(slice => { const from = offset; offset += slice.length; return from; });
+    return { slices, offsets };
+  };
+  const current = source => `markdownEditor.value===${JSON.stringify(source)}&&
+    viewer.querySelector('h1')?.textContent==='Mirror retention fixture'&&
+    getEditorScrollDiagnostics().ready&&getEditorScrollDiagnostics().matchesSource&&
+    !getEditorScrollDiagnostics().pendingSource&&!getEditorScrollDiagnostics().pendingGeometry`;
+  try {
+    await exec(`markdownEditor.value=${JSON.stringify(body)};
+      markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
+    await wait("mirror fixture current geometry", current(body));
+    const setup = await exec(`(() => {
+      const mirrors=[...document.body.children].filter(node=>node.tagName==='DIV'&&node.inert&&
+        node.getAttribute('aria-hidden')==='true'&&node.style.left==='-100000px'&&node.style.visibility==='hidden');
+      if(mirrors.length!==1)throw new Error('Expected one current source mirror');
+      const mirror=mirrors[0],changes=[];
+      let deliveries=0;
+      const observer=new MutationObserver(records=>{deliveries++;changes.push(...records);});
+      observer.observe(mirror,{childList:true});
+      const parts=()=>[...mirror.children],offsets=nodes=>{
+        let offset=0;return nodes.map((node,i)=>{const from=offset;
+          if(i<nodes.length-1)offset+=node.textContent.length;return from;});
+      };
+      const initial=parts(),at=offsets(initial),source=markdownEditor.value;
+      const start=source.indexOf(${JSON.stringify(long)}),split=start+512;
+      window.__mirrorProof={mirror,observer,changes,parts,offsets,deliveries:()=>deliveries,begin(){
+        observer.takeRecords();changes.length=0;this.before=parts();this.beforeDeliveries=deliveries;
+        this.beforeText=new Map(this.before.map(node=>[node,node.textContent]));
+        this.builds=getEditorScrollDiagnostics().builds;
+      },finish(expected,partition){
+        const after=parts(),from=offsets(after),d=getEditorScrollDiagnostics();
+        const records=[...changes,...observer.takeRecords()],removed=new Set(records.flatMap(r=>[...r.removedNodes]));
+        const retained=after.slice(0,-1).filter(node=>this.before.includes(node)&&
+          node.textContent.replace(/[\\s\\u200b]/g,'').length>0);
+        const actual=after.slice(0,-1).map(node=>node.textContent).concat('');
+        return {sourceExact:markdownEditor.value===expected&&after.slice(0,-1).map(n=>n.textContent).join('')===expected,
+          partitionExact:JSON.stringify(actual)===JSON.stringify(partition.slices)&&JSON.stringify(from)===JSON.stringify(partition.offsets),
+          sentinel:after.at(-1)?.textContent==='\\u200b'&&from.at(-1)===expected.length,
+          safeBoundaries:from.every(offset=>!/[\\uDC00-\\uDFFF]/.test(expected[offset]||'')),
+          current:d.ready&&d.matchesSource&&!d.pendingSource&&!d.pendingGeometry&&d.builds>this.builds&&
+            d.selection===${JSON.stringify(saved.selection)}&&d.mappedSelection===d.selection,
+          callbackDeliveries:deliveries-this.beforeDeliveries,records:records.length,removed:removed.size,
+          retained:retained.length,neverRemoved:retained.every(node=>node.isConnected&&!removed.has(node)&&
+            node.textContent===this.beforeText.get(node))};
+      }};
+      return {splitRelative:split-start,high:/[\\uD800-\\uDBFF]/.test(source[split-1]),
+        low:/[\\uDC00-\\uDFFF]/.test(source[split]),bindingStart:at.includes(start),
+        backedOff:at.includes(split-1)&&!at.includes(split),
+        terminalAuthored:initial.at(-2)?.textContent==='\\u200b'&&at.at(-2)===source.length-1&&
+          initial.at(-1)?.textContent==='\\u200b'&&at.at(-1)===source.length,
+        editorOverflow:markdownEditor.scrollHeight>markdownEditor.clientHeight+500,
+        previewOverflow:viewer.scrollHeight>viewer.clientHeight+500,
+        partitionExact:JSON.stringify(initial.slice(0,-1).map(node=>node.textContent).concat(''))===
+          JSON.stringify(${JSON.stringify(partition(body).slices)})&&
+          JSON.stringify(at)===JSON.stringify(${JSON.stringify(partition(body).offsets)})};
+    })()`);
+    check("mirror fixture proves the artificial split crosses a surrogate pair inside its binding",
+      setup.splitRelative === 512 && setup.high && setup.low && setup.bindingStart && setup.backedOff, setup);
+    check("mirror fixture separates authored terminal zero-width text from the artificial sentinel",
+      setup.terminalAuthored, setup);
+    check("mirror fixture really overflows both panes", setup.editorOverflow && setup.previewOverflow, setup);
+    check("mirror fixture has independently defined ordered source spans", setup.partitionExact, setup);
+    receipt.mirrorProof = { setup, edits: [] };
+    const sentinelAlive = await exec(`(async() => {
+      const p=window.__mirrorProof,last=p.parts().at(-1),before=p.deliveries();
+      last.remove();p.mirror.append(last);await Promise.resolve();
+      return {deliveries:p.deliveries()-before,removed:p.changes.some(record=>[...record.removedNodes].includes(last))};
+    })()`);
+    check("mirror removal observer detects a real detach and reinsert through its callback",
+      sentinelAlive.deliveries > 0 && sentinelAlive.removed, sentinelAlive);
+    receipt.mirrorProof.observerControl = sentinelAlive;
+    const inserted = body.replace("Mirror edit anchor.", "Mirror edit anchor. Inserted.");
+    const deleted = inserted.replace("Mirror edit anchor. Inserted.", "Mirror edit.");
+    const appended = deleted + "\n\nMirror appended.";
+    for (const [kind, source] of [["insert", inserted], ["delete", deleted], ["append", appended]]) {
+      await exec("window.__mirrorProof.begin();true");
+      await exec(`markdownEditor.value=${JSON.stringify(source)};
+        markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
+      await wait("mirror " + kind + " current geometry", current(source));
+      const observed = await exec(`window.__mirrorProof.finish(${JSON.stringify(source)},${JSON.stringify(partition(source))})`);
+      check(`mirror ${kind} keeps current text partition, UTF-16 boundaries, sentinel and owner`,
+        observed.sourceExact && observed.partitionExact && observed.sentinel && observed.safeBoundaries && observed.current &&
+        observed.callbackDeliveries > 0 && observed.records > 0, observed);
+      check(`mirror ${kind} retains attached unchanged source spans`,
+        observed.retained > 1 && observed.neverRemoved, observed);
+      const position = await correspondence("editor", "Mirror repeated paragraph.",
+        `mirror ${kind} aligns the interior repeated occurrence after shifted offsets`, 2);
+      check(`mirror ${kind} correspondence is interior and unclamped in both panes`,
+        position.editor > 36 && position.editor < position.editorMax - 36 &&
+        position.rendered > 36 && position.rendered < position.previewMax - 36, position);
+      receipt.mirrorProof.edits.push({ kind, utf16Units: source.length, observed, position });
+    }
+    const beforeWidth = await exec(`(() => {
+      const p=window.__mirrorProof;p.beforeWidth=p.parts();p.observer.takeRecords();p.changes.length=0;
+      return {width:markdownEditor.clientWidth,height:markdownEditor.scrollHeight,builds:getEditorScrollDiagnostics().builds};
+    })()`);
+    await exec("applyEditorSplitRatio(.25);applyTableBreakout();true");
+    await wait("mirror width invalidation", `getEditorScrollDiagnostics().ready&&
+      !getEditorScrollDiagnostics().pendingGeometry&&getEditorScrollDiagnostics().builds>${beforeWidth.builds}`);
+    const resized = await exec(`(() => {
+      const p=window.__mirrorProof,nodes=p.parts(),
+        removed=new Set([...p.changes,...p.observer.takeRecords()].flatMap(r=>[...r.removedNodes]));
+      return {width:markdownEditor.clientWidth,height:markdownEditor.scrollHeight,
+        same:nodes.length===p.beforeWidth.length&&nodes.every((node,i)=>node===p.beforeWidth[i]&&!removed.has(node)),
+        sourceExact:markdownEditor.value===${JSON.stringify(appended)},
+        partitionExact:JSON.stringify(nodes.slice(0,-1).map(node=>node.textContent).concat(''))===
+          JSON.stringify(${JSON.stringify(partition(appended).slices)})&&
+          JSON.stringify(p.offsets(nodes))===JSON.stringify(${JSON.stringify(partition(appended).offsets)}),
+        sentinel:nodes.at(-1)?.textContent==='\\u200b'&&p.offsets(nodes).at(-1)===${appended.length},
+        current:getEditorScrollDiagnostics().matchesSource&&!getEditorScrollDiagnostics().pendingSource};
+    })()`);
+    check("mirror width change proves fresh wrapping without replacing unchanged source spans",
+      resized.width !== beforeWidth.width && resized.height !== beforeWidth.height && resized.same && resized.current &&
+      resized.sourceExact && resized.partitionExact && resized.sentinel,
+      { beforeWidth, resized });
+    const resizedPosition = await correspondence("preview", "Mirror repeated paragraph.",
+      "mirror resized preview aligns the interior repeated occurrence using fresh geometry", 2);
+    check("mirror resized correspondence is interior and unclamped in both panes",
+      resizedPosition.editor > 36 && resizedPosition.editor < resizedPosition.editorMax - 36 &&
+      resizedPosition.rendered > 36 && resizedPosition.rendered < resizedPosition.previewMax - 36, resizedPosition);
+    receipt.mirrorProof.width = { before: beforeWidth, after: resized, position: resizedPosition };
+    await capture("mirror-retention");
+  } finally {
+    await exec(`window.__mirrorProof?.observer.disconnect();delete window.__mirrorProof;
+      editorPanel.style.width=${JSON.stringify(saved.width)};applyTableBreakout();
+      markdownEditor.value=${JSON.stringify(saved.source)};
+      markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true`);
+    await wait("mirror probe restores current original geometry", `markdownEditor.value===${JSON.stringify(saved.source)}&&
+      viewer.querySelector('h1')?.textContent==='Scroll correspondence'&&getEditorScrollDiagnostics().ready&&
+      getEditorScrollDiagnostics().matchesSource&&!getEditorScrollDiagnostics().pendingSource&&
+      !getEditorScrollDiagnostics().pendingGeometry&&!hasUnsavedChanges`);
+    await exec(`clearTimeout(historyDebounceTimer);historyDebounceTimer=null;historyRestore(${JSON.stringify(saved.history)});
+      markdownEditor.setSelectionRange(${saved.start},${saved.end},${JSON.stringify(saved.direction)});
+      markdownEditor.scrollTop=${saved.editorTop};viewer.scrollTop=${saved.previewTop};true`);
+    await settle();
+    await exec("retainCurrentDocumentEditor();true");
+    check("mirror probe restores original source, history, selection and clean current ownership",
+      await exec(`markdownEditor.value===${JSON.stringify(saved.source)}&&!hasUnsavedChanges&&
+        historyDebounceTimer===null&&JSON.stringify(historySnapshot())===${JSON.stringify(JSON.stringify(saved.history))}&&
+        editorPanel.style.width===${JSON.stringify(saved.width)}&&
+        markdownEditor.selectionStart===${saved.start}&&markdownEditor.selectionEnd===${saved.end}&&
+        markdownEditor.selectionDirection===${JSON.stringify(saved.direction)}&&
+        getEditorScrollDiagnostics().ready&&getEditorScrollDiagnostics().matchesSource&&
+        getEditorScrollDiagnostics().selection===${JSON.stringify(saved.selection)}`));
+  }
+}
+
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
   win.setSize(1440, 920);
@@ -463,6 +647,7 @@ async function run() {
   await capture("preview-middle-section");
   if (!baseline && !perfOnly && !coreProof) {
     await wait("published scroll geometry", "getEditorScrollDiagnostics().ready");
+    if (scenario("mirror")) await mirrorRetention();
     if (scenario("empty")) {
       const vm = require("vm");
       const markedModule = await import(require("url").pathToFileURL(require.resolve("marked")).href);
@@ -1244,7 +1429,7 @@ async function run() {
     }
   }
   const requiredScenarios = baseline || perfOnly || coreProof ? [] :
-    proof ? [proof] : ["blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty"];
+    proof ? [proof] : ["blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty", "mirror"];
   receipt.scenarios = [...executedScenarios];
   check("all required scrolling scenarios were executed",
     requiredScenarios.every(name => executedScenarios.has(name)), { requiredScenarios, executed: receipt.scenarios });

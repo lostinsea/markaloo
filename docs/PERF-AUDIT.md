@@ -1,5 +1,97 @@
 # Performance Audit
 
+## Hidden-mirror retention - local adoption, 2026-10-24
+
+- Released `f5d38078` versus the same source with whole-span mirror retention;
+  both keep the 400 ms preview wait. Only hidden-mirror mutation changes.
+  Binding partitions, current source/owner, UTF-16 offsets and fresh Range
+  geometry stay intact. No cached coordinates or second renderer.
+- Same Windows x64 host, AMD EPYC 7763, Node 24.18.1 and Electron 43.4.1.
+  One existing 1 MiB prose workload, two untimed admissions and three
+  alternating matched pairs. All eight launches qualified; every receipt
+  decoded and owned-process absence passed before advancing.
+
+| Pair | Whole edited build, released -> retention (ms) | Primary current-output gain (ms) | Final burst-readiness gain (ms) |
+|---|---:|---:|---:|
+| 1 | 346.4 -> 256.9 | 94.6 | 98.7 |
+| 2 | 352.3 -> 258.4 | 96.5 | 112.3 |
+| 3 | 364.5 -> 251.4 | 120.5 | 142.5 |
+
+- Exactly one edited build was observed per sample. Whole builds improve
+  about 26-31%; practical current output also arrives earlier. This is not
+  an exclusive mirror/layout CPU attribution.
+- All current text, caret, owner, output, mapping and partition controls passed.
+  Admissions prove substantive node retention and identical source partitions.
+  Render-call counts were unchanged. Final input notifications still took
+  hundreds of milliseconds; this does not establish smooth typing.
+- Separate original full editor-scroll qualification: 238/238 in each variant,
+  with an owned-profile path adapter and otherwise unchanged test source.
+  All mixed/plain open/split median and observed-maximum budgets passed.
+  Largest added median was plain Open at 5.60 ms, below its 50 ms allowance.
+  Original settled callback, no-rebuild/Range-read and bounded-write checks
+  passed. Four qualification captures were viewed.
+- Separate source-revert proof: retention passed 29/29; released source failed
+  only insert/delete/append attached-span reuse. Exact source, independently
+  defined partitions, UTF-16, EOF and shifted offsets pass in both.
+  Its assertion labelled "owner" checks source matching, not `diagnostics.owner`;
+  actual owner checks belong to the separate practical comparison.
+  Width changes remeasure geometry without replacing unchanged spans.
+  Six proof captures were viewed; both independent process fences passed.
+- Separate startup/prose regression screen: three fresh alternating pairs,
+  six launches, all stock assertions and process fences passed. Original
+  median/observed-maximum allowances passed:
+
+| Original endpoint | Released median / maximum (ms) | Retention median / maximum (ms) | Allowed increase, median / maximum (ms) |
+|---|---:|---:|---:|
+| Startup | 1007.29 / 1078.99 | 990.91 / 1017.37 | 100 / 200 |
+| 64 KiB prose Open | 183.54 / 183.62 | 182.91 / 183.85 | 30 / 60 |
+
+- These are regression checks, not additional speedup claims. Startup starts
+  after test imports/isolation, before product Main loading, and ends after
+  reader availability plus two renderer frames. Open uses the actual Open
+  action, heading/overlay and two frames.
+- An earlier separate startup unit stopped after one successful baseline
+  because the collector additionally required native window visibility.
+  The stock endpoint records that flag without requiring it. The repaired
+  unit retains the flag and requires visible renderer frames; focus was
+  observed true, not required. It does not force-show windows. All six native
+  flags were false, with renderer visibility/focus true.
+  The native flag remains unexplained. No samples from
+  the stopped unit enter the comparison.
+- Editor-scroll Open means the original heading/overlay endpoint, before Mermaid
+  settling; Split waits for current geometry and stable layout frames.
+  Three observations per fixture/variant do not certify a population p95.
+  Original language-feature native-edit and token/copy first-open endpoints
+  remain unqualified here; no historical release exception is transferred.
+- Final combined functional invocation passed 260/260, including the existing
+  scenarios and new mirror checks. Its six stock measurements are raw context,
+  not another performance comparison. Process absence passed; nine captures
+  were viewed. An unlaunched draft was closed after review found inaccurate
+  failure bookkeeping; the corrected declaration consumed one launch.
+- R1115 is bound to the executed proof by complete reverted-file byte
+  equivalence and exact test/route/assertion controls. The harness itself was
+  not newly executed; its read-only anchor check passed.
+- **Decision: adopt locally at 400 ms.** The measured practical gain warrants
+  a small span-matching branch and its durable tests. There is no new cache,
+  pipeline, scheduler or dependency. Sol/Luna and source-aware Astra support
+  this narrow scope; no broad performance qualification is claimed.
+  No retry, replacement, exclusion,
+  old-sample pooling, CPU/memory/physical-paint or universal-speedup claim.
+- Evidence: session `301ba72b`, `files\mirror-trial\r1` and
+  `files\mirror-qualification\r1`. Qualification result SHA-256
+  `eba3a89c6893415a4bc8547853e1e92cafec5ae92fb55134ef076fcc07622d5c`;
+  gate result `d9fdc0e441b3fba6d893ee8f536bc5f8d3ecfd4f8253728fc23b7388d7b21f4b`.
+  Proof: `files\mirror-proof\r1`, result SHA-256
+  `2721b5dd4fe261f2622af0d41b4073a30541db29acb2a8951a3b325df1daeac3`.
+  Startup/prose: `files\mirror-startup\r2`, result SHA-256
+  `556d3e8bb010b3f43190288b03520cb391aea841d1de1fa80d54fdd3c98f0b56`;
+  gate result `6f22ce6546f4a1a7131412260363f22e2cd74e8c6cd6dda98a21c3e0fa6124c5`.
+  Combined functional: `files\mirror-integration\r2`, result SHA-256
+  `f4588219422e7ee898db4bf612166639e9c6a4519de32b88b03bdec4db8b27b7`.
+  Retained layouts and immutable evidence: `files\mirror-retained-layout\r1`
+  and `files\mirror-closure\r1`; frozen paths resolve through `layout-map.json`.
+  Global 200 ms rejection and sealed R7 are unchanged.
+
 ## Preview wait 400 -> 200 ms - valid heavy-edit comparison, 2026-10-24
 
 - Baseline: released `f5d380786fb895bf783e263f79aea6316f303ad1`.

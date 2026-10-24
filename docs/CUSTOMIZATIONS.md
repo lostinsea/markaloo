@@ -98,6 +98,10 @@ This approach means after an upstream merge, you only need to ensure these files
 - Paragraphs, physical prose lines, list items, table rows and code lines provide
   landmarks. Mermaid, images and sandboxed HTML use stable block correspondence.
 - A hidden, inert mirror measures the textarea's actual wrapping.
+- Small edits keep unchanged whole prefix/suffix spans attached. Matching uses
+  exact source slices and distinguishes authored text from the EOF sentinel.
+  Binding partitions and UTF-16 boundaries stay unchanged; marker offsets and
+  Range positions are rebuilt for the current source and layout.
 - Displayed HTML stays unchanged. A separate, inert metadata copy supplies
   source spans only after its complete sanitized structure and text verify.
   Reused nodes receive the new source occurrence's spans.
@@ -119,10 +123,11 @@ This approach means after an upstream merge, you only need to ensure these files
   Horizontal scrolling and nested scrollports remain independent.
 - New input suspends mapping until the matching preview commits. Layout changes,
   media sizing, zoom, pane sizing and collapse state refresh cached coordinates.
-- Local preview-pause trial: input requests a refresh after 200 ms without
-  further input; the 800 ms undo-history timer is unchanged. This is a shorter
-  trailing pause, not periodic refresh during continuous typing. Adoption and
-  input-during-render qualification remain pending in the performance plan.
+- Input requests a preview after 400 ms without further input. The independent
+  undo-history timer stays at 800 ms. Neither is periodic refresh during typing.
+- The editor-scroll `mirror` route protects attached span reuse, exact source
+  partitions, shifted offsets, Unicode boundaries and fresh resized geometry.
+  R1115 restores full replacement while preserving the correctness controls.
   Existing Mermaid/table/general insertion commands share this setting; their
   separately written callbacks are not new ownership guarantees.
 - Settled scroll frames binary-search cached coordinates and write only the

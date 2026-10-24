@@ -38,7 +38,42 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **HEAVY COMPARISON COMPLETE; GLOBAL 200 MS REJECTED** (2026-10-24).
+- `performance-architecture` - **MIRROR LOCALLY ADOPTED; GLOBAL 200 MS REJECTED** (2026-10-24).
+  - Hidden-mirror PoC completed all eight frozen launches at unchanged
+    400 ms: two admissions and three alternating pairs on one expensive
+    prose workload. Whole edited builds fell from 346-365 ms to 251-258 ms;
+    current primary output arrived 95-121 ms earlier. Exact source, caret,
+    owner, output, partition and fresh mapping controls passed. Large final
+    input-notification delays remain; this does not establish smooth typing,
+    CPU savings or removable mirror-only layout cost.
+    Independent Sol/Luna verified the actual receipts and agree with
+    source-aware Astra: the gain supports this localized mechanism.
+    No retry, replacement, exclusion or old-sample pooling.
+    Separate qualification completed both owned-profile invocations of the
+    existing full modern editor-scroll suite: 238/238 each. Original open/split
+    median/observed-maximum budgets and settled callback controls pass.
+    Four captures were viewed. The two-launch cap is consumed.
+    Separate two-launch source-revert proof passed: retention 29/29; released
+    source failed only the three attached-span-reuse assertions. Both preserve
+    exact partitions, UTF-16, shifted offsets and fresh resized geometry.
+    Its "owner" assertion checks source matching, not direct owner identity;
+    the practical comparison supplies the actual owner controls.
+    Six proof captures were viewed; both process fences pass.
+    `mirror-startup\r2` completed six launches; all selected median and
+    observed-maximum budgets pass. Its R1 stopped after one baseline because the
+    collector required a native-visibility flag that the stock endpoint only
+    records. R1 remains separate; neither unit proves physical presentation.
+    Exact candidate/test bytes and the R1115 full-source revert are integrated.
+    The final combined functional invocation passed 260/260; process absence
+    passed and nine captures were viewed. Its six measurements are raw context,
+    not another comparison. An unlaunched earlier draft remains separate.
+    R1115 binds the executed proof through complete reverted-file equivalence;
+    no new harness execution is claimed. Read-only anchors resolve.
+    Decision: adopt locally at 400 ms. The practical gain warrants the small
+    span-matching branch and durable tests; no new pipeline/cache/dependency.
+    Original Prism native-edit/token-copy endpoints remain unqualified.
+    No main integration, publication, release or new strategy follows.
+    R7 remains closed and sealed; no further writes or execution there.
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,

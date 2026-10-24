@@ -586,16 +586,41 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     }
     const offsetKey = offsets.join(',');
     if (mirrorText !== committed.source || mirrorOffsets !== offsetKey) {
+      const previous = sourceMarkers;
+      const matches = (before, after) => {
+        const oldFrom = previous[before].from, newFrom = offsets[after];
+        return (oldFrom === mirrorText.length) === (newFrom === committed.source.length) &&
+          mirrorText.slice(oldFrom, previous[before + 1]?.from ?? mirrorText.length) ===
+            committed.source.slice(newFrom, offsets[after + 1] ?? committed.source.length);
+      };
+      let prefix = 0, suffix = 0;
+      while (prefix < previous.length && prefix < offsets.length && matches(prefix, prefix)) prefix++;
+      while (suffix < previous.length - prefix && suffix < offsets.length - prefix &&
+        matches(previous.length - suffix - 1, offsets.length - suffix - 1)) suffix++;
+      const retainsContent = (prefix > 0 && previous[0].from < mirrorText.length) ||
+        (suffix > 0 && previous[previous.length - suffix].from < mirrorText.length);
+      if (!retainsContent) prefix = suffix = 0;
       const fragment = document.createDocumentFragment();
-      sourceMarkers = [];
+      const markers = [];
       for (let i = 0; i < offsets.length; i++) {
-        const span = document.createElement('span');
-        span.textContent = committed.source.slice(offsets[i], offsets[i + 1] ?? committed.source.length) ||
-          (offsets[i] === committed.source.length ? '\u200b' : '');
-        sourceMarkers.push({ from: offsets[i], span });
-        fragment.append(span);
+        let span;
+        if (i < prefix) span = previous[i].span;
+        else if (i >= offsets.length - suffix) span = previous[i - offsets.length + previous.length].span;
+        else {
+          span = document.createElement('span');
+          span.textContent = committed.source.slice(offsets[i], offsets[i + 1] ?? committed.source.length) ||
+            (offsets[i] === committed.source.length ? '\u200b' : '');
+          fragment.append(span);
+        }
+        markers.push({ from: offsets[i], span });
       }
-      mirror.replaceChildren(fragment);
+      if (prefix || suffix) {
+        for (let i = prefix; i < previous.length - suffix; i++) previous[i].span.remove();
+        mirror.insertBefore(fragment, suffix ? previous[previous.length - suffix].span : null);
+      } else {
+        mirror.replaceChildren(fragment);
+      }
+      sourceMarkers = markers;
       mirrorText = committed.source;
       mirrorOffsets = offsetKey;
     }

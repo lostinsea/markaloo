@@ -208,10 +208,6 @@ const VIRTUAL_SUITES = Object.freeze({
     npmScript: "test:document-editor",
     environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "noop" }),
   }),
-  "test:document-editor-preview-timing": Object.freeze({
-    npmScript: "test:document-editor",
-    environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "preview-timing" }),
-  }),
   "test:document-editor-modes": Object.freeze({
     npmScript: "test:document-editor",
     environment: Object.freeze({ MARKALOO_EDITOR_PROOF: "modes" }),
@@ -259,6 +255,10 @@ const VIRTUAL_SUITES = Object.freeze({
   "test:editor-scroll-empty": Object.freeze({
     npmScript: "test:editor-scroll",
     environment: Object.freeze({ FOLIA_SCROLL_PROOF: "empty" }),
+  }),
+  "test:editor-scroll-mirror": Object.freeze({
+    npmScript: "test:editor-scroll",
+    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "mirror" }),
   }),
   "test:editor-scroll-blocks": Object.freeze({
     npmScript: "test:editor-scroll",
@@ -480,28 +480,86 @@ const VIRTUAL_SUITES = Object.freeze({
 
 const REVERTS = [
   {
-    id: "R1114", what: "restore the longer input preview pause",
-    file: RENDERER,
-    from: "  previewDebounceDelay: 200,   // Trailing editor preview pause; no periodic refresh.",
-    to: "  previewDebounceDelay: 400,   // Trailing editor preview pause; no periodic refresh.",
-    suite: "test:document-editor-preview-timing",
-    expect: [/^input preview uses the trial pause while independent history stays unchanged$/,
-      /^Mermaid insertion uses the shared trial preview pause$/,
-      /^table insertion uses the shared trial preview pause$/,
-      /^general insertion uses the shared trial preview pause$/],
-    mustPass: [
-      /^preview timing probe starts with a cancelled obsolete timer and no rendered burst$/,
-      /^preview input burst renders only the latest complete source through the real callback$/,
-      /^a retired preview callback cannot render into a reopened editor mode$/,
-      /^a retired preview callback cannot render across document selection$/,
-      /^Mermaid insertion callback renders the complete current source$/,
-      /^table insertion callback renders the complete current source$/,
-      /^general insertion callback renders the complete current source$/,
-      /^preview timing probe restores the earlier undo and redo history$/,
-      /^document editor error sentinel proves both channels are live$/,
-      /^document editor scenarios introduce no renderer or visible document errors$/,
+    id: "R1115", what: "rebuild every hidden mirror span after small source edits",
+    file: EDITOR_SCROLL,
+    from: `      const previous = sourceMarkers;
+      const matches = (before, after) => {
+        const oldFrom = previous[before].from, newFrom = offsets[after];
+        return (oldFrom === mirrorText.length) === (newFrom === committed.source.length) &&
+          mirrorText.slice(oldFrom, previous[before + 1]?.from ?? mirrorText.length) ===
+            committed.source.slice(newFrom, offsets[after + 1] ?? committed.source.length);
+      };
+      let prefix = 0, suffix = 0;
+      while (prefix < previous.length && prefix < offsets.length && matches(prefix, prefix)) prefix++;
+      while (suffix < previous.length - prefix && suffix < offsets.length - prefix &&
+        matches(previous.length - suffix - 1, offsets.length - suffix - 1)) suffix++;
+      const retainsContent = (prefix > 0 && previous[0].from < mirrorText.length) ||
+        (suffix > 0 && previous[previous.length - suffix].from < mirrorText.length);
+      if (!retainsContent) prefix = suffix = 0;
+      const fragment = document.createDocumentFragment();
+      const markers = [];
+      for (let i = 0; i < offsets.length; i++) {
+        let span;
+        if (i < prefix) span = previous[i].span;
+        else if (i >= offsets.length - suffix) span = previous[i - offsets.length + previous.length].span;
+        else {
+          span = document.createElement('span');
+          span.textContent = committed.source.slice(offsets[i], offsets[i + 1] ?? committed.source.length) ||
+            (offsets[i] === committed.source.length ? '\\u200b' : '');
+          fragment.append(span);
+        }
+        markers.push({ from: offsets[i], span });
+      }
+      if (prefix || suffix) {
+        for (let i = prefix; i < previous.length - suffix; i++) previous[i].span.remove();
+        mirror.insertBefore(fragment, suffix ? previous[previous.length - suffix].span : null);
+      } else {
+        mirror.replaceChildren(fragment);
+      }
+      sourceMarkers = markers;`,
+    to: `      const fragment = document.createDocumentFragment();
+      sourceMarkers = [];
+      for (let i = 0; i < offsets.length; i++) {
+        const span = document.createElement('span');
+        span.textContent = committed.source.slice(offsets[i], offsets[i + 1] ?? committed.source.length) ||
+          (offsets[i] === committed.source.length ? '\\u200b' : '');
+        sourceMarkers.push({ from: offsets[i], span });
+        fragment.append(span);
+      }
+      mirror.replaceChildren(fragment);`,
+    suite: "test:editor-scroll-mirror",
+    expect: [
+      /^mirror insert retains attached unchanged source spans$/,
+      /^mirror delete retains attached unchanged source spans$/,
+      /^mirror append retains attached unchanged source spans$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+    mustPass: [
+      /^scroll fixture has live isolated production preload and overflowing source and expanded diagram$/,
+      /^mirror probe starts with settled original history$/,
+      /^mirror fixture proves the artificial split crosses a surrogate pair inside its binding$/,
+      /^mirror fixture separates authored terminal zero-width text from the artificial sentinel$/,
+      /^mirror fixture really overflows both panes$/,
+      /^mirror fixture has independently defined ordered source spans$/,
+      /^mirror removal observer detects a real detach and reinsert through its callback$/,
+      /^mirror width change proves fresh wrapping without replacing unchanged source spans$/,
+      /^mirror resized preview aligns the interior repeated occurrence using fresh geometry$/,
+      /^mirror resized correspondence is interior and unclamped in both panes$/,
+      /^mirror probe restores original source, history, selection and clean current ownership$/,
+      /^all required scrolling scenarios were executed$/,
+      /^scroll error sentinel detects both deliberately provoked channels$/,
+      /^scroll scenarios introduce no renderer or visible document errors$/,
+      /^scroll product source remains unchanged throughout this run$/,
+      /^mirror insert keeps current text partition, UTF-16 boundaries, sentinel and owner$/,
+      /^mirror insert aligns the interior repeated occurrence after shifted offsets$/,
+      /^mirror insert correspondence is interior and unclamped in both panes$/,
+      /^mirror delete keeps current text partition, UTF-16 boundaries, sentinel and owner$/,
+      /^mirror delete aligns the interior repeated occurrence after shifted offsets$/,
+      /^mirror delete correspondence is interior and unclamped in both panes$/,
+      /^mirror append keeps current text partition, UTF-16 boundaries, sentinel and owner$/,
+      /^mirror append aligns the interior repeated occurrence after shifted offsets$/,
+      /^mirror append correspondence is interior and unclamped in both panes$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
   },
   {
     id: "R1111", what: "leave saved tab restoration armed after explicit preview navigation",
@@ -25553,7 +25611,7 @@ function proveCompanionTranscriptRoles() {
       r.requireMustPassAssertions === true && r.mustPass.length > 0) &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
-      .join(",") === "R1114,R1111,R1112,R1113,R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
+      .join(",") === "R1115,R1111,R1112,R1113,R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,
