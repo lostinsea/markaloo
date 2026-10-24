@@ -32,8 +32,9 @@
   is a valid outcome; promising partial timings alone do not justify adoption.
 - Current decision: keep 200 ms parked. R4 demonstrates the narrow preview
   benefit and input-response cost, not safe global-policy adoption. More
-  expensive edit workloads remain unqualified. Do not require a native input
-  handler to run while another synchronous callback is blocking.
+  expensive edit workloads remain unqualified; r5 now defines that focused
+  comparison. Do not require a native input handler to run while another
+  synchronous callback is blocking.
 
 ```mermaid
 flowchart LR
@@ -1137,6 +1138,25 @@ flowchart LR
   moved byte-identically to `r4\retained-layout`; all six prior roots and
   protected refs remain unchanged. No product/dependency/functional-suite
   change, adoption, publication or release was performed in r4.
+
+### Expensive-edit qualification - r5 preparing
+
+- R4 is closed and preserved at `8172dd00`. R5 selects existing corpus
+  prose at 1 MiB and code at 64 KiB. A declared heading and unique landmarks
+  retain the original corpus. Both naturally use light-format edits; prose
+  expands document mapping, while code adds many highlighted/copied blocks.
+  Confirm actual editing expense in the run; bytes alone are not evidence.
+- Reuse the fixed native bursts and preservation controls, with no new policy.
+  Two most-demanding admissions precede two alternating pairs per workload:
+  at most ten Electron launches for two workloads, or six for one.
+  No retries, replacements, exclusions or extra smokes.
+- Code baseline/candidate admissions exercise the additional syntax controls.
+  Both must qualify before samples alternate B-C and C-B for prose, then code.
+  An admission or method fault closes the batch without using remaining slots.
+- Map existing gates to their actual endpoints before collection. Main input
+  notifications have no inherited open/split or settled-scroll budget.
+  Judge the whole input sequence and current output, not one selected spike.
+  Local ROI decisions are delegated; no new regression exception is implied.
 
 ## Open gaps and decision limits
 

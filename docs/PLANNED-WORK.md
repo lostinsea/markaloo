@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **R4 COMPLETE: BENEFIT AND INPUT COST MEASURED; 200 MS UNADOPTED** (2026-10-24).
+- `performance-architecture` - **R5 ADAPTER PREPARATION; 200 MS UNADOPTED** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -340,6 +340,21 @@ section is kept here so the register has a visible edge.
     qualification justify validation, resource and maintenance costs. Keep
     measured facts separate from ROI judgments. Leaving the product unchanged
     is a valid outcome.
+    Coordinator accepted r4's reviewed fact record at `8172dd00`.
+    R5 now selects at most two genuinely heavier edit workloads and maps
+    existing gates. Minimal deterministic additions to an existing generator
+    may supply new heading/landmark witnesses; old r4 shape is not a blocker.
+    Astra owns source/workload selection, Sol the small collector adaptation,
+    then independent Sol/Luna review before launch. Two admissions plus two
+    pairs per workload: maximum ten Electron launches, or six for one workload.
+    No retries/replacements; r4 and all earlier evidence stay immutable.
+    Owner judges whole-sequence benefit/cost under delegated autonomy, without
+    inventing typing budgets or requiring a routine human acceptance click.
+    Selected corpus profiles are 1 MiB prose and 64 KiB code, with preserved
+    original bodies and minimal declared landmarks. Both naturally use light
+    edits. Code admissions precede two alternating prose pairs, then two code
+    pairs. Parent mapped original open/split/settled/startup/edit gate scopes;
+    no gate pass is inferred from new endpoints or two samples per variant.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
