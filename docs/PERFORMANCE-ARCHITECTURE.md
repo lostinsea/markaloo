@@ -11,6 +11,7 @@
   attempts closed with method gaps and no sample journeys. The separately
   authorized reopened campaign completed two admissions and nine baseline
   journeys below. Its allowance is closed; no further collection follows.
+  Coordinator accepted that scoped baseline at `5f7f38f5`.
   Step 4 is a source-based options assessment, not a performance ranking.
   Steps 5-6 have not started.
 - These documents record only the named observations, not full runtime
@@ -677,6 +678,73 @@ flowchart LR
 - Limits remain source-entry metadata/startup/diagnostic differences, three
   samples per workload, fixed viewport/actions and no OS-input, physical-paint,
   cross-platform UI, full-suite or complete-export certification.
+
+### Focused edit-to-follower diagnosis
+
+```mermaid
+flowchart LR
+    I["Input: invalidate mapping; reset timer"] --> W["400 ms quiet period"]
+    W --> R["Check selection/mode; read current textarea"]
+    R --> D["Light synchronous work / full asynchronous path"]
+    D --> G["Commit source; request geometry frame"]
+    G --> F["Rebuild current mapping; release follower"]
+```
+
+- **No new launches or instrumentation.** Source plus all nine retained r1
+  samples resolve the next behavior decision; the optional three-launch
+  diagnostic unit was not needed or started. Raw derivation: same session,
+  `files\step3-phase-diagnosis\retained-audit.json`.
+- [Native input](../src/renderer.js#L4085-L4100) resets a trailing **400 ms**
+  preview timer after invalidating mapping. There is **no maximum-wait refresh**
+  during continuous input spaced below that interval. The independent 800 ms
+  undo/history timer does not gate preview. The preview callback checks file
+  selection/editor mode, reads the current textarea and dispatches rendering.
+  It does not await rendering; callback return is not full-render or mapping
+  completion.
+- **Source-derived modes, not recorded mode stamps:** these prose-marker
+  edits are expected to take light rendering for prose/code and full rendering
+  for mixed's Mermaid fence. [Light work](../src/renderer.js#L6627-L6685) runs
+  preparation/parsing/sanitization/patching synchronously and still checks for
+  unprocessed code to highlight. [Full work](../src/renderer.js#L6720-L6726)
+  first awaits a 10 ms timer; unchanged Mermaid may reuse cached SVG rather
+  than rerender. Its later idle presentation tail need not precede mapping
+  commit. Do not call mapping readiness complete presentation.
+- [Source commit and frame scheduling](../src/editor-scroll.js#L789-L847)
+  lead to geometry rebuild before follower synchronization. Pending/stale
+  mapping is refused; [rebuild requires committed source to equal the textarea](../src/editor-scroll.js#L617-L622).
+  Native source scrolling can proceed meanwhile. Render generation alone is
+  not a substitute for selection, current-source and ready-mapping guards.
+
+**Renderer-local ranges, all three samples per workload; admissions excluded:**
+
+| Workload | Latest input -> current-mapping observation | Current mapping rebuild body |
+|---|---|---|
+| Prose | 459.6-461.4 ms | 17.9-18.9 ms |
+| Code-rich | 463.4-464.7 ms | 15.1-15.3 ms |
+| Mixed rich | 489.0-495.2 ms | 25.9-27.2 ms |
+
+- Both marker insertions and the initial editor movement occurred in the
+  quiet period, before their debounced preview work. Their prompt response
+  does **not** measure typing/scrolling during active parsing or layout.
+- `lastBuildMs` measures synchronous **elapsed** rebuild work, including mirror,
+  geometry and anchor construction, not CPU or the whole propagation interval.
+  Its named phases are not exhaustive. Diagnostic `callbacks` measure only
+  `sync()` after rebuilding; they exclude rebuild/frame waiting. The existing
+  settled-callback gate must not be applied to this different interval.
+- Timer registration/due/entry, render commit and individual queue waits were
+  not timestamped. **400 ms is requested from registration**, not a separately
+  measured input-to-callback interval. Do not label total-minus-400 as CPU.
+- **Decision:** this path deliberately waits for a typing pause. An engine or
+  worker replacement cannot remove that wait while preserving the policy.
+  Keep 400 ms and safe follower suspension now. Recommend discussing **one
+  shorter pause-to-refresh trial**, keeping trailing coalescing and current-source
+  guards. Earlier refresh can mean more parsing/layout during typing; this is
+  a behavior decision, not a refactor. No interval, SLO or implementation is
+  selected. A shorter trailing delay still cannot guarantee refresh during
+  uninterrupted typing; periodic refresh would be a separate policy decision,
+  not a change silently bundled into that trial.
+- Independent Sol/Luna agree on the source path, all nine derived rows and
+  the behavior-versus-work distinction. No material finding or disagreement.
 
 ## Step 4: source-based options assessment
 

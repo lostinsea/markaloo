@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **STEP 3 REOPENED OBSERVATIONS COMPLETE: REVIEWED LOCAL RESULTS; NO PRODUCT SLICE SELECTED** (2026-10-23).
+- `performance-architecture` - **SCOPED STEP 3 BASELINE ACCEPTED; PREVIEW TIMING DECISION; NO PRODUCT SLICE SELECTED** (2026-10-23).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -228,6 +228,19 @@ section is kept here so the register has a visible edge.
     figures and scope. Luna caught "three journeys" in one Step 4 sentence:
     corrected to three workloads with nine samples. No numerical disagreement.
     Local documentation only; no product slice, comparison or further collection.
+  - Focused [edit-to-follower diagnosis](PERFORMANCE-ARCHITECTURE.md#focused-edit-to-follower-diagnosis)
+    uses unchanged f5 source and all nine retained samples; **zero new launches**
+    or instrumentation. The 400 ms trailing preview timer resets on input;
+    continuous input has no maximum-wait refresh. Current mapping rebuild
+    bodies measure 15.1-27.2 ms elapsed, not the entire 459.6-495.2 ms observed
+    propagation or CPU. Missing timer/queue stamps do not change that policy.
+    Keep current debounce/output/ownership now. Recommend one shorter
+    pause-to-refresh behavior trial only after the user's cadence decision,
+    not an engine rewrite. It would not guarantee refresh during continuous
+    typing; periodic refresh is a separate policy, not bundled scope.
+    No speculative product slice or further collection. Independent Sol/Luna
+    approve the focused source/retained-evidence finding without material
+    disagreement. Optional diagnostic collection was not needed or started.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
