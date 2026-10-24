@@ -1,5 +1,68 @@
 # Performance Audit
 
+## Preview wait 400 -> 200 ms - valid heavy-edit comparison, 2026-10-24
+
+- Baseline: released `f5d380786fb895bf783e263f79aea6316f303ad1`.
+  Candidate: `538f6eea44bde19e595370df4c555bf811b2ea18`.
+  Only runtime change: shared trailing preview wait, 400 -> 200 ms.
+- R7 completed two code admissions and four alternating matched pairs:
+  two pairs each on corpus-derived 1 MiB prose and 64 KiB code.
+  Original corpus bodies and fixed native actions were preserved.
+  All ten launches qualified; no retry, replacement, exclusion or pooling.
+  Admissions are not comparison samples. Earlier incomplete units remain separate.
+- Same Windows x64 host, Node 24.18.1 and Electron 43.4.1. Native bursts:
+  `q/u/i` at 0/90/180 ms, `c/k/space` at 420/510/600 ms,
+  `f/o/x` at 1050/1140/1230 ms; four separately validated editor wheels.
+  Main registered all timers in advance, without waiting for previews.
+- The table reports each pair, not pooled percentiles. Preview/mapping is
+  renderer input receipt to current preview and mapping. Notification is
+  Main submission to the marker-correlated renderer input notification,
+  using only Main's clock. Neither is physical key-to-paint latency.
+
+| Pair | Preview/mapping ms, 400 -> 200 | Within-sequence notification median ms, 400 -> 200 | Sequence maximum ms, 400 -> 200 |
+|---|---:|---:|---:|
+| Prose 1 | 1283.4 -> 1065.0 | 5.6 -> 147.8 | 812.0 -> 812.6 |
+| Prose 2 | 1283.5 -> 1059.1 | 5.4 -> 162.2 | 797.7 -> 825.9 |
+| Code 1 | 735.4 -> 538.7 | 3.3 -> 105.6 | 271.1 -> 270.6 |
+| Code 2 | 740.3 -> 524.1 | 3.1 -> 114.3 | 273.5 -> 276.1 |
+
+- Preview/mapping improved by 196.7-224.4 ms. Follower movement also arrived
+  earlier. Final-input receipt to current burst readiness improved by
+  183.4-235.3 ms. Shorter requested waiting is not faster rendering.
+- Similar maxima hide the broader input cost. Baseline's first six text
+  notifications took about 3-6 ms each; with 200 ms, only the first three
+  stayed similarly quick (about 3-9 ms). Delays extended into both later bursts.
+  All nine intervals and their three largest values remain in each raw receipt.
+- Prose ran two light renders in both variants; code ran two with 400 ms and
+  three with 200 ms. Prose gained an additional observed current-ready revision.
+  Code did not, but that does not prove no earlier content was visible.
+  Light-render entry-to-return spans were 264-280 ms/prose and 98-135 ms/code.
+  These are elapsed spans, not CPU measurements or exclusive phase costs.
+- Exact text, selection/caret, source revision, owner, final output, mapping,
+  highlighted code, copy-button presence, trusted input, wheel effects and
+  error controls passed. R7 did not exercise clipboard actions.
+  Every receipt decoded and every post-exit process check passed before the
+  next launch. Both fixtures predicted no large-document warning; the real
+  open/tab flows confirmed its absence without disabling the guard.
+- All 161 host rows remain; sampler shutdown was clean. Representative
+  baseline/candidate prose/code captures were viewed. Measured observer frame
+  totals were 80-89 ms/prose and 248-265 ms/code, over their recorded scopes.
+  They overlap other observations and exclude some instrumentation; do not
+  subtract or sum them as exclusive costs.
+- Limits: two samples per variant/workload are not p95 certification or a
+  median-of-three performance gate. No new notification SLO, identical-wheel
+  RTT, causal render-queue claim, CPU/memory saving or global gate pass.
+  Original Prism R2/R3 failures and release exceptions retain their own scope.
+- Evidence: session `301ba72b`, `files\pause-trial\r7\result.json`,
+  SHA-256 `22c552e0cd19842cf497d06862c7b1683af7e8e282115c677087e93365b2e20d`,
+  with pinned per-launch raw receipts and the predeclared assessment plan.
+- **Decision: reject global 200 ms; retain released 400 ms.** More consistently
+  responsive source entry outweighs earlier preview for this global default.
+  This is a product/ROI judgment from valid measurements, not a new input
+  budget or an inference from earlier collector failures. Passing additional
+  startup/open/split gates would not remove this tradeoff; those new comparisons
+  remain unknown. No adoption, gate waiver, integration or publication.
+
 ## Offline language coverage - scoped 0.10.0 release exception, 2026-10-23
 
 - User accepted the original twelve-language Prism feature's known first-open

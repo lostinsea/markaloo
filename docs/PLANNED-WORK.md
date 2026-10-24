@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **REOPENED; COMPARISON METHOD REPAIR; 200 MS UNADOPTED** (2026-10-24).
+- `performance-architecture` - **HEAVY COMPARISON COMPLETE; GLOBAL 200 MS REJECTED** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -403,6 +403,32 @@ section is kept here so the register has a visible edge.
     Keep R4 findings, all nine historical roots and protected refs intact.
     Candidate 200 ms remains unadopted; released 400 ms unchanged. Decide
     only after valid product evidence and applicable qualification.
+    R7 now completed all ten launches: two qualified admissions and all four
+    alternating heavy-document pairs, without retry, replacement or exclusion.
+    Every portable raw receipt and independent cleanup fence passed before the
+    next launch; all 161 host rows remain and sampler shutdown was clean.
+    Three real query-path checks took 1,047-1,278 ms before sampling. Both
+    reviewers approved the actual repair after its PID-collision correction.
+    Both fixtures predicted no large-document warning; actual open/tab paths
+    confirmed absence. No guard bypass or exercised affirmative-path claim.
+    Valid product evidence: preview/mapping improved 196.7-224.4 ms and final
+    input receipt to current burst readiness improved 183.4-235.3 ms.
+    In all four pairs, the nine-character sequence's median Main notification
+    interval rose from 3-6 ms to 106-162 ms; more markers waited longer while
+    sequence maxima stayed broadly similar. Prose renders stayed two versus
+    two; code increased two to three. Text, caret/selection, ownership, current
+    complete output, mapping, presentation, native input and error controls pass.
+    Decision: reject global 200 ms and retain released 400 ms. Earlier previews
+    do not justify this replicated source-entry tradeoff for a global default.
+    This is a delegated product/ROI judgment from valid numbers, not tooling
+    failure, an invented input budget, a universal claim or CPU attribution.
+    No further startup/open/split runs are needed for rejection; their new
+    comparison remains unknown. Exact-candidate functional evidence is reused
+    only in its original scope; original Prism R2/R3 failures are unchanged.
+    Paired values, clocks, observer costs and limits are in
+    [PERF-AUDIT](PERF-AUDIT.md#preview-wait-400---200-ms---valid-heavy-edit-comparison-2026-10-24).
+    R4 and all closed units remain intact. Trial source is retained only for
+    reproduction. No product integration, dependency change or publication.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,

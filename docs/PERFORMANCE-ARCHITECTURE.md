@@ -13,14 +13,16 @@
   journeys below. Its allowance is closed; no further collection follows.
   Coordinator accepted that scoped baseline at `5f7f38f5`.
   Step 4 is a source-based options assessment, not a performance ranking.
-  The single 200 ms candidate remains **parked**: functional checks pass, but
-  closed r1 failed before the UI opened. Layout-only r2 reached the UI but
+  The single global 200 ms candidate is **rejected after valid comparison**.
+  Functional checks pass. Closed r1 failed before the UI opened.
+  Layout-only r2 reached the UI but
   stopped on an input-method assumption. Final narrow r3 stopped after fifteen
   launches on a baseline insertion-position check. Six matched pairs completed,
   but that campaign remains incomplete. R4 subsequently qualified both
   admissions and all six pairs with the corrected setup and repeated typing.
   Earlier previews came with extra renders and text-notification delays.
-  No performance adoption is established.
+  R7 then qualified both admissions and all four heavy-document pairs.
+  Its valid results support keeping released 400 ms, not adopting 200 ms.
 - These documents record named observations, not blanket runtime qualification.
   User now delegates sequential short local PoCs, strategy selection, proper
   implementation and supported local adoption without routine approval pauses.
@@ -30,14 +32,15 @@
   qualification justify validation, resource and maintenance costs. Separate
   measured results from engineering ROI judgments. Leaving the product unchanged
   is a valid outcome; promising partial timings alone do not justify adoption.
-- Current direction: repair the comparison method and obtain valid heavy-edit
-  results before deciding on 200 ms. The user superseded the earlier closure:
-  a tooling failure is not evidence against the product's benefit or ROI.
-  R4's measured benefits and tradeoffs remain valid. R5/R6 stay closed and
-  immutable; neither reached a heavy-edit comparison. R6's portable receipt
-  worked, but its post-exit process query timed out. Test the real Windows
-  query path before another bounded batch. Keep 200 ms unadopted and released
-  400 ms unchanged while comparison and applicable qualification continue.
+- Current decision: keep released 400 ms. With 200 ms, heavy-document preview
+  and mapping arrived about 197-224 ms earlier, but the nine-character
+  sequence's median Main input-notification interval rose from 3-6 ms to
+  106-162 ms in all four pairs. More of each sequence waited longer.
+  This tradeoff does not justify changing the global default.
+  It is a product judgment from valid observations, not a new input SLO,
+  a universal claim or a conclusion from tooling failures. R4 remains valid;
+  failed R5/R6 units remain immutable. The trial source stays available for
+  reproduction only; no product integration or publication follows.
 
 ```mermaid
 flowchart LR
@@ -1203,7 +1206,7 @@ flowchart LR
   sample exclusion, pooling, product change or new functional-suite run.
   Independent retention checks do not retroactively pass the failed fence.
 
-### Reopened heavy-edit comparison - r7 method repair
+### Reopened heavy-edit comparison - r7 completed; global 200 ms rejected
 
 - Fix the collector, not the product. R6's one-second cold PowerShell query
   limit was an administrative bound, not a product requirement. Its later
@@ -1237,6 +1240,53 @@ flowchart LR
 - Decide only after valid comparison and relevant qualification. Tool repair
   cost may be reported separately; it cannot replace missing product evidence.
   No dependency, product-policy, primary-profile, integration or release change.
+- Actual method qualification: three real Windows query-path checks completed
+  in 1,047-1,278 ms, each with complete validated responses and owned-PID
+  positive controls. Both independent reviewers approved the actual repaired
+  collector after its checker-PID collision control was corrected. No retry,
+  unrelated termination or success-shaped timeout.
+- Actual comparison: all ten launches qualified, including two admissions and
+  all four alternating heavy-edit pairs. Every portable receipt decoded and
+  every cleanup fence passed before the next launch. All 161 host rows remain;
+  sampler shutdown was clean. Four representative captures were viewed.
+  Both fixtures predicted no large-document question and the production
+  open/tab flows confirmed absence. The affirmative-button path was not
+  exercised; no warning is claimed to explain R6's post-exit timeout.
+- Paired results and clocks are in
+  [PERF-AUDIT](PERF-AUDIT.md#preview-wait-400---200-ms---valid-heavy-edit-comparison-2026-10-24).
+  Primary preview/mapping improved 196.7-224.4 ms; final-input receipt to
+  current burst readiness improved 183.4-235.3 ms. Source, caret/selection,
+  owner, complete output, mapping, presentation and input controls passed.
+- The cost appears across the sequence, not just its maximum. Baseline's first
+  six notifications took about 3-6 ms each; the candidate kept only its first
+  three similarly quick (about 3-9 ms), with delays in both later bursts. Per-sequence
+  medians rose from 3-6 ms to 106-162 ms. Worst intervals remained broadly
+  similar. Prose ran two light renders in both variants; code ran two versus
+  three. These observations do not establish CPU/memory cost or causal timing
+  for a particular rendering phase.
+- Decision: reject the global 200 ms policy; retain released 400 ms. Earlier
+  preview is useful, but more consistently responsive source entry matters
+  more for this default. The policy shortens waiting rather than reducing the
+  expensive work. This is a bounded ROI judgment, not a failed numerical input
+  budget. Two pairs per workload support this decision, not p95 certification.
+- No further startup/open/split runs are needed to reject an unadopted policy:
+  passing those gates would not undo this measured tradeoff. Their new
+  before/after results remain unknown. Existing exact-candidate functional
+  checks and R1114 remain valid in their original scope; original Prism R2/R3
+  failures and release exceptions remain unchanged. No gate waiver or full
+  performance qualification is claimed.
+- Evidence: session `301ba72b`, `files\pause-trial\r7\result.json`,
+  SHA-256 `22c552e0cd19842cf497d06862c7b1683af7e8e282115c677087e93365b2e20d`,
+  pinned raw receipts, predeclared assessment and independent result reviews.
+  No retry, replacement, exclusion, pooling or new product change.
+- One possible next question, not started: can
+  [`sourceGeometry()`](../src/editor-scroll.js) retain unchanged measurement
+  spans after a small edit instead of replacing the whole hidden mirror?
+  Existing preview-block reuse does not cover that mirror. Its layout read
+  can also flush shared layout, so the measured span is not removable cost
+  by definition. A separate short comparison would keep 400 ms and require
+  the current binding-derived marker partition, UTF-16 boundaries, source
+  offsets, wrapping and mapping, not reuse stale coordinates.
 
 ## Open gaps and decision limits
 
