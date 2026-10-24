@@ -30,13 +30,14 @@
   qualification justify validation, resource and maintenance costs. Separate
   measured results from engineering ROI judgments. Leaving the product unchanged
   is a valid outcome; promising partial timings alone do not justify adoption.
-- Current decision: keep 200 ms parked. R4 demonstrates the narrow preview
-  benefit and input-response cost, not safe global-policy adoption. More
-  expensive edit workloads remain unqualified: r5 stopped at an unreadable
-  receipt format before any comparison. One final small, portable-persistence
-  repair is selected for a fresh bounded r6 unit. Any further method failure
-  ends this effort without adoption. Do not require a native input handler
-  to run while another synchronous callback is blocking.
+- Final decision: finish this strategy without adopting 200 ms; keep released
+  400 ms. R4 demonstrates earlier previews and real input-response/render
+  tradeoffs, not safe global-policy adoption. R5 and final R6 did not reach
+  an expensive-edit comparison. R6's portable receipt worked, but its post-exit
+  process query timed out. Honor the frozen stop rule: no retry or further
+  collector campaign. This is insufficient adoption evidence, not proof that
+  the candidate is defective. No other strategy is selected without a concrete
+  unmet need and a small, credible way to evaluate it.
 
 ```mermaid
 flowchart LR
@@ -1171,7 +1172,7 @@ flowchart LR
   increases are 0.13-28.82 ms. These are not p95, CPU, a new typing budget,
   or a substitute for the individual intervals and expensive-edit results.
 
-### Final portable qualification - r6 selected
+### Final portable qualification - r6 closed; no adoption
 
 - Sol/Luna confirm the R5 limit; source-aware Astra supports one final small
   repair because R4's narrow benefit still warrants the heavier comparison.
@@ -1179,7 +1180,7 @@ flowchart LR
   engine-specific transport with a versioned portable compact encoding.
   Preserve all supported values and rejecting controls. No new dependency,
   streaming framework, observer, input schedule or product change.
-- Freeze a new maximum of ten Electron launches: two code admissions, then
+- The frozen maximum was ten Electron launches: two code admissions, then
   the same four alternating heavy-workload pairs. The actual host must decode
   and fully validate the baseline admission's receipt before any next launch;
   otherwise stop. The candidate admission must also qualify before samples.
@@ -1188,6 +1189,23 @@ flowchart LR
   closes this effort without adoption. A successful screen still needs the
   applicable existing gates and an evidence-led ROI decision; 400 ms remains
   released and 200 ms remains unadopted.
+- Actual outcome: one baseline code admission, no candidate or samples.
+  The actual host decoded and fully validated the portable receipt. The
+  post-exit process fence then stopped on its first PowerShell query timeout
+  (1,000 ms query limit, 3,000 ms overall fence). Exit zero and valid receipt
+  did not override that failure. All four pair rows remain unstarted; all
+  14 host rows remain and the sampler exited cleanly. The screenshot was viewed.
+- Decision: end this strategy without adoption or another collector repair.
+  R4's narrow benefit remains valid, but expensive-edit benefit/cost and
+  applicable adoption gates remain unqualified. The accumulated validation
+  cost does not justify more tooling for this small global-policy change.
+  This is an engineering ROI decision, not a numeric ROI estimate, a new
+  typing budget or evidence of a product fault. Keep the candidate and raw
+  evidence for reference; leave released 400 ms unchanged.
+- Evidence: session `301ba72b`, `files\pause-trial\r6\result.json`
+  (`3157ff32...881e713`) and `method-outcome.json`. No R6 retry, replacement,
+  sample exclusion, pooling, product change or new functional-suite run.
+  Independent retention checks do not retroactively pass the failed fence.
 
 ## Open gaps and decision limits
 

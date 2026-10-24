@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **R5 CLOSED; FINAL PORTABLE UNIT SELECTED; 200 MS UNADOPTED** (2026-10-24).
+- `performance-architecture` - **STRATEGY CLOSED; 200 MS NOT ADOPTED; RELEASED 400 MS UNCHANGED** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -376,6 +376,19 @@ section is kept here so the register has a visible edge.
     If the repair is not small, or another method fault occurs, finish this
     effort without adoption. Applicable gates and ROI still govern any
     successful screen. Released 400 ms and candidate source stay unchanged.
+    R6 closed after one baseline code admission, no candidate or samples.
+    The actual host decoded and fully validated the portable receipt, but
+    the post-exit process fence stopped on its first PowerShell query timeout
+    (1,000 ms query limit, 3,000 ms overall fence). All four pair rows remain
+    unstarted. All 14 host rows remain; sampler clean, screenshot viewed.
+    Honor the final stop rule: no retry or further collector campaign.
+    Final owner decision: do not adopt 200 ms; finish this strategy and keep
+    released 400 ms. R4's narrow preview benefit and typing/render tradeoffs
+    remain valid; expensive-edit comparison and applicable adoption gates
+    remain unqualified. Further tooling cost is not justified for this small
+    policy change. This is not proof of a product fault or a numeric ROI claim.
+    Preserve the candidate and all evidence; no speculative next strategy,
+    product/dependency change, integration or publication is selected.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
