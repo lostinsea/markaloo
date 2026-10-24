@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **200 MS TRIAL PARKED: BASELINE ENTRY GAP; NO COMPARISON** (2026-10-24).
+- `performance-architecture` - **200 MS PARKED: COMPARISON CLOSED WITH INPUT-METHOD GAP** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -272,6 +272,18 @@ section is kept here so the register has a visible edge.
     and original gates/exception remain. A new collection needs a real decision.
     Independent Sol/Luna accept the actual result and record; Astra agrees
     with parking. No unresolved review finding remains.
+    Separately authorized `pause-trial\r2` corrected ordinary dependency ancestry
+    with complete pinned snapshots below this worktree's `test` directory.
+    Real Main/preload/UI, live sentinels and primary controls were reached.
+    **One baseline admission, zero candidate launches or pairs**: all three text
+    inputs and six wheels arrived trusted at the editor, but not in the
+    cross-type order the adapter required. No loss/coalescing is established.
+    No native receipt occurred within the recorded render lifetimes; that
+    qualification remains unobserved. No retry or remaining-slot continuation.
+    Raw result `060b68bc…aede622`, receipt `6d19a932…be6da58`; all nine host
+    rows retained, owned PIDs absent, sampler clean. Closed r1 and earlier
+    evidence stay immutable. Keep 200 ms parked; no comparative speed or
+    regression claim, functional-suite rerun, adoption or publication.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,

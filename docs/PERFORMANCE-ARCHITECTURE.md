@@ -13,9 +13,10 @@
   journeys below. Its allowance is closed; no further collection follows.
   Coordinator accepted that scoped baseline at `5f7f38f5`.
   Step 4 is a source-based options assessment, not a performance ranking.
-  The single 200 ms trial below is **parked**: functional checks pass, but its
-  first baseline admission failed before the UI opened. No matched comparison,
-  input-during-render qualification or adoption is established.
+  The single 200 ms candidate remains **parked**: functional checks pass, but
+  closed r1 failed before the UI opened. Layout-only r2 reached the UI but
+  stopped on an input-method assumption. No candidate comparison or performance
+  adoption is established.
 - These documents record only the named observations, not full runtime
   qualification or permission to choose or implement an optimization.
 
@@ -901,7 +902,7 @@ flowchart LR
   Collector `5f38036a…3022c33e`, declaration `13f65a7d…7c77216`.
   Execution stopped at the admission failure below; no replacement or retry.
 
-### Trial result and decision
+### Closed r1 result and decision
 
 - **One baseline admission launched; zero candidate admissions and zero sample
   pairs.** Twelve functional Electron invocations are separate. The previous
@@ -936,6 +937,47 @@ flowchart LR
   qualified Electron snapshot entry and a new bounded authorization; this unit
   does not reopen the collector. Original R2/R3 failures and the scoped release
   exception remain unchanged.
+
+### Layout-only comparison revision
+
+- Separately authorized session `files\pause-trial\r2` keeps the same candidate,
+  fixtures, primary observations and interleaved extension. No timer, product,
+  dependency version or instrumentation-policy change.
+- Complete pinned app snapshots live below this worktree's
+  `test\.pause-trial-r2-301ba72b`, giving their Main modules ordinary ancestry
+  to the existing `node_modules`. Check actual snapshot dependency resolution;
+  do not rely on `NODE_PATH` or claim its Electron failure cause is known.
+- Preserve all closed r1 bytes. New allowance is at most two mixed admissions
+  and, only after both qualify, nine matched pairs. No replacement or retry.
+  Prior fourteen observation launches and twelve functional invocations remain
+  separate.
+- **Closed after one baseline admission; zero candidate launches or sample
+  pairs.** Ordinary ancestry reached the real Main/preload/UI without
+  `NODE_PATH`. Both error sentinels were live; seven primary endpoints and eight
+  controls completed. The admission itself did not qualify.
+- All **three text inputs and six wheels** arrived trusted and editor-targeted.
+  The adapter required cross-type delivery order `A W W B W W W C W`, but saw
+  `A W B W W W W C W`. This is an ordering-assumption failure, not demonstrated
+  input loss or coalescing. Identical wheels cannot be paired individually.
+- The mismatch preceded rendering. No native receipt fell inside either
+  recorded full-render lifetime (**52.0 / 55.1 ms**) or patch span. Those
+  lifetimes include asynchronous waits and observation, not just CPU work.
+  C's **61.0 ms** Main submission-to-notification interval also includes
+  delivery/notification overhead; it does not isolate blocking time.
+- Raw latest-source mapping and presentation were observed, but later extension
+  checks were not reached. Keep **200 ms parked**: no benefit or regression
+  comparison exists, and active-render input qualification remains unobserved.
+  No retry, retiming, weakened control or further launch follows this unit.
+- Evidence: session `files\pause-trial\r2\result.json` (`060b68bc…aede622`)
+  and `admission-mixed-baseline.json` (`6d19a932…be6da58`). All nine host rows
+  remain; observer costs and limits are retained separately. Owned app and
+  sampler PIDs are absent; sampler exited cleanly. Source and prior evidence
+  pins are unchanged. The final screenshot was viewed. Only the new owned
+  runtime folder was moved to `r2\retained-layout`; `retention.json` records
+  identical before/after bytes and the original-path mapping.
+- Independent Sol/Luna agree on the raw counts, failure, cleanup and parking.
+  Astra confirms the ordering mismatch preceded the first recorded full render;
+  it is not evidence of that render's overlay blocking input.
 
 ## Open gaps and decision limits
 
