@@ -17,10 +17,23 @@
   closed r1 failed before the UI opened. Layout-only r2 reached the UI but
   stopped on an input-method assumption. Final narrow r3 stopped after fifteen
   launches on a baseline insertion-position check. Six matched pairs completed,
-  but the comparison and active-render input qualification remain incomplete.
+  but that campaign remains incomplete. R4 subsequently qualified both
+  admissions and all six pairs with the corrected setup and repeated typing.
+  Earlier previews came with extra renders and text-notification delays.
   No performance adoption is established.
-- These documents record only the named observations, not full runtime
-  qualification or permission to choose or implement an optimization.
+- These documents record named observations, not blanket runtime qualification.
+  User now delegates sequential short local PoCs, strategy selection, proper
+  implementation and supported local adoption without routine approval pauses.
+  Preserve contracts, frozen batch limits, dependency holds and historical
+  evidence; no publication is authorized.
+- Adopt only when reliable relevant-workload benefit and preservation
+  qualification justify validation, resource and maintenance costs. Separate
+  measured results from engineering ROI judgments. Leaving the product unchanged
+  is a valid outcome; promising partial timings alone do not justify adoption.
+- Current decision: keep 200 ms parked. R4 demonstrates the narrow preview
+  benefit and input-response cost, not safe global-policy adoption. More
+  expensive edit workloads remain unqualified. Do not require a native input
+  handler to run while another synchronous callback is blocking.
 
 ```mermaid
 flowchart LR
@@ -1051,6 +1064,79 @@ flowchart LR
   evidence directories and protected source refs remain unchanged.
   Independent Sol/Luna agree on the raw outcomes, math, limits and parking;
   Astra confirms that queued input behind a specific render is not established.
+
+### Focused repeated-typing screen - r4 closed (2026-10-24)
+
+- **Decision: keep 200 ms parked; no default change is adopted.**
+  The preview benefit is real on these workloads, but it does not yet justify
+  adopting the shared policy with its input-response cost and missing
+  qualification on more expensive edit documents. Released 400 ms is unchanged.
+- Source: unchanged released `f5d38078` versus qualified candidate `538f6eea`.
+  Same fixtures, settings, ordinary dependency ancestry and production entry
+  limits. Both admissions and all six alternating pairs qualified:
+  **14 launches, no retries, replacements, exclusions or unstarted samples.**
+  Earlier campaigns remain separate.
+- Source investigation found a missing click-completion/caret witness in r3,
+  not an established product selection defect. R4 acknowledged the trusted
+  click in a later renderer task, then set the prescribed caret once per named
+  primary/control/burst sequence. No between-insertion refocus or range repair.
+  Actual beforeinput/input source, range, marker, focus and owner checks passed
+  for all 168 insertions. R3's misplaced insertion remains unexplained.
+- The fixed extension typed nine characters in three bursts without waiting
+  for previews, with four independent native wheels. All 126 marker-correlated
+  Main notification intervals and 182 submission-lateness values remain in the
+  evidence. Identical wheels have no individual latency pairing.
+
+- Values below are milliseconds on each run's renderer clock. Primary preview
+  means current first-paragraph DOM and source mapping; burst readiness also
+  requires complete presentation. Follower timing measures actual movement.
+  These are not CPU or physical-paint measurements.
+
+| Pair | Primary preview, baseline / candidate | Pending follower, baseline / candidate | Final burst input to ready, baseline / candidate |
+|---|---:|---:|---:|
+| Prose 1 | 452.4 / 274.6 | 411.7 / 216.2 | 449.9 / 369.2 |
+| Code 1 | 454.4 / 261.4 | 412.2 / 208.6 | 449.0 / 369.4 |
+| Mixed 1 | 490.2 / 302.9 | 448.1 / 257.6 | 482.2 / 365.6 |
+| Prose 2 | 451.0 / 257.4 | 415.5 / 210.6 | 446.4 / 367.6 |
+| Code 2 | 460.0 / 262.8 | 416.4 / 209.4 | 458.6 / 372.5 |
+| Mixed 2 | 498.0 / 298.7 | 460.9 / 254.8 | 485.8 / 352.6 |
+
+- **Measured benefit:** primary preview was 177.8-199.3 ms earlier; follower
+  response was 190.5-207.0 ms earlier. The candidate also reached complete
+  current presentation/mapping after character six and character nine; baseline
+  observed it only after character nine. Final burst readiness improved by
+  78.8-133.2 ms. This is a shorter requested pause, not a faster renderer.
+- **Measured cost:** candidate invoked three render/patch cycles instead of
+  two. Mixed `c` Main submission-to-notification intervals were 56.71/52.82 ms,
+  versus baseline `c` 1.26/1.49 ms. Baseline had later `f` delays of
+  27.89/46.18 ms. Prose/code also showed smaller `c` penalties. These costs
+  cannot be subtracted from the preview gains or called CPU consumption.
+  Missing complete-current readiness for the first candidate invocation does
+  not prove it had no visible benefit.
+- **Qualification limit:** independent Sol/Luna confirm the raw math and
+  controls and recommend adoption qualification, not adoption. Astra confirms
+  that another repeat campaign on these three fixtures alone would not close
+  the remaining gaps. Existing gates require explicit acceptance of measured
+  regressions and representative workloads; expensive edit rendering is not
+  qualified here. The open/split budget is not a new typing allowance.
+  Exact-candidate functional/shared-command/revert evidence remains reusable.
+- **ROI judgment:** the pause-and-inspect benefit is promising and the code
+  change is small, but safe global-policy adoption is not demonstrated.
+  Do not repeat this screen merely to obtain more favorable numbers or add a
+  speculative subsystem. No further cheap strategy is established by this
+  evidence. No new regression exception is granted.
+- Shared Mermaid/table/general insert callbacks also use 200 ms in the
+  candidate. Their previous functional coverage is unchanged; no new command
+  performance or ownership guarantee is claimed. Physical keyboard/IME,
+  resource use, causal queuing, p95 and product-wide latency remain unqualified.
+- Evidence: session `301ba72b`, `files\pause-trial\r4\result.json`
+  (`8ca09bcd...cef5fba`) and `evidence-summary.json` (`a26e5af8...bb3ac74`).
+  All 169 host rows and scoped observer costs remain; sampler exited cleanly.
+  Representative prose/code/mixed captures were viewed. All 57 owned app and
+  sampler PIDs were independently absent. Only the owned runtime directory
+  moved byte-identically to `r4\retained-layout`; all six prior roots and
+  protected refs remain unchanged. No product/dependency/functional-suite
+  change, adoption, publication or release was performed in r4.
 
 ## Open gaps and decision limits
 

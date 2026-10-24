@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **200 MS PARKED: FINAL COMPARISON CLOSED WITH INCOMPLETE QUALIFICATION** (2026-10-24).
+- `performance-architecture` - **R4 COMPLETE: BENEFIT AND INPUT COST MEASURED; 200 MS UNADOPTED** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -304,6 +304,42 @@ section is kept here so the register has a visible edge.
     old evidence and protected refs remain unchanged. Independent Sol/Luna
     agree on the raw outcomes/math/parking; Astra confirms the qualification
     limit. No product, dependency or functional-suite change in this revision.
+    User reopened one focused effort: diagnose the misplaced insertion from
+    source/retained evidence first, then qualify one fixed repeated-typing
+    workload if a small reliable method correction is justified. Literal input
+    receipt inside blocking JavaScript is not a success requirement. New cap:
+    two mixed admissions, then six alternating pairs/two per workload only if
+    both qualify; fourteen Electron launches maximum, no retries/replacements.
+    Keep r3 separate and immutable; do not change the 200 ms product candidate.
+    Astra found an unacknowledged-click/caret-readback gap, not an established
+    product selection defect. Sol prepared the narrow setup correction and
+    actual selection witnesses. Node-only preflight passes; independent
+    Sol/Luna approved the frozen executable and declaration for bounded r4.
+    Setup is once per named primary/control/burst sequence, not per insertion.
+    R4 completed both admissions and all six pairs: fourteen launches, no
+    retries, replacements or exclusions. Actual native beforeinput, exact
+    source/caret/owner and final output/mapping controls passed throughout.
+    Primary preview/follower effects arrived earlier, but repeated bursts
+    invoked three renders rather than two and delayed mixed-input `c`
+    notifications to 52.8/56.7 ms. Independent Sol/Luna confirm raw math and
+    controls; both recommend adoption qualification, not adoption. Astra finds
+    that another repeat campaign on these three fixtures alone cannot close
+    unaccepted input regressions or missing expensive-edit qualification.
+    Owner decision: keep 200 ms parked, preserve released 400 ms, and do not
+    spend more launches merely repeating this screen. No new regression
+    exception, global-policy adoption or speculative subsystem is justified.
+    See the r4 result in PERFORMANCE-ARCHITECTURE.md. All 169 host rows remain,
+    sampler clean, 57 owned PIDs independently absent; representative captures
+    viewed. The owned snapshots moved byte-identically to r4 retained layout.
+    All six previous evidence roots and protected refs are unchanged.
+    User also delegated sequential short PoCs, evidence-led strategy selection,
+    proper implementation and supported local adoption without routine approval
+    pauses. Finish this question first; freeze future units separately and
+    deepen only promising results. The current fourteen-launch cap is unchanged.
+    Adopt only when reliable relevant-workload benefit and preservation
+    qualification justify validation, resource and maintenance costs. Keep
+    measured facts separate from ROI judgments. Leaving the product unchanged
+    is a valid outcome.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
