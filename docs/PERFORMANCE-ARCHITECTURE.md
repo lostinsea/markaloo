@@ -32,9 +32,11 @@
   is a valid outcome; promising partial timings alone do not justify adoption.
 - Current decision: keep 200 ms parked. R4 demonstrates the narrow preview
   benefit and input-response cost, not safe global-policy adoption. More
-  expensive edit workloads remain unqualified; r5 now defines that focused
-  comparison. Do not require a native input handler to run while another
-  synchronous callback is blocking.
+  expensive edit workloads remain unqualified: r5 stopped at an unreadable
+  receipt format before any comparison. One final small, portable-persistence
+  repair is selected for a fresh bounded r6 unit. Any further method failure
+  ends this effort without adoption. Do not require a native input handler
+  to run while another synchronous callback is blocking.
 
 ```mermaid
 flowchart LR
@@ -1139,7 +1141,7 @@ flowchart LR
   protected refs remain unchanged. No product/dependency/functional-suite
   change, adoption, publication or release was performed in r4.
 
-### Expensive-edit qualification - r5 preparing
+### Expensive-edit qualification - r5 closed
 
 - R4 is closed and preserved at `8172dd00`. R5 selects existing corpus
   prose at 1 MiB and code at 64 KiB. A declared heading and unique landmarks
@@ -1157,6 +1159,35 @@ flowchart LR
   notifications have no inherited open/split or settled-scroll budget.
   Judge the whole input sequence and current output, not one selected spike.
   Local ROI decisions are delegated; no new regression exception is implied.
+- Actual outcome: one baseline code admission, no candidate or samples.
+  All four pair rows remain unstarted. Electron exited with code zero, but
+  the host could not read its engine-specific binary receipt format
+  (writer format 16, reader format 15). This is a collector fault, not a
+  qualified admission or a product regression. Raw receipt and screenshot
+  remain intact; the screenshot was viewed. The sampler exited cleanly with
+  all 13 host rows retained. No R5 retry or comparison follows.
+- Separate descriptive analysis of all nine Main text intervals in each R4
+  sample keeps sequence medians at 1.13-1.49 ms. Paired sequence-maximum
+  increases are 0.13-28.82 ms. These are not p95, CPU, a new typing budget,
+  or a substitute for the individual intervals and expensive-edit results.
+
+### Final portable qualification - r6 selected
+
+- Sol/Luna confirm the R5 limit; source-aware Astra supports one final small
+  repair because R4's narrow benefit still warrants the heavier comparison.
+  Keep the string table and raw-receipt references; replace only the
+  engine-specific transport with a versioned portable compact encoding.
+  Preserve all supported values and rejecting controls. No new dependency,
+  streaming framework, observer, input schedule or product change.
+- Freeze a new maximum of ten Electron launches: two code admissions, then
+  the same four alternating heavy-workload pairs. The actual host must decode
+  and fully validate the baseline admission's receipt before any next launch;
+  otherwise stop. The candidate admission must also qualify before samples.
+  No extra smoke, retry, replacement, R5 recovery or pooling.
+- If the codec needs more than a small repair, stop. Any further method fault
+  closes this effort without adoption. A successful screen still needs the
+  applicable existing gates and an evidence-led ROI decision; 400 ms remains
+  released and 200 ms remains unadopted.
 
 ## Open gaps and decision limits
 

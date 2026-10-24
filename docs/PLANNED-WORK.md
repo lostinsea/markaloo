@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **R5 ADAPTER PREPARATION; 200 MS UNADOPTED** (2026-10-24).
+- `performance-architecture` - **R5 CLOSED; FINAL PORTABLE UNIT SELECTED; 200 MS UNADOPTED** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -322,9 +322,10 @@ section is kept here so the register has a visible edge.
     Primary preview/follower effects arrived earlier, but repeated bursts
     invoked three renders rather than two and delayed mixed-input `c`
     notifications to 52.8/56.7 ms. Independent Sol/Luna confirm raw math and
-    controls; both recommend adoption qualification, not adoption. Astra finds
-    that another repeat campaign on these three fixtures alone cannot close
-    unaccepted input regressions or missing expensive-edit qualification.
+    controls; both recommend adoption qualification, not adoption. Another
+    repeat campaign on these three fixtures alone cannot establish the missing
+    expensive-edit qualification. The observed input delays have no newly
+    agreed typing budget or automatic regression exception.
     Owner decision: keep 200 ms parked, preserve released 400 ms, and do not
     spend more launches merely repeating this screen. No new regression
     exception, global-policy adoption or speculative subsystem is justified.
@@ -355,6 +356,26 @@ section is kept here so the register has a visible edge.
     edits. Code admissions precede two alternating prose pairs, then two code
     pairs. Parent mapped original open/split/settled/startup/edit gate scopes;
     no gate pass is inferred from new endpoints or two samples per variant.
+    R5 closed after one baseline code admission and no candidate or samples.
+    The child exited zero, but the host could not decode its engine-specific
+    receipt format (writer 16, reader 15). All four pair rows remain unstarted.
+    No product fault, admission qualification or comparison is established.
+    Raw receipt/PNG and all 13 host rows remain; screenshot viewed, sampler
+    clean. R5 will not resume.
+    Independent Sol/Luna confirm that limit. Source-aware Astra supports one
+    final small portable-persistence repair, not adoption or another strategy.
+    Keep string-table deduplication and campaign references; preserve supported
+    values/rejecting controls. No dependency, streaming framework, observer
+    change or further persistence redesign.
+    Freeze a fresh r6 maximum of ten launches: two code admissions plus the
+    same four heavy-workload pairs, with unchanged source/actions/endpoints.
+    The actual host must decode and fully validate the baseline admission's
+    receipt before any next launch; otherwise stop. The candidate admission
+    must also qualify before samples.
+    No extra smoke, retry, replacement, old-data recovery or pooling.
+    If the repair is not small, or another method fault occurs, finish this
+    effort without adoption. Applicable gates and ROI still govern any
+    successful screen. Released 400 ms and candidate source stay unchanged.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
