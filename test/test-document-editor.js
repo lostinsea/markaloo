@@ -263,6 +263,7 @@ async function repeatedEditorNoop() {
 async function previewTiming(alpha, beta) {
   await exec("openEditorBtn.click();true");
   await wait("preview timing editor", "isEditMode");
+  const history = await exec("historySnapshot()");
   const latest = bodies[0] + "\n\nPreview timing latest source.\n";
   try {
     const setup = await exec(`(() => {
@@ -331,6 +332,42 @@ async function previewTiming(alpha, beta) {
     })()`);
     check("a retired preview callback cannot render across document selection",
       tabSetup && tab.cancelled && tab.unchanged && tab.correct, tab);
+    await select(alpha, "Alpha");
+    for (const kind of ["Mermaid", "table", "general"]) {
+      const command = await exec(`(async () => {
+        const p=window.__previewTiming;p.renders.length=0;
+        savedCursorPosition=null;
+        markdownEditor.setSelectionRange(markdownEditor.value.length,markdownEditor.value.length);
+        const before=markdownEditor.value;
+        if(${JSON.stringify(kind)}==='Mermaid'){
+          mermaidDialogMode='insert';editingMermaidContainer=null;
+          mermaidTemplateCode.value='flowchart LR\\n A[Pause command] --> B[Current source]';
+          await insertMermaidFromDialog();
+        }else if(${JSON.stringify(kind)}==='table'){
+          tableDialogMode='insert';editingTableEl=null;
+          tableInsertMarkdownEl.value='| Pause command | Value |\\n| --- | --- |\\n| Current source | kept |';
+          insertTableFromDialog();
+        }else{
+          insertContentAtCursor('\\n\\nPause command general.\\n');
+        }
+        const timer=p.timers.get(previewDebounceTimer);
+        return {changed:before!==markdownEditor.value,source:markdownEditor.value,
+          delay:timer?.delay,pending:!!timer&&!timer.fired};
+      })()`);
+      check(`${kind} insertion uses the shared trial preview pause`,
+        command.changed && command.pending && command.delay === 200, command);
+      await wait(kind + " command preview", `window.__previewTiming.renders.includes(${JSON.stringify(command.source)})&&
+        !loadingScreen.classList.contains('active')&&getEditorScrollDiagnostics().ready&&
+        getEditorScrollDiagnostics().matchesSource`);
+      check(`${kind} insertion callback renders the complete current source`,
+        await exec(`window.__previewTiming.renders.length===1&&
+          window.__previewTiming.renders[0]===${JSON.stringify(command.source)}&&
+          markdownEditor.value===${JSON.stringify(command.source)}&&
+          !!viewer.querySelector('.mermaid svg')&&
+          (${JSON.stringify(kind)}==='Mermaid'||!!viewer.querySelector('table,.tabulator'))&&
+          viewer.textContent.includes('Pause command')&&
+          (${JSON.stringify(kind)}!=='general'||viewer.textContent.includes('Pause command general.'))`));
+    }
   } finally {
     await exec("window.__previewTiming?.restore();delete window.__previewTiming;true");
   }
@@ -339,6 +376,18 @@ async function previewTiming(alpha, beta) {
     markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));exitEditBtn.click();true`);
   await wait("preview timing clean reading reset", `!isEditMode&&!hasUnsavedChanges&&
     currentReloadSnapshot()===${JSON.stringify(bodies[0])}&&!loadingScreen.classList.contains('active')`);
+  const historyRestored = await exec(`(() => {
+      const changed=JSON.stringify(historySnapshot())!==${JSON.stringify(JSON.stringify(history))};
+      historyRestore(${JSON.stringify(history)});
+      retainCurrentDocumentEditor();
+      return changed&&historyDebounceTimer===null&&
+        JSON.stringify(historySnapshot())===${JSON.stringify(JSON.stringify(history))};
+    })()`);
+  await select(beta, "Beta");
+  await select(alpha, "Alpha");
+  check("preview timing probe restores the earlier undo and redo history",
+    historyRestored && await exec(`!isEditMode&&historyDebounceTimer===null&&
+      JSON.stringify(historySnapshot())===${JSON.stringify(JSON.stringify(history))}`));
 }
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'");
