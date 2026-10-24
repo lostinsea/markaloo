@@ -15,8 +15,10 @@
   Step 4 is a source-based options assessment, not a performance ranking.
   The single 200 ms candidate remains **parked**: functional checks pass, but
   closed r1 failed before the UI opened. Layout-only r2 reached the UI but
-  stopped on an input-method assumption. No candidate comparison or performance
-  adoption is established.
+  stopped on an input-method assumption. Final narrow r3 stopped after fifteen
+  launches on a baseline insertion-position check. Six matched pairs completed,
+  but the comparison and active-render input qualification remain incomplete.
+  No performance adoption is established.
 - These documents record only the named observations, not full runtime
   qualification or permission to choose or implement an optimization.
 
@@ -978,6 +980,77 @@ flowchart LR
 - Independent Sol/Luna agree on the raw counts, failure, cleanup and parking.
   Astra confirms the ordering mismatch preceded the first recorded full render;
   it is not evidence of that render's overlay blocking input.
+
+### Final receipt-correlation revision
+
+- Session `files\pause-trial\r3` preserves all closed r2/r1/earlier bytes.
+  Same f5/200 ms snapshots, ordinary dependency ancestry, settings, fixed native
+  schedule, phase wrappers and comparable primary endpoints.
+- Reviewed repair identifies text by marker and exact source/caret/revision;
+  every receipt retains its current-source check in actual receipt order.
+  Text notification intervals use proven receipt identity and the Main clock.
+  Identical wheel latencies remain unqualified. Node-only checks passed two
+  positive cases and 22 negative cases; no product or dependency change.
+- **Closed at fifteen launches:** two qualified mixed admissions, twelve
+  qualified samples (six pairs), then failed `sample-prose-3-baseline`.
+  Five planned launches were not reached. No retry, replacement or exclusion;
+  no aggregate from the successful subset. Earlier campaigns and twelve
+  functional invocations remain separate.
+- The failed baseline received a trusted editor input, but not the intended
+  value/position. The viewed screenshot shows `step3one` in the third paragraph,
+  not the prescribed first paragraph. The **30,008.1 ms** cutoff means the
+  expected value was not observed; it is **not** native input latency or proof
+  of lost input. The cause is not established. The interleaved extension was
+  not reached for that launch.
+- Individual primary observations below use milliseconds, **400 ms baseline ->
+  200 ms candidate**. These are six completed pairs plus every incomplete
+  planned pair, not a completed campaign or a new gate pass.
+
+| Journey | Input to current preview | Editor wheel to follower |
+| --- | --- | --- |
+| Prose 1 | 461.8 -> 251.4 | 406.7 -> 196.3 |
+| Code 1 | 462.8 -> 249.7 | 408.0 -> 193.8 |
+| Mixed 1 | 495.9 -> 306.1 | 445.5 -> 250.9 |
+| Prose 2 | 459.9 -> 251.0 | 406.7 -> 196.6 |
+| Code 2 | 463.1 -> 248.9 | 407.0 -> 194.2 |
+| Mixed 2 | 492.5 -> 288.0 | 438.7 -> 213.4 |
+| Prose 3 | Baseline failed; candidate not reached | Not reached |
+| Code 3 | Neither variant reached | Not reached |
+| Mixed 3 | Neither variant reached | Not reached |
+
+- Primary native text/driver effects, current-source mapping, output/token/copy,
+  owner, presentation and movement controls passed in the fourteen completed
+  journeys. All fifteen runs proved both error sentinels; actual error lists
+  are empty. The failed baseline's remaining controls stay unqualified.
+- All fourteen completed extensions received three text inputs and six trusted
+  editor wheels. Each candidate made three preview calls versus two in its
+  baseline. Input notification delays moved too: in Mixed 1, B was **1.3 ->
+  60.9 ms**, while C was **62.2 -> 1.5 ms**. These Main-clock intervals include
+  delivery/notification, not isolated CPU time. All A/B/C intervals and primary
+  text/driver effects remain in the raw evidence; this is not an overall input
+  latency win.
+- No extension observed native receipts inside the recorded render lifetimes.
+  **Active-render input qualification remains withheld.** Do not infer queued
+  input during a specific synchronous span by aligning different clocks.
+  Extra preview calls do not establish their CPU or memory cost.
+- **Keep 200 ms parked.** Earlier preview/follower observations do not complete
+  the failed comparison or resolve the input tradeoff. The setting also affects
+  Mermaid/table/general insert callbacks; their prior functional coverage is
+  unchanged, with no new command-ownership or command-performance claim.
+  Released 400 ms, existing gates and the v0.10.0 exception remain unchanged.
+  This final allowance is closed; no further collector repair or launch.
+- Evidence: `r3\result.json` (`0dcaf048...222470`) and
+  `evidence-summary.json` (`2d95a9d1...678989c`) retain all outcomes and nine pair
+  denominators. All **145 host rows** remain, with observer costs and unmeasured
+  wrapper overhead stated separately. The failed and representative completed
+  screenshots were viewed. Independent PID checks found all 61 owned app and
+  sampler PIDs absent; sampler exited cleanly. No p95, packaged/physical-paint,
+  full-suite, export/lifetime or adoption claim.
+- Only this revision's runtime folder moved to `r3\retained-layout`;
+  `retention.json` records identical paths, lengths and bytes. All five closed
+  evidence directories and protected source refs remain unchanged.
+  Independent Sol/Luna agree on the raw outcomes, math, limits and parking;
+  Astra confirms that queued input behind a specific render is not established.
 
 ## Open gaps and decision limits
 

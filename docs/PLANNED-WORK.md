@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **200 MS PARKED: COMPARISON CLOSED WITH INPUT-METHOD GAP** (2026-10-24).
+- `performance-architecture` - **200 MS PARKED: FINAL COMPARISON CLOSED WITH INCOMPLETE QUALIFICATION** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -284,6 +284,26 @@ section is kept here so the register has a visible edge.
     rows retained, owned PIDs absent, sampler clean. Closed r1 and earlier
     evidence stay immutable. Keep 200 ms parked; no comparative speed or
     regression claim, functional-suite rerun, adoption or publication.
+    Final narrow `pause-trial\r3` repaired both receipt-index assumptions without
+    weakening current-source/caret/revision controls or pairing identical wheels.
+    **Closed at fifteen launches:** two qualified admissions, twelve qualified
+    samples/six pairs, then a baseline insertion-position failure; five launches
+    not reached. Trusted text arrived, but `step3one` appeared in the third
+    paragraph rather than the intended first paragraph. The 30,008.1 ms
+    expected-value cutoff is not native input latency or proof of lost input.
+    Six pairs show earlier preview/follower effects; no successful-only
+    aggregate or completed gate pass. All fourteen completed extensions retain
+    three text/six wheel receipts, but render overlap remains unobserved.
+    Candidate made more preview calls and shifted text-notification delays;
+    CPU cost and active-render input safety remain unqualified. Keep 200 ms
+    parked, including its shared insert-command scope. No retry, further
+    collector repair, adoption or publication. Raw result `0dcaf048...222470`,
+    all-outcomes summary `2d95a9d1...678989c`; all 145 host rows retained,
+    61 owned app/sampler PIDs independently absent, sampler clean.
+    Only the new runtime folder moved byte-identically to `r3\retained-layout`;
+    old evidence and protected refs remain unchanged. Independent Sol/Luna
+    agree on the raw outcomes/math/parking; Astra confirms the qualification
+    limit. No product, dependency or functional-suite change in this revision.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,
