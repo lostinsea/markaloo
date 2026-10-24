@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **SCOPED STEP 3 BASELINE ACCEPTED; PREVIEW TIMING DECISION; NO PRODUCT SLICE SELECTED** (2026-10-23).
+- `performance-architecture` - **200 MS TRIAL PARKED: BASELINE ENTRY GAP; NO COMPARISON** (2026-10-24).
   - User direction: make a clear plan, then work through it one step at a time.
     Preserve functionality; consider selective subsystem replacement, not a
     whole-app rewrite. Judge readable output and scrolling/typing effects,
@@ -241,6 +241,37 @@ section is kept here so the register has a visible edge.
     No speculative product slice or further collection. Independent Sol/Luna
     approve the focused source/retained-evidence finding without material
     disagreement. Optional diagnostic collection was not needed or started.
+  - User chose one shorter preview-pause trial with input-during-render
+    qualification. Candidate requests **200 ms**, half the released pause as
+    a screening choice, not an optimum, SLO or promised speedup. Only the shared
+    preview-delay setting changes; history, output, current-source/owner/mode
+    guards and trailing coalescing remain. No periodic/max-wait refresh.
+    Sol implemented the candidate and behavioral scheduling/coalescing/latest
+    source/cancelled mode-and-tab coverage in the existing editor suite.
+    Real Mermaid/table/general insertion callbacks also exercise that pause
+    and complete current-source output; no new command-ownership claim.
+    Coordinator reserved **R1114**; its exact constant-only revert is proven.
+    Astra defines the minimal interleaved-input method. Independent Sol/Luna
+    review the actual candidate and frozen executable before comparison.
+    Limit: two method admissions (one per variant), then nine matched pairs,
+    three per workload; no retry, replacement or sample exclusion. Functional
+    suite processes are separate and reported. No adoption/release decision.
+    Candidate `538f6eea` includes product commit `d6a0428d` and shared-command
+    callback/history-cleanup checks. Editor **72/72**, scroll **238/238**,
+    syntax **78/78**; R1114 proves the exact scheduling failures with surviving
+    output/owner/mode/cleanup controls. Twelve functional Electron invocations.
+    First baseline admission failed before any production UI: the session
+    snapshot could not resolve `semver/functions/valid` through the declared
+    Electron entry. Node-only resolution succeeds; no missing-package cause
+    or product regression is established. **One admission, zero candidate
+    launches, zero pairs**; no repair/retry or use of the remaining slots.
+    Raw `files\pause-trial\r1\result.json` (`a8a27469…33ef214`);
+    all three host rows retained, owned app/sampler PIDs absent, sampler exit 0,
+    source and prior evidence pins intact. Park, do not adopt: no measured
+    benefit or input-during-render qualification. The released 400 ms fallback
+    and original gates/exception remain. A new collection needs a real decision.
+    Independent Sol/Luna accept the actual result and record; Astra agrees
+    with parking. No unresolved review finding remains.
 - `release-0.10.0` - **PUBLISHED AND VERIFIED** (2026-10-23).
   - Release: [Markaloo 0.10.0](https://github.com/lostinsea/markaloo/releases/tag/v0.10.0).
     Exact tagged source: `f5d380786fb895bf783e263f79aea6316f303ad1`,

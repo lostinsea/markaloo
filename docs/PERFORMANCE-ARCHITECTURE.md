@@ -13,7 +13,9 @@
   journeys below. Its allowance is closed; no further collection follows.
   Coordinator accepted that scoped baseline at `5f7f38f5`.
   Step 4 is a source-based options assessment, not a performance ranking.
-  Steps 5-6 have not started.
+  The single 200 ms trial below is **parked**: functional checks pass, but its
+  first baseline admission failed before the UI opened. No matched comparison,
+  input-during-render qualification or adoption is established.
 - These documents record only the named observations, not full runtime
   qualification or permission to choose or implement an optimization.
 
@@ -801,9 +803,10 @@ flowchart LR
   uncovered current paths, not behavior to copy or new reproduced failures.
   Qualify them if an actual slice touches them; no repair campaign follows here.
 
-### Recommendation and current stopping point
+### Architecture recommendation
 
-- **Keep the current implementation; no product slice is selected.** Selective
+- **Keep the current engines and runtime.** The only selected local trial is
+  the shorter preview pause below, not a subsystem replacement. Selective
   internal change remains the proportionate direction when a concrete need is
   established. This is a scope/risk recommendation, not a performance winner.
 - The one small maintenance candidate examined was shared full/light preparation.
@@ -816,20 +819,123 @@ flowchart LR
   lack a demonstrated user-visible return for this release. The source map
   cannot identify a CPU bottleneck. New observations establish named text/driver
   effects separately from later preview/follower, not an alternative's benefit.
-- Autonomy permits useful small work, not speculative product edits or a gate
-  exemption. No compelling small slice **and** sufficient allowed qualification
-  were identified together. Steps 5-6 therefore remain unstarted; this is not a
-  request to approve a routine handoff.
+- Autonomy permits useful small work, not speculative refactors or a gate
+  exemption. The user has now selected the bounded pause trial; no engine,
+  cache or worker slice follows automatically.
 - The critical limit is selecting a meaningful objective with suitable evidence,
   not choosing syntax for an implementation. A future concrete maintenance or
   functionality need may be qualified with existing tools after checking their
   scope; it need not revive this collector. A responsiveness claim additionally
   needs comparable current-source, actual-effect observations and complete-output
   checks under unchanged applicable gates. This assessment does not authorize
-  collection; only the explicit reopened campaign above does.
+  collection; the completed baseline and new trial have separate explicit caps.
 - Substantial rewrite/dependency strategy, changed behavior/output/debounce/scroll
   ownership, weakened protection/gates, significant tooling/scope or publication
   still needs a real user decision. No such change is silently chosen here.
+
+## Step 5: one shorter preview-pause trial
+
+- User chose **one shorter trailing pause with input-during-render
+  qualification**. Candidate **`538f6eea`**, tree
+  `311e40f465f5119f3f13af1547727cbbb2251482`, requests **200 ms** instead of
+  released f5's 400 ms. Half the pause is a screening choice, not a fitted
+  optimum, SLO or promised 50% speedup. No value sweep or periodic refresh.
+  Product change is committed separately at `d6a0428d`; `538f6eea` adds only
+  shared-command regression checks and their test-state cleanup.
+- Product change is only `TIMING.previewDebounceDelay`. History and other
+  timer settings, full output, selection/mode/current-source and follower
+  checks remain. Existing Mermaid/table/general insertion commands also use
+  that shared setting; they gain no new ownership guarantee from this trial.
+- Behavioral editor coverage exercises real scheduling, obsolete-timer
+  cancellation, complete latest-source rendering and retired callbacks across
+  mode/tab changes. Real Mermaid/table/general insert callbacks also prove
+  the shared pause and complete current-source output; their existing ownership
+  limits remain. **R1114** reverts only 200 -> 400: exactly the input and shared
+  command schedule assertions fail; output/coalescing/owner/sentinel controls
+  survive. Targeted shared-call checks **14/14**, full editor **72/72**, scroll
+  **238/238**, syntax **78/78**; twelve functional Electron invocations, separate
+  from comparison. Luna found that command tests left undo history behind;
+  the probe now restores its earlier undo/redo state, refreshes the saved tab
+  state and checks it again after switching away and back.
+  Independent Sol/Luna accept the corrected candidate. No full/legacy-search
+  suite claim.
+
+### Bounded comparison contract
+
+- Freeze exact executable/declaration after independent Sol/Luna review:
+  session `files\pause-trial\r1`. Same pinned f5/candidate source snapshots,
+  fixture bytes, Electron 43.4.1, viewport/light/100%/0.5 split and existing
+  native primary actions/actual-effect endpoints and live controls.
+- **At most 20 comparison launches:** baseline and candidate mixed-method
+  admissions once each, then nine alternating matched pairs, three per
+  workload. No extra smoke, retry, replacement or exclusion. Prior thirteen
+  launches remain separate. Stop on identity/sentinel/observer/control failure;
+  keep slow/no-effect/unobserved outcomes and every host row.
+- Primary two-marker pause -> current preview/mapping/follower observations
+  remain unchanged. After their controls, install only pass-through
+  light/full/DOM-patch phase wrappers. Preserve `this`, arguments, returned
+  values/promises and throws; no timer/geometry hooks, held work or source edit.
+- Independent Main submits one fixed extension without waiting for renderer
+  replies: **0 ms A; 205 wheel; 225 wheel; 240 B; 255 wheel; 645 wheel;
+  665 wheel; 680 C; 695 wheel**. Text markers are `trialA `, `trialB `,
+  `trialC `; all six editor wheels retain `deltaY: -100`. Same schedule and
+  prequalified focus/overflow in both variants; no phase-triggered retiming.
+- Keep intended/actual submissions, trusted arrivals, exact text/selection,
+  driver/follower effects, superseded/current adoption and complete-output
+  controls. Same-thread input cannot run inside synchronous rendering.
+  A receipt within a pending asynchronous render lifetime is a narrower
+  interleaving result, not input during blocking JS. If overlap is absent,
+  record **unobserved** and withhold that qualification; do not rerun.
+- Renderer clocks locate measured spans/arrivals. Main submission -> receipt
+  notification includes delivery and notification overhead. Do not subtract
+  clocks, infer active work from nominal deadlines, or call an asynchronous
+  full-render lifetime CPU. Nested patch/light spans are not additive.
+  Keep primary/extension observer costs and unmeasured idle-tail limits explicit.
+- Existing applicable gates remain unchanged. Compare all three pairs and
+  ranges, not p95/significance from three samples or only successful outcomes.
+  Any output/ownership regression blocks adoption; any measured performance
+  regression needs the existing gate/maintainer process, not a new tolerance.
+  Earlier preview with missing active-render evidence is not complete
+  qualification. No CPU/memory saving, packaged/physical-paint or export claim.
+- Candidate and frozen method received independent Sol/Luna approval.
+  Collector `5f38036a…3022c33e`, declaration `13f65a7d…7c77216`.
+  Execution stopped at the admission failure below; no replacement or retry.
+
+### Trial result and decision
+
+- **One baseline admission launched; zero candidate admissions and zero sample
+  pairs.** Twelve functional Electron invocations are separate. The previous
+  thirteen observation launches and all their artifacts remain unchanged.
+- Baseline Main failed while requiring `semver/functions/valid` from
+  `src/update-state.js` in the session snapshot. No production window, Open,
+  native actions, mapping controls, phase wrappers or error-sentinel proof were
+  reached. Empty `errors` is not an application-clean result.
+- Node-only checks resolve that installed module from both the worktree and
+  snapshot with the declared `NODE_PATH`. The actual Electron entry did not.
+  This is a source-entry dependency-resolution gap, not evidence that 400 ms
+  or 200 ms performs badly. No dependency installation or collector repair
+  followed; unused slots do not permit a replacement baseline admission.
+- All three host rows remain: CPU **3.09-11.19%**, available memory
+  **70,435-70,498 MiB**, disk peak **6,492,228 bytes/s**, queue peak **0.0356**.
+  No renderer observer was installed, so observer costs are unmeasured.
+  These host counters do not explain the module-resolution failure.
+- Owned app PID **125088** and sampler PID **60312** are absent; sampler
+  exit **0**, no forced stop. The fresh owned profile and failed receipt are
+  retained. Snapshot and recursive prior-artifact pins still match.
+- Raw receipts: session `files\pause-trial\r1\result.json`
+  (`a8a27469…33ef214`) and `admission-mixed-baseline.json`
+  (`2ef8d62a…597946`); `evidence-summary.json` records full hashes, controls
+  not reached and scoped cleanup. No latency aggregate or gate pass is produced.
+- Independent Sol/Luna checked the raw counts, host arithmetic, cleanup and
+  final record. Both approve; Astra independently agrees with parking.
+- **Park the local 200 ms candidate; do not adopt or release it.** The real
+  input and shared Mermaid/table/general command regressions are protected,
+  but earlier current-preview/follower effects and continued input during
+  rendering remain unqualified. No product regression is established either.
+  Keep the released 400 ms fallback. Any renewed comparison first needs a
+  qualified Electron snapshot entry and a new bounded authorization; this unit
+  does not reopen the collector. Original R2/R3 failures and the scoped release
+  exception remain unchanged.
 
 ## Open gaps and decision limits
 
@@ -894,11 +1000,12 @@ flowchart LR
   and nine journeys; it supplies the limited source-entry baseline above.
   Hand off this bounded unit before further work; no extra collection follows.
 - Step 4 assesses source-supported engineering tradeoffs with responsiveness
-  benefits unproven. The user ended the collector loop and permits autonomous
-  small, preserving, reversible work when existing allowed tools can qualify it.
+  benefits unproven. Autonomous small, preserving, reversible work still needs
+  meaningful qualification with allowed tools.
   No option may bypass existing gates or the explicit collector/dependency/
   publication limits. Significant behavior, scope or architecture decisions
   still need the user. Independent Sol/Luna approve the actual options and
   recommendation, with no material findings or unresolved disagreement.
-  Source-supported boundaries and risks are assessed; no product slice is
-  selected and Steps 5-6 have not started.
+  The selected Step 5 pause trial has functional protection but stopped at its
+  baseline admission gap. Step 6's recommendation is to park it, not adopt it;
+  no further collection, integration or publication follows from this unit.
