@@ -21,7 +21,7 @@ files.forEach((file, i) => fs.writeFileSync(file, bodies[i]));
 let chosen = files[0], win, sentinel, cancelNextOpen = false, chooserCalls = 0;
 const results = [];
 const proof = process.env.MARKALOO_EDITOR_PROOF;
-if (proof && !["toolbar", "modes", "sessions", "baseline", "admission", "deferred", "visible-save", "save", "reload", "clean-exit", "reopen-exit", "lastclose", "commands", "noop"].includes(proof)) {
+if (proof && !["toolbar", "modes", "sessions", "baseline", "admission", "deferred", "visible-save", "save", "reload", "clean-exit", "reopen-exit", "lastclose", "commands", "noop", "preview-timing"].includes(proof)) {
   console.error("Unsupported document-editor proof route: " + proof);
   app.exit(2);
 }
@@ -260,6 +260,86 @@ async function repeatedEditorNoop() {
   await exec("markdownEditor.style.whiteSpace='';true");
   await settle();
 }
+async function previewTiming(alpha, beta) {
+  await exec("openEditorBtn.click();true");
+  await wait("preview timing editor", "isEditMode");
+  const latest = bodies[0] + "\n\nPreview timing latest source.\n";
+  try {
+    const setup = await exec(`(() => {
+      const schedule=window.setTimeout,cancel=window.clearTimeout,render=renderMarkdown;
+      const probe=window.__previewTiming={timers:new Map(),renders:[]};
+      window.setTimeout=function(callback,delay,...args){
+        if(typeof callback!=='function')return schedule.call(this,callback,delay,...args);
+        const row={callback,delay,cancelled:false,fired:false};
+        const id=schedule.call(this,function(...values){
+          row.fired=true;return callback.apply(this,values);
+        },delay,...args);
+        probe.timers.set(id,row);return id;
+      };
+      window.clearTimeout=function(id){
+        const row=probe.timers.get(id);if(row)row.cancelled=true;
+        return cancel.call(this,id);
+      };
+      renderMarkdown=function(...args){
+        probe.renders.push(args[0]);return render.apply(this,args);
+      };
+      probe.restore=()=>{window.setTimeout=schedule;window.clearTimeout=cancel;renderMarkdown=render;};
+      markdownEditor.value=${JSON.stringify(bodies[0] + "\n\nPreview timing obsolete source.\n")};
+      markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));
+      const first=previewDebounceTimer;
+      markdownEditor.value=${JSON.stringify(latest)};
+      markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));
+      const second=previewDebounceTimer;
+      return {different:first!==second,firstCancelled:probe.timers.get(first).cancelled,
+        firstFired:probe.timers.get(first).fired,preview:probe.timers.get(second).delay,
+        history:probe.timers.get(historyDebounceTimer).delay,renders:probe.renders.length};
+    })()`);
+    check("preview timing probe starts with a cancelled obsolete timer and no rendered burst",
+      setup.different && setup.firstCancelled && !setup.firstFired && setup.renders === 0, setup);
+    check("input preview uses the trial pause while independent history stays unchanged",
+      setup.preview === 200 && setup.history === 800, setup);
+    await wait("latest coalesced preview", "viewer.textContent.includes('Preview timing latest source.')&&!loadingScreen.classList.contains('active')");
+    check("preview input burst renders only the latest complete source through the real callback",
+      await exec(`JSON.stringify(window.__previewTiming.renders)===JSON.stringify([${JSON.stringify(latest)}])&&
+        currentReloadSnapshot()===${JSON.stringify(latest)}&&!viewer.textContent.includes('obsolete source')`));
+    await exec(`markdownEditor.value=${JSON.stringify(bodies[0])};
+      markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));
+      window.__previewTiming.staleMode=window.__previewTiming.timers.get(previewDebounceTimer);
+      exitEditBtn.click();true`);
+    await wait("clean preview mode exit", "!isEditMode&&!loadingScreen.classList.contains('active')");
+    await exec("openEditorBtn.click();true");
+    await wait("new editor mode revision", "isEditMode");
+    const mode = await exec(`(() => {
+      const p=window.__previewTiming,before=p.renders.length;
+      p.staleMode.callback();
+      return {cancelled:p.staleMode.cancelled,unchanged:before===p.renders.length};
+    })()`);
+    check("a retired preview callback cannot render into a reopened editor mode",
+      mode.cancelled && mode.unchanged, mode);
+    const tabSetup = await exec(`(() => {
+      markdownEditor.value=${JSON.stringify(latest)};
+      markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));
+      const p=window.__previewTiming;p.staleTab=p.timers.get(previewDebounceTimer);
+      return previewDebounceTimer!==null;
+    })()`);
+    await select(beta, "Beta");
+    const tab = await exec(`(() => {
+      const p=window.__previewTiming,before=p.renders.length;
+      p.staleTab.callback();
+      return {cancelled:p.staleTab.cancelled,unchanged:before===p.renders.length,
+        correct:viewer.querySelector('h1')?.textContent==='Beta'&&!isEditMode};
+    })()`);
+    check("a retired preview callback cannot render across document selection",
+      tabSetup && tab.cancelled && tab.unchanged && tab.correct, tab);
+  } finally {
+    await exec("window.__previewTiming?.restore();delete window.__previewTiming;true");
+  }
+  await select(alpha, "Alpha");
+  await exec(`markdownEditor.value=${JSON.stringify(bodies[0])};
+    markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));exitEditBtn.click();true`);
+  await wait("preview timing clean reading reset", `!isEditMode&&!hasUnsavedChanges&&
+    currentReloadSnapshot()===${JSON.stringify(bodies[0])}&&!loadingScreen.classList.contains('active')`);
+}
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'");
   win.setSize(1440, 920);
@@ -268,6 +348,10 @@ async function run() {
   if (proof === "commands") return finish();
   const alpha = await open(0), beta = await open(1);
   await select(alpha, "Alpha");
+  if (!proof || proof === "preview-timing") {
+    await previewTiming(alpha, beta);
+    if (proof === "preview-timing") return finish();
+  }
   check("new documents begin in reading mode through the isolated production preload",
     await exec("!isEditMode&&!contentWrapper.classList.contains('split-view')&&window.require===undefined"));
   const toolbar = await exec("!!document.getElementById('openEditorBtn')");

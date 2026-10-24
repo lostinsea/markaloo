@@ -939,7 +939,7 @@ function i18n(key, params) {
 }
 
 const TIMING = {
-  previewDebounceDelay: 400,   // Editor input debounce (was 3000ms)
+  previewDebounceDelay: 200,   // Trailing editor preview pause; no periodic refresh.
   previewRenderDelay: 400,     // Preview render debounce
   // PERF-02: highlightSearchTerm() walks and rewrites the whole rendered tree.
   // On a 2MB / 2001-heading document a common term measured 316ms, which was

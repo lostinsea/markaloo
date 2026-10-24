@@ -119,6 +119,12 @@ This approach means after an upstream merge, you only need to ensure these files
   Horizontal scrolling and nested scrollports remain independent.
 - New input suspends mapping until the matching preview commits. Layout changes,
   media sizing, zoom, pane sizing and collapse state refresh cached coordinates.
+- Local preview-pause trial: input requests a refresh after 200 ms without
+  further input; the 800 ms undo-history timer is unchanged. This is a shorter
+  trailing pause, not periodic refresh during continuous typing. Adoption and
+  input-during-render qualification remain pending in the performance plan.
+  Existing Mermaid/table/general insertion commands share this setting; their
+  separately written callbacks are not new ownership guarantees.
 - Settled scroll frames binary-search cached coordinates and write only the
   follower's vertical position. They do not parse, scan or re-render the document.
 - Physical-line rebuilds walk the paragraph once and measure short text ranges,
