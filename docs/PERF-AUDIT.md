@@ -1,5 +1,68 @@
 # Performance Audit
 
+## Remaining expensive edits - bounded diagnostic, 2026-10-24
+
+- Baseline: locally adopted `572f3744`; mirror retention and 400 ms unchanged.
+  Two identical fresh-process journeys on the existing 1 MiB prose fixture,
+  Windows x64, AMD EPYC 7763, Node 24.18.1, Electron 43.4.1.
+  No candidate, comparison, extra smoke, retry, replacement or old-data pooling.
+- Snapshot-only sparse spans record rebuild/source-geometry entry/exit,
+  committed identity, counters and binding/text-group/sort boundaries.
+  No new DOM reads, source copies, per-Range timing or IPC in those taps.
+  Exact reversal recovers adopted source `4aff2f9c`.
+  Sol/Luna approved the corrected executable before either launch.
+
+| Run | First / final light render (ms) | First / final whole rebuild (ms) | First / final text-group pass (ms) | Final input receipt -> current readiness (ms) |
+|---|---:|---:|---:|---:|
+| 1 | 264.3 / 251.6 | 281.4 / 227.6 | 156.4 / 141.9 | 1075.4 |
+| 2 | 253.8 / 264.0 | 240.4 / 249.0 | 154.2 / 155.7 | 1115.6 |
+
+- Rebuild counters were 3 -> 4 -> 5 for distinct committed source revisions
+  6 -> 9. No duplicate same-source rebuild was observed. Light contains the
+  patch; rebuild contains source-geometry setup. That separately timed span
+  ends when it returns a lazy reader; later source Range reads run inside the
+  binding/text-group loops. These nested spans are not added.
+- First-light return to input seven: 493.9/438.1 ms. Rebuilds cover
+  281.4/240.4 ms of those intervals; 212.5/197.7 ms remains unattributed.
+  Text-group processing includes source and preview Range reads and may
+  flush shared layout. The span does not isolate removable JavaScript CPU.
+- Nine Main-clock submission-to-notification intervals per run are retained.
+  The first six took approximately 5.1-6.3 ms. The final three were
+  724.4/670.3/585.1 ms and 663.4/603.5/518.3 ms.
+  These are not physical key-to-paint times. Earlier revisions were superseded
+  without observed current readiness; the final source reached complete
+  current presentation/mapping in both runs.
+- Both journeys qualified: exact source, caret, owner/generation, complete
+  output, mapping, native input/wheel, error-sentinel and restoration controls.
+  Both final captures were viewed. Each receipt decoded and passed the
+  diagnostic-span controls before qualification; owned-process absence passed
+  before advancing. The host sampler stopped cleanly.
+- Source inspection found display-sample memoization within each text run
+  and source-offset memoization within each rebuild.
+  Adaptive sampling checks both panes' wrapping;
+  unchanged text or retained nodes alone do not certify unchanged geometry.
+  No safely dispensable subset was identified by these measurements.
+- **Disposition: no additional implementation from this investigation.**
+  Keep adopted mirror retention and 400 ms. Evidence does not yet justify a
+  small change's preservation, validation and maintenance costs. This is not
+  a rejection of all geometry optimization or a claim of exhausted options.
+  Source-aware Astra and independent Sol/Luna agree; no unresolved disagreement.
+  No further instrumentation campaign follows automatically.
+- Limits: observer frame/listener/notification totals cover only named
+  scopes; instrumentation overhead is uncalibrated. Two baseline observations
+  are not a new SLO, p95 certificate, regression comparison or adoption gate.
+  No CPU/memory saving, exclusive attribution, physical-paint or smooth-input
+  claim. Historical Prism failures and release exceptions are unchanged.
+- Evidence: session `301ba72b`, `files\remaining-edit\r1`,
+  `result.json` SHA-256
+  `f259c71ef4c88fe46ff7272c5524a73438ef9e11b8128d16b13e306a46c238dd`.
+  All raw outcomes and unlaunched review/preparation failures remain separate.
+  Retained layout: `files\remaining-edit-retained\r1`; immutable manifest/seal:
+  `files\remaining-edit-closure\r1`. Original paths resolve through
+  `files\remaining-edit\r1\layout-map.json`.
+  Product/test/dependency bytes and all closed mirror/200 ms evidence remain
+  unchanged. No push, main integration, publication or release.
+
 ## Hidden-mirror retention - local adoption, 2026-10-24
 
 - Released `f5d38078` versus the same source with whole-span mirror retention;

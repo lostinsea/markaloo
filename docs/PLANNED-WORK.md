@@ -38,7 +38,26 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `performance-architecture` - **MIRROR LOCALLY ADOPTED; GLOBAL 200 MS REJECTED** (2026-10-24).
+- `performance-architecture` - **MIRROR LOCALLY ADOPTED; REMAINING-EDIT DIAGNOSTIC CLOSED** (2026-10-24).
+  - Remaining-edit diagnostic completed two baseline-only journeys from local
+    `572f3744`, with mirror retention and 400 ms unchanged. Exact native
+    source/caret/owner/output/mapping controls and both process fences passed;
+    both captures were viewed. Sparse snapshot instrumentation reverses to
+    the exact adopted source. No product candidate or comparison was made.
+    Distinct committed revisions each rebuilt once: 281.4/240.4 ms, then
+    227.6/249.0 ms. Text-group processing took 141.9-156.4 ms and includes
+    source and preview Range reads. Another 212.5/197.7 ms before input seven
+    remains unattributed; no exclusive CPU or removable-cost claim.
+    Source-aware Astra and independent Sol/Luna agree: no additional
+    implementation is justified by this bounded investigation.
+    Existing within-build memoization and fresh two-pane wrapping measurements
+    expose no sufficiently supported small avoidable-work mechanism.
+    This does not establish that optimization is exhausted.
+    Evidence: session `301ba72b`, `files\remaining-edit\r1`; retained layout
+    and seal in `files\remaining-edit-retained\r1` and
+    `files\remaining-edit-closure\r1`. No unresolved review disagreement.
+    Closed mirror/200 ms units stay immutable. No cross-content, Prism
+    first-open, dependency, publication or unrelated correctness work.
   - Hidden-mirror PoC completed all eight frozen launches at unchanged
     400 ms: two admissions and three alternating pairs on one expensive
     prose workload. Whole edited builds fell from 346-365 ms to 251-258 ms;

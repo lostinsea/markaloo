@@ -41,11 +41,13 @@
   a universal claim or a conclusion from tooling failures. R4 remains valid;
   failed R5/R6 units remain immutable. The trial source stays available for
   reproduction only; no product integration or publication follows.
-- Next sequential question: can unchanged hidden-mirror spans survive a small
-  edit and reduce whole mapping rebuild/edit response at released 400 ms?
-  Source investigation comes first. Any PoC must compare 400 ms against 400 ms,
-  preserve the exact current partition and fresh geometry, and use separate
-  identities and evidence. R7 is closed and must not be changed or rerun.
+- Current local implementation: hidden-mirror span retention at `572f3744`,
+  with the 400 ms preview wait unchanged. The following bounded remaining-edit
+  diagnostic found substantial synchronous mapping work, but no sufficiently
+  supported small avoidable-work mechanism. Keep that implementation;
+  do not add a speculative cache, scheduler or reduced-precision path.
+  This is not a claim that further optimization is impossible.
+  All closed mirror/200 ms units remain immutable.
 
 ```mermaid
 flowchart LR
@@ -1351,6 +1353,47 @@ flowchart LR
   Retained layouts and sealed evidence are in `files\mirror-retained-layout\r1`
   and `files\mirror-closure\r1`. Local implementation only; no main integration,
   publication or release.
+
+## Remaining expensive edits - bounded diagnostic
+
+- **Baseline:** adopted `572f3744`, unchanged 400 ms and mirror retention.
+  Two identical fresh-process journeys on the existing 1 MiB prose fixture;
+  no product candidate, comparison, retry, replacement, exclusion or pooling.
+- **Method:** source investigation and retained timelines preceded sparse
+  snapshot-only rebuild/phase timestamps. Exact removal recovers adopted
+  source bytes. Independent Sol/Luna approved the actual executable after
+  correcting an inherited admission offset and validating every accepted
+  diagnostic outcome before recording qualification.
+- **Observed:** both journeys qualified, with exact current text/caret/owner,
+  complete output, mapping, native input, presentation and process controls.
+  Both captures were viewed. Distinct committed revisions 6 and 9 each
+  rebuilt once. The largest measured rebuild subphase was text-group
+  processing, 141.9-156.4 ms. See the separate
+  [diagnostic record](PERF-AUDIT.md#remaining-expensive-edits---bounded-diagnostic-2026-10-24)
+  for all four builds, native notification tails and current-readiness times.
+- **Source constraint:** [adaptive text sampling](../src/editor-scroll.js#L711-L749)
+  checks rendered shape and both panes' measured wrapping. It already
+  memoizes sampled display positions; the returned source-geometry reader
+  separately memoizes source offsets within the build. Retained text/nodes
+  alone do not establish reusable coordinates after an edit.
+- **Disposition:** no further implementation is justified by this bounded
+  investigation. Large synchronous spans are real, but no sufficiently
+  supported dispensable subset was identified whose practical benefit
+  warrants preservation, validation and maintenance costs. This does not
+  prove that every read/traversal is necessary or all optimization exhausted.
+  Source-aware Astra and independent Sol/Luna agree on this bounded conclusion.
+  No additional instrumentation campaign follows from these observations.
+- **Limits:** source and preview Range reads share the measured phase;
+  layout reads may flush shared work. Another 212.5/197.7 ms before input
+  seven remains unattributed. Observer totals cover only named scopes;
+  instrumentation overhead was not calibrated. No CPU, memory, physical
+  paint, speedup, smooth-input, p95 or general performance-gate claim.
+- **Evidence:** session `301ba72b`, `files\remaining-edit\r1`; baseline-only
+  results are separate from all closed mirror and global 200 ms comparisons.
+  Retained layout/seal: `files\remaining-edit-retained\r1` and
+  `files\remaining-edit-closure\r1`, with frozen paths mapped by `layout-map.json`.
+  Product/test/dependency bytes remain unchanged. No main integration,
+  publication, release or automatically selected next strategy.
 
 ## Open gaps and decision limits
 
