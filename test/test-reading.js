@@ -3,17 +3,40 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { randomUUID } = require("crypto");
+const { prepareOwnedRestartDirectory } = require("./test-restart-directory");
 const root = path.resolve(__dirname, "..");
-const batch = process.env.FOLIA_READING_BATCH || path.join(root, "tmp", "reading-" + randomUUID());
-if (!path.resolve(batch).startsWith(path.join(root, "tmp") + path.sep)) throw new Error("Project-local reading batch required");
+const isElectron = !!process.versions.electron;
+const declaredPhases = ["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed",
+  "invalid", "missing", "unreadable", "borders"];
+const phase = isElectron ? process.argv[2] : "controller";
+function failPreparation(stage, error) {
+  try {
+    fs.writeSync(2, "Reading preparation failed at " + stage + ": " + String(error.stack || error) + "\n");
+  } finally {
+    process.exit(1);
+  }
+}
+let batch, phaseTempRoot;
+try {
+  if (isElectron && !declaredPhases.includes(phase)) throw new Error("Unsupported reading fixture phase: " + phase);
+  batch = path.resolve(process.env.FOLIA_READING_BATCH || path.join(root, "tmp", "reading-" + randomUUID()));
+  phaseTempRoot = prepareOwnedRestartDirectory(root, "tmp", batch, path.join("isolation", phase));
+  const entry = fs.lstatSync(phaseTempRoot);
+  console.log("READING_PHASE_DIRECTORY " + JSON.stringify({
+    phase, expectedPath: phaseTempRoot, physicalPath: fs.realpathSync.native(phaseTempRoot),
+    directory: entry.isDirectory(), link: entry.isSymbolicLink(),
+  }));
+} catch (error) {
+  failPreparation("phase temporary root", error);
+}
 const originalTmpdir = os.tmpdir;
-os.tmpdir = () => path.join(batch, "isolation", process.argv[2] || "controller");
+os.tmpdir = () => phaseTempRoot;
 require("./test-userdata-isolation");
 os.tmpdir = originalTmpdir;
+const { REAL_USER_DATA } = require("./test-userdata-isolation");
 const electron = require("electron");
-if (typeof electron === "string") {
+if (!isElectron) {
   const { spawnSync } = require("child_process");
-  fs.mkdirSync(batch, { recursive: true });
   console.log("Reading evidence: " + batch);
   let total = 0;
   let passed = 0;
@@ -51,15 +74,44 @@ if (typeof electron === "string") {
   process.exit(passed === total ? 0 : 1);
 } else {
   const { app, BrowserWindow, dialog, session, net, shell } = electron;
-  const phase = process.argv[2];
-  if (!["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed",
-    "invalid", "missing", "unreadable", "borders"].includes(phase)) {
-    console.error("Unsupported reading fixture phase: " + phase);
-    app.exit(2);
+  const profileRelative = ["startup", "welcomeChoice"].includes(phase) ? phase + "-profile" : "profile";
+  let profile, profileStage = "actual restart profile";
+  try {
+    profile = prepareOwnedRestartDirectory(root, "tmp", batch, profileRelative);
+    const key = value => process.platform === "win32" ? value.toLowerCase() : value;
+    profileStage = "original userData identity";
+    if (typeof REAL_USER_DATA !== "string" || !path.isAbsolute(REAL_USER_DATA) ||
+        key(path.resolve(REAL_USER_DATA)) === key(profile)) {
+      throw new Error("Restart profile must differ from the original userData");
+    }
+    let originalPhysicalPath = null;
+    try {
+      originalPhysicalPath = fs.realpathSync.native(REAL_USER_DATA);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (originalPhysicalPath && key(originalPhysicalPath) === key(profile)) {
+      throw new Error("Restart profile physically aliases the original userData");
+    }
+    profileStage = "pre-ready userData override";
+    if (app.isReady()) throw new Error("Restart profile must be selected before app ready");
+    app.setPath("userData", profile);
+    profileStage = "selected userData identity";
+    const selectedPath = app.getPath("userData");
+    const entry = fs.lstatSync(selectedPath);
+    const physicalPath = fs.realpathSync.native(selectedPath);
+    if (selectedPath !== profile || key(physicalPath) !== key(profile) ||
+        !entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error("Selected userData differs from the verified restart directory");
+    }
+    console.log("READING_RESTART_DIRECTORY " + JSON.stringify({
+      expectedPath: profile, selectedPath, physicalPath,
+      directory: entry.isDirectory(), link: entry.isSymbolicLink(), originalUserData: REAL_USER_DATA,
+      originalPhysicalPath,
+    }));
+  } catch (error) {
+    failPreparation(profileStage, error);
   }
-  const profile = path.join(batch, ["startup", "welcomeChoice"].includes(phase) ? phase + "-profile" : "profile");
-  fs.mkdirSync(profile, { recursive: true });
-  app.setPath("userData", profile);
   const first = path.join(batch, "reading.md");
   const other = path.join(batch, "other.md");
   let chosen = first;
@@ -906,6 +958,11 @@ if (typeof electron === "string") {
     check(`${phase} restore preserves hidden drawer accessibility`, state.inertToc === (expected !== "toc") && state.inertNotes === (expected !== "notes"), state);
     check(`${phase} restore never focuses a drawer`, !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);
     check(`${phase} restart restores the actual admitted document`, await exec("viewer.querySelector('h1')?.textContent==='Other reading document'"));
+    if (["invalid", "missing", "unreadable"].includes(phase)) {
+      const initial = await exec("window.__panelInitialPreference");
+      check(`${phase} before-render setup captures the exact original preference`,
+        initial?.captured === true && initial.value === (phase === "invalid" ? "invalid" : null), initial);
+    }
     if (phase === "freshClosed") {
       check("user closed preference survives a real quit and document restoration", state.saved === "closed", state);
       await exec("document.getElementById('toggleIndex').click();true");
@@ -916,32 +973,47 @@ if (typeof electron === "string") {
     if (phase === "unreadable") {
       const refusal = await exec("window.__panelReadRefusal");
       check("unreadable panel storage was refused and warned without stopping document startup",
-        refusal.reads === 1 && refusal.warned && state.saved === null, refusal);
+        refusal.reads === 1 && refusal.warned && state.saved === null, { refusal, state });
     }
     if (phase === "toc") await exec("document.getElementById('toggleNotes').click();true");
     if (phase === "notes") await exec("document.getElementById('closeNotes').click();true");
-    if (phase === "closed") await exec("localStorage.setItem('readingSidePanel','invalid');true");
-    if (phase === "invalid") await exec("localStorage.removeItem('readingSidePanel');true");
+    if (phase === "closed") {
+      await exec("localStorage.setItem('readingSidePanel','invalid');true");
+      check("closed phase reads back its exact invalid renderer seed",
+        await exec("localStorage.getItem('readingSidePanel')==='invalid'"));
+    }
+    if (phase === "invalid") {
+      await exec("localStorage.removeItem('readingSidePanel');true");
+      check("invalid phase reads back its removed renderer seed",
+        await exec("localStorage.getItem('readingSidePanel')===null"));
+    }
   }
   app.whenReady().then(async () => {
-    if (phase === "unreadable") {
+    if (["invalid", "missing", "unreadable"].includes(phase)) {
       const { pathToFileURL } = require("url");
       const indexPath = path.join(root, "src", "index.html");
       const indexUrl = pathToFileURL(indexPath).href;
       const probe = `<script>
-        window.__panelReadRefusal={reads:0,warned:false};
         const panelGet=Storage.prototype.getItem,panelWarn=console.warn;
-        Storage.prototype.getItem=function(key){
-          if(this===localStorage&&key==='readingSidePanel'&&window.__panelReadRefusal.reads===0){
-            window.__panelReadRefusal.reads++;
-            throw new Error('deliberate panel storage refusal');
-          }
-          return panelGet.call(this,key);
-        };
-        console.warn=function(...args){
-          if(args[0]==='Could not restore reading panel preference:')window.__panelReadRefusal.warned=true;
-          return panelWarn.apply(this,args);
-        };
+        window.__panelInitialPreference={captured:false};
+        try{
+          window.__panelInitialPreference.value=panelGet.call(localStorage,'readingSidePanel');
+          window.__panelInitialPreference.captured=true;
+        }catch(error){window.__panelInitialPreference.error=String(error)}
+        if(${JSON.stringify(phase)}==='unreadable'){
+          window.__panelReadRefusal={reads:0,warned:false};
+          Storage.prototype.getItem=function(key){
+            if(this===localStorage&&key==='readingSidePanel'&&window.__panelReadRefusal.reads===0){
+              window.__panelReadRefusal.reads++;
+              throw new Error('deliberate panel storage refusal');
+            }
+            return panelGet.call(this,key);
+          };
+          console.warn=function(...args){
+            if(args[0]==='Could not restore reading panel preference:')window.__panelReadRefusal.warned=true;
+            return panelWarn.apply(this,args);
+          };
+        }
       </script>`;
       await session.defaultSession.protocol.handle("file", request => request.url === indexUrl
         ? new Response(fs.readFileSync(indexPath, "utf8").replace("</head>", probe + "</head>"),

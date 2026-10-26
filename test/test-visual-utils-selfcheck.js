@@ -20,6 +20,7 @@ const watchdog = setTimeout(() => failUnattended(new Error("Visual selfcheck wat
 // Isolate before any window or profile access, including failures during setup.
 require("./test-userdata-isolation");
 const {
+  admitTestDocument,
   inspectVisual,
   captureScreenshot,
   mergeDisabledFeatures,
@@ -57,6 +58,356 @@ const expect = (name, ok, detail) => {
   lines.push(line);
   console.log(line);
 };
+
+async function checkDocumentAdmission(repositoryRoot) {
+  const fs = require("fs");
+  const path = require("path");
+  const { runInNewContext } = require("vm");
+  const { isDeepStrictEqual } = require("util");
+  const descriptor = Object.getOwnPropertyDescriptor(dialog, "showOpenDialog");
+  const setupSound = descriptor?.configurable === true && typeof dialog.showOpenDialog === "function" &&
+    fs.statSync(repositoryRoot).isDirectory();
+  expect("document admission controls start with an owned fixture root and replaceable guarded chooser",
+    setupSound);
+  if (!setupSound) return;
+
+  for (const externallyManagedChooser of [false, true]) {
+    const mode = externallyManagedChooser ? "externally managed" : "default";
+    for (const scenario of ["ready", "wrong path", "wrong heading", "loading", "click rejection", "poll rejection"]) {
+      const label = mode + " document admission " + scenario;
+      const fixture = path.join(repositoryRoot, "admission", mode, scenario + ".md");
+      const heading = "Admission " + mode + " " + scenario;
+      const markdown = "# " + heading + "\n\nControlled admitted fixture.\n";
+      const chooserOptions = { properties: ["openFile"] };
+      const fault = new Error("Controlled " + scenario);
+      const refused = new Error("Controlled caller chooser refused an unarmed request");
+      const writes = [], polls = [];
+      let clicks = 0, executions = 0, guardCalls = 0;
+      let selection = null, chosen = null, chooserAtClick = null;
+      let allowance = null, consumed = false, allowanceAfterHelper = null;
+      let completed = false, caught = null;
+      const callerChooser = (owner, options) => {
+        guardCalls++;
+        const allowed = allowance;
+        allowance = null;
+        if (!allowed || owner !== allowed.win || options !== chooserOptions ||
+            allowed.fixture !== fixture) throw refused;
+        consumed = true;
+        return Promise.resolve({ canceled: false, filePaths: [allowed.fixture] });
+      };
+      let currentChooser = callerChooser;
+      const win = {
+        webContents: {
+          async executeJavaScript(source) {
+            executions++;
+            if (executions === 1) {
+              if (scenario === "click rejection") throw fault;
+              const value = runInNewContext(source, {
+                document: {
+                  getElementById(id) {
+                    if (id !== "openFile") throw new Error("Unexpected admission button: " + id);
+                    return { click() {
+                      clicks++;
+                      chooserAtClick = dialog.showOpenDialog;
+                      selection = Promise.resolve(chooserAtClick(win, chooserOptions));
+                    } };
+                  },
+                },
+              });
+              if (!selection) throw new Error("Admission did not click its controlled Open button");
+              chosen = await selection;
+              return value;
+            }
+            if (scenario === "poll rejection") throw fault;
+            if (polls.length >= 2) throw new Error("Admission polled beyond its controlled completion");
+            const invalid = polls.length === 0;
+            const state = {
+              filePath: invalid && scenario === "wrong path" ? fixture + ".other" : chosen?.filePaths?.[0],
+              heading: invalid && scenario === "wrong heading" ? heading + " other" : heading,
+              loading: invalid && scenario === "loading",
+            };
+            const value = runInNewContext(source, {
+              currentFilePath: state.filePath,
+              viewer: { querySelector(selector) {
+                if (selector !== "h1") throw new Error("Unexpected admission selector: " + selector);
+                return { textContent: state.heading };
+              } },
+              loadingScreen: { classList: { contains(name) {
+                if (name !== "active") throw new Error("Unexpected loading class: " + name);
+                return state.loading;
+              } } },
+            });
+            polls.push({ state, value });
+            return value;
+          },
+        },
+      };
+      const ownedAllowance = { win, fixture };
+      try {
+        Object.defineProperty(dialog, "showOpenDialog", {
+          configurable: true,
+          enumerable: descriptor.enumerable,
+          get: () => currentChooser,
+          set(value) {
+            writes.push(value);
+            if (externallyManagedChooser) throw new Error("Externally managed chooser was assigned");
+            currentChooser = value;
+          },
+        });
+        allowance = externallyManagedChooser ? ownedAllowance : null;
+        expect(label + " setup owns the installed chooser and exact fixture allowance",
+          dialog.showOpenDialog === callerChooser && writes.length === 0 &&
+            allowance === (externallyManagedChooser ? ownedAllowance : null) &&
+            path.dirname(path.dirname(fixture)) === path.join(repositoryRoot, "admission"));
+        try {
+          if (externallyManagedChooser) {
+            await admitTestDocument(win, fixture, markdown, { externallyManagedChooser: true });
+          } else {
+            await admitTestDocument(win, fixture, markdown);
+          }
+          completed = true;
+        } catch (error) {
+          caught = error;
+        } finally {
+          allowanceAfterHelper = allowance;
+          allowance = null;
+        }
+        const beforeClickFailure = scenario === "click rejection";
+        const expectedFailure = beforeClickFailure || scenario === "poll rejection";
+        expect(label + " reaches the real helper and its controlled success or exact rejection",
+          fs.readFileSync(fixture, "utf8") === markdown &&
+            completed === !expectedFailure && (expectedFailure ? caught === fault : caught === null) &&
+            executions >= 1 && clicks === (beforeClickFailure ? 0 : 1) &&
+            (beforeClickFailure || isDeepStrictEqual(chosen, { canceled: false, filePaths: [fixture] })),
+          String(caught?.stack || JSON.stringify({ completed, executions, clicks, chosen })));
+        expect(label + " preserves the requested chooser ownership through completion or failure",
+          currentChooser === callerChooser &&
+            (externallyManagedChooser ? writes.length === 0 &&
+              guardCalls === (beforeClickFailure ? 0 : 1) && consumed === !beforeClickFailure &&
+              allowanceAfterHelper === (beforeClickFailure ? ownedAllowance : null) :
+              writes.length === 2 && typeof writes[0] === "function" &&
+              writes[0] !== callerChooser && writes[1] === callerChooser && guardCalls === 0) &&
+            (beforeClickFailure || chooserAtClick === (externallyManagedChooser ? callerChooser : writes[0])),
+          JSON.stringify({ writes: writes.length, guardCalls, consumed, allowanceRetained: !!allowanceAfterHelper }));
+        if (!expectedFailure) {
+          const needsWait = scenario !== "ready";
+          const first = polls[0], last = polls.at(-1);
+          expect(label + " setup exposes only its intended completion-state mismatch",
+            !!first &&
+              first.state.filePath === (scenario === "wrong path" ? fixture + ".other" : fixture) &&
+              first.state.heading === (scenario === "wrong heading" ? heading + " other" : heading) &&
+              first.state.loading === (scenario === "loading"), JSON.stringify(first));
+          expect(label + " requires exact path heading and completed loading before resolving",
+            polls.length === (needsWait ? 2 : 1) && first.value === !needsWait &&
+              last.value === true && last.state.filePath === fixture &&
+              last.state.heading === heading && last.state.loading === false,
+            JSON.stringify(polls));
+        }
+        let unarmedError = null;
+        try { await dialog.showOpenDialog(win, chooserOptions); } catch (error) { unarmedError = error; }
+        expect(label + " leaves only the caller guard which refuses an unarmed second request",
+          unarmedError === refused && allowance === null &&
+            guardCalls === (externallyManagedChooser && !beforeClickFailure ? 2 : 1));
+      } finally {
+        allowance = null;
+        Object.defineProperty(dialog, "showOpenDialog", descriptor);
+      }
+    }
+  }
+  expect("document admission controls restore the complete startup chooser descriptor",
+    isDeepStrictEqual(Object.getOwnPropertyDescriptor(dialog, "showOpenDialog"), descriptor));
+}
+
+function checkRestartDirectories(repositoryRoot) {
+  const fs = require("fs");
+  const path = require("path");
+  const { prepareOwnedRestartDirectory } = require("./test-restart-directory");
+  const physicalRoot = fs.realpathSync.native(repositoryRoot);
+  const key = value => process.platform === "win32" ? value.toLowerCase() : value;
+  const witness = expectedPath => {
+    const entry = fs.lstatSync(expectedPath, { throwIfNoEntry: false });
+    return {
+      expectedPath, physicalPath: entry ? fs.realpathSync.native(expectedPath) : null,
+      directory: !!entry?.isDirectory(), link: !!entry?.isSymbolicLink(),
+    };
+  };
+  const container = "restart-safe";
+  fs.mkdirSync(path.join(physicalRoot, container));
+  const batch = path.join(repositoryRoot, container, "batch");
+  const physicalBatch = path.join(physicalRoot, container, "batch");
+  const phaseExpected = path.join(physicalBatch, "isolation", "controller");
+  const profileExpected = path.join(physicalBatch, "profile");
+  const phase = prepareOwnedRestartDirectory(repositoryRoot, container, batch, path.join("isolation", "controller"));
+  const profile = prepareOwnedRestartDirectory(repositoryRoot, container, batch, "profile");
+  const phaseFacts = witness(phaseExpected), profileFacts = witness(profileExpected);
+  console.log("RESTART_DIRECTORY_WITNESS " + JSON.stringify({ phase, profile, phaseFacts, profileFacts }));
+  expect("restart preparation creates a physical phase root and profile beneath the declared container",
+    phase === phaseExpected && profile === profileExpected &&
+      phaseFacts.directory && !phaseFacts.link && key(phaseFacts.physicalPath) === key(phaseExpected) &&
+      profileFacts.directory && !profileFacts.link && key(profileFacts.physicalPath) === key(profileExpected),
+    JSON.stringify({ phase, profile, phaseFacts, profileFacts }));
+  const bytes = Buffer.from([0, 255, 13, 10, 82, 69, 83, 84, 65, 82, 84]);
+  const savedProfile = path.join(profileExpected, "known-profile.bin");
+  fs.writeFileSync(savedProfile, bytes);
+  const repeatedPhase = prepareOwnedRestartDirectory(repositoryRoot, container, batch, path.join("isolation", "controller"));
+  const repeatedProfile = prepareOwnedRestartDirectory(repositoryRoot, container, batch, "profile");
+  const repeatedFacts = witness(profileExpected);
+  expect("preparing an existing restart directory again preserves its exact known profile bytes",
+    repeatedPhase === phaseExpected && repeatedProfile === profileExpected &&
+      repeatedFacts.directory && !repeatedFacts.link && key(repeatedFacts.physicalPath) === key(profileExpected) &&
+      fs.readFileSync(savedProfile).equals(bytes) &&
+      JSON.stringify(fs.readdirSync(profileExpected)) === '["known-profile.bin"]',
+    JSON.stringify({ repeatedPhase, repeatedProfile, repeatedFacts, entries: fs.readdirSync(profileExpected) }));
+
+  for (const [name, rootName, declaredContainer] of [
+    ["restart missing declared container", "restart-fresh-root", "tmp"],
+    ["restart missing nested declared container", "restart-fresh-nested-root", path.join("allowed", "nested", "tmp")],
+  ]) {
+    const freshRoot = path.join(physicalRoot, rootName);
+    fs.mkdirSync(freshRoot);
+    const rootFacts = witness(freshRoot);
+    const candidateBatch = path.join(freshRoot, declaredContainer, "batch");
+    const requested = path.join("isolation", "controller");
+    const expectedPhase = path.join(candidateBatch, requested);
+    const parts = [...declaredContainer.split(path.sep), "batch", "isolation", "controller"];
+    const directories = parts.map((_part, index) => path.join(freshRoot, ...parts.slice(0, index + 1)));
+    const before = directories.map(witness);
+    const setupSound = rootFacts.directory && !rootFacts.link &&
+      key(rootFacts.physicalPath) === key(freshRoot) && fs.readdirSync(freshRoot).length === 0 &&
+      before.every(facts => facts.physicalPath === null && !facts.directory && !facts.link);
+    expect(name + " setup has a fresh physical root with every container component absent",
+      setupSound, JSON.stringify({ rootFacts, declaredContainer, candidateBatch, requested, before }));
+    if (!setupSound) continue;
+    let prepared = null, failure = null;
+    try {
+      prepared = prepareOwnedRestartDirectory(freshRoot, declaredContainer, candidateBatch, requested);
+    } catch (error) {
+      failure = String(error.stack || error);
+    }
+    const after = directories.map(witness);
+    const fullyPrepared = failure === null && prepared === expectedPhase &&
+      after.every(facts => facts.directory && !facts.link &&
+        key(facts.physicalPath) === key(facts.expectedPath));
+    const facts = { freshRoot, declaredContainer, candidateBatch, requested, before, after, prepared, failure };
+    console.log("RESTART_DIRECTORY_MISSING_WITNESS " + JSON.stringify(facts));
+    expect(name + " prepares every physical component through the exact phase directory",
+      fullyPrepared, JSON.stringify(facts));
+    if (!fullyPrepared) continue;
+    const marker = path.join(expectedPhase, "phase-witness.bin");
+    fs.writeFileSync(marker, bytes);
+    const repeated = prepareOwnedRestartDirectory(freshRoot, declaredContainer, candidateBatch, requested);
+    const readbackFacts = witness(expectedPhase);
+    expect(name + " provides a usable phase directory and preserves its exact readback on repeat",
+      repeated === expectedPhase && readbackFacts.directory && !readbackFacts.link &&
+        key(readbackFacts.physicalPath) === key(expectedPhase) &&
+        fs.readFileSync(marker).equals(bytes) &&
+        JSON.stringify(fs.readdirSync(expectedPhase)) === '["phase-witness.bin"]',
+      JSON.stringify({ repeated, readbackFacts, entries: fs.readdirSync(expectedPhase) }));
+  }
+
+  const markerBytes = Buffer.from("owned restart destination must remain byte-for-byte untouched\r\n");
+  function refused(name, declaredContainer, candidateBatch, requested, blocker, destination, setupValid, errorStage) {
+    const marker = path.join(destination, "keep.bin");
+    const unexpectedWrite = path.join(destination, "unexpected-write.txt");
+    fs.writeFileSync(marker, markerBytes);
+    const beforeEntries = fs.readdirSync(destination).sort();
+    const target = path.resolve(physicalRoot, candidateBatch, requested);
+    const targetExisted = fs.existsSync(target);
+    const targetBefore = targetExisted ? witness(target) : null;
+    const before = witness(blocker);
+    const setupSound = setupValid(before, targetBefore);
+    expect(name + " setup has the actual declared filesystem shape", setupSound,
+      JSON.stringify({ declaredContainer, candidateBatch, requested, before, marker, target, targetExisted, targetBefore }));
+    if (!setupSound) return;
+    let adoptedPath = null, writes = 0, deletions = 0, refusal = null;
+    try {
+      adoptedPath = prepareOwnedRestartDirectory(repositoryRoot, declaredContainer, candidateBatch, requested);
+      // Stand-ins for the caller's post-preparation work touch only these exact
+      // private fixture files, never an unchecked path returned by a regression.
+      writes++;
+      fs.writeFileSync(unexpectedWrite, "unexpected restart adoption");
+      deletions++;
+      fs.rmSync(marker, { force: true });
+    } catch (error) {
+      refusal = error.message;
+    }
+    const after = witness(blocker);
+    const blockerIntact = JSON.stringify(before) === JSON.stringify(after) &&
+      (before.directory || before.link || fs.readFileSync(blocker).equals(markerBytes));
+    const markerIntact = fs.existsSync(marker) && fs.readFileSync(marker).equals(markerBytes);
+    const afterEntries = fs.readdirSync(destination).sort();
+    const facts = {
+      declaredContainer, candidateBatch, requested, before, after, adoptedPath, writes, deletions, refusal,
+      target, targetExisted, targetBefore, targetAfter: fs.existsSync(target) ? witness(target) : null,
+      blockerIntact, marker, markerIntact, beforeEntries, afterEntries,
+    };
+    console.log("RESTART_DIRECTORY_REFUSAL " + JSON.stringify(facts));
+    expect(name + " is refused before target writes deletion or adoption",
+      !!refusal && refusal.includes(errorStage) && adoptedPath === null && writes === 0 && deletions === 0 &&
+        blockerIntact && markerIntact && JSON.stringify(beforeEntries) === JSON.stringify(afterEntries) &&
+        targetExisted === fs.existsSync(target),
+      JSON.stringify(facts));
+  }
+
+  const inputDestination = path.join(physicalRoot, "restart-input-destination");
+  fs.mkdirSync(inputDestination);
+  for (const [name, declaredContainer, candidateBatch, requested, errorStage] of [
+    ["restart batch equality", container, path.join(repositoryRoot, container), "profile", "batch containment"],
+    ["restart sibling-prefix batch", container, path.join(repositoryRoot, container + "-sibling", "batch"), "profile", "batch containment"],
+    ["restart parent-traversal batch", container, batch + path.sep + ".." + path.sep + "escape", "profile", "batch containment"],
+    ["restart relative batch", container, "relative-batch", "profile", "batch containment"],
+    ["restart absolute request", container, batch, path.join(physicalRoot, "absolute-request"), "requested directory"],
+    ["restart parent-traversal request", container, batch, ".." + path.sep + "escape", "requested directory"],
+    ["restart equal request", container, batch, ".", "requested directory"],
+    ["restart parent-traversal container", ".." + path.sep + container, batch, "profile", "declared container"],
+  ]) {
+    refused(name, declaredContainer, candidateBatch, requested, profileExpected, inputDestination,
+      facts => facts.directory && !facts.link && key(facts.physicalPath) === key(profileExpected), errorStage);
+  }
+
+  for (const node of ["ancestor", "batch", "phase", "profile"]) {
+    for (const kind of ["file", "alias"]) {
+      const caseName = "restart-" + node + "-" + kind;
+      const home = path.join(physicalRoot, caseName);
+      fs.mkdirSync(home);
+      const declaredContainer = node === "ancestor" ? path.join(caseName, "ancestor", "container") :
+        path.join(caseName, "container");
+      const candidateBatch = path.join(repositoryRoot, declaredContainer, "batch");
+      const expectedBatch = path.join(physicalRoot, declaredContainer, "batch");
+      const requested = node === "phase" ? path.join("isolation", "controls") : "profile";
+      const blocker = node === "ancestor" ? path.join(home, "ancestor") :
+        node === "batch" ? expectedBatch : path.join(expectedBatch, requested);
+      fs.mkdirSync(path.dirname(blocker), { recursive: true });
+      const destination = path.join(home, "destination");
+      fs.mkdirSync(destination);
+      // The whole restart tree exists behind an alias: canonicalizing the
+      // arbitrary batch must not turn this into an apparently valid owner.
+      if (node === "ancestor") fs.mkdirSync(path.join(destination, "container", "batch", "profile"), { recursive: true });
+      if (node === "batch") fs.mkdirSync(path.join(destination, "profile"));
+      let linked = false;
+      try {
+        if (kind === "alias") {
+          fs.symlinkSync(destination, blocker, process.platform === "win32" ? "junction" : "dir");
+          linked = true;
+        } else {
+          fs.writeFileSync(blocker, markerBytes);
+        }
+        refused("restart " + node + " " + kind, declaredContainer, candidateBatch, requested, blocker, destination,
+          (facts, targetFacts) => kind === "alias" ? facts.link && !facts.directory &&
+            key(facts.physicalPath) === key(destination) && !!targetFacts &&
+              fs.statSync(path.join(candidateBatch, requested)).isDirectory() :
+            !facts.link && !facts.directory && key(facts.physicalPath) === key(blocker) &&
+              fs.readFileSync(blocker).equals(markerBytes),
+          "[" + blocker + "]");
+      } catch (error) {
+        expect("restart " + node + " " + kind + " filesystem control reaches its owned setup",
+          false, String(error.stack || error));
+      } finally {
+        if (linked) fs.unlinkSync(blocker);
+      }
+    }
+  }
+}
 
 async function checkExternalTrap() {
   const windows = [];
@@ -521,6 +872,9 @@ app.whenReady().then(async () => {
         pathx.resolve(pathx.dirname(madeDir)) === pathx.resolve(osx.tmpdir()),
       `dir=${madeDir} exists=${fsx.existsSync(madeDir)} registered=${REGISTERED_TEMP_DIRS.has(madeDir)}`,
     );
+
+    checkRestartDirectories(madeDir);
+    await checkDocumentAdmission(madeDir);
 
     releaseTempDir(madeDir);
     expect(

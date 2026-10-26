@@ -1201,7 +1201,9 @@ try {
   // Required from plain Node - that tier is covered by the hook above.
 }
 
-async function admitTestDocument(win, fixture, markdown) {
+// externallyManagedChooser leaves the suite's chooser untouched, even on failure.
+// The caller owns its one-use allowance and must disarm it in finally.
+async function admitTestDocument(win, fixture, markdown, options = {}) {
   const { dialog } = require("electron");
   const heading = /^# (.+)$/m.exec(markdown)?.[1];
   if (!heading) throw new Error("An admitted visual fixture needs a distinct heading");
@@ -1209,7 +1211,9 @@ async function admitTestDocument(win, fixture, markdown) {
   fs.writeFileSync(fixture, markdown);
   const chooser = dialog.showOpenDialog;
   try {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [fixture] });
+    if (!options.externallyManagedChooser) {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [fixture] });
+    }
     await win.webContents.executeJavaScript("document.getElementById('openFile').click();true");
     for (let attempt = 0; attempt < 160; attempt++) {
       if (await win.webContents.executeJavaScript(`currentFilePath===${JSON.stringify(fixture)}&&
@@ -1219,7 +1223,7 @@ async function admitTestDocument(win, fixture, markdown) {
     }
     throw new Error("Disposable visual document was not admitted and rendered: " + fixture);
   } finally {
-    dialog.showOpenDialog = chooser;
+    if (!options.externallyManagedChooser) dialog.showOpenDialog = chooser;
   }
 }
 

@@ -3,16 +3,39 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { randomUUID, createHash } = require("crypto");
+const { prepareOwnedRestartDirectory } = require("./test-restart-directory");
 const root = path.resolve(__dirname, "..");
-const batch = path.resolve(process.env.FOLIA_ZOOM_BATCH ||
-  path.join(root, "tmp", "reading-zoom", randomUUID()));
-if (!batch.startsWith(path.join(root, "tmp", "reading-zoom") + path.sep)) {
-  throw new Error("A disposable project-local zoom batch is required");
+const container = path.join("tmp", "reading-zoom");
+const isElectron = !!process.versions.electron;
+const perfPhases = Array.from({ length: 5 }, (_, i) => "perf-" + i);
+const declaredPhases = ["controls", "restart", "reset-restart", "defaults", "startup", "invalid-startup", "sync",
+  ...perfPhases];
+const phase = isElectron ? process.argv[2] : "controller";
+function failPreparation(stage, error) {
+  try {
+    fs.writeSync(2, "Zoom preparation failed at " + stage + ": " + String(error.stack || error) + "\n");
+  } finally {
+    process.exit(1);
+  }
+}
+let batch, phaseTempRoot;
+try {
+  if (isElectron && !declaredPhases.includes(phase)) throw new Error("Unsupported zoom fixture phase: " + phase);
+  batch = path.resolve(process.env.FOLIA_ZOOM_BATCH || path.join(root, container, randomUUID()));
+  phaseTempRoot = prepareOwnedRestartDirectory(root, container, batch, path.join("isolation", phase));
+  const entry = fs.lstatSync(phaseTempRoot);
+  console.log("ZOOM_PHASE_DIRECTORY " + JSON.stringify({
+    phase, expectedPath: phaseTempRoot, physicalPath: fs.realpathSync.native(phaseTempRoot),
+    directory: entry.isDirectory(), link: entry.isSymbolicLink(),
+  }));
+} catch (error) {
+  failPreparation("phase temporary root", error);
 }
 const originalTmpdir = os.tmpdir;
-os.tmpdir = () => path.join(batch, "isolation", process.argv[2] || "controller");
+os.tmpdir = () => phaseTempRoot;
 require("./test-userdata-isolation");
 os.tmpdir = originalTmpdir;
+const { REAL_USER_DATA } = require("./test-userdata-isolation");
 const electron = require("electron");
 const budgets = {
   handlerP50: { relative: 0.20, absoluteMs: 2 },
@@ -21,7 +44,7 @@ const budgets = {
   startupP95: { relative: 0.25, absoluteMs: 100 },
 };
 const hash = file => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-if (typeof electron === "string") {
+if (!isElectron) {
   const { spawnSync } = require("child_process");
   const perf = process.argv.includes("--perf");
   const routes = {
@@ -31,10 +54,9 @@ if (typeof electron === "string") {
     startup: ["startup"],
     sync: ["sync"],
   };
-  const phases = perf ? Array.from({ length: 5 }, (_, i) => "perf-" + i) :
+  const phases = perf ? perfPhases :
     routes[process.env.FOLIA_ZOOM_PROOF] ||
       ["controls", "restart", "reset-restart", "defaults", "startup", "invalid-startup", "sync"];
-  fs.mkdirSync(batch, { recursive: true });
   const sources = Object.fromEntries(["renderer.js", "main.js", "custom-tabs.js", "main-preload.js"]
     .map(name => [name, hash(path.join(root, "src", name))]));
   const evidence = {
@@ -102,14 +124,55 @@ if (typeof electron === "string") {
 } else {
   const { app, BrowserWindow, dialog, session, net, shell } = electron;
   const { pathToFileURL } = require("url");
-  const phase = process.argv[2];
-  const perf = phase.startsWith("perf-");
+  const perf = perfPhases.includes(phase);
   const started = performance.now();
-  const profile = path.join(batch, perf ? "perf-profile" :
-    ["controls", "restart", "reset-restart"].includes(phase) ? "persistent-profile" : phase + "-profile");
-  if (perf) fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  fs.mkdirSync(profile, { recursive: true });
-  app.setPath("userData", profile);
+  const profileRelative = perf ? "perf-profile" :
+    ["controls", "restart", "reset-restart"].includes(phase) ? "persistent-profile" : phase + "-profile";
+  let profile, profileStage = "actual restart profile";
+  try {
+    profile = prepareOwnedRestartDirectory(root, container, batch, profileRelative);
+    const key = value => process.platform === "win32" ? value.toLowerCase() : value;
+    profileStage = "original userData identity";
+    if (typeof REAL_USER_DATA !== "string" || !path.isAbsolute(REAL_USER_DATA) ||
+        key(path.resolve(REAL_USER_DATA)) === key(profile)) {
+      throw new Error("Restart profile must differ from the original userData");
+    }
+    let originalPhysicalPath = null;
+    try {
+      originalPhysicalPath = fs.realpathSync.native(REAL_USER_DATA);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (originalPhysicalPath && key(originalPhysicalPath) === key(profile)) {
+      throw new Error("Restart profile physically aliases the original userData");
+    }
+    profileStage = "pre-ready profile preparation";
+    if (app.isReady()) throw new Error("Restart profile must be selected before app ready");
+    if (perf) {
+      profileStage = "verified perf profile removal";
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      profileStage = "perf profile recreation";
+      profile = prepareOwnedRestartDirectory(root, container, batch, profileRelative);
+    }
+    profileStage = "pre-ready userData override";
+    if (app.isReady()) throw new Error("Restart profile must be selected before app ready");
+    app.setPath("userData", profile);
+    profileStage = "selected userData identity";
+    const selectedPath = app.getPath("userData");
+    const entry = fs.lstatSync(selectedPath);
+    const physicalPath = fs.realpathSync.native(selectedPath);
+    if (selectedPath !== profile || key(physicalPath) !== key(profile) ||
+        !entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error("Selected userData differs from the verified restart directory");
+    }
+    console.log("ZOOM_RESTART_DIRECTORY " + JSON.stringify({
+      expectedPath: profile, selectedPath, physicalPath,
+      directory: entry.isDirectory(), link: entry.isSymbolicLink(), originalUserData: REAL_USER_DATA,
+      originalPhysicalPath,
+    }));
+  } catch (error) {
+    failPreparation(profileStage, error);
+  }
   const first = path.join(batch, "zoom-first.md");
   const second = path.join(batch, "zoom-second.md");
   const fixture = "# Reading zoom fixture\n\n" +

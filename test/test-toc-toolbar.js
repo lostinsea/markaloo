@@ -3,16 +3,37 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { randomUUID, createHash } = require("crypto");
+const { prepareOwnedRestartDirectory } = require("./test-restart-directory");
 const root = path.resolve(__dirname, "..");
-const batch = path.resolve(process.env.MARKALOO_TOC_TOOLBAR_BATCH ||
-  path.join(root, "screenshots", "toc-toolbar-" + randomUUID()));
-if (!batch.startsWith(path.join(root, "screenshots") + path.sep)) {
-  throw new Error("Project-local TOC toolbar batch required");
+const isElectron = !!process.versions.electron;
+const phase = isElectron ? process.argv[2] : "controller";
+const declaredPhases = ["behavior", "savedToc", "savedClosed"];
+function failPreparation(stage, error) {
+  try {
+    fs.writeSync(2, "TOC toolbar preparation failed at " + stage + ": " + String(error.stack || error) + "\n");
+  } finally {
+    process.exit(1);
+  }
+}
+let batch, phaseTempRoot;
+try {
+  if (isElectron && !declaredPhases.includes(phase)) throw new Error("Unsupported TOC toolbar fixture phase: " + phase);
+  batch = path.resolve(process.env.MARKALOO_TOC_TOOLBAR_BATCH ||
+    path.join(root, "screenshots", "toc-toolbar-" + randomUUID()));
+  phaseTempRoot = prepareOwnedRestartDirectory(root, "screenshots", batch, path.join("isolation", phase));
+  const entry = fs.lstatSync(phaseTempRoot);
+  console.log("TOC_TOOLBAR_PHASE_DIRECTORY " + JSON.stringify({
+    phase, expectedPath: phaseTempRoot, physicalPath: fs.realpathSync.native(phaseTempRoot),
+    directory: entry.isDirectory(), link: entry.isSymbolicLink(),
+  }));
+} catch (error) {
+  failPreparation("phase temporary root", error);
 }
 const originalTmpdir = os.tmpdir;
-os.tmpdir = () => path.join(batch, "isolation", process.argv[2] || "controller");
+os.tmpdir = () => phaseTempRoot;
 require("./test-userdata-isolation");
 os.tmpdir = originalTmpdir;
+const { REAL_USER_DATA } = require("./test-userdata-isolation");
 const electron = require("electron");
 const proof = process.env.MARKALOO_TOC_TOOLBAR_PROOF;
 const routes = ["handler", "state", "owner", "grouping", "welcome"];
@@ -21,10 +42,13 @@ if (proof && !routes.includes(proof)) {
   process.exit(2);
 }
 const evidence = path.resolve(process.env.MARKALOO_TOC_TOOLBAR_EVIDENCE || batch);
-if (typeof electron === "string") {
+if (!isElectron) {
   const { spawnSync } = require("child_process");
-  fs.mkdirSync(batch, { recursive: true });
-  fs.mkdirSync(evidence, { recursive: true });
+  try {
+    fs.mkdirSync(evidence, { recursive: true });
+  } catch (error) {
+    failPreparation("controller evidence directory", error);
+  }
   const phases = !proof || proof === "owner" ? ["behavior", "savedToc", "savedClosed"] : ["behavior"];
   const completed = [];
   let passed = 0, total = 0;
@@ -56,12 +80,45 @@ if (typeof electron === "string") {
 } else {
   const { app, BrowserWindow, dialog, shell, session } = electron;
   const { startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
-  const phase = process.argv[2];
-  if (!["behavior", "savedToc", "savedClosed"].includes(phase)) process.exit(2);
-  fs.mkdirSync(evidence, { recursive: true });
-  const profile = path.join(batch, "profile");
-  fs.mkdirSync(profile, { recursive: true });
-  app.setPath("userData", profile);
+  let profile, profileStage = "actual restart profile";
+  try {
+    profile = prepareOwnedRestartDirectory(root, "screenshots", batch, "profile");
+    const key = value => process.platform === "win32" ? value.toLowerCase() : value;
+    profileStage = "original userData identity";
+    if (typeof REAL_USER_DATA !== "string" || !path.isAbsolute(REAL_USER_DATA) ||
+        key(path.resolve(REAL_USER_DATA)) === key(profile)) {
+      throw new Error("Restart profile must differ from the original userData");
+    }
+    let originalPhysicalPath = null;
+    try {
+      originalPhysicalPath = fs.realpathSync.native(REAL_USER_DATA);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (originalPhysicalPath && key(originalPhysicalPath) === key(profile)) {
+      throw new Error("Restart profile physically aliases the original userData");
+    }
+    profileStage = "pre-ready userData override";
+    if (app.isReady()) throw new Error("Restart profile must be selected before app ready");
+    app.setPath("userData", profile);
+    profileStage = "selected userData identity";
+    const selectedPath = app.getPath("userData");
+    const entry = fs.lstatSync(selectedPath);
+    const physicalPath = fs.realpathSync.native(selectedPath);
+    if (selectedPath !== profile || key(physicalPath) !== key(profile) ||
+        !entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error("Selected userData differs from the verified restart directory");
+    }
+    console.log("TOC_TOOLBAR_RESTART_DIRECTORY " + JSON.stringify({
+      expectedPath: profile, selectedPath, physicalPath,
+      directory: entry.isDirectory(), link: entry.isSymbolicLink(), originalUserData: REAL_USER_DATA,
+      originalPhysicalPath,
+    }));
+    profileStage = "evidence directory";
+    fs.mkdirSync(evidence, { recursive: true });
+  } catch (error) {
+    failPreparation(profileStage, error);
+  }
   const files = ["alpha", "beta"].map(name => path.join(batch, name + ".md"));
   const bodies = ["Alpha", "Beta"].map(name => {
     const paragraphs = ["# " + name];

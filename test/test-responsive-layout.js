@@ -1,11 +1,75 @@
 "use strict";
 
+const { app, BrowserWindow, dialog, shell } = require("electron");
+function failUnattended(error) {
+  try {
+    require("fs").writeSync(2, "FAIL  harness threw  -> " + String(error?.stack || error) + "\n");
+  } finally {
+    try { app.exit(2); } finally { process.exit(2); }
+  }
+}
+process.on("uncaughtException", failUnattended);
+process.on("unhandledRejection", failUnattended);
+let observedMain = null;
+let chooserAllowance = null;
+const nativeDialogGuards = {};
+for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog",
+  "showOpenDialogSync", "showSaveDialog", "showSaveDialogSync", "showErrorBox"]) {
+  const guard = method === "showOpenDialog" ? (...args) => {
+    const allowance = chooserAllowance;
+    chooserAllowance = null;
+    const expected = {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+        { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    };
+    if (!allowance || args.length !== 2 || args[0] !== observedMain ||
+        args[0] !== allowance.win || args[0].isDestroyed() ||
+        !require("util").isDeepStrictEqual(args[1], expected)) {
+      return failUnattended(new Error("Unexpected native dialog: " + method));
+    }
+    allowance.consumed = true;
+    return Promise.resolve({ canceled: false, filePaths: [allowance.fixture] });
+  } : () => failUnattended(new Error("Unexpected native dialog: " + method));
+  nativeDialogGuards[method] = guard;
+  if (method === "showOpenDialog") {
+    Object.defineProperty(dialog, method, { value: guard, writable: false, configurable: false });
+  } else {
+    dialog[method] = guard;
+  }
+}
+const blockExternal = () => failUnattended(new Error("Responsive layout must not call shell.openExternal"));
+const blockPath = () => failUnattended(new Error("Responsive layout must not call shell.openPath"));
+shell.openExternal = blockExternal;
+shell.openPath = blockPath;
+const watchdog = setTimeout(() =>
+  failUnattended(new Error("Responsive layout watchdog expired")), 120000);
+
 require("./test-userdata-isolation");
 
-const { app, BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
-const { admitTestDocument } = require("./test-visual-utils");
+const {
+  admitTestDocument, startErrorSentinel, proveSentinelAlive, LIVENESS_MUTE_REASON,
+} = require("./test-visual-utils");
+const { OwnedDialogs } = require("../src/owned-dialogs");
+const blockOwnedDialog = () => failUnattended(new Error("Unexpected Main-owned dialog"));
+OwnedDialogs.prototype.show = blockOwnedDialog;
+const guardsIntact = () =>
+  Object.entries(nativeDialogGuards).every(([method, guard]) => dialog[method] === guard) &&
+  Object.getOwnPropertyDescriptor(dialog, "showOpenDialog").writable === false &&
+  OwnedDialogs.prototype.show === blockOwnedDialog &&
+  shell.openExternal === blockExternal && shell.openPath === blockPath;
+const noPreexistingWindows = BrowserWindow.getAllWindows().length === 0;
+if (!noPreexistingWindows) failUnattended(new Error("A window existed before Main observation"));
+let sentinel = null;
+app.once("browser-window-created", (_event, win) => {
+  observedMain = win;
+  sentinel = startErrorSentinel(win, { label: "responsive-layout", trapExternal: false });
+});
 require("../src/main.js");
 
 const evidence = process.env.FOLIA_LAYOUT_EVIDENCE ||
@@ -51,10 +115,27 @@ app.whenReady().then(async () => {
     console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : "  -> " + JSON.stringify(detail)}`);
   };
   try {
+    check("responsive layout observes the actual Main window from creation",
+      noPreexistingWindows && win === observedMain && !!sentinel);
+    if (!win || win !== observedMain || !sentinel) throw new Error("Main window was not observed");
+    check("responsive layout retains its native, Main-owned and shell guards", guardsIntact());
+    if (!guardsIntact()) throw new Error("Responsive layout guards were replaced");
     await waitFor(exec, "typeof renderMarkdown==='function' && !!window.CustomTabs");
     fs.mkdirSync(evidence, { recursive: true });
     const fixture = path.resolve(evidence, "responsive-reading.md");
-    await admitTestDocument(win, fixture, markdown);
+    const allowance = { win, fixture, consumed: false };
+    chooserAllowance = allowance;
+    try {
+      await admitTestDocument(win, fixture, markdown, { externallyManagedChooser: true });
+      check("responsive fixture consumes exactly its scoped Main chooser", allowance.consumed);
+      if (!allowance.consumed) throw new Error("Responsive fixture bypassed its Main chooser");
+    } finally {
+      chooserAllowance = null;
+    }
+    check("responsive admission reaches its actual fixture heading",
+      await exec(`currentFilePath===${JSON.stringify(fixture)}&&
+        viewer.querySelector('h1')?.textContent==='Responsive reading'&&
+        !loadingScreen.classList.contains('active')`));
     win.unmaximize();
     for (const scenario of [
       { name: "roomy-closed", width: 1500, toc: false, split: false, zoom: 100 },
@@ -291,21 +372,33 @@ app.whenReady().then(async () => {
       (await win.webContents.capturePage()).toPNG());
     check("theme re-render keeps author sizing and border",
       themed.count === 5 && themed.width <= 122 && themed.stroke === "rgb(255, 0, 0)", themed);
+    const alive = await proveSentinelAlive(win, sentinel);
+    check("responsive sentinel proves real console and DOM detection", alive.console && alive.dom, alive);
+    await sentinel.drain();
+    check("responsive guards remain installed after all scenarios", guardsIntact() && chooserAllowance === null);
+    if (!guardsIntact() || chooserAllowance !== null) throw new Error("Responsive guards were lost");
+    // Keep Electron alive until the tracked window's shutdown diagnostic lands.
+    const cleanupWindow = new BrowserWindow({ show: false });
+    win.destroy();
+    await sleep(50);
+    const report = await sentinel.stop();
+    check("responsive scenarios and teardown have zero unexpected sentinel hits",
+      report.hits.length === 0, report.hits);
+    check("responsive sentinel has zero stalls", report.stalls.length === 0, report.stalls);
+    const mute = report.mutes[0];
+    check("responsive sentinel mutes only its exact console and DOM liveness probes",
+      report.mutes.length === 1 && mute.reason === LIVENESS_MUTE_REASON &&
+        mute.suppressed.length === 2 &&
+        mute.suppressed.some(hit => hit.kind === "console-error" &&
+          /^sentinel-liveness-probe-\d+ @ /.test(hit.detail)) &&
+        mute.suppressed.some(hit => hit.kind === "error-text-on-screen" &&
+          hit.detail === "top: Syntax error in text"), report.mutes);
+    if (cleanupWindow.isDestroyed() || !guardsIntact()) throw new Error("Responsive teardown lost its keepalive or guards");
+    clearTimeout(watchdog);
+    console.log(`=== ${checks.filter(Boolean).length}/${checks.length} passed ===`);
+    // app.exit owns the keepalive: destroying it first enters Main's automatic quit path.
+    app.exit(checks.every(Boolean) ? 0 : 1);
   } catch (error) {
-    console.error(error.stack || error);
-    app.exit(1);
-    return;
+    failUnattended(error);
   }
-  // Keep Electron alive until the tracked window's shutdown diagnostic lands.
-  const cleanupWindow = new BrowserWindow({ show: false });
-  win.destroy();
-  await sleep(50);
-  console.log(`=== ${checks.filter(Boolean).length}/${checks.length} passed ===`);
-  cleanupWindow.destroy();
-  app.exit(checks.every(Boolean) ? 0 : 1);
-});
-
-setTimeout(() => {
-  console.error("Responsive layout watchdog expired");
-  app.exit(2);
-}, 120000);
+}).catch(failUnattended);

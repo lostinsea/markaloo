@@ -25,16 +25,149 @@
 // never edited, so it stays a faithful record of what shipped - and a FOURTH
 // deviation, which nobody decided on, fails loudly instead of hiding among
 // three that were.
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+function failUnattended(error) {
+  try {
+    require("fs").writeSync(2, "FAIL  harness threw  -> " + String(error?.stack || error) + "\n");
+  } finally {
+    try { app.exit(2); } finally { process.exit(2); }
+  }
+}
+process.on("uncaughtException", failUnattended);
+process.on("unhandledRejection", failUnattended);
+let observedMain = null;
+let chooserAllowance = null;
+const nativeDialogGuards = {};
+for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog",
+  "showOpenDialogSync", "showSaveDialog", "showSaveDialogSync", "showErrorBox"]) {
+  const guard = method === "showOpenDialog" ? (...args) => {
+    const allowance = chooserAllowance;
+    chooserAllowance = null;
+    const expected = {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+        { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    };
+    if (!allowance || args.length !== 2 || args[0] !== observedMain ||
+        args[0] !== allowance.win || args[0].isDestroyed() ||
+        !require("util").isDeepStrictEqual(args[1], expected)) {
+      return failUnattended(new Error("Unexpected native dialog: " + method));
+    }
+    allowance.consumed = true;
+    return Promise.resolve({ canceled: false, filePaths: [allowance.fixture] });
+  } : () => failUnattended(new Error("Unexpected native dialog: " + method));
+  nativeDialogGuards[method] = guard;
+  if (method === "showOpenDialog") {
+    Object.defineProperty(dialog, method, { value: guard, writable: false, configurable: false });
+  } else {
+    dialog[method] = guard;
+  }
+}
+const blockExternal = () => failUnattended(new Error("Theme suite must not call shell.openExternal"));
+const blockPath = () => failUnattended(new Error("Theme suite must not call shell.openPath"));
+shell.openExternal = blockExternal;
+shell.openPath = blockPath;
+
+// The packaging teardown oracle ends at the watchdog declaration; preserve that
+// boundary while starting the timer before repository setup.
+async function finish() {
+  if (finishing) return;
+  finishing = true;
+  try {
+    if (!sentinel || !guardsIntact() || chooserAllowance !== null) {
+      throw new Error("Theme teardown lost its sentinel or unattended guards");
+    }
+    await sentinel.drain();
+    // Keep owned teardown diagnostics before the terminal transcript, without
+    // muting them or racing automatic quit when the last test window disappears.
+    const windows = BrowserWindow.getAllWindows();
+    const keepalive = new BrowserWindow({
+      show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+    });
+    await Promise.all(windows.map(win => new Promise(resolve => {
+      if (win.webContents.isDestroyed()) return resolve();
+      win.webContents.once("destroyed", resolve);
+      win.destroy();
+    })));
+    await new Promise(resolve => setImmediate(resolve));
+    if (keepalive.isDestroyed()) throw new Error("Theme teardown keepalive was lost");
+    const report = await sentinel.stop();
+    check("theme scenarios and teardown have zero unexpected sentinel hits",
+      report.hits.length === 0, JSON.stringify(report.hits));
+    check("theme sentinel has zero stalls", report.stalls.length === 0, JSON.stringify(report.stalls));
+    const mute = report.mutes[0];
+    check("theme sentinel mutes only its exact console and DOM liveness probes",
+      report.mutes.length === 1 && mute.reason === LIVENESS_MUTE_REASON &&
+        mute.suppressed.length === 2 &&
+        mute.suppressed.some(hit => hit.kind === "console-error" &&
+          /^sentinel-liveness-probe-\d+ @ /.test(hit.detail)) &&
+        mute.suppressed.some(hit => hit.kind === "error-text-on-screen" &&
+          hit.detail === "top: Syntax error in text"), JSON.stringify(report.mutes));
+    if (!guardsIntact()) throw new Error("Theme teardown replaced an unattended guard");
+    results.push(`=== ${results.length - failed}/${results.length} passed ===`);
+    const text = results.join("\n") + "\n";
+    fs.writeFileSync(path.join(__dirname, "test-theme-results.txt"), text);
+    console.log(text);
+    clearTimeout(watchdog);
+    app.exit(failed === 0 ? 0 : 1);
+  } catch (error) {
+    try {
+      console.error("FATAL: theme harness teardown failed:", error);
+    } finally {
+      failUnattended(error);
+    }
+  }
+}
+
+/* A HANG DETECTOR, NOT A PERFORMANCE BUDGET - and the difference is what the
+   number has to respect. It sat at 180s while the suite ran 43s, which reads
+   like ample headroom until a revert deliberately slows the product down:
+   R300 stretches a themed transition past the settle budget, and since
+   applySettled() then burns its full 60x50ms poll (plus one exec round-trip
+   per poll) on every one of ~30 states, the run lands at roughly 183s. The
+   watchdog fired FIRST, called finish(), and truncated the run before the
+   settle assertion at the end of the suite was ever reported - so R300 came
+   back WRONG-GUARD and the settle assertion silently had no proof at all.
+   That is the worst failure mode available here: a truncated run still prints
+   a count and still looks like a result.
+   So the budget must outlast the slowest revert that legitimately depends on
+   this suite, not merely the suite at rest. At 43s this leaves ~10x headroom
+   for a real hang while keeping R300 provable. Startup and teardown count too. */
+const watchdog = setTimeout(() => {
+  check("harness completed within 420s", false, "watchdog fired");
+  failUnattended(new Error("Theme watchdog expired"));
+}, 420000);
+
 // Isolate this suite's userData profile before main.js exists and before the
 // app is ready. See test-userdata-isolation.js.
 require("./test-userdata-isolation");
 
-const { app, BrowserWindow, ipcMain } = require("electron");
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const { stripJsComments } = require("./test-source-utils.js");
-const { admitTestDocument, captureScreenshot } = require("./test-visual-utils.js");
+const {
+  admitTestDocument, captureScreenshot, startErrorSentinel, proveSentinelAlive, LIVENESS_MUTE_REASON,
+} = require("./test-visual-utils.js");
+const { OwnedDialogs } = require("../src/owned-dialogs");
+const blockOwnedDialog = () => failUnattended(new Error("Unexpected Main-owned dialog"));
+OwnedDialogs.prototype.show = blockOwnedDialog;
+const guardsIntact = () =>
+  Object.entries(nativeDialogGuards).every(([method, guard]) => dialog[method] === guard) &&
+  Object.getOwnPropertyDescriptor(dialog, "showOpenDialog").writable === false &&
+  OwnedDialogs.prototype.show === blockOwnedDialog &&
+  shell.openExternal === blockExternal && shell.openPath === blockPath;
+const noPreexistingWindows = BrowserWindow.getAllWindows().length === 0;
+if (!noPreexistingWindows) failUnattended(new Error("A window existed before Main observation"));
+let sentinel = null;
+app.once("browser-window-created", (_event, win) => {
+  observedMain = win;
+  sentinel = startErrorSentinel(win, { label: "theme", trapExternal: false });
+});
 
 const {
   GOLDEN_PATH,
@@ -58,54 +191,6 @@ function check(name, condition, detail) {
     `${ok ? "PASS" : "FAIL"}  ${name}${ok || detail === undefined ? "" : "  -> " + detail}`,
   );
 }
-
-async function finish() {
-  if (finishing) return;
-  finishing = true;
-  try {
-    // Keep owned teardown diagnostics before the terminal transcript, without
-    // muting them or racing automatic quit when the last test window disappears.
-    const windows = BrowserWindow.getAllWindows();
-    const keepalive = new BrowserWindow({
-      show: false,
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
-    });
-    await Promise.all(windows.map(win => new Promise(resolve => {
-      if (win.webContents.isDestroyed()) return resolve();
-      win.webContents.once("destroyed", resolve);
-      win.destroy();
-    })));
-    await new Promise(resolve => setImmediate(resolve));
-    if (keepalive.isDestroyed()) throw new Error("Theme teardown keepalive was lost");
-    results.push(`=== ${results.length - failed}/${results.length} passed ===`);
-    const text = results.join("\n") + "\n";
-    fs.writeFileSync(path.join(__dirname, "test-theme-results.txt"), text);
-    console.log(text);
-    app.exit(failed === 0 ? 0 : 1);
-  } catch (error) {
-    console.error("FATAL: theme harness teardown failed:", error);
-    app.exit(2);
-  }
-}
-
-/* A HANG DETECTOR, NOT A PERFORMANCE BUDGET - and the difference is what the
-   number has to respect. It sat at 180s while the suite ran 43s, which reads
-   like ample headroom until a revert deliberately slows the product down:
-   R300 stretches a themed transition past the settle budget, and since
-   applySettled() then burns its full 60x50ms poll (plus one exec round-trip
-   per poll) on every one of ~30 states, the run lands at roughly 183s. The
-   watchdog fired FIRST, called finish(), and truncated the run before the
-   settle assertion at the end of the suite was ever reported - so R300 came
-   back WRONG-GUARD and the settle assertion silently had no proof at all.
-   That is the worst failure mode available here: a truncated run still prints
-   a count and still looks like a result.
-   So the budget must outlast the slowest revert that legitimately depends on
-   this suite, not merely the suite at rest. At 43s this leaves ~10x headroom
-   for a real hang while keeping R300 provable. */
-const watchdog = setTimeout(() => {
-  check("harness completed within 420s", false, "watchdog fired");
-  finish();
-}, 420000);
 
 // ─── THE AMENDMENTS ─────────────────────────────────────────────────────────
 // Keyed mode -> token class-set -> property -> { was, now, why }. `was` is
@@ -605,6 +690,11 @@ async function checkContextMenuViewport(win, exec) {
 app.whenReady().then(async () => {
   try {
     const win = await waitForWindow(BrowserWindow);
+    check("theme observes the actual Main window from creation",
+      noPreexistingWindows && win === observedMain && !!sentinel);
+    if (win !== observedMain || !sentinel) throw new Error("Main window was not observed");
+    check("theme retains its native, Main-owned and shell guards", guardsIntact());
+    if (!guardsIntact()) throw new Error("Theme guards were replaced");
     const exec = (js) => win.webContents.executeJavaScript(js);
 
     const welcomeStash = await exec(`(() => {
@@ -613,8 +703,22 @@ app.whenReady().then(async () => {
       window.__foliaWelcomeHTML = w.outerHTML;
       return w.querySelectorAll('*').length;
     })()`);
-    await admitTestDocument(win, path.join(__dirname, "..", "tmp", "document-editor-theme.md"),
-      "# Theme context\n\nA disposable admitted document for menu and editor layout.\n");
+    const fixture = path.join(__dirname, "..", "tmp", "document-editor-theme.md");
+    const allowance = { win, fixture, consumed: false };
+    chooserAllowance = allowance;
+    try {
+      await admitTestDocument(win, fixture,
+        "# Theme context\n\nA disposable admitted document for menu and editor layout.\n",
+        { externallyManagedChooser: true });
+      check("theme fixture consumes exactly its scoped Main chooser", allowance.consumed);
+      if (!allowance.consumed) throw new Error("Theme fixture bypassed its Main chooser");
+    } finally {
+      chooserAllowance = null;
+    }
+    check("theme admission reaches its actual fixture heading",
+      await exec(`currentFilePath===${JSON.stringify(fixture)}&&
+        viewer.querySelector('h1')?.textContent==='Theme context'&&
+        !loadingScreen.classList.contains('active')`));
     await checkContextMenuViewport(win, exec);
     await exec(`(async()=>{
       const answer=window.MarkalooDialogs.show({
@@ -10359,10 +10463,14 @@ app.whenReady().then(async () => {
       maxRunning > 0,
       `the highest number of running transitions seen across every theme change was ${maxRunning} - if the filter is dead this is 0 and every settle above was a no-op`,
     );
+    const alive = await proveSentinelAlive(win, sentinel);
+    check("theme sentinel proves real console and DOM detection", alive.console && alive.dom, JSON.stringify(alive));
+    await sentinel.drain();
+    check("theme guards remain installed after all scenarios", guardsIntact() && chooserAllowance === null);
+    if (!guardsIntact() || chooserAllowance !== null) throw new Error("Theme guards were lost");
   } catch (e) {
     check("harness ran without throwing", false, e && e.stack ? e.stack.slice(0, 400) : String(e));
   }
 
-  clearTimeout(watchdog);
-  finish();
-});
+  await finish();
+}).catch(failUnattended);

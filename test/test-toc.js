@@ -1,16 +1,136 @@
 "use strict";
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const { isDeepStrictEqual } = require("util");
+let directory = null;
+let registeredTempDirs = null;
+let win = null;
+let observedMain = null;
+let observedContents = null;
+let sentinel = null;
+let chooserAllowance = null;
+let chooserCalls = 0;
+let openFixtures = [];
+let completed = false;
+let finishing = false;
+let fatalExiting = false;
+let ordinaryExiting = false;
+let cleanExit = false;
+let summaryWritten = false;
+const results = [];
+
+function failUnattended(error) {
+  // A fatal during ordinary finish must exit now, not disappear behind its latch.
+  if (fatalExiting) process.exit(2);
+  fatalExiting = true;
+  chooserAllowance = null;
+  if (directory) registeredTempDirs?.delete(directory);
+  try {
+    fs.writeSync(2, "FAIL  TOC fatal error  -> " + String(error?.stack || error) + "\n");
+    if (directory) fs.writeSync(2, "TOC fixture retained without confirmed teardown: " + directory + "\n");
+  } catch (_) { /* A broken diagnostic pipe must not postpone a nonzero exit. */ }
+  try {
+    if (observedMain && !observedMain.isDestroyed()) observedMain.destroy();
+  } catch (_) { /* No asynchronous evidence or unsafe fixture release on this path. */ }
+  try { app.exit(2); } finally { process.exit(2); }
+}
+process.on("uncaughtException", failUnattended);
+process.on("unhandledRejection", failUnattended);
+process.once("exit", () => {
+  if ((!ordinaryExiting || !cleanExit) && !process.exitCode) process.exitCode = 1;
+});
+const watchdog = setTimeout(() => failUnattended(new Error("TOC watchdog expired")), 180000);
+
+const nativeDialogGuards = {};
+for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog",
+  "showOpenDialogSync", "showSaveDialog", "showSaveDialogSync", "showErrorBox"]) {
+  const guard = method === "showOpenDialog" ? (...args) => {
+    const allowance = chooserAllowance;
+    chooserAllowance = null;
+    const expected = {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+        { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    };
+    if (!allowance || allowance.consumed || args.length !== 2 ||
+        args[0] !== observedMain || args[0] !== allowance.win || !isLiveMain() ||
+        allowance.fixture !== openFixtures[chooserCalls] ||
+        !isDeepStrictEqual(args[1], expected) || !guardsIntact()) {
+      return failUnattended(new Error("Unexpected native dialog: " + method));
+    }
+    allowance.consumed = true;
+    chooserCalls++;
+    return Promise.resolve({ canceled: false, filePaths: [allowance.fixture] });
+  } : () => failUnattended(new Error("Unexpected native dialog: " + method));
+  nativeDialogGuards[method] = guard;
+  if (method === "showOpenDialog") {
+    Object.defineProperty(dialog, method, { value: guard, writable: false, configurable: false });
+  } else {
+    dialog[method] = guard;
+  }
+}
+const blockExternal = () => failUnattended(new Error("TOC suite must not call shell.openExternal"));
+const blockPath = () => failUnattended(new Error("TOC suite must not call shell.openPath"));
+Object.defineProperty(shell, "openExternal", { value: blockExternal, writable: false, configurable: false });
+Object.defineProperty(shell, "openPath", { value: blockPath, writable: false, configurable: false });
+
 require("./test-userdata-isolation");
-const { tempDir, releaseTempDir, captureScreenshot, startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
+const {
+  tempDir, releaseTempDir, captureScreenshot, startErrorSentinel, proveSentinelAlive,
+  LIVENESS_MUTE_REASON, REGISTERED_TEMP_DIRS,
+} = require("./test-visual-utils");
+registeredTempDirs = REGISTERED_TEMP_DIRS;
+const exitWithSharedSweep = app.exit.bind(app);
+const guardedExit = code => {
+  if (!ordinaryExiting && !fatalExiting) {
+    return failUnattended(new Error("Unexpected app.exit before TOC terminal accounting"));
+  }
+  return exitWithSharedSweep(fatalExiting ? 2 : cleanExit && code === 0 ? 0 : 1);
+};
+Object.defineProperty(app, "exit", { value: guardedExit, writable: false, configurable: false });
+app.on("before-quit", event => {
+  event.preventDefault();
+  if (!fatalExiting) failUnattended(new Error("Unexpected app.quit before TOC terminal exit"));
+});
+const { OwnedDialogs } = require("../src/owned-dialogs");
+const blockOwnedDialog = () => failUnattended(new Error("Unexpected Main-owned dialog"));
+OwnedDialogs.prototype.show = blockOwnedDialog;
+const guardsIntact = () =>
+  Object.entries(nativeDialogGuards).every(([method, guard]) => dialog[method] === guard) &&
+  Object.getOwnPropertyDescriptor(dialog, "showOpenDialog").writable === false &&
+  OwnedDialogs.prototype.show === blockOwnedDialog &&
+  shell.openExternal === blockExternal && shell.openPath === blockPath &&
+  Object.getOwnPropertyDescriptor(shell, "openExternal").writable === false &&
+  Object.getOwnPropertyDescriptor(shell, "openPath").writable === false &&
+  app.exit === guardedExit;
+function isLiveMain() {
+  return !!observedMain && win === observedMain && !!observedContents &&
+    !observedMain.isDestroyed() && !observedContents.isDestroyed() &&
+    observedMain.webContents === observedContents;
+}
+const noPreexistingWindows = BrowserWindow.getAllWindows().length === 0;
+if (!noPreexistingWindows) failUnattended(new Error("A window existed before Main observation"));
+app.once("browser-window-created", (_event, created) => {
+  observedMain = created;
+  observedContents = created.webContents;
+  sentinel = startErrorSentinel(created, { label: "toc", trapExternal: false });
+});
 require("../src/main.js");
 
-const directory = tempDir("folia-toc-");
+directory = tempDir("folia-toc-");
+// Both shared sweeps run too early for a still-watched fixture. Re-register
+// only after the observed owner and its webContents are verifiably destroyed.
+registeredTempDirs.delete(directory);
+if (registeredTempDirs.has(directory)) failUnattended(new Error("TOC fixture remains exposed to shared exit sweeps"));
 const first = path.join(directory, "outline.md");
 const second = path.join(directory, "other.md");
 const tailFile = path.join(directory, "tail.md");
 const nestedFile = path.join(directory, "nested.md");
+openFixtures = [first, second, nestedFile, tailFile];
 const parts = ["# TOC Alpha", "Opening paragraph."];
 for (let i = 0; i < 64; i++) {
   parts.push(`## Section ${i}`);
@@ -30,16 +150,30 @@ const nestedHeadings = [
 ];
 fs.writeFileSync(nestedFile, nestedHeadings.map(h =>
   h + "\n\n" + ("A long nested section keeps its heading above the viewport while reading.\n\n").repeat(35)).join("\n\n"));
-let selectedFile = first;
-dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedFile] });
-let win;
-const results = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const exec = code => win.webContents.executeJavaScript(code);
+const exec = code => {
+  if (!isLiveMain() || !guardsIntact()) throw new Error("TOC driver lost the observed Main or its guards");
+  return win.webContents.executeJavaScript(code);
+};
 const frames = () => exec("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))))");
 function check(name, ok, detail) {
   results.push({ name, ok });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : "  -> " + JSON.stringify(detail)}`);
+}
+async function withChooser(fixture, action) {
+  if (!isLiveMain() || !guardsIntact() || chooserAllowance !== null ||
+      fixture !== openFixtures[chooserCalls]) {
+    throw new Error("TOC chooser scope does not match the next exact Main fixture");
+  }
+  const allowance = { win, fixture, consumed: false };
+  chooserAllowance = allowance;
+  try {
+    await action();
+    check("TOC scoped Main chooser consumes " + path.basename(fixture), allowance.consumed);
+    if (!allowance.consumed) throw new Error("TOC fixture bypassed its scoped Main chooser");
+  } finally {
+    chooserAllowance = null;
+  }
 }
 async function wait(label, expression) {
   for (let i = 0; i < 300; i++) {
@@ -77,10 +211,11 @@ async function run() {
   win.setSize(1280, 850);
   win.focus();
   win.webContents.focus();
-  const sentinel = startErrorSentinel(win, { label: "toc" });
-  await exec("document.getElementById('openFile').click(); true");
-  await wait("actual admitted document", "viewer.querySelector('h1')?.textContent==='TOC Alpha' && viewer.querySelectorAll('.mermaid svg').length===1 && !loadingScreen.classList.contains('active')");
-  await sleep(1300);
+  await withChooser(first, async () => {
+    await exec("document.getElementById('openFile').click(); true");
+    await wait("actual admitted document", "viewer.querySelector('h1')?.textContent==='TOC Alpha' && viewer.querySelectorAll('.mermaid svg').length===1 && !loadingScreen.classList.contains('active')");
+    await sleep(1300);
+  });
   await exec("setIndexVisible(false);document.getElementById('toggleIndex').click(); true");
   let state = await oracle();
   check("TOC opens with exactly one current heading before any outline click", matches(state), state);
@@ -237,9 +372,10 @@ async function run() {
   await exec("closeNotesPanel();setIndexVisible(true);true");
 
   await setView(false, 100);
-  selectedFile = second;
-  await exec("document.getElementById('openFile').click();true");
-  await wait("other tab", "viewer.querySelector('h1')?.textContent==='TOC Other'");
+  await withChooser(second, async () => {
+    await exec("document.getElementById('openFile').click();true");
+    await wait("other tab", "viewer.querySelector('h1')?.textContent==='TOC Other'");
+  });
   state = await oracle();
   check("opening another real admitted tab replaces old TOC membership", matches(state) &&
     await exec("indexList.children.length===viewer.querySelectorAll('h1,h2,h3,h4,h5,h6').length"), state);
@@ -319,10 +455,11 @@ async function run() {
   await exec("document.getElementById('toggleIndex').click();true");
   state = await oracle();
   check("reopening the TOC calculates a fresh highlight at the current position", matches(state), state);
-  selectedFile = nestedFile;
-  await exec("document.getElementById('openFile').click();true");
-  await wait("admitted mixed-level fixture", "viewer.querySelector('h1')?.textContent==='Multi outline' && !loadingScreen.classList.contains('active')");
-  await sleep(1300);
+  await withChooser(nestedFile, async () => {
+    await exec("document.getElementById('openFile').click();true");
+    await wait("admitted mixed-level fixture", "viewer.querySelector('h1')?.textContent==='Multi outline' && !loadingScreen.classList.contains('active')");
+    await sleep(1300);
+  });
   const hierarchy = await exec(`Array.from({length:6},(_,i)=>{
     const level=i+1,headers=[...viewer.querySelectorAll('h'+level)],rows=[...indexList.querySelectorAll('.level-'+level)];
     return {level,headers:headers.length,rows:rows.length,padding:rows.map(r=>parseFloat(getComputedStyle(r).paddingLeft))};
@@ -361,10 +498,11 @@ async function run() {
   }
   check("mixed-level TOC clicks keep H1-H6 and skipped-level targets current",
     nestedClicks.every(c=>matches(c) && c.active===c.id), nestedClicks);
-  selectedFile = tailFile;
-  await exec("document.getElementById('openFile').click();true");
-  await wait("admitted tail fixture", "viewer.querySelector('h1')?.textContent==='End fixture' && !loadingScreen.classList.contains('active')");
-  await sleep(1300);
+  await withChooser(tailFile, async () => {
+    await exec("document.getElementById('openFile').click();true");
+    await wait("admitted tail fixture", "viewer.querySelector('h1')?.textContent==='End fixture' && !loadingScreen.classList.contains('active')");
+    await sleep(1300);
+  });
   const tailCases = [];
   for (const split of [false, true]) {
     for (const zoom of [100, 200]) {
@@ -396,25 +534,135 @@ async function run() {
     await exec("!indexList.querySelector('.index-item,.active,[aria-current]')"));
   const alive = await proveSentinelAlive(win, sentinel);
   check("TOC error sentinel detects both deliberately provoked channels", alive.console && alive.dom, alive);
-  const errors = await sentinel.stop();
-  check("TOC scenarios introduce no renderer or visible document errors", errors.hits.length === 0, errors.hits);
+}
+
+async function bounded(action, label, milliseconds) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(action),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + " timed out")), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function finish(error) {
+  if (finishing) return failUnattended(new Error("TOC ordinary finish was entered twice"));
+  finishing = true;
+  if (!guardsIntact()) return failUnattended(new Error("TOC terminal path lost an unattended guard"));
+  let keepalive = null;
+  let destructionConfirmed = false;
+  let sentinelReported = false;
+  let released = false;
+  try {
+    check("TOC harness reaches completion", completed && !error,
+      error ? String(error.stack || error) : "scenario sequence did not complete");
+    if (error) {
+      try {
+        console.log("TOC diagnostic", await bounded(() => exec("({heading:viewer.querySelector('h1')?.textContent,edit:contentWrapper.className,active:window.CustomTabs.getActiveTabId(),tabs:window.CustomTabs.getTabs().map(t=>({id:t.id,name:t.filename,dirty:t.hasUnsavedChanges}))})"),
+          "TOC failure diagnostic", 1500));
+      } catch (diagnosticError) {
+        check("TOC failure diagnostic completed", false, String(diagnosticError.stack || diagnosticError));
+      }
+      try {
+        if (win && !win.isDestroyed()) {
+          await bounded(() => captureScreenshot(win, "toc-FAILED"), "TOC failure capture", 1500);
+        }
+      } catch (captureError) {
+        check("TOC failure capture completed", false, String(captureError.stack || captureError));
+      }
+    }
+  } finally {
+    // Leave the listener alive across destruction; queued teardown errors belong
+    // to this run, not to a clean transcript printed before its owner disappears.
+    try {
+      if (!sentinel || !isLiveMain()) throw new Error("TOC lost its live observed Main sentinel");
+      await bounded(() => sentinel.drain(), "TOC live sentinel drain", 12000);
+    } catch (drainError) {
+      check("TOC live sentinel drain completed", false, String(drainError.stack || drainError));
+    }
+    try {
+      if (!observedMain || !observedContents) throw new Error("TOC Main destruction cannot be verified");
+      keepalive = new BrowserWindow({
+        show: false,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+      });
+      const windowGone = observedMain.isDestroyed() ? Promise.resolve() :
+        new Promise(resolve => observedMain.once("closed", resolve));
+      const contentsGone = observedContents.isDestroyed() ? Promise.resolve() :
+        new Promise(resolve => observedContents.once("destroyed", resolve));
+      if (!observedMain.isDestroyed()) observedMain.destroy();
+      await bounded(() => Promise.all([windowGone, contentsGone]), "TOC Main destruction", 5000);
+      await bounded(() => new Promise(resolve => setImmediate(resolve)), "TOC queued teardown diagnostics", 1500);
+      destructionConfirmed = observedMain.isDestroyed() && observedContents.isDestroyed();
+      if (keepalive.isDestroyed()) throw new Error("TOC teardown keepalive was lost");
+    } catch (destructionError) {
+      check("TOC owned Main teardown completed", false, String(destructionError.stack || destructionError));
+    }
+    check("TOC observed Main and webContents are destroyed before fixture release", destructionConfirmed);
+    try {
+      if (!destructionConfirmed || !sentinel) throw new Error("TOC sentinel cannot report after unconfirmed Main destruction");
+      const errors = await bounded(() => sentinel.stop(), "TOC sentinel stop after destruction", 12000);
+      check("TOC scenarios introduce no renderer or visible document errors", errors.hits.length === 0, errors.hits);
+      check("TOC error sentinel has zero stalls", errors.stalls.length === 0, errors.stalls);
+      const mute = errors.mutes[0];
+      check("TOC error sentinel mutes only its exact console and DOM liveness probes",
+        errors.mutes.length === 1 && mute.reason === LIVENESS_MUTE_REASON &&
+        mute.suppressed.length === 2 &&
+        mute.suppressed.some(hit => hit.kind === "console-error" &&
+          /^sentinel-liveness-probe-\d+ @ /.test(hit.detail)) &&
+        mute.suppressed.some(hit => hit.kind === "error-text-on-screen" &&
+          hit.detail === "top: Syntax error in text") && sentinel.currentMute() === null, errors.mutes);
+      sentinelReported = true;
+    } catch (sentinelError) {
+      check("TOC sentinel reports through owned Main destruction", false, String(sentinelError.stack || sentinelError));
+    }
+    try {
+      if (destructionConfirmed) {
+        registeredTempDirs.add(directory);
+        released = releaseTempDir(directory) === true;
+        if (released) directory = null;
+      } else {
+        registeredTempDirs.delete(directory);
+      }
+      check("TOC watched fixture is released only after confirmed owner destruction", released,
+        destructionConfirmed ? "releaseTempDir returned false; safe shared sweeps may retry: " + directory :
+          "retained unsafe fixture outside both shared sweeps: " + directory);
+    } catch (releaseError) {
+      check("TOC watched fixture release completed", false, String(releaseError.stack || releaseError));
+    }
+    check("TOC retains native, Main-owned and shell guards through teardown", guardsIntact());
+    check("TOC consumes only the four scoped fixture choosers and leaves none armed",
+      chooserCalls === openFixtures.length && chooserAllowance === null, { chooserCalls });
+    cleanExit = completed && !error && destructionConfirmed && sentinelReported && released &&
+      !!keepalive && !keepalive.isDestroyed() && results.length > 0 && results.every(r => r.ok);
+    if (summaryWritten) return failUnattended(new Error("TOC terminal summary was already written"));
+    summaryWritten = true;
+    console.log(`=== ${results.filter(r => r.ok).length}/${results.length} passed ===`);
+    ordinaryExiting = true;
+    clearTimeout(watchdog);
+    app.exit(cleanExit ? 0 : 1);
+  }
 }
 
 app.whenReady().then(async () => {
-  await sleep(1800);
-  win = BrowserWindow.getAllWindows()[0];
-  try { await run(); }
-  catch (error) {
-    check("TOC harness reaches completion", false, String(error.stack || error));
-    console.log("TOC diagnostic", await exec("({heading:viewer.querySelector('h1')?.textContent,edit:contentWrapper.className,active:window.CustomTabs.getActiveTabId(),tabs:window.CustomTabs.getTabs().map(t=>({id:t.id,name:t.filename,dirty:t.hasUnsavedChanges}))})"));
-    if (win && !win.isDestroyed()) await captureScreenshot(win, "toc-FAILED");
+  let error = null;
+  try {
+    await sleep(1800);
+    win = BrowserWindow.getAllWindows()[0];
+    check("TOC observes the actual live Main window from creation",
+      noPreexistingWindows && isLiveMain() && !!sentinel);
+    if (!isLiveMain() || !sentinel) throw new Error("TOC Main window was not observed from creation");
+    check("TOC retains its unattended guards before scenarios", guardsIntact());
+    if (!guardsIntact()) throw new Error("TOC unattended guards were replaced");
+    await run();
+    completed = true;
+  } catch (caught) {
+    error = caught;
   }
-  const summary = `=== ${results.filter(r => r.ok).length}/${results.length} passed ===`;
-  app.once("quit", () => console.log(summary));
-  app.once("will-quit", () => {
-    releaseTempDir(directory);
-    app.exit(results.every(r => r.ok) ? 0 : 1);
-  });
-  app.quit();
-});
-setTimeout(() => { console.error("TOC watchdog expired"); app.exit(2); }, 180000);
+  await finish(error);
+}).catch(failUnattended);
