@@ -38,6 +38,30 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `direct-0.11.0-test-candidate` - **PROVISIONAL COMBINED SOURCE; NOT RELEASE QUALIFIED**.
+  - The user selected direct 0.11.0 testing in three isolated sessions.
+    A owns layout/reading; B owns editing/rendering and shared integration;
+    C owns state/security/packaging. Each test group has one owner.
+  - B combines feature checkpoint `58ce884a` with common-source handoff
+    `f13469ee`. The handoff includes reviewed source and explicitly unqualified
+    candidate test/layout fixes. No separate 0.10.1 pass is required first.
+  - Package and lock versions are 0.11.0. Dependencies, mirror retention and
+    the 400 ms preview delay stay unchanged.
+  - Export one exact combined commit and source/runtime/lock inventory for
+    all three sessions before candidate qualification.
+  - Earlier ordinary runs and individual sensitivity proofs keep their actual
+    source bindings. They are not passes for the combined candidate.
+  - B owns manifests and product docs. Fixes in another owner's files go
+    through the coordinator; integration is serialized.
+  - Source work and safe Node checks may run in parallel. GUI/performance
+    work needs a fresh finite parent allocation and all-peer quiescence.
+  - No dependency upgrades, performance timings, builds, installer runs,
+    publication or PRs are authorized by this test-candidate handoff.
+  - The feature-free performance comparator and runner compatibility still
+    need qualification. Programmatic edit timing is not physical-key latency.
+  - Older workset notes below retain their original evidence scope; this
+    direct-test plan replaces their release ordering and total-wait gate.
+
 - `visual-table-cell-editing` - **ACTIVE: RUNTIME QUALIFICATION / REVIEW CORRECTIONS**.
   - Isolated branch: `users/vinma-microsoft/visual-table-editing`, based on
     `5c659f629b4f990b8351c8783cf72cec1676698c`. No integration or publication.
@@ -240,6 +264,177 @@ section is kept here so the register has a visible edge.
     if its fully qualified combined candidate is ready first. Shared fixes,
     final combined checks and the current publication hold still apply.
 
+- `release-0.10.1` - **SUPERSEDED BY DIRECT 0.11.0 TESTING; EVIDENCE RETAINED**.
+  - Release ordering is conditional: publish 0.10.1 if it qualifies first.
+    If the fully qualified combined 0.11.0 candidate is ready first, 0.10.1 may
+    be skipped. The same test rules and publication hold apply to either path.
+    Shared reviewed repairs must still carry forward; no work is discarded.
+  - Publication is held while the user's full-test question is reconciled.
+    Inventory every ordinary npm-test leaf and CI integration check, retain
+    failed/skipped/blocked/not-run outcomes and run remaining eligible suites.
+    Targeted checks and mutation proofs do not establish a full-suite pass.
+    No push, tag or publication before this hold is explicitly cleared.
+  - The ordinary inventory was stopped after the user reported dialogs needing
+    manual clicks. Its partial GUI results are diagnostic, not unattended
+    qualification. Queued suites are stopped and no owned Electron remains.
+    Raw logs and the interrupted inventory are retained in session `adbd3d7b`.
+  - Current repair handoff: Sol owns tab admissions and async dialog actors.
+    Release Sol owns reading/toolbar teardown and the shared opener guard.
+    The shared guard must intercept Main shell routes, not use page Node.
+    Suites with explicit Main guards keep them through sentinel opt-out.
+    Independent Sol/Luna review found a missing toolbar opt-out and a vacuous
+    HTTP heading-collapse check. Both are corrected; fresh Sol/Luna review passes.
+    The heading check now has an internal-link witness and non-link control.
+    The guarded visual selfcheck passes `50/50` unattended. R216, R1126 and
+    R1127 execute with exact expected failures and passing controls; all source
+    bytes are restored and no owned Electron remains. Patch's R1128 and later
+    raw-IPC actors are not qualified; no full ordinary-suite pass is claimed.
+    Renderer confirmations use HTML `#appMessageDialog.showModal()`.
+    Native Electron dialog and Main-host guards do not intercept that surface.
+    Dirty Open and dirty Reload are separate choices; each needs an exact actor
+    when intended, or prompt failure and owned cleanup when unexpected.
+    The shared isolation helper now checks physical profile ownership before
+    wiping, creating or enumerating a suite directory. Pure Node profile checks
+    pass `72/72`, including real parent/suite redirects, non-directory paths and
+    a valid trusted-temp alias. R1130 proves the exact refusal checks and passing
+    controls; all source bytes are restored. Fresh Sol/Luna review accepts it.
+    An earlier focused early-refresh tab route passes `43/43` unattended after
+    moving exit-only failure handling and its deadline before risky imports.
+    This is not full tab-suite or R589 qualification.
+    The guarded migration suite now passes `87/87` on reviewed source `3f650de7`.
+    It retains the actual Main window and verifies its topology, frame, current
+    guard acknowledgement and authenticated owner generation. This replaces a
+    test-only preference filter that rejected the ready Main window before
+    installing its HTML-dialog guard. Source bytes stayed unchanged during the
+    run; owned cleanup is complete. R758, R759 and R760 are individually proven on
+    that source with exact failures, passing controls and restored source bytes.
+    R831 is unusable: its mutation aborts initial native admission before the
+    expected assertion and a valid footer. The sequence stopped before R832.
+    All source bytes are restored and owned cleanup is complete. This does not
+    explain the original `65/68` preservation failure.
+    The new migration observer and corrected R831 evidence record have fresh
+    independent Sol/Luna source acceptance. They distinguish an actual correlated
+    native-adoption refusal from a timeout and skip dependent cases without
+    counting them as passes. This source has no new ordinary run or proof.
+    Search's source-only actor repair now has independent Sol/Luna acceptance.
+    It checks private storage before Main, observes immediate action state in
+    the same renderer execution and verifies destruction before fixture release.
+    Pending-button setup and ordinary-failure capture are explicit. Terminal
+    safety vetoes exit promptly without awaiting an untrusted renderer capture.
+    Its first actual run passes private storage setup, then times out waiting
+    for Main/bridge/guarded-DOM readiness before any search scenario. Teardown
+    reports sentinel stalls and repeated fatal footers. Source is unchanged,
+    exact owned cleanup is complete and runtime remains unqualified.
+    Astra identifies acknowledgement-before-navigation ordering and reentrant
+    terminal reporting in the harness. Sol corrected those mechanisms with
+    small executed-reference patterns and bounded stage metadata. The final
+    required screenshot capture is also bounded. Fresh independent Sol/Luna
+    source reviews passed on `8592bfe6`; no ordinary search qualification is claimed.
+    No product defect or exact stalled CDP command is established by the first run.
+    The source-bound connected-dialog negative challenge ran once. It reached
+    guarded startup, genuine admission and the exact real guard refusal.
+    Source was restored and observed owned processes were gone, but the composed
+    negative is not qualified: implicit last-window quitting reentered cleanup,
+    allowing a shared fixture sweep before destruction verification finished.
+    Later fixture absence cannot prove removal order. Test-local quit, fixture
+    and sticky-reentry repairs on `2c89f73c` have independent Sol/Luna source
+    acceptance. Actual R2 on `2c89f73c -> dcddf15f -> 2c89f73c` qualifies the
+    narrow Main-origin guard/terminal-cleanup negative: one expected refusal,
+    one `8/9` footer, observed implicit-quit hold, verified destruction before
+    release, clean cached exit sweep and zero observed owned residuals. Astra
+    traced the refused secondary terminal attempt and production renderer
+    destruction log; neither reenters cleanup. Shared helpers and R1 evidence
+    remain unchanged. The one ordinary `2c89f73c` run failed `14/16` at the
+    first typing snapshot (`undefined.passes`); startup, admission, spy and
+    terminal cleanup controls passed. Healthy panel capture was not reached.
+    Astra confirmed two generated-return ASI defects. The two-site parentheses
+    repair on `6eae3077` and actual-template VM positive/negative controls have
+    fresh Sol/Luna source acceptance; its exact inverse reproduces `2c89f73c`.
+    The one ordinary `6eae3077` run reached every scenario but failed `54/55`:
+    the panel visibility probe found two points covered by the TOC header.
+    Both repaired snapshots passed. The new panel and terminal images were
+    viewed and preserved. Guards, sentinel and destruction-before-fixture-release
+    controls passed; all nine input pins stayed unchanged and observed cleanup
+    was clean. Ordinary search remains unqualified; no repeat is authorized.
+    Read-only observers on `7007e36a` and a 12-pin fence have fresh independent
+    Sol/Luna source acceptance, with no blocking findings or disagreements.
+    The single approved diagnostic again failed `54/55` at the unchanged panel
+    assertion. Actual browser data shows the input starting at 294 CSS pixels
+    while the TOC ends at 300. The point `(295, 76)`, just inside the input's
+    left edge, hits the TOC header rather than the input. The other 19 control
+    samples hit their controls. Full geometry, styles and hit ancestry are
+    retained; both new captures were viewed. All 12 pins stayed unchanged and
+    owner/fixture/process cleanup was clean; the slot was explicitly released.
+    This is measured overlap, not trusted-pointer proof or ordinary qualification.
+    No repeat, layout repair or test retarget is approved.
+    Early-tab async confirmation and raw Main-payload repairs are implemented
+    source-only after independent Sol/Luna design acceptance. The combined
+    source reviews initially blocked fixture release before observed Main
+    destruction and an inherited parent-owned companion root. Both are corrected,
+    including refusal before imports. Fresh Sol/Luna source reviews pass on
+    `aefa08da`; the new baseline and R714/R819/R825 proofs remain unrun.
+    R714 will explicitly check the forbidden page-filesystem dependency as a
+    source-architecture rule, not claim an impossible renderer read executed.
+    Its clean baseline must still reach the actual Main-owned refresh checks.
+    Earlier popup actor repairs have independent Sol/Luna source acceptance on
+    `20457541`. The test retains actual Main and popup document
+    identities, proves hostile fixtures reach their intended surfaces and
+    checks completed export content. Its refresh cases claim sanitization,
+    not navigation protection that they did not exercise. R455 and R504 now
+    name the additional content failures and require exact failure inventories
+    with passing controls. A later class check found missing implicit-quit and
+    cleanup-reentry fences. Test-local corrections on `cbb7652c` have independent
+    Sol/Luna source acceptance. The passive verified-destruction observation tap
+    on `b5a8251a` and proposed Main-origin negative `01263cce` have independent
+    source acceptance; prospective injected bytes are `bb13f60f`, not executed.
+    Both models accepted the external fence after adding continuous
+    `package.json` pinning for Luna's route-drift finding. The source watchdog is 240 seconds;
+    a separately authorized finite exclusion is still required. The repaired
+    ordinary suite and its proofs have not run; inventories remain source predictions.
+    Each GUI invocation needs a fresh finite nonoverlap acknowledgement,
+    reviewed guards, a deadline, exact owned cleanup and explicit slot release.
+    Ordinary failures remain release gates, including failures already present.
+    Obsolete actors may be replaced only with meaningful current-behavior tests.
+  - Every final release repair, including tests, proof harness, CI and docs,
+    must carry forward to the separate 0.11.0 feature stream by reviewed commit.
+  - User explicitly resumed release first after the earlier pause.
+    Canonical main is still `90111cfa`; no 0.10.1 tag or release exists.
+    Prepared source and metadata are unchanged.
+  - Earlier editor scrolling `260/260` and document editor `60/60` results
+    predate sentinel ownership repairs; both need final-source reruns.
+    Update state `42/42` retains its original unchanged-source scope.
+    Initial tab-dialog and toolbar reruns passed their bounded earlier routes,
+    not the full current suites. Migration's first preservation failure remains
+    unexplained; the current ordinary pass repairs the later test classifier,
+    not a proven cause of that original failure.
+  - User authorized Markaloo 0.10.1, including normal canonical integration,
+    tag and publication. Its publication is no longer a prerequisite for 0.11.0.
+    No dependency maintenance, installed upgrade or live-profile changes.
+  - Sole writer: isolated `users/vinma-microsoft/markaloo-0-10-1-release`.
+    Canonical main was fetched and checked at
+    `90111cfa30f35a39515072b3258265d8f32528ee`.
+    Primary checkout, shared local main and origin mapping stay untouched.
+  - Import only the seven-file final delta from qualified local `5c659f62`,
+    not its experimental commit history. Relative to released `f5d38078`,
+    `src/editor-scroll.js` is the only changed product file; its physical
+    SHA256 is `4aff2f9cc92dacd432bc313f4602b00bffbc59fdd06220236e2e021cc8fc4483`.
+    Renderer, Prism bundle and 400 ms policy stay fixed. Test-only sentinel
+    ownership changes are explicit; do not reuse earlier physical test hashes.
+  - Existing matched trials, full-suite qualification, source-revert proof,
+    startup/prose gates and final functional closure retain their original
+    scopes. Sealed evidence in session `301ba72b` is read-only.
+    No new speed, CPU, memory, physical-paint or population-p95 claim.
+  - Release gates: exact affected source suite and R1115 execution, version/
+    updater checks, local Windows portable/NSIS build, strict built-ASAR
+    checks and isolated actual-package checks. Fresh independent Sol 6.1/high
+    and Luna 6/high review the combined release before publication.
+  - Original Prism first-open failures and the scoped 0.10.0 exception remain
+    unchanged. This is not an exception for failing ordinary tests.
+    No full-suite or cross-platform UI/performance certification is claimed.
+  - Publication will use a non-force atomic canonical main/tag push after a
+    final remote check. Discover the tag-triggered workflow before considering
+    one dispatch; never duplicate a running release.
+    Verify all public assets, updater roles/hashes and hosted provenance.
 - `performance-architecture` - **MIRROR LOCALLY ADOPTED; REMAINING-EDIT DIAGNOSTIC CLOSED** (2026-10-24).
   - Remaining-edit diagnostic completed two baseline-only journeys from local
     `572f3744`, with mirror retention and 400 ms unchanged. Exact native

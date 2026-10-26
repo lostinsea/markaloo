@@ -4,12 +4,39 @@
 // Boots the real main.js so every real IPC handler exists, then drives the
 // renderer through the multi-tab refresh scenarios via executeJavaScript.
 // Uses only the Electron already required to run the app - no test framework.
+const failStartup = (kind, error) => {
+  writeFatal("FAIL  tab harness startup " + kind + "  -> " + uncaughtExceptionDetail(error));
+  process.exit(1);
+};
+const startupUncaught = error => failStartup("uncaught exception", error);
+const startupRejection = error => failStartup("unhandled rejection", error);
+// Neither results nor Electron's cleanup helpers exist yet. Never recover or
+// let Electron turn an import/isolation failure into a native error modal.
+process.prependListener("uncaughtException", startupUncaught);
+process.prependListener("unhandledRejection", startupRejection);
+const initialBoundaryHarness = process.env.SEC08_INITIAL_BOUNDARY_HARNESS === "1";
+const earlyRefreshHarness = process.env.SEC08_EARLY_REFRESH_HARNESS === "1";
+const focusedDeadlineAt = initialBoundaryHarness || earlyRefreshHarness ? performance.now() + 90000 : null;
+const startupWatchdog = focusedDeadlineAt === null ? null : setTimeout(() =>
+  failStartup("deadline", "focused startup did not hand off within 90 seconds"), 90000);
+
+if (earlyRefreshHarness && process.env.F22_COMPANION_DIR) {
+  rejectHarnessConfiguration("Early refresh controls cannot inherit a companion-owned fixture directory");
+}
+
+const fs = require("fs");
 const { app, BrowserWindow, dialog, ipcMain, shell, autoUpdater: electronAutoUpdater } = require("electron");
 const { spawnSync } = require("child_process");
-const fs = require("fs");
 const path = require("path");
 const { StringDecoder } = require("string_decoder");
+const { isDeepStrictEqual } = require("util");
 const actualHostPlatform = process.platform;
+
+function rejectHarnessConfiguration(message) {
+  // Explicit refusals must not throw into Electron's native error UI.
+  writeFatal("FAIL  invalid tab harness configuration  -> " + message);
+  process.exit(1);
+}
 
 // The renderer and main must agree on document identity. Borrow Linux only
 // for an approved update-install continuation that selects BaseUpdater.
@@ -148,7 +175,7 @@ const nativeAuthorityFocusedHarness = process.env.SEC08_NATIVE_AUTHORITY_FOCUSED
 const ownedMetadataFocusedHarness = process.env.SEC08_OWNED_METADATA_FOCUSED_HARNESS === "1";
 const browserIsolationHarness = process.env.SEC08_BROWSER_ISOLATION_HARNESS === "1";
 if (browserIsolationHarness && !ownedMetadataFocusedHarness) {
-  throw new Error("Browser isolation controls require the owned metadata native route");
+  rejectHarnessConfiguration("Browser isolation controls require the owned metadata native route");
 }
 let ownedMetadataNativeReads = null;
 const nativeAttestationObservers = [];
@@ -159,19 +186,19 @@ const tabAuthorityPendingReceiptRefs = [];
 let tabAuthorityDelayedContinuation = null;
 if (tabAuthorityReceiptHarness && (!ownedMetadataFocusedHarness ||
     tabAuthorityCreateHarness || tabAuthorityBackgroundHarness)) {
-  throw new Error("Tab authority receipt controls require their own owned metadata native route");
+  rejectHarnessConfiguration("Tab authority receipt controls require their own owned metadata native route");
 }
 if (tabAuthorityCreateHarness && !ownedMetadataFocusedHarness) {
-  throw new Error("Tab authority create controls require the owned metadata native route");
+  rejectHarnessConfiguration("Tab authority create controls require the owned metadata native route");
 }
 if (tabAuthorityBackgroundHarness && (!ownedMetadataFocusedHarness || tabAuthorityCreateHarness)) {
-  throw new Error("Tab authority background controls require their own owned metadata native route");
+  rejectHarnessConfiguration("Tab authority background controls require their own owned metadata native route");
 }
 const rendererBoundaryUnit = process.env.SEC08_RENDERER_BOUNDARIES_UNIT || null;
 if (rendererBoundaryUnit && (!ownedMetadataFocusedHarness ||
     process.env.SEC08_RENDERER_BOUNDARIES_HARNESS !== "1" ||
     !["open", "reload"].includes(rendererBoundaryUnit))) {
-  throw new Error("Invalid focused renderer boundary unit");
+  rejectHarnessConfiguration("Invalid focused renderer boundary unit");
 }
 const dialogExtraFocusedHarness = process.env.SEC08_DIALOG_EXTRA_FOCUSED_HARNESS === "1";
 const admissionConsumersOnly = dialogExtraFocusedHarness &&
@@ -190,6 +217,16 @@ const teardownCase = process.env.F22_TEARDOWN_CASE || "";
 // preserved companion tree, so the preservation can be observed from OUTSIDE
 // the process that performs it. See runFinalizerPreservationSubprocess().
 const finalizerSelfcheck = process.env.F22_FINALIZER_SELFCHECK === "1";
+if ((initialBoundaryHarness || earlyRefreshHarness) && (
+    (initialBoundaryHarness && earlyRefreshHarness) ||
+    portableHarness || focusedF22Harness || f22CtimeR660ProofHarness ||
+    newlineFocusedHarness || focusedCommitHarness || queueFocusedHarness ||
+    ownedReadFocusedHarness || approvedRequestFocusedHarness ||
+    nativeAuthorityFocusedHarness || ownedMetadataFocusedHarness ||
+    dialogExtraFocusedHarness || companionSelfcheck || teardownCase ||
+    finalizerSelfcheck || process.argv.includes("--folia-test-preload"))) {
+  rejectHarnessConfiguration("Initial boundary and early refresh controls require separate unmarked production launches");
+}
 // SAMPLED BEFORE THE FALLBACK BELOW WRITES IT. "PORTABLE_EXECUTABLE_DIR is set"
 // is not evidence that anything outside this harness chose the portable branch
 // once this harness is one of the things that can set it. Recorded here so the
@@ -212,6 +249,10 @@ if (portableHarness) {
   process.argv.splice(1, 0, "test-f22-portable.js");
   process.env.PORTABLE_EXECUTABLE_DIR =
     process.env.PORTABLE_EXECUTABLE_DIR || path.join(process.cwd(), "tmp");
+} else if (initialBoundaryHarness) {
+  process.argv.splice(1, 0, "test-sec08-initial-boundary.js");
+} else if (earlyRefreshHarness) {
+  process.argv.splice(1, 0, "test-sec08-early-refresh.js");
 } else if (teardownCase) {
   process.argv.splice(1, 0, `test-f22-teardown-${teardownCase}.js`);
 } else if (focusedCommitHarness) {
@@ -1393,7 +1434,8 @@ function writeFatal(message) {
   try {
     // app.exit() can discard buffered console output, so diagnostics that
     // explain a fatal harness failure must reach stderr synchronously.
-    fs.writeSync(2, message + "\n");
+    // Configuration refusals can precede the module's filesystem import.
+    require("fs").writeSync(2, message + "\n");
   } catch {
     // There is no recoverable output path after stderr itself has failed.
   }
@@ -1403,7 +1445,8 @@ function writeFatal(message) {
 // modal, which blocks this unattended suite before its watchdog can run.
 // Register before loading main.js, whose module initialization starts Electron
 // lifecycle work and is therefore part of this suite's failure surface.
-process.on("uncaughtException", (error) => {
+let terminalHarnessException;
+process.on("uncaughtException", terminalHarnessException = (error) => {
   const detail = uncaughtExceptionDetail(error);
   if (!terminatingFromUncaughtException) {
     terminatingFromUncaughtException = true;
@@ -1420,6 +1463,11 @@ process.on("uncaughtException", (error) => {
   // behind the same blocked renderer condition that caused the exception.
   app.exit(1);
 });
+process.prependListener("unhandledRejection", terminalHarnessException);
+// Install the result-reporting, cleanup-aware successors before withdrawing
+// either bootstrap listener; there must be no unprotected handoff interval.
+process.removeListener("uncaughtException", startupUncaught);
+process.removeListener("unhandledRejection", startupRejection);
 
 // Captured for the shutdown block below. main.js exports a narrow read/reset
 // seam over the quit-approval state machine (F22): `state()` is how a test can
@@ -1447,7 +1495,275 @@ if (browserCliFixture) {
     restoreBrowserCliDelivery = restore;
   });
 }
-const { __shutdown } = require("../src/main.js");
+const { OwnedDialogs } = require("../src/owned-dialogs");
+const ownedDialogFile = path.join(__dirname, "../src/owned-dialog.html");
+const ownedDialogUrl = require("url").pathToFileURL(ownedDialogFile).href;
+const dialogSafety = { expected: null, presentations: 0, unexpected: [] };
+function unexpectedDialog(kind, options) {
+  const detail = { kind, title: options?.title || null, message: options?.message || null };
+  dialogSafety.unexpected.push(detail);
+  throw new Error("Unowned test dialog refused before presentation: " + JSON.stringify(detail));
+}
+const realOwnedDialogShow = OwnedDialogs.prototype.show;
+const restoreDialogSafety = [
+  replaceMethod(OwnedDialogs.prototype, "show", function (owner, options) {
+    const expected = dialogSafety.expected;
+    if (!expected || owner !== expected.owner || options.title !== "Large document" ||
+        expected.calls !== 0) {
+      return unexpectedDialog("Main-owned", options);
+    }
+    expected.calls += 1;
+    dialogSafety.presentations += 1;
+    expected.presentation = {
+      title: options.title, message: options.message, detail: options.detail,
+      buttons: options.buttons.slice(), defaultId: options.defaultId, cancelId: options.cancelId,
+    };
+    return realOwnedDialogShow.apply(this, arguments);
+  }),
+];
+// Refuse rather than invent an answer. Explicit fixture actors replace these
+// guards locally; an obsolete fixture must not ask the person running the suite.
+for (const method of [
+  "showMessageBox", "showMessageBoxSync", "showOpenDialog", "showOpenDialogSync",
+  "showSaveDialog", "showSaveDialogSync", "showErrorBox",
+]) {
+  restoreDialogSafety.push(replaceMethod(dialog, method, (...args) =>
+    unexpectedDialog(method, args.at(-1))));
+}
+if (initialBoundaryHarness || earlyRefreshHarness) {
+  let stage = "before-ready owned profile";
+  try {
+    const { USER_DATA_DIR } = require("./test-userdata-isolation");
+    const suite = earlyRefreshHarness ? "test-sec08-early-refresh" : "test-sec08-initial-boundary";
+    if (app.isReady() || typeof USER_DATA_DIR !== "string" ||
+        !path.isAbsolute(USER_DATA_DIR) || path.basename(USER_DATA_DIR) !== suite) {
+      throw new Error("Focused storage preflight has no owned pre-ready profile");
+    }
+    // A junction at the profile or its parent must not redefine ownership.
+    // Derive the expected spelling from the trusted canonical base instead.
+    const trustedTempRoot = fs.realpathSync.native(require("os").tmpdir());
+    const expectedProfileKey = nativePathKey(path.join(
+      trustedTempRoot, "folia-test-userdata", suite));
+    const ownedProfile = fs.realpathSync.native(USER_DATA_DIR);
+    if (nativePathKey(ownedProfile) !== expectedProfileKey)
+      throw new Error("Focused owned profile escaped its trusted base");
+    stage = "before-ready userData";
+    const userData = fs.realpathSync.native(app.getPath("userData"));
+    if (nativePathKey(userData) !== expectedProfileKey)
+      throw new Error("Focused userData ownership mismatch");
+    stage = "before-ready sessionData";
+    app.setPath("sessionData", ownedProfile);
+    const sessionData = fs.realpathSync.native(app.getPath("sessionData"));
+    if (nativePathKey(sessionData) !== expectedProfileKey)
+      throw new Error("Focused sessionData ownership mismatch");
+    console.log("SEC08_PRIVATE_STORAGE before-ready " + JSON.stringify({ userData, sessionData }));
+    // Register before Main's whenReady callback, so storage is checked before
+    // its first defaultSession access or production BrowserWindow creation.
+    app.whenReady().then(() => {
+      let readyStage = "ready before production window";
+      try {
+        if (!app.isReady() || BrowserWindow.getAllWindows().length !== 0)
+          throw new Error("Focused storage check missed the pre-window boundary");
+        readyStage = "ready owned profile";
+        if (nativePathKey(fs.realpathSync.native(USER_DATA_DIR)) !== expectedProfileKey)
+          throw new Error("Focused ready profile escaped its trusted base");
+        readyStage = "ready userData";
+        const readyUserData = fs.realpathSync.native(app.getPath("userData"));
+        if (nativePathKey(readyUserData) !== expectedProfileKey)
+          throw new Error("Focused ready userData ownership mismatch");
+        readyStage = "ready sessionData";
+        const readySessionData = fs.realpathSync.native(app.getPath("sessionData"));
+        if (nativePathKey(readySessionData) !== expectedProfileKey)
+          throw new Error("Focused ready sessionData ownership mismatch");
+        readyStage = "ready defaultSession storage";
+        const sessionStoragePath = require("electron").session.defaultSession.getStoragePath();
+        if (typeof sessionStoragePath !== "string")
+          throw new Error("Focused defaultSession has no persistent storage");
+        const storagePath = fs.realpathSync.native(sessionStoragePath);
+        if (nativePathKey(storagePath) !== expectedProfileKey)
+          throw new Error("Focused defaultSession storage ownership mismatch");
+        console.log("SEC08_PRIVATE_STORAGE ready-before-main-window " + JSON.stringify({
+          userData: readyUserData, sessionData: readySessionData,
+          storagePath,
+        }));
+      } catch {
+        rejectHarnessConfiguration("Focused private storage preflight failed at " + readyStage);
+      }
+    });
+  } catch {
+    rejectHarnessConfiguration("Focused private storage preflight failed at " + stage);
+  }
+}
+let focusedRendererDialogGuard = null;
+if (initialBoundaryHarness || earlyRefreshHarness) {
+  const guard = focusedRendererDialogGuard = { owner: null, installed: false, failed: false };
+  const marker = "TABS_UNOWNED_RENDERER_APP_DIALOG ";
+  const mainPageUrl = require("url").pathToFileURL(path.join(__dirname, "..", "src", "index.html")).href;
+  guard.refuse = (stage, dialog = null) => {
+    if (guard.failed) return;
+    guard.failed = true;
+    const detail = { kind: "renderer-embedded-modal", stage,
+      afterAssertion: results.at(-1)?.name || null, dialog };
+    dialogSafety.unexpected.push(detail);
+    writeFatal("FAIL  unexpected Main renderer dialog  -> " + JSON.stringify(detail));
+    app.exit(1);
+  };
+  // Main creates the first window. Do not attach to its separate, explicitly
+  // driven large-render permission host, which uses the same dialog DOM IDs.
+  app.once("browser-window-created", (_event, owner) => {
+    guard.owner = owner;
+    const wc = owner.webContents;
+    if (earlyRefreshFixtureGuard) {
+      const fixture = earlyRefreshFixtureGuard;
+      fixture.owner = owner;
+      fixture.webContents = wc;
+      fixture.windowId = owner.id;
+      fixture.webContentsId = wc.id;
+      owner.once("closed", () => { fixture.closed = true; });
+      wc.once("destroyed", () => { fixture.destroyed = true; });
+    }
+    wc.on("console-message", details => {
+      if (typeof details?.message !== "string" || !details.message.startsWith(marker)) return;
+      let dialog;
+      try { dialog = JSON.parse(details.message.slice(marker.length)); }
+      catch { guard.refuse("invalid renderer dialog observation"); return; }
+      guard.refuse("renderer embedded dialog " + dialog.phase, dialog);
+    });
+    wc.on("dom-ready", () => {
+      if (wc.getURL() !== mainPageUrl) return;
+      guard.installed = false;
+      boundedDialogWork(wc.executeJavaScript(`(() => {
+        window.__unownedDialog?.observer?.disconnect();
+        const state = window.__unownedDialog = { violation: null };
+        const report = (dialog, phase) => {
+          if (state.violation) return;
+          state.violation = {
+            phase, surface: dialog.id || null,
+            title: dialog.querySelector('#appMessageTitle')?.textContent || '',
+            message: dialog.querySelector('#appMessageText')?.textContent || '',
+            buttons: Array.from(dialog.querySelectorAll('button')).map(node => node.textContent),
+          };
+          console.error(${JSON.stringify(marker)} + JSON.stringify(state.violation));
+        };
+        const prototype = HTMLDialogElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'showModal');
+        state.beforeShow = function() {
+          report(this, 'before-show');
+          throw new Error('Unowned embedded dialog refused before showModal');
+        };
+        Object.defineProperty(prototype, 'showModal', { ...descriptor, value: state.beforeShow });
+        const inspect = () => {
+          const dialog = Array.from(document.querySelectorAll('dialog[open]'))
+            .find(node => node instanceof HTMLDialogElement && node.open);
+          if (dialog) report(dialog, 'already-open');
+        };
+        state.observer = new MutationObserver(inspect);
+        state.observer.observe(document, {
+          subtree: true, childList: true, attributes: true, attributeFilter: ['open'],
+        });
+        inspect();
+        return { installed: prototype.showModal === state.beforeShow, violation: state.violation };
+      })()`, true), "Main renderer dialog observer installation").then(state => {
+        if (state?.violation) guard.refuse("initial embedded renderer dialog scan", state.violation);
+        else if (state?.installed !== true) guard.refuse("renderer dialog observer did not install");
+        else guard.installed = true;
+      }, () => guard.refuse("renderer dialog observer installation failed"));
+    });
+  });
+}
+const largeRenderRegistration = { handler: null, count: 0 };
+// Main retains the raw receipts before preload projection. The isolated page
+// deliberately has no transport object to intercept.
+let tabDiskObservation = null;
+let largeRenderObservation = null;
+const realRegisterHandle = ipcMain.handle;
+const restoreRegistrationCapture = replaceMethod(ipcMain, "handle", function (channel, handler) {
+  if (channel === "confirm-large-render") {
+    largeRenderRegistration.handler = handler;
+    largeRenderRegistration.count += 1;
+    return realRegisterHandle.call(this, channel, async function (event, data) {
+      const observation = largeRenderObservation;
+      if (!observation) return handler.apply(this, arguments);
+      const current = __shutdown.state();
+      const record = {
+        senderId: event.sender.id,
+        owner: event.sender === observation.target,
+        frame: event.senderFrame === observation.frame &&
+          event.senderFrame === event.sender.mainFrame,
+        generation: current.rendererGeneration,
+        pageSession: current.rendererPageSession,
+        rawKeys: data && typeof data === "object" ? Object.keys(data).sort() : [],
+        raw: structuredClone(data),
+        settled: false,
+      };
+      // Keep the actual event identities without serializing Electron objects
+      // into failure diagnostics; snapshot the payload before Main sees it.
+      Object.defineProperties(record, {
+        sender: { value: event.sender },
+        senderFrame: { value: event.senderFrame },
+      });
+      observation.records.push(record);
+      try {
+        const fault = observation.fault;
+        let reply;
+        if (fault) {
+          fault.calls += 1;
+          // An armed actor never falls through to a real question, including
+          // for a repeated or misdirected request.
+          if (fault.consumed || !record.owner || !record.frame ||
+              current.rendererGeneration !== observation.generation ||
+              current.rendererPageSession !== observation.pageSession ||
+              !isDeepStrictEqual(data, fault.request)) {
+            observation.unexpected.push(record);
+            throw new Error("Unexpected armed large-render invocation refused");
+          }
+          fault.consumed = true;
+          record.fault = fault.label;
+          if (fault.reject) throw new Error(fault.reject);
+          reply = fault.reply;
+        } else {
+          reply = await handler.apply(this, arguments);
+        }
+        record.reply = reply;
+        record.settled = true;
+        return reply;
+      } catch (error) {
+        record.error = String(error.message || error);
+        record.settled = true;
+        throw error;
+      }
+    });
+  }
+  if (["read-owned-tab-disk-snapshot", "refresh-owned-tab-disk-snapshot"].includes(channel)) {
+    return realRegisterHandle.call(this, channel, function (event, data) {
+      const observation = tabDiskObservation;
+      if (!observation || event.sender !== observation.target ||
+          !observation.paths.has(data?.filePath)) {
+        return handler.apply(this, arguments);
+      }
+      const record = { channel, request: {
+        ...data, owner: { ...data.owner }, diskVersion: { ...data.diskVersion },
+      }, settled: false };
+      observation.records.push(record);
+      return Promise.resolve(handler.apply(this, arguments)).then(reply => {
+        record.reply = reply;
+        record.settled = true;
+        return reply;
+      }, error => {
+        record.error = String(error);
+        record.settled = true;
+        throw error;
+      });
+    });
+  }
+  return realRegisterHandle.apply(this, arguments);
+});
+let __shutdown;
+try {
+  ({ __shutdown } = require("../src/main.js"));
+} finally {
+  restoreRegistrationCapture();
+}
 ipcMain.handle("test-seed-approved-session-layout", (_event, layout) =>
   __shutdown.seedDocumentSessionLayout(layout));
 
@@ -1579,6 +1895,18 @@ function preserveFocusedFixtureRoot(root) {
     }
   }
   return { root, removedRegistrations };
+}
+// Fatal exits cannot await Electron destruction. Keep this root out of both
+// shared sweeps until the finite early-route teardown verifies its exact owner.
+const earlyRefreshFixtureGuard = earlyRefreshHarness ? {
+  ...preserveFocusedFixtureRoot(dir),
+  owner: null, webContents: null, closed: false, destroyed: false,
+  sentinel: null, consoleAttribution: null, report: null, verified: false,
+} : null;
+if (earlyRefreshFixtureGuard) {
+  console.log("SEC08_EARLY_FIXTURE_OWNER " + JSON.stringify({
+    root: dir, nativePid: process.pid, excludedFromSweepUntilMainDestroyed: true,
+  }));
 }
 // Neither observed handles nor window destruction proves that queued Main
 // continuations have stopped. Remove the root and its registered ancestors
@@ -11356,52 +11684,583 @@ async function runTabPathCopyScenario(exec, expectedPath) {
     ctx.copied === expectedPath && ctx.calls === 1 && ctx.dismissed, JSON.stringify(ctx));
 }
 
-async function runLargeRenderBoundary(win, isolatedWindow) {
-  const modalCalls = [];
-  let answer = 0, fail = false;
-  const restore = replaceMethod(dialog, "showMessageBoxSync", (_owner, options) => {
-    modalCalls.push(options.message);
-    if (fail) throw new Error("controlled large render modal failure");
-    return answer;
+async function boundedDialogWork(work, label, timeoutMs = 12000) {
+  let timeout;
+  try {
+    return await Promise.race([
+      work,
+      new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Timed out: " + label)), timeoutMs);
+      }),
+    ]);
+  } finally { clearTimeout(timeout); }
+}
+
+function inspectCleanRefreshSource(source) {
+  if (typeof source !== "string") return { valid: false, reason: "source unavailable" };
+  source = source.replace(/\r\n/g, "\n");
+  const declarations = [...source.matchAll(/^  function refreshTabFromDisk\(/gm)];
+  const endMarker = "\n  // ============================================\n  // Tab Management Functions\n";
+  const ends = source.split(endMarker).length - 1;
+  const start = declarations[0]?.index;
+  const end = start === undefined ? -1 : source.indexOf(endMarker, start);
+  const unambiguous = declarations.length === 1 && ends === 1 && end > start;
+  if (!unambiguous) return { valid: false, unambiguous, reason: "refresh region missing or ambiguous" };
+  const region = source.slice(start, end);
+  const calls = [...region.matchAll(
+    /snapshot\s*=\s*await\s+window\.folia\.refreshOwnedTabDiskSnapshot\s*\(\s*\{\s*filePath\s*,\s*pageSession:\s*session\s*,\s*rendererGeneration:\s*identity\.rendererGeneration\s*,\s*owner:\s*identity\s*,\s*diskVersion:\s*startingVersion\s*,?\s*\}\s*\)/g,
+  )];
+  const ownerBoundMainCall = calls.length === 1 &&
+    (region.match(/\brefreshOwnedTabDiskSnapshot\s*\(/g) || []).length === 1 &&
+    /const filePath\s*=\s*tab\.filePath\s*;/.test(region) &&
+    /const session\s*=\s*window\.getReloadRequestSession\?\.\(\)\s*;/.test(region) &&
+    /const identity\s*=\s*state && state\.pathKey && state\.admission &&\s*documentIdentity\(tab, session\)\s*;/.test(region) &&
+    /const startingVersion\s*=\s*normaliseDiskVersion\(tab\.diskVersion\)\s*;/.test(region) &&
+    /if \(!identity \|\| !startingVersion\) \{[\s\S]*?return false;\s*\}/.test(
+      region.slice(0, calls[0]?.index),
+    ) &&
+    /\n  }\s*$/.test(region);
+  const pageFilesystemDependency =
+    /\b(?:window\s*(?:\.\s*fs\b|\[\s*["']fs["']\s*\])|fs\s*(?:\.|\[)|require\s*\(\s*["'](?:node:)?fs(?:\/promises)?["'])/.test(region);
+  return { valid: ownerBoundMainCall && !pageFilesystemDependency,
+    unambiguous, ownerBoundMainCall, pageFilesystemDependency };
+}
+
+function verifyCleanRefreshSource() {
+  // This is a source-architecture oracle, not an attempt to run forbidden
+  // page filesystem code in a Node-free renderer.
+  const request = `      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({
+        filePath,
+        pageSession: session,
+        rendererGeneration: identity.rendererGeneration,
+        owner: identity,
+        diskVersion: startingVersion,
+      });`;
+  const positive = `  function refreshTabFromDisk(tab) {
+    const filePath = tab.filePath;
+    const session = window.getReloadRequestSession?.();
+    const identity = state && state.pathKey && state.admission &&
+      documentIdentity(tab, session);
+    const startingVersion = normaliseDiskVersion(tab.diskVersion);
+    if (!identity || !startingVersion) { return false; }
+    const readAndVerify = async () => {
+${request}
+    };
+    return readAndVerify();
+  }
+
+  // ============================================
+  // Tab Management Functions
+`;
+  const negative = positive.replace(request,
+    '      void window.fs.readFileSync(filePath, "utf8");\n' + request);
+  const accepted = inspectCleanRefreshSource(positive);
+  const refused = inspectCleanRefreshSource(negative);
+  const controls = accepted.valid && !refused.valid && refused.ownerBoundMainCall &&
+    refused.pageFilesystemDependency && !inspectCleanRefreshSource("").valid &&
+    !inspectCleanRefreshSource(positive + positive).valid;
+  check("SEC-08 refresh source oracle rejects a page filesystem read and retains the owner-bound Main call",
+    controls, JSON.stringify({ category: "source architecture", accepted, refused }));
+  let source = null;
+  try { source = fs.readFileSync(path.join(__dirname, "../src/custom-tabs.js"), "utf8"); }
+  catch { /* Missing source fails closed without starting refresh operations. */ }
+  const actual = inspectCleanRefreshSource(source);
+  check("SEC-08 clean-tab refresh has no page filesystem dependency before its fixed Main request",
+    actual.valid, JSON.stringify({ category: "source architecture", ...actual }));
+  return controls && actual.valid;
+}
+
+function observeEarlyLargeRender(win) {
+  if (largeRenderObservation) throw new Error("Overlapping large-render invoke observers");
+  const current = __shutdown.state();
+  const observation = {
+    target: win.webContents, frame: win.webContents.mainFrame,
+    generation: current.rendererGeneration, pageSession: current.rendererPageSession,
+    records: [], unexpected: [], fault: null,
+    restore() {
+      observation.fault = null;
+      if (largeRenderObservation === observation) largeRenderObservation = null;
+    },
+  };
+  if (current.renderer !== "ready" || !observation.frame ||
+      !observation.pageSession || !(observation.generation > 0)) {
+    throw new Error("Large-render observer requires the current ready Main owner");
+  }
+  largeRenderObservation = observation;
+  return observation;
+}
+
+function exactLargeRenderReceipt(record, request, observation) {
+  return !!record && record.owner && record.frame &&
+    record.sender === observation.target && record.senderFrame === observation.frame &&
+    record.senderId === observation.target.id &&
+    record.generation === observation.generation &&
+    record.pageSession === observation.pageSession &&
+    record.rawKeys.join(",") === "name,seconds" &&
+    isDeepStrictEqual(record.raw, request);
+}
+
+async function withEarlyLargeRenderFault(observation, request, fault, work) {
+  if (largeRenderObservation !== observation || observation.fault)
+    throw new Error("Large-render fault has no exclusive current observer");
+  const actor = { ...fault, request, calls: 0, consumed: false };
+  const before = observation.records.length;
+  observation.fault = actor;
+  try {
+    const result = await boundedDialogWork(Promise.resolve().then(work),
+      "one-use large-render invoke fault");
+    const records = observation.records.slice(before);
+    return { result, records, consumed: actor.consumed, calls: actor.calls,
+      exact: records.length === 1 && actor.calls === 1 && actor.consumed &&
+        records[0].settled && records[0].fault === actor.label &&
+        exactLargeRenderReceipt(records[0], request, observation) &&
+        observation.unexpected.length === 0 };
+  } finally {
+    observation.fault = null;
+  }
+}
+
+async function runLargeRenderBoundary(win, isolatedWindow, sentinel, observation) {
+  const request = { name: "Exact guard name", seconds: 12 };
+  const message = '"Exact guard name" may take about 12 seconds to display.';
+  const detail = "Markaloo may not respond until the document finishes opening.";
+  const call = code => boundedDialogWork(win.webContents.executeJavaScript(code, true),
+    "large-render page operation");
+  const question = async (choice, failLoad = false, payload = request, operation = null) => {
+    const questionMessage = `"${payload.name}" may take about ${payload.seconds} seconds to display.`;
+    const expected = { owner: win, calls: 0, hosts: [], failedLoads: 0 };
+    const realLoadFile = BrowserWindow.prototype.loadFile;
+    const restoreLoad = replaceMethod(BrowserWindow.prototype, "loadFile", function (filePath) {
+      if (filePath === ownedDialogFile && this.getParentWindow() === win) {
+        expected.hosts.push(this);
+        if (failLoad) {
+          expected.failedLoads += 1;
+          return Promise.reject(new Error("controlled large-render host load failure"));
+        }
+      }
+      return realLoadFile.apply(this, arguments);
+    });
+    dialogSafety.expected = expected;
+    let started = false;
+    try {
+      await call(`(() => {
+        const state = window.__largeRenderBoundary = { settled: false };
+        Promise.resolve(${operation || `window.folia.confirmLargeRender(${JSON.stringify(payload)})`}).then(
+          value => { state.value = value; state.settled = true; },
+          error => { state.error = String(error.message || error); state.settled = true; });
+        return true;
+      })()`);
+      started = true;
+      let metadata = null;
+      if (!failLoad) {
+        let host = null;
+        const displayed = await boundedDialogWork(waitUntil(async () => {
+          host = expected.hosts.find(candidate => !candidate.isDestroyed() &&
+            candidate.getParentWindow() === win &&
+            candidate.webContents.getURL() === ownedDialogUrl && candidate.isVisible());
+          return !!host && host.webContents.executeJavaScript(
+            "document.getElementById('appMessageDialog')?.open === true", true);
+        }, 12000), "test-owned large-render question", 13000);
+        if (!displayed) throw new Error("The expected Main-owned large-render question did not display");
+        metadata = await boundedDialogWork(host.webContents.executeJavaScript(`(() => ({
+          title: document.getElementById('appMessageTitle').textContent,
+          message: document.getElementById('appMessageText').textContent,
+          detail: document.getElementById('appMessageDetail').textContent,
+          buttons: [...document.querySelectorAll('#appMessageButtons button')].map(node => node.textContent),
+          focused: document.activeElement.dataset.dialogChoice,
+          require: typeof require, process: typeof process,
+        }))()`, true), "large-render permission metadata");
+        const preferences = host.webContents.getLastWebPreferences();
+        metadata.isolated = preferences.nodeIntegration === false &&
+          preferences.contextIsolation === true && preferences.sandbox === true;
+        metadata.pendingBeforeChoice = await call("window.__largeRenderBoundary.settled === false");
+        if (metadata.title !== "Large document" || metadata.message !== questionMessage ||
+            metadata.detail !== detail || metadata.buttons.join(",") !== "Open anyway,Cancel" ||
+            metadata.focused !== "1" || !metadata.pendingBeforeChoice) {
+          throw new Error("Large-render permission setup changed: " + JSON.stringify(metadata));
+        }
+        await boundedDialogWork(host.webContents.executeJavaScript(
+          `document.querySelector('#appMessageButtons [data-dialog-choice="${choice}"]').click(); true`,
+          true), "explicit test-owned large-render choice");
+      }
+      const settled = await boundedDialogWork(waitUntil(() =>
+        call("window.__largeRenderBoundary.settled === true"), 12000),
+      "large-render answer settlement", 13000);
+      if (!settled) throw new Error("The test-owned large-render answer did not settle");
+      const answer = await call("window.__largeRenderBoundary");
+      return { answer, metadata, calls: expected.calls, hostCount: expected.hosts.length,
+        failedLoads: expected.failedLoads, presentation: expected.presentation };
+    } finally {
+      restoreLoad();
+      for (const host of expected.hosts) {
+        if (!host.isDestroyed()) host.destroy();
+      }
+      dialogSafety.expected = null;
+      if (started && !win.isDestroyed()) {
+        const settled = await boundedDialogWork(waitUntil(() =>
+          call("window.__largeRenderBoundary.settled === true"), 2000),
+        "large-render failure cleanup", 3000);
+        if (!settled) throw new Error("Large-render cleanup left a pending permission request");
+        await call("delete window.__largeRenderBoundary; true");
+      }
+    }
+  };
+  const booleanStart = observation.records.length;
+  const approved = await question("0");
+  const canceled = await question("1");
+  check("SEC-08 real large-render bridge preserves themed approval cancellation and exact permission metadata",
+    approved.answer.value === true && canceled.answer.value === false &&
+      [approved, canceled].every(result => !result.answer.error && result.calls === 1 &&
+        result.hostCount === 1 && result.failedLoads === 0 &&
+        result.presentation.defaultId === 1 && result.presentation.cancelId === 1 &&
+        result.presentation.message === message && result.presentation.detail === detail &&
+        result.presentation.buttons.join(",") === "Open anyway,Cancel" &&
+        result.metadata.isolated && result.metadata.require === "undefined" &&
+        result.metadata.process === "undefined"),
+    JSON.stringify({ approved, canceled }));
+  const booleanReceipts = observation.records.slice(booleanStart);
+  check("SEC-08 async large-render bridge preserves pending and settled boolean replies",
+    booleanReceipts.length === 2 &&
+      booleanReceipts.every(record => exactLargeRenderReceipt(record, request, observation) &&
+        record.settled && !record.error && !record.fault) &&
+      booleanReceipts[0].reply === true && booleanReceipts[1].reply === false &&
+      approved.metadata.pendingBeforeChoice && canceled.metadata.pendingBeforeChoice &&
+      approved.answer.value === true && canceled.answer.value === false,
+    JSON.stringify({ approved, canceled, booleanReceipts }));
+  const projectedRequest = { name: "Projected guard metadata", seconds: 7 };
+  const projectionStart = observation.records.length;
+  const projection = await question("1", false, {
+    ...projectedRequest, ignored: 19, nested: { unrelated: "must not cross IPC" },
+  });
+  const projectionReceipts = observation.records.slice(projectionStart);
+  const comparatorControl = Object.defineProperties({},
+    Object.getOwnPropertyDescriptors(booleanReceipts[0] || {}));
+  comparatorControl.rawKeys = ["ignored", "name", "seconds"];
+  comparatorControl.raw = { ...request, ignored: 1 };
+  check("SEC-08 async large-render raw-payload comparator rejects an extra key",
+    exactLargeRenderReceipt(booleanReceipts[0], request, observation) &&
+      !exactLargeRenderReceipt(comparatorControl, request, observation),
+    JSON.stringify({ positive: booleanReceipts[0], negative: comparatorControl }));
+  check("SEC-08 async large-render bridge forwards only name and seconds at the raw Main boundary",
+    projectionReceipts.length === 1 &&
+      exactLargeRenderReceipt(projectionReceipts[0], projectedRequest, observation) &&
+      projectionReceipts[0].settled && projectionReceipts[0].reply === false &&
+      !projectionReceipts[0].error && projection.answer.value === false &&
+      !projection.answer.error && projection.calls === 1 && projection.hostCount === 1,
+    JSON.stringify({ projectionReceipts, projection }));
+  const malformedStart = observation.records.length;
+  const malformed = await call(`(async () => {
+    const invalid = [null, undefined, [], 1, {}, { name: 1, seconds: 0 },
+      { name: 'invalid', seconds: -1 }, { name: 'invalid', seconds: Infinity },
+      { name: 'invalid', seconds: NaN }, { name: 'invalid', seconds: undefined },
+      { name: 'invalid', seconds: '12' }, { name: 'x'.repeat(1025), seconds: 1 },
+      { name: 'invalid\\0name', seconds: 1 }];
+    const results = [];
+    for (const request of invalid) {
+      try { results.push({ rejected: false, value: await window.folia.confirmLargeRender(request) }); }
+      catch (error) { results.push({ rejected: true, message: String(error.message || error) }); }
+    }
+    return results;
+  })()`);
+  const noMalformedReceipt = observation.records.length === malformedStart;
+  const bracketStart = observation.records.length;
+  const bracket = await question("1");
+  const bracketReceipts = observation.records.slice(bracketStart);
+  check("SEC-08 async large-render bridge rejects malformed requests before Main IPC",
+    malformed.length === 13 && malformed.every(result => result.rejected &&
+      result.message === "Invalid large render confirmation request") &&
+      noMalformedReceipt &&
+      projectionReceipts.length === 1 && projectionReceipts[0].settled &&
+      bracketReceipts.length === 1 && bracketReceipts[0].settled &&
+      exactLargeRenderReceipt(bracketReceipts[0], request, observation) &&
+      bracket.answer.value === false && !bracket.answer.error,
+    JSON.stringify({ malformed, noMalformedReceipt, projectionReceipts, bracketReceipts, bracket }));
+  const before = dialogSafety.presentations;
+  const foreign = await boundedDialogWork(isolatedWindow.webContents.executeJavaScript(
+    `window.folia.confirmLargeRender(${JSON.stringify(request)})`, true),
+  "foreign-window large-render refusal");
+  check("SEC-08 an actual isolated foreign window cannot open the main large-render modal",
+    foreign === false && dialogSafety.presentations === before,
+    JSON.stringify({ foreign, before, after: dialogSafety.presentations }));
+  const handler = largeRenderRegistration.handler;
+  if (largeRenderRegistration.count !== 1 || typeof handler !== "function") {
+    throw new Error("The real Main large-render invoke handler was not captured exactly once");
+  }
+  const replies = [];
+  for (const payload of [null, [], { name: 1, seconds: 1 },
+    { name: "invalid", seconds: -1 }, { name: "invalid", seconds: Infinity },
+    { name: "invalid", seconds: NaN }, { name: "x".repeat(1025), seconds: 1 },
+    { name: "invalid\0name", seconds: 1 }]) {
+    replies.push(await boundedDialogWork(Promise.resolve().then(() => handler({
+      sender: win.webContents, senderFrame: win.webContents.mainFrame,
+    }, payload)), "Main malformed large-render refusal"));
+  }
+  check("SEC-08 Main refuses malformed large-render envelopes before presentation and resolves false",
+    replies.length === 8 && replies.every(value => value === false) &&
+      dialogSafety.presentations === before, JSON.stringify({ replies, before,
+      after: dialogSafety.presentations }));
+  const errors = [], diagnostics = [];
+  const realSend = win.webContents.send;
+  const restoreSend = replaceMethod(win.webContents, "send", function (channel, value) {
+    if (channel === "show-error") errors.push(value);
+    return realSend.apply(this, arguments);
+  });
+  const realConsoleError = console.error;
+  const restoreConsole = replaceMethod(console, "error", function (...args) {
+    if (args[0] === "Themed dialog unavailable: Large document") diagnostics.push(args[0]);
+    return realConsoleError.apply(this, args);
   });
   try {
-    const request = { name: "Exact guard name", seconds: 12 };
-    const call = code => win.webContents.executeJavaScript(code, true);
-    const approved = await call(`window.folia.confirmLargeRender(${JSON.stringify(request)})`);
-    answer = 1;
-    const canceled = await call(`window.folia.confirmLargeRender(${JSON.stringify(request)})`);
-    check("SEC-08 real large-render bridge preserves native approval cancellation and exact modal metadata",
-      approved === true && canceled === false && modalCalls.length === 2 &&
-        modalCalls.every(message => message === '"Exact guard name" may take about 12 seconds to display.'),
-      JSON.stringify({ approved, canceled, modalCalls }));
-    const before = modalCalls.length;
-    const foreign = await isolatedWindow.webContents.executeJavaScript(`(() => {
-      try { window.folia.confirmLargeRender(${JSON.stringify(request)}); return false; }
-      catch (error) { return error.message.includes('Invalid large render confirmation response'); }
-    })()`, true);
-    check("SEC-08 an actual isolated foreign window cannot open the main large-render modal",
-      foreign && modalCalls.length === before, JSON.stringify({ foreign, modalCalls }));
-    const beforeMalformed = modalCalls.length;
-    const handler = ipcMain.listeners("confirm-large-render")[0];
-    const replies = [];
-    for (const payload of [null, [], { name: 1, seconds: 1 },
-      { name: "invalid", seconds: -1 }, { name: "invalid", seconds: Infinity }]) {
-      const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
-      Object.defineProperty(event, "returnValue", { set(value) { replies.push(value); } });
-      handler(event, payload);
+    const refused = await question(null, true);
+    const failureMessage = "Markaloo could not display the confirmation. The operation was cancelled.";
+    const notified = await boundedDialogWork(waitForCondition(call,
+      `document.getElementById('notificationMessage')?.textContent === ${JSON.stringify(failureMessage)}`,
+      2000), "large-render failure notification", 3000);
+    await sentinel.drain();
+    check("SEC-08 themed large-render presentation failure fails closed without a native approval fallback",
+      refused.answer.value === false && !refused.answer.error &&
+        refused.calls === 1 && refused.hostCount === 1 && refused.failedLoads === 1 &&
+        notified && errors.length === 1 && errors[0] === failureMessage &&
+        diagnostics.length === 1 &&
+        dialogSafety.unexpected.length === 0,
+      JSON.stringify({ refused, errors, diagnostics, notified,
+        unexpected: dialogSafety.unexpected }));
+  } finally {
+    restoreConsole();
+    restoreSend();
+  }
+  return question;
+}
+
+async function runEarlyLargeRenderFaults(win) {
+  const observation = observeEarlyLargeRender(win);
+  const call = code => boundedDialogWork(win.webContents.executeJavaScript(code, true),
+    "async large-render protocol operation");
+  const outcomes = [];
+  try {
+    for (const [index, reply] of [null, undefined, 0, "false"].entries()) {
+      const request = { name: "Nonboolean protocol probe " + index, seconds: index };
+      outcomes.push(await withEarlyLargeRenderFault(observation, request,
+        { label: "nonboolean-" + index, reply }, () => call(`(async () => {
+          try {
+            return { rejected: false, value: await window.folia.confirmLargeRender(${JSON.stringify(request)}) };
+          } catch (error) {
+            return { rejected: true, message: String(error.message || error) };
+          }
+        })()`)));
     }
-    check("SEC-08 Main refuses malformed large-render envelopes before modal work and replies exactly once",
-      replies.length === 5 && replies.every(value => value === null) &&
-        modalCalls.length === beforeMalformed, JSON.stringify({ replies, modalCalls }));
-    const beforeFailure = modalCalls.length;
-    fail = true;
-    const refused = await call(`(() => {
-      try { window.folia.confirmLargeRender(${JSON.stringify(request)}); return false; }
-      catch (error) { return error.message.includes('Invalid large render confirmation response'); }
+    check("SEC-08 async large-render bridge rejects nonboolean Main replies",
+      outcomes.length === 4 && outcomes.every(outcome => outcome.exact &&
+        typeof outcome.records[0].reply !== "boolean" && !outcome.records[0].error &&
+        outcome.result.rejected &&
+        outcome.result.message === "Invalid large render confirmation response"),
+      JSON.stringify(outcomes));
+    const request = { name: "One-use invoke rejection", seconds: 2 };
+    const token = "SEC08_CONTROLLED_MAIN_INVOKE_REJECTION";
+    const rejection = await withEarlyLargeRenderFault(observation, request,
+      { label: "invoke-rejection", reject: token }, () => call(`(async () => {
+        try {
+          return { rejected: false, value: await window.folia.confirmLargeRender(${JSON.stringify(request)}) };
+        } catch (error) {
+          return { rejected: true, message: String(error.message || error) };
+        }
+      })()`));
+    check("SEC-08 async large-render bridge propagates a one-use Main invoke rejection",
+      rejection.exact && rejection.records[0].error === token &&
+        rejection.result.rejected && rejection.result.message.includes(token),
+      JSON.stringify(rejection));
+  } finally {
+    observation.restore();
+  }
+}
+
+async function runEarlyNativeLargeTabGuard(win, sentinel, question, chooserOptions, switchAndWait) {
+  const call = code => boundedDialogWork(win.webContents.executeJavaScript(code, true),
+    "native large-tab guard operation");
+  const smallPath = path.join(dir, "early-large-control.md");
+  const largePath = path.join(dir, "early-large-background.md");
+  const smallText = "# Native ordinary control\n\nSEC08_NATIVE_SMALL\n";
+  const largeText = "# SEC08 native expensive background\n\n" + "|".repeat(260000) + "\n";
+  write(smallPath, smallText);
+  write(largePath, largeText);
+  const observation = observeEarlyLargeRender(win);
+  const presentationsBefore = dialogSafety.presentations;
+  const deliveries = [], chooserRequests = [];
+  const realSend = win.webContents.send;
+  const restoreSend = replaceMethod(win.webContents, "send", function (channel, data) {
+    if (channel === "file-opened" && data?.path === smallPath) {
+      deliveries.push({ paths: data.allPaths, grants: data.extraReadGrants, document: data.document });
+    }
+    return realSend.apply(this, arguments);
+  });
+  const restoreChooser = replaceMethod(dialog, "showOpenDialog", async function (parent, options) {
+    const request = { call: chooserRequests.length + 1, parent: parent === win,
+      arguments: arguments.length, options };
+    request.allowed = request.call === 1 && request.parent && request.arguments === 2 &&
+      isDeepStrictEqual(options, chooserOptions);
+    chooserRequests.push(request);
+    if (!request.allowed) {
+      dialogSafety.unexpected.push({ kind: "early-large-native-chooser", ...request });
+      throw new Error("Unexpected native large-tab chooser refused");
+    }
+    return { canceled: false, filePaths: [smallPath, largePath] };
+  });
+  try {
+    const clean = await call(`({
+      dirtyTabs: window.CustomTabs.__dirtyTabNames(), unsaved: window.hasUnsavedWorkForReload(),
+    })`);
+    if (clean.unsaved !== false || !Array.isArray(clean.dirtyTabs) || clean.dirtyTabs.length)
+      throw new Error("Native large-tab admission requires clean documents: " + JSON.stringify(clean));
+    await call("window.folia.openFileDialog(); true");
+    const admitted = await boundedDialogWork(waitForCondition(call, `(() => {
+      const tabs = window.CustomTabs.getTabs();
+      const small = tabs.find(tab => tab.filePath === ${JSON.stringify(smallPath)});
+      const large = tabs.find(tab => tab.filePath === ${JSON.stringify(largePath)});
+      return tabs.length === 2 && small && large &&
+        window.currentFilePath === small.filePath &&
+        window.CustomTabs.getActiveTabId() === small.id &&
+        document.getElementById('viewer').textContent.includes('SEC08_NATIVE_SMALL') &&
+        !!window.CustomTabs.getDocumentDescriptor(large.id)?.ref;
+    })()`, 8000), "native ordinary paint and background grant admission");
+    const setup = await call(`(() => {
+      const tabs = window.CustomTabs.getTabs();
+      const small = tabs.find(tab => tab.filePath === ${JSON.stringify(smallPath)});
+      const large = tabs.find(tab => tab.filePath === ${JSON.stringify(largePath)});
+      return {
+        count: tabs.length, active: window.CustomTabs.getActiveTabId(), path: window.currentFilePath,
+        small: small && { id: small.id, dirty: small.hasUnsavedChanges,
+          matches: small.content === ${JSON.stringify(smallText)},
+          document: window.CustomTabs.getDocumentDescriptor(small.id),
+          verdict: window.FoliaFileHelpers.isLargeDocument(small.content) },
+        large: large && { id: large.id, dirty: large.hasUnsavedChanges,
+          matches: large.content === ${JSON.stringify(largeText)},
+          document: window.CustomTabs.getDocumentDescriptor(large.id),
+          verdict: window.FoliaFileHelpers.isLargeDocument(large.content) },
+        painted: document.getElementById('viewer').textContent.includes('SEC08_NATIVE_SMALL'),
+      };
     })()`);
-    check("SEC-08 native modal failure remains protocol refusal rather than cached acceptance or cancellation",
-      refused && modalCalls.length === beforeFailure + 1, JSON.stringify({ refused, modalCalls }));
-  } finally { restore(); }
+    const nativeSetup = admitted && setup.count === 2 &&
+      chooserRequests.length === 1 && chooserRequests[0].allowed &&
+      observation.records.length === 0 && dialogSafety.presentations === presentationsBefore &&
+      setup.small?.matches && setup.large?.matches &&
+      setup.small.dirty === false && setup.large.dirty === false &&
+      setup.small.verdict.large === false && setup.large.verdict.large === true &&
+      setup.small.id !== setup.large.id && setup.active === setup.small.id &&
+      setup.path === smallPath && setup.painted &&
+      setup.small.document?.logicalPath === smallPath &&
+      setup.small.document?.readTarget === fs.realpathSync.native(smallPath) &&
+      setup.large.document?.logicalPath === largePath &&
+      setup.large.document?.readTarget === fs.realpathSync.native(largePath) &&
+      /^[a-f0-9]{64}$/.test(setup.small.document?.ref) &&
+      /^[a-f0-9]{64}$/.test(setup.large.document?.ref) &&
+      setup.small.document.ref !== setup.large.document.ref &&
+      deliveries.length === 1 &&
+      isDeepStrictEqual(deliveries[0].paths, [smallPath, largePath]) &&
+      deliveries[0].grants?.length === 1 && /^[a-f0-9]{64}$/.test(deliveries[0].grants[0]) &&
+      deliveries[0].document?.ref === setup.small.document.ref;
+    check("SEC-08 native large-tab setup proves an expensive background admission and an ordinary painted control",
+      nativeSetup, JSON.stringify({ admitted, setup, deliveries, chooserRequests,
+        confirmations: observation.records, presentationsBefore,
+        presentationsAfter: dialogSafety.presentations, clean }));
+    if (!nativeSetup) throw new Error("Large-tab cache journey has no genuine native background control");
+    const request = {
+      name: path.basename(largePath), seconds: Math.round(setup.large.verdict.estimatedMs / 1000),
+    };
+    const retained = () => call(`({
+      ordinary: window.currentFilePath === ${JSON.stringify(smallPath)} &&
+        window.CustomTabs.getActiveTabId() === ${setup.small.id} &&
+        window.originalMarkdown === ${JSON.stringify(smallText)} &&
+        window.CustomTabs.getActiveTab().hasUnsavedChanges === false &&
+        document.getElementById('viewer').textContent.includes('SEC08_NATIVE_SMALL'),
+      notification: document.getElementById('notificationMessage').textContent,
+    })`);
+    const forwardedErrors = [];
+    const onConsole = details => {
+      if (details.level === "error") forwardedErrors.push({
+        message: details.message, sourceId: details.sourceId, lineNumber: details.lineNumber,
+      });
+    };
+    let rejection, rejectionState, muted;
+    await sentinel.mute("controlled native large-tab nonboolean confirmation rejection");
+    win.webContents.on("console-message", onConsole);
+    try {
+      rejection = await withEarlyLargeRenderFault(observation, request,
+        { label: "native-large-nonboolean", reply: null },
+        () => call(`(async () => {
+          await window.CustomTabs.switchToTab(${setup.large.id});
+          return true;
+        })()`));
+      rejectionState = await retained();
+      await sentinel.drain();
+      muted = sentinel.currentMute();
+    } finally {
+      try { await sentinel.unmute(); }
+      finally { win.webContents.off("console-message", onConsole); }
+    }
+    const expectedMessages = [
+      "[CustomTabs] size confirmation failed: Error: Invalid large render confirmation response",
+      "[CustomTabs] size confirmation failed: TypeError: Invalid large render confirmation response",
+    ];
+    const expectedSource = require("url").pathToFileURL(path.join(__dirname, "../src/custom-tabs.js")).href;
+    const diagnostic = forwardedErrors[0];
+    const suppressed = muted?.suppressed || [];
+    check("SEC-08 tab guard exposes nonboolean confirmation rejection without changing the selected document",
+      rejection.exact && rejection.records[0].reply === null &&
+        rejectionState.ordinary && rejectionState.notification ===
+          "The large-document question could not be opened. Please try again." &&
+        dialogSafety.presentations === presentationsBefore &&
+        forwardedErrors.length === 1 && expectedMessages.includes(diagnostic?.message) &&
+        diagnostic.sourceId === expectedSource && Number.isFinite(diagnostic.lineNumber) &&
+        diagnostic.lineNumber > 0 &&
+        suppressed.length === 1 && suppressed[0].kind === "console-error" &&
+        suppressed[0].detail === `${diagnostic.message} @ ${diagnostic.sourceId}:${diagnostic.lineNumber}`,
+      JSON.stringify({ rejection, rejectionState, forwardedErrors, suppressed,
+        presentationsBefore, presentationsAfter: dialogSafety.presentations }));
+
+    // Nonboolean replies are already refused by CustomTabs' !== true check.
+    // The protocol requirement above is its rejection diagnostic, not approval.
+    const cancelStart = observation.records.length;
+    const canceled = await question("1", false, request,
+      `window.CustomTabs.switchToTab(${setup.large.id})`);
+    const afterCancel = await retained();
+    const cancelReceipts = observation.records.slice(cancelStart);
+    const approvalStart = observation.records.length;
+    const approved = await question("0", false, request,
+      `window.CustomTabs.switchToTab(${setup.large.id})`);
+    const approvalReceipts = observation.records.slice(approvalStart);
+    const painted = await boundedDialogWork(waitForCondition(call,
+      `window.currentFilePath === ${JSON.stringify(largePath)} &&
+       window.CustomTabs.getActiveTabId() === ${setup.large.id} &&
+       window.CustomTabs.getActiveTab().content === ${JSON.stringify(largeText)} &&
+       document.getElementById('viewer').textContent.includes('SEC08 native expensive background')`,
+      8000), "approved native expensive tab paint");
+    const revisitStart = observation.records.length;
+    await switchAndWait(setup.small.id);
+    await switchAndWait(setup.large.id);
+    const revisited = await call(`window.currentFilePath === ${JSON.stringify(largePath)} &&
+      window.CustomTabs.getActiveTabId() === ${setup.large.id} &&
+      document.getElementById('viewer').textContent.includes('SEC08 native expensive background')`);
+    check("SEC-08 declined large-tab switches remain uncached until a current themed approval",
+      rejection.exact && rejectionState.ordinary && afterCancel.ordinary &&
+        cancelReceipts.length === 1 && approvalReceipts.length === 1 &&
+        [cancelReceipts[0], approvalReceipts[0]].every(record =>
+          exactLargeRenderReceipt(record, request, observation) && record.settled &&
+          !record.error && !record.fault) &&
+        cancelReceipts[0].reply === false && approvalReceipts[0].reply === true &&
+        canceled.calls === 1 && approved.calls === 1 &&
+        canceled.metadata.pendingBeforeChoice && approved.metadata.pendingBeforeChoice &&
+        !canceled.answer.error && !approved.answer.error &&
+        painted && revisited && observation.records.length === revisitStart &&
+        observation.unexpected.length === 0 &&
+        dialogSafety.presentations === presentationsBefore + 2,
+      JSON.stringify({ rejection, afterCancel, canceled, approved,
+        cancelReceipts, approvalReceipts, painted, revisited,
+        confirmationsBeforeRevisit: revisitStart, confirmationsAfterRevisit: observation.records.length }));
+  } finally {
+    restoreChooser();
+    restoreSend();
+    observation.restore();
+  }
 }
 
 async function runLargeRenderTransportValidation(exec) {
@@ -15761,8 +16620,22 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
 
 async function run(win) {
   const exec = (code) => win.webContents.executeJavaScript(code, true);
+  if (focusedRendererDialogGuard) {
+    const guard = focusedRendererDialogGuard;
+    const installed = await boundedDialogWork(waitUntil(() =>
+      guard.owner === win && guard.installed && !guard.failed, 8000),
+    "Main renderer dialog observer startup", 9000);
+    if (!installed) {
+      guard.refuse("renderer dialog observer unavailable before fixture actions");
+      return;
+    }
+  }
   const sentinel = startErrorSentinel(win, { label: "tabs" });
   const consoleAttribution = startConsoleAttributionSidecar(win, sentinel);
+  if (earlyRefreshFixtureGuard) {
+    earlyRefreshFixtureGuard.sentinel = sentinel;
+    earlyRefreshFixtureGuard.consoleAttribution = consoleAttribution;
+  }
   const closeFixtureTabsSource = `
     async function closeFixtureTabs() {
       const realConfirm = window.confirm;
@@ -15804,6 +16677,8 @@ async function run(win) {
         subframePdfRestore: typeof iframe.contentWindow.__foliaTestPdfRestore,
         diagnostic: typeof window.__foliaTestDocumentControl?.mark,
         subframeDiagnostic: typeof iframe.contentWindow.__foliaTestDocumentControl,
+        frozen: Object.isFrozen(window.folia), require: typeof require,
+        process: typeof process, rawIpc: typeof window.ipcRenderer,
       };
     } finally { iframe.remove(); }
   })()`);
@@ -15819,6 +16694,9 @@ async function run(win) {
       mainSession: controlState.rendererPageSession, controlSession }));
   if (!controlReady) throw new Error("Production control readiness did not reach Main");
   const productionBridgeMethods = [
+    "publishDialogTheme", "onMainDialogVisibility",
+    "checkForUpdates", "openUpdateRelease", "getUpdateState",
+    "respondToDocumentReplacementConsent",
     "registerDocumentOwner", "setActiveFile", "selectFileTracking",
     "pauseFileWatching", "resumeFileWatching", "stopFileWatching",
     "quarantineSelectedFileTracking", "queryDocumentDeletionState",
@@ -15851,7 +16729,9 @@ async function run(win) {
       bridgeExposure.pdfRestore === (expectsPdfSignal ? "function" : "undefined") &&
       bridgeExposure.subframePdfRestore === "undefined" &&
       bridgeExposure.diagnostic === (expectsPdfSignal ? "function" : "undefined") &&
-      bridgeExposure.subframeDiagnostic === "undefined",
+      bridgeExposure.subframeDiagnostic === "undefined" && bridgeExposure.frozen &&
+      bridgeExposure.require === "undefined" && bridgeExposure.process === "undefined" &&
+      bridgeExposure.rawIpc === "undefined",
     JSON.stringify(bridgeExposure),
   );
   if (ownedMetadataFocusedHarness) {
@@ -15970,6 +16850,7 @@ async function run(win) {
       sandbox: true,
     },
   });
+  let largeRenderQuestion;
   try {
     await isolatedBridgeWindow.loadURL("data:text/html,<p>Owned bridge boundary</p>");
     const isolatedBoundary = await isolatedBridgeWindow.webContents.executeJavaScript(`
@@ -16008,6 +16889,8 @@ async function run(win) {
         return {
           methods: Object.keys(window.folia || {}),
           require: typeof require,
+          process: typeof process, rawIpc: typeof window.ipcRenderer,
+          frozen: Object.isFrozen(window.folia),
           rejected,
           refused,
           dialogMalformedRejected,
@@ -16021,6 +16904,8 @@ async function run(win) {
       "SEC-08 production bridge works under Node-off isolation and sandbox without exposing Node or arbitrary IPC",
       isolatedBoundary.methods.slice().sort().join(",") === productionBridgeMethods &&
         isolatedBoundary.require === "undefined" &&
+        isolatedBoundary.process === "undefined" && isolatedBoundary.rawIpc === "undefined" &&
+        isolatedBoundary.frozen &&
         isolatedBoundary.rejected === true &&
         isolatedBoundary.refused === null &&
         isolatedBoundary.dialogMalformedRejected === true &&
@@ -16030,7 +16915,12 @@ async function run(win) {
     await runDocumentEventBoundary(isolatedBridgeWindow);
     await runUiEventBoundary(isolatedBridgeWindow);
     await runControlEventBoundary(isolatedBridgeWindow);
-    await runLargeRenderBoundary(win, isolatedBridgeWindow);
+    const observation = observeEarlyLargeRender(win);
+    try {
+      largeRenderQuestion = await runLargeRenderBoundary(win, isolatedBridgeWindow, sentinel, observation);
+    } finally {
+      observation.restore();
+    }
     check(
       "SEC-08 session test preload does not expose the PDF signal to an unmarked window or subframe",
       isolatedBoundary.pdfRestore === "undefined" &&
@@ -16040,41 +16930,150 @@ async function run(win) {
   } finally {
     isolatedBridgeWindow.destroy();
   }
+  await runEarlyLargeRenderFaults(win);
+  if (initialBoundaryHarness) {
+    check("SEC-08 initial boundary controls retain an unmarked ordinary production launch",
+      !expectsPdfSignal && !process.argv.includes("--folia-test-preload"));
+    const alive = await proveSentinelAlive(win, sentinel);
+    check("the error sentinel was demonstrably watching both channels",
+      alive.console === true && alive.dom === true, JSON.stringify(alive));
+    const report = await sentinel.stop();
+    consoleAttribution.stop(report);
+    check("nothing rendered a visible error at any point during the suite",
+      report.hits.length === 0 && report.stalls.length === 0,
+      JSON.stringify({ hits: report.hits, stalls: report.stalls }));
+    return;
+  }
+
+  const finishEarlyRefresh = async nodeUnavailable => {
+    check("SEC-08 early refresh controls retain an unmarked Node-free production launch",
+      !expectsPdfSignal && !process.argv.includes("--folia-test-preload") && nodeUnavailable);
+    const alive = await proveSentinelAlive(win, sentinel);
+    check("the error sentinel was demonstrably watching both channels",
+      alive.console === true && alive.dom === true, JSON.stringify(alive));
+    const report = await sentinel.stop();
+    if (earlyRefreshFixtureGuard) earlyRefreshFixtureGuard.report = report;
+    consoleAttribution.stop(report);
+    check("nothing rendered a visible error at any point during the suite",
+      report.hits.length === 0 && report.stalls.length === 0,
+      JSON.stringify({ hits: report.hits, stalls: report.stalls }));
+  };
+  if (!verifyCleanRefreshSource()) {
+    console.log("SKIP  unsafe refresh operations and native large-tab switches: source architecture refused");
+    const nodeUnavailable = await exec(`typeof require === 'undefined' && typeof process === 'undefined' &&
+      typeof window.fs === 'undefined' && typeof window.ipcRenderer === 'undefined' &&
+      Object.isFrozen(window.folia)`);
+    await finishEarlyRefresh(nodeUnavailable);
+    return;
+  }
 
   write(fileA, "# Alpha\n\nALPHA_V1\n");
   write(fileB, "# Beta\n\nBETA_V1\n");
 
-  await exec(`
-    localStorage.clear();
-    window.CustomTabs.getTabs().forEach(t => { t.hasUnsavedChanges = false; });
-    window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-    null;
-  `);
+  const earlyExec = code => boundedDialogWork(exec(code), "early native tab operation");
+  await boundedDialogWork(clearFixtureTabs("early refresh preflight"), "early fixture cleanup");
+  await earlyExec("localStorage.clear(); true");
 
   const ids = {};
+  const nativeAdmissions = [];
+  const expectedChooserOptions = {
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+      { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  };
   for (const [key, filePath, marker] of [
     ["a", fileA, "ALPHA_V1"], ["b", fileB, "BETA_V1"],
   ]) {
-    const restoreChooser = replaceMethod(dialog, "showOpenDialog", async () => ({
-      canceled: false, filePaths: [filePath],
-    }));
+    const cleanBeforeAdmission = await earlyExec(`({
+      dirtyTabs: window.CustomTabs.__dirtyTabNames(),
+      unsaved: window.hasUnsavedWorkForReload(),
+    })`);
+    if (cleanBeforeAdmission.unsaved !== false ||
+        !Array.isArray(cleanBeforeAdmission.dirtyTabs) || cleanBeforeAdmission.dirtyTabs.length) {
+      throw new Error("Native fixture admission requires clean renderer and tab state: " +
+        JSON.stringify(cleanBeforeAdmission));
+    }
+    let chooserCalls = 0;
+    const chooserRequests = [];
+    const restoreChooser = replaceMethod(dialog, "showOpenDialog", async function (parent, options) {
+      chooserCalls += 1;
+      const request = {
+        call: chooserCalls, parentIsExpected: parent === win,
+        argumentCount: arguments.length, options,
+      };
+      request.allowed = request.parentIsExpected && request.argumentCount === 2 &&
+        request.call === 1 && isDeepStrictEqual(options, expectedChooserOptions);
+      chooserRequests.push(request);
+      if (!request.allowed) {
+        const refusal = { kind: "early-native-chooser", filePath, ...request };
+        dialogSafety.unexpected.push(refusal);
+        throw new Error("Unexpected native fixture admission refused: " + JSON.stringify(refusal));
+      }
+      return { canceled: false, filePaths: [filePath] };
+    });
     try {
-      await exec("window.folia.openFileDialog(); null;");
-      const painted = await waitForCondition(exec,
+      await earlyExec(`(() => {
+        const probe = window.__earlyNativeOpen = {
+          complete: window.completeFileOpen, completed: false,
+          sequence: window.getFileOpenDiagnostics().sequence,
+        };
+        window.completeFileOpen = function(context, visual) {
+          const result = probe.complete.call(this, context, visual);
+          if (context.path === ${JSON.stringify(filePath)} &&
+              context.sequence > probe.sequence) {
+            probe.completed = result === true;
+          }
+          return result;
+        };
+        return true;
+      })()`);
+      await earlyExec("window.folia.openFileDialog(); true");
+      const painted = await boundedDialogWork(waitForCondition(earlyExec,
         `window.currentFilePath === ${JSON.stringify(filePath)} &&
+         window.__earlyNativeOpen.completed === true &&
          document.getElementById('viewer').textContent.includes(${JSON.stringify(marker)}) &&
-         !!window.CustomTabs.getDocumentDescriptor()?.ref`, 8000);
+         !!window.CustomTabs.getDocumentDescriptor()?.ref`, 8000),
+      `initial native ${key} document completion`);
       if (!painted) throw new Error(`Initial native ${key} fixture did not paint`);
-      ids[key] = await exec("window.CustomTabs.getActiveTabId()");
-    } finally { restoreChooser(); }
+      const admitted = await earlyExec(`({
+        id: window.CustomTabs.getActiveTabId(),
+        path: window.CustomTabs.getActiveTab().filePath,
+        document: window.CustomTabs.getDocumentDescriptor(),
+        dirty: window.CustomTabs.getActiveTab().hasUnsavedChanges,
+      })`);
+      ids[key] = admitted.id;
+      nativeAdmissions.push({ ...admitted, chooserCalls, chooserRequests, cleanBeforeAdmission, filePath });
+    } finally {
+      restoreChooser();
+      await earlyExec(`(() => {
+        const probe = window.__earlyNativeOpen;
+        if (probe) window.completeFileOpen = probe.complete;
+        delete window.__earlyNativeOpen;
+        return true;
+      })()`);
+    }
   }
+  const nativeSetup = nativeAdmissions.length === 2 && ids.a !== ids.b &&
+    new Set(nativeAdmissions.map(item => item.document?.ref)).size === 2 &&
+    nativeAdmissions.every(item => item.chooserCalls === 1 &&
+      item.chooserRequests.length === 1 && item.chooserRequests[0].allowed &&
+      item.cleanBeforeAdmission.unsaved === false && item.cleanBeforeAdmission.dirtyTabs.length === 0 &&
+      item.path === item.filePath && item.document?.logicalPath === item.filePath &&
+      item.document?.readTarget === fs.realpathSync.native(item.filePath) &&
+      /^[a-f0-9]{64}$/.test(item.document?.ref) && item.dirty === false);
+  check("SEC-08 early refresh setup admits two distinct clean native documents through the production chooser",
+    nativeSetup, JSON.stringify(nativeAdmissions));
+  if (!nativeSetup) throw new Error("Early refresh fixtures have no distinct native document ownership");
 
   const viewerText = () =>
-    exec(`document.getElementById('viewer').textContent`);
+    earlyExec(`document.getElementById('viewer').textContent`);
   // switchToTab returns before its render calls completeFileOpen; await the
   // accepted completion for this switch, not merely the synchronous tab id.
   const switchToTabAndWait = async (tabId) => {
-    await exec(`
+    await earlyExec(`
       (() => {
         const original = window.completeFileOpen;
         const probe = window.__refreshSwitchCompletion = {
@@ -16095,7 +17094,6 @@ async function run(win) {
             result => { probe.switchOutcome = { settled: true, result }; },
             error => {
               probe.switchOutcome = { settled: false, error: String(error) };
-              throw error;
             },
           );
         } catch (error) {
@@ -16107,14 +17105,14 @@ async function run(win) {
       })()
     `);
     try {
-      const completed = await waitForCondition(
-        exec,
+      const completed = await boundedDialogWork(waitForCondition(
+        earlyExec,
         `window.__refreshSwitchCompletion.completed === true &&
          window.CustomTabs.getActiveTabId() === ${tabId}`,
         8000,
-      );
+      ), `tab ${tabId} accepted visual completion`);
       if (!completed) {
-        const state = await exec(`({
+        const state = await earlyExec(`({
           activeId: window.CustomTabs.getActiveTabId(),
           sequence: window.getFileOpenDiagnostics().sequence,
           expected: window.__refreshSwitchCompletion.sequence,
@@ -16132,9 +17130,68 @@ async function run(win) {
         })}`);
       }
     } finally {
-      await exec(`(() => {
+      await earlyExec(`(() => {
         window.completeFileOpen = window.__refreshSwitchCompletion.original;
         delete window.__refreshSwitchCompletion;
+        return true;
+      })()`);
+    }
+  };
+  const reloadSelectedAndWait = async (tabId, filePath, previousMarker, marker, content) => {
+    const before = await earlyExec(`({
+      id: window.CustomTabs.getActiveTabId(), path: window.currentFilePath,
+      content: window.CustomTabs.getActiveTab()?.content,
+      dirty: window.CustomTabs.getActiveTab()?.hasUnsavedChanges,
+      viewer: document.getElementById('viewer').textContent,
+    })`);
+    if (before.id !== tabId || before.path !== filePath || before.dirty !== false ||
+        typeof before.content !== "string" ||
+        !before.content.includes(previousMarker) || !before.viewer.includes(previousMarker) ||
+        before.content.includes(marker) || before.viewer.includes(marker)) {
+      throw new Error("Explicit refresh has no selected stale clean document: " + JSON.stringify(before));
+    }
+    try {
+      await earlyExec(`(() => {
+        const probe = window.__earlyExplicitReload = {
+          sequence: window.getReloadRequestDiagnostics().sequence + 1,
+          replies: [], notified: false,
+        };
+        probe.off = window.folia.onFileReloadResult(data => {
+          if (data?.path === ${JSON.stringify(filePath)} &&
+              data.reloadRequest?.sequence === probe.sequence) {
+            probe.replies.push(data);
+          }
+        });
+        probe.observer = new MutationObserver(() => {
+          if (document.getElementById('notificationMessage').textContent === i18n('notif.fileReloaded'))
+            probe.notified = true;
+        });
+        probe.observer.observe(document.getElementById('notificationMessage'),
+          { childList: true, characterData: true, subtree: true });
+        return true;
+      })()`);
+      // Select the old bytes before changing disk; switching after the write
+      // would let automatic refresh satisfy an explicit-Reload assertion.
+      write(filePath, content);
+      const dispatched = await earlyExec("window.reloadCurrentFile() === true");
+      const landed = await boundedDialogWork(waitForCondition(earlyExec, `(() => {
+        const probe = window.__earlyExplicitReload, tab = window.CustomTabs.getActiveTab();
+        return probe.replies.length === 1 && probe.replies[0].success === true &&
+          probe.replies[0].content === ${JSON.stringify(content)} &&
+          probe.replies[0].reloadRequest.tabId === ${tabId} &&
+          probe.notified && window.CustomTabs.getActiveTabId() === ${tabId} &&
+          window.currentFilePath === ${JSON.stringify(filePath)} &&
+          window.originalMarkdown === ${JSON.stringify(content)} &&
+          tab.content === ${JSON.stringify(content)} && tab.originalContent === tab.content &&
+          tab.hasUnsavedChanges === false &&
+          document.getElementById('viewer').textContent.includes(${JSON.stringify(marker)});
+      })()`, 8000), "explicit native Reload completion");
+      return { dispatched, landed, before, viewer: await viewerText() };
+    } finally {
+      await earlyExec(`(() => {
+        const probe = window.__earlyExplicitReload;
+        probe?.off?.(); probe?.observer?.disconnect();
+        delete window.__earlyExplicitReload;
         return true;
       })()`);
     }
@@ -16164,27 +17221,24 @@ async function run(win) {
   };
 
   // ---- Scenario 1: the reported bug -------------------------------------
-  // Both files change on disk. Refresh B, then refresh A, then switch back to
+  // Refresh B from disk, then A, then switch back to
   // B. Before the fix, B reverted to BETA_V1.
-  write(fileA, "# Alpha\n\nALPHA_V2\n");
-  write(fileB, "# Beta\n\nBETA_V2\n");
-
   await switchToTabAndWait(ids.b);
-  await exec(`window.reloadCurrentFile(); null;`);
-  await sleep(900);
+  const refreshedB = await reloadSelectedAndWait(ids.b, fileB, "BETA_V1", "BETA_V2",
+    "# Beta\n\nBETA_V2\n");
   check(
     "refresh shows new content for B",
-    (await viewerText()).includes("BETA_V2"),
-    await viewerText(),
+    refreshedB.dispatched && refreshedB.landed && refreshedB.viewer.includes("BETA_V2"),
+    JSON.stringify(refreshedB),
   );
 
   await switchToTabAndWait(ids.a);
-  await exec(`window.reloadCurrentFile(); null;`);
-  await sleep(900);
+  const refreshedA = await reloadSelectedAndWait(ids.a, fileA, "ALPHA_V1", "ALPHA_V2",
+    "# Alpha\n\nALPHA_V2\n");
   check(
     "refresh shows new content for A",
-    (await viewerText()).includes("ALPHA_V2"),
-    await viewerText(),
+    refreshedA.dispatched && refreshedA.landed && refreshedA.viewer.includes("ALPHA_V2"),
+    JSON.stringify(refreshedA),
   );
 
   await switchToTabAndWait(ids.b);
@@ -16215,189 +17269,286 @@ async function run(win) {
 
   // ---- Scenario 2a: clean-tab reads stay main-owned ---------------------
   // Unchanged switches inspect metadata in Main, never the body or adoption.
-  const cleanTargetPaths = [fileA, fileB].map(file => fs.realpathSync.native(file));
-  let cleanMainOpens = 0;
-  let cleanMainStats = 0;
-  const cleanOpen = fs.promises.open;
-  const cleanStat = fs.promises.stat;
-  const restoreCleanOpen = replaceMethod(fs.promises, "open", function (filePath) {
-    if (cleanTargetPaths.includes(filePath)) cleanMainOpens += 1;
-    return cleanOpen.apply(this, arguments);
-  });
-  const restoreCleanStat = replaceMethod(fs.promises, "stat", function (filePath) {
-    if (cleanTargetPaths.includes(filePath)) cleanMainStats += 1;
-    return cleanStat.apply(this, arguments);
-  });
-  let cleanRefreshFastPath;
-  try { cleanRefreshFastPath = await exec(`
-    (async () => {
-      const ipc = window.ipcRenderer;
-      const realInvoke = ipc.invoke;
-      let ownedReads = 0;
-      const receipts = [];
-      let preparations = 0;
-      const realPrepare = window.prepareDocumentDiskAdoption;
-      window.prepareDocumentDiskAdoption = function () {
-        preparations += 1;
-        return realPrepare.apply(this, arguments);
-      };
-      ipc.invoke = function (channel) {
-        if (channel === 'read-owned-tab-disk-snapshot') ownedReads += 1;
-        const result = realInvoke.apply(this, arguments);
-        if (channel !== 'refresh-owned-tab-disk-snapshot') return result;
-        return Promise.resolve(result).then(receipt => {
-          receipts.push({ status: receipt?.status,
-            keys: Object.keys(receipt || {}).sort(),
-            content: Object.prototype.hasOwnProperty.call(receipt || {}, 'content') });
-          return receipt;
-        });
-      };
+  // Watch path-based readers and acquired handles; a new fixture descriptor
+  // also fails the fast path even if its caller uses a raw-fd read API.
+  const observeNativeDiskReads = async (paths, work, controlBodies = null) => {
+    if (tabDiskObservation) throw new Error("Overlapping Main disk-read observers");
+    const pathKey = file => actualHostPlatform === "win32" ? file.toLowerCase() : file;
+    const targets = new Set(paths.flatMap(file =>
+      [file, fs.realpathSync.native(file)].map(target => pathKey(path.resolve(target)))));
+    const fixturePath = value => {
       try {
-        await window.CustomTabs.switchToTab(${ids.a});
-        await window.CustomTabs.switchToTab(${ids.b});
-        const deadline = Date.now() + 5000;
-        while (Date.now() < deadline &&
-          window.CustomTabs.getActiveTabId() !== ${ids.b}) {
-          await new Promise(resolve => setTimeout(resolve, 25));
-        }
-        return {
-          active: window.CustomTabs.getActiveTabId(),
-          ownedReads,
-          receipts, preparations,
-          beta: (window.CustomTabs.getTabs().find(t => t.id === ${ids.b}) || {}).content,
-        };
-      } finally {
-        ipc.invoke = realInvoke;
-        window.prepareDocumentDiskAdoption = realPrepare;
+        const file = Buffer.isBuffer(value) ? value.toString() :
+          value instanceof URL ? require("url").fileURLToPath(value) : value;
+        if (typeof file !== "string") return null;
+        const resolved = path.resolve(file);
+        return targets.has(pathKey(resolved)) ? resolved : null;
+      } catch {
+        return null;
       }
-    })()
-  `); } finally { restoreCleanStat(); restoreCleanOpen(); }
+    };
+    const observation = {
+      target: win.webContents, paths: new Set(paths), records: [],
+      opens: 0, stats: 0, openCalls: [], bodyCalls: [], bodyReads: [],
+    };
+    let observing = true;
+    const controls = [];
+    const noteOpen = (api, filePath) => {
+      const target = fixturePath(filePath);
+      if (target) {
+        observation.opens += 1;
+        observation.openCalls.push({ api, filePath: target });
+      }
+      return target;
+    };
+    const realOpen = fs.promises.open, realStat = fs.promises.stat;
+    const restores = [
+      replaceMethod(fs.promises, "stat", function (filePath) {
+        if (fixturePath(filePath)) observation.stats += 1;
+        return realStat.apply(this, arguments);
+      }),
+      replaceMethod(fs.promises, "open", function (filePath) {
+        const target = noteOpen("fs.promises.open", filePath);
+        const pending = realOpen.apply(this, arguments);
+        if (!target) return pending;
+        return pending.then(handle => {
+          if (!observing) return handle;
+          for (const method of ["readFile", "read", "readv", "createReadStream"]) {
+            const original = handle[method];
+            restores.push(replaceMethod(handle, method, function () {
+              const api = "FileHandle." + method;
+              observation.bodyCalls.push({ api, filePath: target });
+              const result = original.apply(this, arguments);
+              if (method !== "readFile") return result;
+              return result.then(content => {
+                observation.bodyReads.push({ api, filePath: target,
+                  content: typeof content === "string" ? content : content.toString("utf8") });
+                return content;
+              });
+            }));
+          }
+          return handle;
+        });
+      }),
+    ];
+    try {
+      for (const method of ["open", "openSync"]) {
+        const original = fs[method];
+        restores.push(replaceMethod(fs, method, function (filePath) {
+          noteOpen("fs." + method, filePath);
+          return original.apply(this, arguments);
+        }));
+      }
+      for (const [object, method, api] of [
+        [fs.promises, "readFile", "fs.promises.readFile"],
+        [fs, "readFile", "fs.readFile"],
+        [fs, "readFileSync", "fs.readFileSync"],
+        [fs, "createReadStream", "fs.createReadStream"],
+      ]) {
+        const original = object[method];
+        restores.push(replaceMethod(object, method, function (filePath) {
+          const target = fixturePath(filePath);
+          if (target) observation.bodyCalls.push({ api, filePath: target });
+          return original.apply(this, arguments);
+        }));
+      }
+      tabDiskObservation = observation;
+      if (controlBodies) {
+        const readStreamBody = stream => {
+          const content = new Promise((resolve, reject) => {
+            let body = "";
+            stream.on("data", chunk => { body += chunk; });
+            stream.once("end", () => resolve(body));
+            stream.once("error", reject);
+          });
+          return boundedDialogWork(content, "body-reader positive-control stream")
+            .finally(() => stream.destroy());
+        };
+        const readOpenedByte = descriptor => {
+          try {
+            const buffer = Buffer.alloc(1);
+            const bytesRead = fs.readSync(descriptor, buffer, 0, 1, 0);
+            if (bytesRead !== 1) throw new Error("Fixture descriptor returned no body byte");
+            return buffer.toString("utf8");
+          } finally {
+            fs.closeSync(descriptor);
+          }
+        };
+        for (const filePath of paths) {
+          const expected = controlBodies.get(filePath);
+          if (typeof expected !== "string" || !expected.length)
+            throw new Error("Missing body-reader positive-control fixture bytes");
+          const withHandle = async read => {
+            const handle = await fs.promises.open(filePath, "r");
+            try { return await read(handle); }
+            finally { await handle.close(); }
+          };
+          const probes = [
+            ["fs.promises.readFile", () => fs.promises.readFile(filePath, "utf8"), expected],
+            ["fs.readFile", () => new Promise((resolve, reject) =>
+              fs.readFile(filePath, "utf8", (error, body) => error ? reject(error) : resolve(body))),
+              expected],
+            ["fs.readFileSync", () => fs.readFileSync(filePath, "utf8"), expected],
+            ["fs.createReadStream", () => readStreamBody(
+              fs.createReadStream(filePath, { encoding: "utf8" })), expected],
+            ["FileHandle.readFile", () => withHandle(handle => handle.readFile("utf8")), expected],
+            ["FileHandle.read", () => withHandle(async handle => {
+              const buffer = Buffer.alloc(1);
+              const read = await handle.read(buffer, 0, 1, 0);
+              return buffer.subarray(0, read.bytesRead).toString("utf8");
+            }), expected.slice(0, 1)],
+            ["FileHandle.readv", () => withHandle(async handle => {
+              const buffer = Buffer.alloc(1);
+              const read = await handle.readv([buffer], 0);
+              return buffer.subarray(0, read.bytesRead).toString("utf8");
+            }), expected.slice(0, 1)],
+            ["FileHandle.createReadStream", () => withHandle(handle => readStreamBody(
+              handle.createReadStream({ encoding: "utf8", autoClose: false }))), expected],
+            ["fs.open", () => new Promise((resolve, reject) => {
+              fs.open(filePath, "r", (error, descriptor) => {
+                if (error) { reject(error); return; }
+                try { resolve(readOpenedByte(descriptor)); }
+                catch (failure) { reject(failure); }
+              });
+            }), expected.slice(0, 1), "openCalls"],
+            ["fs.openSync", () => readOpenedByte(fs.openSync(filePath, "r")),
+              expected.slice(0, 1), "openCalls"],
+          ];
+          for (const [api, read, bytes, collection = "bodyCalls"] of probes) {
+            const before = observation[collection].length;
+            const content = await boundedDialogWork(Promise.resolve().then(read),
+              "body-reader positive control " + api);
+            controls.push({ api, filePath, content, expected: bytes,
+              observed: observation[collection].slice(before).some(call =>
+                call.api === api && pathKey(call.filePath) === pathKey(path.resolve(filePath))) });
+          }
+        }
+        const live = controls.length === paths.length * 10 &&
+          controls.every(control => control.observed && control.content === control.expected);
+        check("SEC-08 Main body-read observers are live for direct and descriptor fixture reads",
+          live, JSON.stringify(controls));
+        if (!live) throw new Error("Main body-read observers failed their real-byte positive controls");
+        // The controls prove the actual installed observers, but their reads
+        // must not be mistaken for reads by the unchanged-refresh operation.
+        observation.opens = 0;
+        observation.stats = 0;
+        for (const field of ["records", "openCalls", "bodyCalls", "bodyReads"])
+          observation[field].length = 0;
+      }
+      await earlyExec(`(() => {
+        const probe = window.__earlyDiskRead = {
+          prepare: window.prepareDocumentDiskAdoption, preparations: 0,
+        };
+        const paths = ${JSON.stringify(paths)};
+        window.prepareDocumentDiskAdoption = function(request) {
+          if (paths.includes(request?.filePath)) probe.preparations += 1;
+          return probe.prepare.apply(this, arguments);
+        };
+        return true;
+      })()`);
+      await work();
+      const page = await earlyExec(`(() => {
+        const tab = window.CustomTabs.getActiveTab();
+        return {
+          active: tab?.id, content: tab?.content, original: tab?.originalContent,
+          dirty: tab?.hasUnsavedChanges, markdown: window.originalMarkdown,
+          viewer: document.getElementById('viewer').textContent,
+          preparations: window.__earlyDiskRead.preparations,
+          nodeUnavailable: typeof require === 'undefined' && typeof process === 'undefined' &&
+            typeof window.fs === 'undefined' && typeof window.ipcRenderer === 'undefined' &&
+            Object.isFrozen(window.folia),
+        };
+      })()`);
+      return { page, records: observation.records, opens: observation.opens,
+        stats: observation.stats, openCalls: observation.openCalls,
+        bodyCalls: observation.bodyCalls, bodyReads: observation.bodyReads, controls };
+    } finally {
+      observing = false;
+      tabDiskObservation = null;
+      while (restores.length) restores.pop()();
+      await earlyExec(`(() => {
+        const probe = window.__earlyDiskRead;
+        if (probe) window.prepareDocumentDiskAdoption = probe.prepare;
+        delete window.__earlyDiskRead;
+        return true;
+      })()`);
+    }
+  };
+  const cleanRefreshFastPath = await observeNativeDiskReads([fileA, fileB], async () => {
+    await switchToTabAndWait(ids.a);
+    await switchToTabAndWait(ids.b);
+  }, new Map([[fileA, "# Alpha\n\nALPHA_V2\n"], [fileB, "# Beta\n\nBETA_V3\n"]]));
+  const cleanReceipts = cleanRefreshFastPath.records;
   check(
     "SEC-08 unchanged clean-tab refresh uses metadata-only main IPC without body reads or adoption",
-    cleanRefreshFastPath &&
-      cleanRefreshFastPath.active === ids.b &&
-      cleanRefreshFastPath.ownedReads === 0 &&
-      cleanRefreshFastPath.receipts.length === 2 &&
-      cleanRefreshFastPath.receipts.every(receipt =>
-        receipt.status === "unchanged" && !receipt.content &&
-        receipt.keys.join(",") === "diskVersion,pathKey,status") &&
-      cleanRefreshFastPath.preparations === 0 &&
-      cleanMainOpens === 0 && cleanMainStats === 2 &&
-      String(cleanRefreshFastPath.beta).includes("BETA_V3"),
-    JSON.stringify({ ...cleanRefreshFastPath, cleanMainOpens, cleanMainStats }),
+    cleanRefreshFastPath.page.active === ids.b &&
+      cleanReceipts.length === 2 &&
+      cleanReceipts.map(record => record.request.filePath).join(",") === [fileA, fileB].join(",") &&
+      cleanReceipts.every(record => record.channel === "refresh-owned-tab-disk-snapshot" &&
+        record.settled && !record.error && record.reply?.status === "unchanged" &&
+        record.reply.pathKey === record.request.owner.pathKey &&
+        Object.keys(record.reply).sort().join(",") === "diskVersion,pathKey,status") &&
+      cleanRefreshFastPath.page.preparations === 0 &&
+      cleanRefreshFastPath.opens === 0 && cleanRefreshFastPath.stats === 2 &&
+      cleanRefreshFastPath.bodyCalls.length === 0 &&
+      cleanRefreshFastPath.bodyReads.length === 0 &&
+      cleanRefreshFastPath.page.nodeUnavailable &&
+      cleanRefreshFastPath.page.content.includes("BETA_V3") &&
+      cleanRefreshFastPath.page.viewer.includes("BETA_V3"),
+    JSON.stringify(cleanRefreshFastPath),
   );
 
-  write(fileB, "# Beta\n\nSEC08_MAIN_OWNED_READ\n\ncaf\u00e9 \u6f22\u5b57 \ud83d\ude80\n");
-  const mainOwnedRefresh = await exec(`
+  await switchToTabAndWait(ids.a);
+  const changedBody = "# Beta\n\nSEC08_MAIN_OWNED_READ\n\ncaf\u00e9 \u6f22\u5b57 \ud83d\ude80\n";
+  write(fileB, changedBody);
+  const presentationsBeforeRefresh = dialogSafety.presentations;
+  const changedRead = await observeNativeDiskReads([fileB], () => switchToTabAndWait(ids.b));
+  const mainOwnedRefresh = await earlyExec(`
     (async () => {
-      const ipc = window.ipcRenderer;
-      const realInvoke = ipc.invoke;
-      const realReadFileSync = window.fs.readFileSync;
-      const realSendSync = ipc.sendSync;
       const target = ${jsB};
-      let rendererReads = 0;
-      let modalCalls = 0;
-      let ownedReads = 0;
-      let forgedPath = null;
-      let forgedOwner = null;
-      let validSnapshot = null;
-      let validPayload = null;
-      let validAttestationCalls = 0;
-      const realPrepare = window.prepareDocumentDiskAdoption;
-      window.fs.readFileSync = function (filePath) {
-        if (filePath === target) rendererReads += 1;
-        return realReadFileSync.apply(this, arguments);
+      const tab = window.CustomTabs.getActiveTab();
+      const owner = window.CustomTabs.getActiveDocumentIdentity(target, window.getReloadRequestSession());
+      const validPayload = {
+        filePath: target, pageSession: owner.pageSession,
+        rendererGeneration: owner.rendererGeneration, owner, diskVersion: tab.diskVersion,
       };
-      window.prepareDocumentDiskAdoption = async function (preparation) {
-        if (preparation && preparation.filePath === target) {
-          validAttestationCalls += 1;
-        }
-        return realPrepare.apply(this, arguments);
+      const valid = await window.folia.readOwnedTabDiskSnapshot(validPayload);
+      const forgedPath = await window.folia.readOwnedTabDiskSnapshot({
+        ...validPayload, filePath: ${jsA},
+      });
+      const forgedOwner = await window.folia.readOwnedTabDiskSnapshot({
+        ...validPayload, owner: { ...owner, tabId: owner.tabId + 1000 },
+      });
+      return {
+        active: tab.id, validSnapshot: valid && { content: valid.content },
+        validPayload, forgedPath, forgedOwner,
+        content: tab.content, original: tab.originalContent, dirty: tab.hasUnsavedChanges,
       };
-      ipc.sendSync = function (channel) {
-        if (channel === 'confirm-large-render') modalCalls += 1;
-        return realSendSync.apply(this, arguments);
-      };
-      ipc.invoke = function (channel, data) {
-        if (channel !== 'refresh-owned-tab-disk-snapshot' || !data ||
-            data.filePath !== target) {
-          return realInvoke.apply(this, arguments);
-        }
-        ownedReads += 1;
-        validPayload = { ...data, owner: { ...data.owner } };
-        return realInvoke.apply(this, arguments);
-      };
-      try {
-        await window.CustomTabs.switchToTab(${ids.a});
-        await window.CustomTabs.switchToTab(${ids.b});
-        const deadline = Date.now() + 8000;
-        while (Date.now() < deadline) {
-          const tab = window.CustomTabs.getTabs().find(t => t.id === ${ids.b});
-          if (window.CustomTabs.getActiveTabId() === ${ids.b} &&
-              tab && String(tab.content).includes('SEC08_MAIN_OWNED_READ')) break;
-          await new Promise(resolve => setTimeout(resolve, 25));
-        }
-        const tab = window.CustomTabs.getTabs().find(t => t.id === ${ids.b});
-        const session = window.getReloadRequestSession();
-        const owner = window.CustomTabs.getActiveDocumentIdentity(target, session);
-        ipc.invoke = realInvoke;
-        if (validPayload && owner) {
-          const settledPayload = {
-            ...validPayload,
-            pageSession: session,
-            rendererGeneration: owner.rendererGeneration,
-            owner,
-          };
-          validPayload = settledPayload;
-          const valid = await window.folia.readOwnedTabDiskSnapshot(settledPayload);
-          validSnapshot = valid && { content: valid.content };
-          forgedPath = await window.folia.readOwnedTabDiskSnapshot({
-              ...settledPayload,
-              filePath: ${jsA},
-            });
-          forgedOwner = await window.folia.readOwnedTabDiskSnapshot({
-              ...settledPayload,
-              owner: { ...owner, tabId: owner.tabId + 1000 },
-            });
-        }
-        return {
-          active: window.CustomTabs.getActiveTabId(),
-          ownedReads,
-          rendererReads,
-          modalCalls,
-          validSnapshot,
-          validPayload,
-          forgedPath,
-          forgedOwner,
-          validAttestationCalls,
-          content: tab && tab.content,
-          original: tab && tab.originalContent,
-          dirty: tab && tab.hasUnsavedChanges,
-        };
-      } finally {
-        ipc.invoke = realInvoke;
-        ipc.sendSync = realSendSync;
-        window.fs.readFileSync = realReadFileSync;
-        window.prepareDocumentDiskAdoption = realPrepare;
-      }
     })()
   `);
   check(
     "SEC-08 changed clean-tab refresh reads through main without renderer content reads or a modal",
     mainOwnedRefresh &&
       mainOwnedRefresh.active === ids.b &&
-      mainOwnedRefresh.ownedReads === 1 &&
-      mainOwnedRefresh.rendererReads === 0 &&
-      mainOwnedRefresh.modalCalls === 0 &&
+      changedRead.records.length === 1 &&
+      changedRead.records[0].channel === "refresh-owned-tab-disk-snapshot" &&
+      changedRead.records[0].settled && !changedRead.records[0].error &&
+      changedRead.records[0].reply?.status === "changed" &&
+      changedRead.records[0].reply.pathKey === changedRead.records[0].request.owner.pathKey &&
+      changedRead.records[0].reply.content === changedBody &&
+      changedRead.opens > 0 && changedRead.bodyReads.some(read => read.content === changedBody) &&
+      changedRead.page.nodeUnavailable &&
+      dialogSafety.presentations === presentationsBeforeRefresh &&
       mainOwnedRefresh.validSnapshot &&
-      String(mainOwnedRefresh.validSnapshot.content).includes("SEC08_MAIN_OWNED_READ") &&
-      mainOwnedRefresh.validAttestationCalls > 0 &&
-      String(mainOwnedRefresh.content).includes("SEC08_MAIN_OWNED_READ") &&
+      changedRead.page.preparations > 0 &&
+      changedRead.page.content === changedBody && changedRead.page.markdown === changedBody &&
+      changedRead.page.viewer.includes("SEC08_MAIN_OWNED_READ") &&
+      mainOwnedRefresh.content === changedBody &&
       mainOwnedRefresh.content === mainOwnedRefresh.validSnapshot.content &&
-      String(mainOwnedRefresh.content).includes("caf\u00e9 \u6f22\u5b57 \ud83d\ude80") &&
       mainOwnedRefresh.original === mainOwnedRefresh.content &&
       mainOwnedRefresh.dirty === false,
-    JSON.stringify(mainOwnedRefresh),
+    JSON.stringify({ mainOwnedRefresh, changedRead, presentationsBeforeRefresh,
+      presentationsAfterRefresh: dialogSafety.presentations }),
   );
   check(
     "SEC-08 main-owned tab reads refuse forged paths and foreign owners without denying the valid owner",
@@ -16408,6 +17559,14 @@ async function run(win) {
       String(mainOwnedRefresh.validSnapshot.content).includes("SEC08_MAIN_OWNED_READ"),
     JSON.stringify(mainOwnedRefresh),
   );
+  if (earlyRefreshHarness) {
+    await boundedDialogWork(clearFixtureTabs("early large-tab setup"), "large-tab fixture cleanup");
+    await runEarlyNativeLargeTabGuard(win, sentinel, largeRenderQuestion,
+      expectedChooserOptions, switchToTabAndWait);
+    await boundedDialogWork(clearFixtureTabs("early large-tab cleanup"), "large-tab fixture cleanup");
+    await finishEarlyRefresh(changedRead.page.nodeUnavailable);
+    return;
+  }
   await runAdoptionBridgeValidation(exec);
   await runDocumentControlBridgeValidation(exec);
   await runDocumentTransportValidation(exec);
@@ -20438,6 +21597,32 @@ async function run(win) {
         closed.reloadReachable === true &&
         closed.menuReachable === true,
       JSON.stringify(closed),
+    );
+
+    // Overlap alone cannot distinguish a real covered candidate from a panel
+    // removed from hit testing. Keep this separate from the toolbar contracts.
+    const retractedStack = await exec(`(() => {
+      const shell = document.querySelector('body > .container');
+      const header = shell.querySelector(':scope > .header');
+      const panel = shell.querySelector(':scope > .search-anchor > #searchPanel');
+      const h = header.getBoundingClientRect(), p = panel.getBoundingClientRect();
+      const overlap = {
+        left: Math.max(h.left,p.left), right: Math.min(h.right,p.right),
+        top: Math.max(h.top,p.top), bottom: Math.min(h.bottom,p.bottom)
+      };
+      const x = (overlap.left+overlap.right)/2, y = (overlap.top+overlap.bottom)/2;
+      const usable = overlap.right>overlap.left && overlap.bottom>overlap.top &&
+        x>=0 && x<innerWidth && y>=0 && y<innerHeight &&
+        !panel.classList.contains('visible');
+      const stack = usable ? document.elementsFromPoint(x,y) : [];
+      return {overlap,x,y,usable,headerOnTop:!!stack[0]&&header.contains(stack[0]),
+        panelBelow:stack.findIndex(element=>panel.contains(element))>0,
+        stack:stack.map(element=>({tag:element.localName,id:element.id,classes:element.className}))};
+    })()`);
+    check(
+      "the retracted search panel remains a real lower hit-test candidate beneath the bar",
+      retractedStack.usable && retractedStack.headerOnTop && retractedStack.panelBelow,
+      JSON.stringify(retractedStack),
     );
 
     // --- the tab right-click menu ---
@@ -41808,7 +42993,9 @@ app.whenReady().then(async () => {
   // machine or a slower revert. It is still a hard, loud bound, and it is NOT
   // a blanket relaxation: the newline and commit focused modes, every
   // companion and the full suite keep exactly the budgets they had.
-  const watchdogMs = focusedF22Harness
+  const watchdogMs = initialBoundaryHarness || earlyRefreshHarness
+    ? 90000
+    : focusedF22Harness
     ? 150000
     // The complete admission journey now includes real quota opens and restarts.
     // Its healthy log spans 91.12s; negative alias/restore polls add up to 28s.
@@ -41842,8 +43029,11 @@ app.whenReady().then(async () => {
       `\n=== TIMED OUT after ${results.length - failed}/${results.length} checks ===`,
     );
     app.exit(1);
-  }, watchdogMs);
+  }, focusedDeadlineAt === null ? watchdogMs : Math.max(0, focusedDeadlineAt - performance.now()));
   watchdog.unref?.();
+  // The focused budget starts before imports, not again after readiness.
+  // Clear the startup timer only after its runtime successor is armed.
+  clearTimeout(startupWatchdog);
 
   await sleep(2500);
   const win = BrowserWindow.getAllWindows()[0];
@@ -41932,7 +43122,7 @@ app.whenReady().then(async () => {
     } else if (queueFocusedHarness) {
       await runF22QueueFocusedScenario((code) =>
         win.webContents.executeJavaScript(code, true));
-    } else if (ownedReadFocusedHarness || dialogExtraFocusedHarness || approvedRequestFocusedHarness || nativeAuthorityFocusedHarness || ownedMetadataFocusedHarness) {
+    } else if (initialBoundaryHarness || earlyRefreshHarness || ownedReadFocusedHarness || dialogExtraFocusedHarness || approvedRequestFocusedHarness || nativeAuthorityFocusedHarness || ownedMetadataFocusedHarness) {
       await run(win);
     } else if (companionSelfcheck) {
       await runCompanionSettlementScenarios();
@@ -41992,6 +43182,78 @@ app.whenReady().then(async () => {
 
   let restoreBatchQuit = null;
   let ownedNativeReadsSettled = true;
+  if (earlyRefreshHarness) {
+    const fixture = earlyRefreshFixtureGuard;
+    if (results.some(result => !result.ok)) {
+      const shot = await captureScreenshot(win, "tab-refresh-FAILED");
+      if (shot) console.log("failure screenshot: " + shot);
+    }
+    let sentinelError = null;
+    try {
+      if (!fixture.sentinel || !fixture.consoleAttribution)
+        throw new Error("Early refresh did not retain its sentinel owner");
+      if (!fixture.report) {
+        fixture.report = await boundedDialogWork(fixture.sentinel.stop(),
+          "early refresh failure sentinel teardown", 12000);
+        fixture.consoleAttribution.stop(fixture.report);
+        check("nothing rendered a visible error at any point during the suite",
+          fixture.report.hits.length === 0 && fixture.report.stalls.length === 0,
+          JSON.stringify({ hits: fixture.report.hits, stalls: fixture.report.stalls }));
+      }
+    } catch (error) {
+      sentinelError = uncaughtExceptionDetail(error);
+    }
+    check("SEC-08 early refresh sentinel teardown completes before Main destruction",
+      sentinelError === null && !!fixture.report,
+      sentinelError || "the retained sentinel completed its final drain");
+    // Destroy bypasses close/beforeunload consent. Suppress only the automatic
+    // app.quit emitted by window-all-closed so this test can finish its footer.
+    restoreBatchQuit = replaceMethod(app, "quit", () => {});
+    const destructionCheck =
+      "SEC-08 early refresh destroys its exact owned Main window and webContents before fixture cleanup";
+    try {
+      const owner = fixture.owner;
+      const wc = fixture.webContents;
+      if (!ownsScratchDir || !fixture.removedRegistrations.includes(dir) ||
+          REGISTERED_TEMP_DIRS.has(dir) || !fs.existsSync(dir) ||
+          owner !== win || focusedRendererDialogGuard?.owner !== owner || !wc) {
+        throw new Error("Early refresh teardown lost its exact private fixture or Main owner");
+      }
+      if (!owner.isDestroyed()) {
+        if (owner.webContents !== wc || BrowserWindow.fromWebContents(wc) !== owner)
+          throw new Error("Early refresh Main webContents identity changed before teardown");
+        owner.destroy();
+      }
+      const destroyed = await boundedDialogWork(waitUntil(() =>
+        fixture.closed && fixture.destroyed && owner.isDestroyed() && wc.isDestroyed(), 5000),
+      "exact early refresh Main destruction", 6000);
+      await new Promise(resolve => setImmediate(resolve));
+      const shutdown = __shutdown.state();
+      const verified = destroyed && fixture.closed && fixture.destroyed &&
+        owner.isDestroyed() && wc.isDestroyed() && shutdown.renderer === "unusable" &&
+        !BrowserWindow.getAllWindows().includes(owner) && fs.existsSync(dir);
+      check(destructionCheck, verified, JSON.stringify({
+        windowId: fixture.windowId, webContentsId: fixture.webContentsId,
+        closedObserved: fixture.closed, destroyedObserved: fixture.destroyed,
+        windowDestroyed: owner.isDestroyed(), webContentsDestroyed: wc.isDestroyed(),
+        renderer: shutdown.renderer, reason: shutdown.rendererUnusableReason,
+      }));
+      if (!verified) {
+        restoreBatchQuit();
+        app.exit(1);
+        return;
+      }
+      fixture.verified = true;
+      for (const root of fixture.removedRegistrations) REGISTERED_TEMP_DIRS.add(root);
+    } catch (error) {
+      check(destructionCheck, false, uncaughtExceptionDetail(error));
+      restoreBatchQuit();
+      // The unverified root stays deregistered: neither app.exit nor the
+      // process-exit sweep may delete fixtures still owned by a live window.
+      app.exit(1);
+      return;
+    }
+  }
   if (ownedMetadataFocusedHarness) {
     if (results.some(result => !result.ok)) {
       const shot = await captureScreenshot(win, "tab-refresh-FAILED");
@@ -42105,6 +43367,7 @@ app.whenReady().then(async () => {
       ? "SEC-08 owned metadata preserves its private fixture root through actual native process exit"
       : "the suite's registered temp-directory cleanup completed before its definitive footer",
     rootReleased === true &&
+      (!earlyRefreshHarness || earlyRefreshFixtureGuard.verified === true) &&
       (!ownedMetadataFocusedHarness || fs.existsSync(dir)) &&
       sweepFailures.length === 0 &&
       REGISTERED_TEMP_DIRS.size === 0,
@@ -42117,6 +43380,7 @@ app.whenReady().then(async () => {
   );
   const finalCleanupPassed =
     rootReleased === true &&
+    (!earlyRefreshHarness || earlyRefreshFixtureGuard.verified === true) &&
     sweepFailures.length === 0 &&
     REGISTERED_TEMP_DIRS.size === 0;
   if (tabAuthorityDelayedContinuation) {
@@ -42131,11 +43395,13 @@ app.whenReady().then(async () => {
         delayed.lookup.body === delayed.bodyEntry.content,
       JSON.stringify({ waiting, lookup: delayed.lookup, rootExists: fs.existsSync(dir) }));
   }
+  check("the tab harness encountered no unowned native or Main-owned dialogs",
+    dialogSafety.unexpected.length === 0, JSON.stringify(dialogSafety.unexpected));
   let failed = results.filter((r) => !r.ok).length;
   // Screenshot as a debugging artifact, never a baseline - see
   // test-visual-utils.js. Captured on failure so the failing screen can be
   // inspected without re-running the suite by hand.
-  if (failed > 0 && !ownedMetadataFocusedHarness) {
+  if (failed > 0 && !ownedMetadataFocusedHarness && !earlyRefreshHarness) {
     const shot = await captureScreenshot(win, "tab-refresh-FAILED");
     if (shot) console.log("failure screenshot: " + shot);
   }
@@ -42160,6 +43426,7 @@ app.whenReady().then(async () => {
   // must not turn a bounded failure into a silent hang after its last check.
   clearTimeout(watchdog);
   if (restoreBatchQuit) restoreBatchQuit();
+  while (restoreDialogSafety.length) restoreDialogSafety.pop()();
   // Exit 2 is neither a behavioral pass nor failure: it states that this
   // regression proof cannot run until its required production contract lands.
   app.exit(failed === 0 ? (unavailableEvidence ? 2 : 0) : 1);

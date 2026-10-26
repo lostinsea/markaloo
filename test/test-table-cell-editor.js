@@ -68,6 +68,7 @@ const hashes = () => Object.fromEntries(productFiles.map(file => [file, sha(path
 // lexer. It remains usable without Electron; absent vendoring fails explicitly.
 async function sourceTests() {
   dialogGuardSourceTests();
+  dialogCleanupSourceTests();
   const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
   const cells = context.window.FoliaTableCells;
@@ -393,6 +394,54 @@ function rendererDialogGuardScript(id, marker, guardStage) {
   })()`;
 }
 
+function closeObservedCellDialog(expectedPresent, allowAbsent) {
+  const dialog = document.getElementById("tableCellDialog");
+  if (typeof expectedPresent !== "boolean") throw new Error("Cell dialog presence was not established");
+  if (!dialog) {
+    if (expectedPresent || !allowAbsent) throw new Error("Expected cell dialog is missing");
+  } else {
+    const button = document.getElementById("tableCellCancel");
+    if (!expectedPresent || !(dialog instanceof HTMLDialogElement) ||
+        !(button instanceof HTMLButtonElement) || !dialog.contains(button)) {
+      throw new Error("Cell dialog or Cancel control changed");
+    }
+    if (dialog.open) button.click();
+    if (dialog.open) throw new Error("Cell dialog did not close");
+  }
+  if (document.querySelector("dialog[open]")) throw new Error("An unexpected document dialog remains open");
+  return true;
+}
+
+function dialogCleanupSourceTests() {
+  function run({ present = true, open = true, closes = true, button = true, other = false,
+    expected = true, allowAbsent = false } = {}) {
+    class Dialog {}
+    class Button {}
+    const dialog = Object.assign(new Dialog(), { open, contains: node => node === cancel });
+    const cancel = button ? Object.assign(new Button(), { click() { if (closes) dialog.open = false; } }) : null;
+    const document = {
+      getElementById: id => id === "tableCellDialog" ? present ? dialog : null : cancel,
+      querySelector: () => other || present && dialog.open ? {} : null,
+    };
+    const context = vm.createContext({ document, HTMLDialogElement: Dialog, HTMLButtonElement: Button });
+    try {
+      return vm.runInContext(`(${closeObservedCellDialog})(${JSON.stringify(expected)},${allowAbsent})`, context);
+    } catch { return false; }
+  }
+  check("cell cleanup closes its previously observed real dialog", run());
+  check("cell cleanup permits confirmed feature-absent baseline without an open dialog",
+    run({ present: false, expected: false, allowAbsent: true }));
+  for (const [label, options] of [
+    ["unobserved presence", { expected: null }],
+    ["unexpected disappearance", { present: false, allowAbsent: true }],
+    ["unapproved baseline absence", { present: false, expected: false }],
+    ["unexpected appearance", { expected: false, allowAbsent: true }],
+    ["missing Cancel", { button: false }],
+    ["unsuccessful closure", { closes: false }],
+    ["another open document dialog", { present: false, expected: false, allowAbsent: true, other: true }],
+  ]) check("cell cleanup refuses " + label, !run(options));
+}
+
 function createEarlyElectronSafety(electron) {
   const { app, dialog } = electron;
   let detailedFailure = null;
@@ -569,7 +618,8 @@ require("./test-userdata-isolation");
   const product = hashes();
   const shellCalls = [], network = [], saves = [], screenshots = [], unexpectedDialogs = [], teardownErrors = [];
   let chooser, win, sentinel, fileSequence = 0, actorCleanup = null, finishing = false, shellControl = null;
-  let admissionFixture = null;
+  let admissionFixture = null, observedCellDialog = null;
+  const performanceSources = new Map();
   const fixtures = [];
   const rawFile = path.join(evidence, "raw-ui" + (proof ? "-" + proof : "") + ".log");
   fs.writeFileSync(rawFile, "");
@@ -712,7 +762,7 @@ require("./test-userdata-isolation");
         selection:window.getActiveFileSelectionGeneration(),
         sequence:window.getReloadRequestDiagnostics().sequence,
         latest:window.getLatestReloadRequestSequence(currentFilePath),
-        snapshot:currentReloadSnapshot(),mode:isEditMode,state:__cells.state(),
+        snapshot:currentReloadSnapshot(),mode:isEditMode,state:__cells.${perfOnly ? "commonState" : "state"}(),
         save:window.getPendingSaveStatus(),freeze:window.CustomTabs.__shutdownFreeze()};
     })()`);
     const owner = witness.owner;
@@ -724,11 +774,12 @@ require("./test-userdata-isolation");
       typeof owner.pathKey === "string" && owner.pathKey.length > 0 &&
       typeof owner.documentRef === "string" && /^[a-f0-9]{64}$/.test(owner.documentRef) &&
       positiveSafe(witness.selection) && witness.mode && !witness.save.pending && !witness.freeze.frozen &&
-      witness.state.exact === fixture.body && witness.state.cache === fixture.body &&
+      witness.state.value === lf(fixture.body) &&
+      (perfOnly || witness.state.exact === fixture.body) && witness.state.cache === fixture.body &&
       witness.snapshot === lf(fixture.body);
     check("cell actor has the exact admitted fixture tab session reference and live source", valid, witness);
     if (!valid) throw new Error("Missing qualified document actor identity");
-    return witness;
+    return { ...witness, expectedSource: fixture.body };
   }
   function observeMainDeliveries(matches, hold = false) {
     const target = win.webContents;
@@ -777,7 +828,7 @@ require("./test-userdata-isolation");
     } };
   }
   function matchesSaveRequest(request, witness) {
-    return !!request && request.filePath === witness.path && request.content === witness.state.exact &&
+    return !!request && request.filePath === witness.path && request.content === witness.expectedSource &&
       request.saveRequestSession === witness.session && positiveSafe(request.requestId) &&
       request.saveRequest?.requestId === request.requestId &&
       positiveSafe(request.saveRequest?.sequence) &&
@@ -802,11 +853,12 @@ require("./test-userdata-isolation");
         saves.length === beforeSaves + 1 && delivery.records.some(record => record.args[1]?.success === true));
       await wait("positive-control Save settlement", "!window.getPendingSaveStatus().pending");
       const request = saves[beforeSaves], result = delivery.records.find(record => record.args[1]?.success === true)?.args[1];
-      const after = await state(), status = await exec("window.getPendingSaveStatus()");
+      const after = await (perfOnly ? commonState() : state()), status = await exec("window.getPendingSaveStatus()");
       const valid = saves.length === beforeSaves + 1 && matchesSaveRequest(request, witness) &&
         matchesSaveResult(result, request) && result.success === true && result.savedContent === fixture.body &&
         !status.pending && status.revision > witness.save.revision &&
-        after.exact === fixture.body && after.cache === fixture.body && after.owner === fixture.id &&
+        after.value === lf(fixture.body) && (perfOnly || after.exact === fixture.body) &&
+        after.cache === fixture.body && after.history === witness.state.history && after.owner === fixture.id &&
         after.path === fixture.file && !after.dirty && fs.readFileSync(fixture.file).equals(disk);
       check("actual explicit unchanged Save proves the qualified request observer and correlated successful settlement", valid,
         { beforeSaves, request, result, status, after });
@@ -1199,6 +1251,14 @@ require("./test-userdata-isolation");
           error: document.getElementById("notificationMessage").textContent };
       },
       inputs() { return [...tableCellGrid.querySelectorAll('[contenteditable="true"]')]; },
+      commonState() {
+        const tab = window.CustomTabs.getActiveTab(), editor = captureDocumentEditor();
+        const session = window.getReloadRequestSession();
+        return { value: markdownEditor.value, cache: tab?.content,
+          history: JSON.stringify(historyForEditorState(editor)), editor,
+          dirty: hasUnsavedChanges, owner: tab?.id, path: currentFilePath,
+          identity: tab ? window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, session) : null };
+      },
       state() {
         return { value: markdownEditor.value, exact: window.CustomTabs.snapshotExactEditorContent(),
           cache: window.CustomTabs.getActiveTab().content,
@@ -1227,15 +1287,28 @@ require("./test-userdata-isolation");
       }
       retained = await exec(`(() => {
         const editor=captureDocumentEditor();
-        return {state:__cells.state(),editor,history:JSON.stringify(historyForEditorState(editor))};
+        return {state:__cells.${perfOnly ? "commonState" : "state"}(),editor,
+          history:JSON.stringify(historyForEditorState(editor))};
       })()`);
+      if (perfOnly) {
+        const expected = performanceSources.get(retained.state.owner);
+        if (!expected || expected.file !== retained.state.path || expected.source !== lf(expected.source) ||
+            retained.state.value !== expected.source || !sameOwner(retained.state.identity, expected.identity)) {
+          throw new Error("Dirty performance owner lacks its independently authored LF source and identity");
+        }
+        retained.expectedSource = expected.source;
+      } else retained.expectedSource = retained.state.exact;
       retained.disk = fs.readFileSync(retained.state.path);
       retained.saves = saves.length;
       await page(id => window.CustomTabs.switchToTab(id), admissionFixture.id);
+      const mapped = perfOnly
+        ? "(()=>{const d=editorScroll.diagnostics();return d.matchesSource&&!d.pendingSource&&" +
+          "Number.isSafeInteger(d.selection)&&d.selection>0&&d.mappedSelection===d.selection})()"
+        : "editorScroll.isCurrentSource(markdownEditor.value)";
       await wait("clean fixture-admission tab", `currentFilePath===${JSON.stringify(admissionFixture.file)}&&
-        isEditMode&&editorScroll.isCurrentSource(markdownEditor.value)&&!undoRedoRendering`);
-      const parked = await state();
-      const clean = parked.owner === admissionFixture.id && parked.exact === admissionFixture.body &&
+        isEditMode&&${mapped}&&!undoRedoRendering&&!window.CustomTabs.isDocumentFrozen()`);
+      const parked = await (perfOnly ? commonState() : state());
+      const clean = parked.owner === admissionFixture.id && (perfOnly || parked.exact === admissionFixture.body) &&
         parked.cache === admissionFixture.body && parked.value === lf(admissionFixture.body) &&
         !await exec("hasUnsavedWork()") && fs.readFileSync(admissionFixture.file, "utf8") === admissionFixture.body;
       check("fixture " + label + " admits from its independently clean tab without discarding the dirty owner", clean, parked);
@@ -1257,6 +1330,17 @@ require("./test-userdata-isolation");
     if (!await exec("isEditMode")) await exec("openEditorBtn.click();true");
     await wait("editable source ownership", "isEditMode&&contentWrapper.classList.contains('split-view')&&editorScroll.diagnostics().matchesSource&&!editorScroll.diagnostics().pendingSource");
     await page(installHelpers);
+    const present = await exec(`(() => {
+      const dialog=document.getElementById('tableCellDialog'),button=document.getElementById('tableCellCancel');
+      if(dialog&&(!(dialog instanceof HTMLDialogElement)||!(button instanceof HTMLButtonElement)||!dialog.contains(button))) {
+        throw new Error('Malformed cell dialog or Cancel control');
+      }
+      return !!dialog;
+    })()`);
+    if (observedCellDialog === null) {
+      if (!present && !(baseline && perfOnly)) throw new Error("Candidate cell dialog is missing");
+      observedCellDialog = present;
+    } else if (present !== observedCellDialog) throw new Error("Observed cell dialog presence changed");
     await settle();
     if (retained) {
       const parkedOwner = await page(id => {
@@ -1267,14 +1351,23 @@ require("./test-userdata-isolation");
           history: editor ? JSON.stringify(historyForEditorState(editor)) : null } : null;
       }, retained.state.owner);
       const preserved = parkedOwner?.id === retained.state.owner && parkedOwner.path === retained.state.path &&
-        parkedOwner.content === retained.state.exact &&
+        parkedOwner.content === retained.expectedSource &&
         parkedOwner.dirty === retained.state.dirty && parkedOwner.editor?.open === retained.editor.open &&
         parkedOwner.history === retained.history &&
         saves.length === retained.saves && fs.readFileSync(retained.state.path).equals(retained.disk);
       check("fixture " + label + " preserves the parked dirty owner's exact source history state and disk", preserved, parkedOwner);
       if (!preserved) throw new Error("Fixture admission changed the parked dirty owner");
     }
-    return { file, id: await exec("window.CustomTabs.getActiveTabId()"), body };
+    const fixture = { file, id: await exec("window.CustomTabs.getActiveTabId()"), body };
+    if (perfOnly) {
+      const observed = await commonState();
+      if (observed.owner !== fixture.id || observed.path !== file ||
+          observed.value !== lf(body) || observed.cache !== body || !observed.identity) {
+        throw new Error("Performance fixture source or identity was not established");
+      }
+      performanceSources.set(fixture.id, { file, source: body, identity: observed.identity });
+    }
+    return fixture;
   }
   function prepareFixture(label, body) {
     if (chooser) throw new Error("An earlier owned fixture chooser is still pending");
@@ -1309,6 +1402,7 @@ require("./test-userdata-isolation");
     throw new Error("Dirty Open did not reach the expected before-original fatal refusal");
   }
   const state = () => exec("__cells.state()");
+  const commonState = () => exec("__cells.commonState()");
   async function openGrid(index = 1, rowsOnly = false, first, last) {
     const menu = first === undefined
       ? await page(index => __cells.preview(index), index)
@@ -1319,7 +1413,7 @@ require("./test-userdata-isolation");
   }
   async function cancel() {
     if (!win || win.isDestroyed()) return;
-    await exec("if(tableCellDialog.open)document.getElementById('tableCellCancel').click();true");
+    await page(closeObservedCellDialog, observedCellDialog, baseline && perfOnly && observedCellDialog === false);
   }
   async function cleanupActors() {
     if (!win || win.isDestroyed()) return;
@@ -2640,6 +2734,7 @@ require("./test-userdata-isolation");
       JSON.stringify(receipt, null, 2));
     for (const profile of ["tables", "wide"]) {
       const body = "# Cells " + profile + "\n\n" + generate(profile, 50 * 1024);
+      if (body !== lf(body)) throw new Error("Performance fixtures require independently authored LF source");
       for (const rep of sample === null ? [0, 1, 2] : [sample]) {
         const start = performance.now();
         const fixture = await fresh("perf-" + profile + "-" + rep, body);
@@ -2656,9 +2751,14 @@ require("./test-userdata-isolation");
         const inputToPaintMs = performance.now() - begin;
         const observed = await exec(`({value:markdownEditor.value,cache:window.CustomTabs.getActiveTab().content,
           callbacks:editorScroll.diagnostics().callbacks})`);
-        check("finite " + profile + " sample " + rep + " preserves its independently authored complete source",
-          observed.value === expected &&
-          fs.readFileSync(fixture.file, "utf8") === body);
+        const preserved = observed.value === expected && observed.cache === expected &&
+          fs.readFileSync(fixture.file, "utf8") === body;
+        check("finite " + profile + " sample " + rep + " preserves its independently authored complete source", preserved);
+        if (!preserved) throw new Error("Performance edit did not preserve its authored source cache and disk");
+        const owner = await commonState(), previous = performanceSources.get(fixture.id);
+        if (!previous || owner.owner !== fixture.id || owner.path !== fixture.file ||
+            !sameOwner(owner.identity, previous.identity)) throw new Error("Performance edit changed its owning document");
+        performanceSources.set(fixture.id, { ...previous, source: expected });
         receipt.samples.push({ profile, rep, openAndSplitMs, inputToPaintMs, callbacks: observed.callbacks });
       }
     }
