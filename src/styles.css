@@ -1922,11 +1922,10 @@ html {
 
 /* Search Panel
  *
- * Positioned against the bottom edge of `.header` via the zero-height
- * `.search-anchor` wrapper, so it opens BELOW the toolbar rather than over it.
- * `top: 100%` on a zero-height anchor is 0, i.e. the header's bottom edge.
- * The retracted panel translates up behind the header, which is why `.header`
- * carries the higher z-index of the two.
+ * The screen host shares main-content's remaining grid row; search remains
+ * an overlay rather than taking a row away from either reading scroller.
+ * Its unclipped, pointer-transparent host lets the retracted panel remain a
+ * hit-test candidate below the higher-stacked header.
  */
 .search-anchor {
   position: relative;
@@ -2254,8 +2253,104 @@ html {
 
 /* Reserve the same width as the left drawer, including at narrow widths.
    The document and its scrollbar must stay beside it, not underneath it. */
-.content-wrapper:has(> #indexPanel.visible) {
-  margin-left: min(var(--toc-width), 40vw);
+body > .container > .main-content > .content-wrapper:has(> #indexPanel.visible) {
+  margin-left: var(--workspace-toc-inset, var(--toc-panel-width));
+}
+
+body > .container {
+  /* Keep the physical closed drawer width for its translateX transition. */
+  --toc-panel-width: min(var(--toc-width), 40vw);
+}
+
+body > .container > .main-content > .content-wrapper > #indexPanel {
+  width: var(--toc-panel-width);
+}
+
+@property --search-toc-exposure {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@media screen {
+  body > .container {
+    --workspace-toc-inset: 0px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) {
+    --workspace-toc-inset: var(--toc-panel-width);
+  }
+
+  body > .container > .header {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+
+  body > .container > .search-anchor,
+  body > .container > .main-content {
+    grid-area: 2 / 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  body > .container > .search-anchor {
+    height: auto;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  body > .container > .search-anchor > .search-panel {
+    --search-toc-exposure: 0;
+    /* Opening reserves full width. Closing keeps a conservative live-width
+       inset for at most 0.3s after the last close, including rapid reversals. */
+    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));
+    max-height: 100%;
+    overflow-y: auto;
+    align-items: flex-start;
+    pointer-events: auto;
+    padding-inline: min(20px, 3vw);
+    transition: transform 0.3s ease, --search-toc-exposure 0.3s ease;
+  }
+
+  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) > .search-anchor > .search-panel {
+    --search-toc-exposure: 1;
+    /* Reset the proxy while the full opening inset already covers the drawer. */
+    transition: transform 0.3s ease;
+  }
+
+  body > .container > .search-anchor > .search-panel > .search-container {
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: min(8px, 1vw);
+  }
+
+  body > .container > .search-anchor > .search-panel .search-input {
+    flex: 1 1 8rem;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  body > .container > .search-anchor > .search-panel .search-counter {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  body > .container > .search-anchor > .search-panel .search-btn {
+    flex: 0 0 auto;
+    padding-inline: min(10px, 2vw);
+  }
+
+  body > .container > .search-anchor > .search-panel .search-btn svg {
+    flex: none;
+  }
 }
 
 .index-header {

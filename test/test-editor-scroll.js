@@ -625,7 +625,7 @@ async function mirrorRetention() {
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
   win.setSize(1440, 920);
-  sentinel = startErrorSentinel(win, { label: "editor-scroll" });
+  sentinel = startErrorSentinel(win, { label: "editor-scroll", trapExternal: false });
   for (let i = 0; !proof && i < 6; i++) {
     const openMs = await open(i % 2 ? plain : first, i % 2 ? null : "Scroll correspondence");
     const splitMs = await mode(true);

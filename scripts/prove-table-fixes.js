@@ -407,6 +407,10 @@ const VIRTUAL_SUITES = Object.freeze({
     npmScript: "test:tabs",
     environment: { SEC08_OWNED_READ_FOCUSED_HARNESS: "1", SEC08_OWNED_READ_CORE_ONLY: "1" },
   }),
+  "test:sec08-early-refresh-evidence": Object.freeze({
+    npmScript: "test:tabs",
+    environment: Object.freeze({ SEC08_EARLY_REFRESH_HARNESS: "1" }),
+  }),
   "test:sec08-native-authority-evidence": Object.freeze({
     npmScript: "test:tabs",
     environment: { SEC08_NATIVE_AUTHORITY_FOCUSED_HARNESS: "1" },
@@ -478,7 +482,328 @@ const VIRTUAL_SUITES = Object.freeze({
   }),
 });
 
+// These controls precede the additional layout actors and survive a refused
+// unsafe pointer preflight. The owner/guard/fixture checks still run on failure.
+const SEARCH_LAYOUT_CONTROLS = [
+  /^the private startup is actually empty and clean with no active document$/,
+  /^the unchanged fixture is cheap under the actual large-document contract$/,
+  /^exactly one native chooser admitted the selected tab with a real descriptor$/,
+  /^the search probe genuinely wraps the production highlight function$/,
+  /^a six-character burst produces a single document-walking pass$/,
+  /^the debounced pass highlights every match$/,
+  /^exactly one match is marked current$/,
+  /^Enter flushes a pending search instead of navigating stale matches$/,
+  /^the next button flushes a pending search$/,
+  /^the previous button flushes a pending search$/,
+  /^closing the panel cancels a pending search$/,
+  /^emptying the input clears highlights synchronously$/,
+  /^the search re-applies against the new tree, with every match attached$/,
+  /^search layout starts after the original rendered With fixture and real admission$/,
+  /^closing viewport enlargement has a physical width change during an unfinished real transition$/,
+  /^closing token increase has a physical width change during an unfinished real transition$/,
+  /^rapid real TOC close open close reversals coexist with physical width changes and unfinished transitions$/,
+  /^search layout restores original window bounds and clean document ownership$/,
+  /^the production search function is restored before terminal cleanup$/,
+  /^nothing rendered a visible error at any point during the suite$/,
+  /^the error sentinel completed without a stalled observation$/,
+  /^Main external-open traps remain active through terminal cleanup$/,
+  /^the native and Main-owned dialog guards remain locked through teardown$/,
+  /^owned-window destruction completed without an exception$/,
+  /^the exact owned windows are destroyed before the watched fixture is released$/,
+  /^the watched fixture was verifiably released after destroying its owner$/,
+];
+
 const REVERTS = [
+  // SOURCE-ONLY proposals: no sensitivity run is claimed. Exact failure sets
+  // must be qualified, not broadened, after an authorized baseline and reviews.
+  // R1142-R1145 belong to the feature stream; these IDs start after that range.
+  {
+    id: "R1146",
+    suite: "test:search",
+    what: "let the whole search panel overlap the actual TOC again",
+    file: CSS,
+    from: "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));",
+    to: "    left: 0;",
+    expect: [
+      // Fresh Welcome starts closed, but the unchanged real chooser admission
+      // applies the pending TOC default before this original visibility check.
+      /^the search panel is actually visible on screen$/,
+      /^TOC toggle transitions keep the whole search panel beside the moving drawer$/,
+      /^closing viewport enlargement keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^closing token increase keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^rapid TOC reversals under width changes keep the whole search panel and exposed controls beside the live drawer$/,
+      /^narrow search layout actually wraps without clipping icons or counter text$/,
+      /^visible TOC width changes reserve search space in the same layout$/,
+      /^search spans the workspace at actual 15 50 and 85 percent split ratios$/,
+      /^search layout shared allocation and control exposure$/,
+      /^short search layout exposes each complete control after local vertical scrolling$/,
+      /^native search searchInput preflight owns its inward-left point$/,
+      /^harness ran to completion$/,
+      /^the complete search scenario sequence reached its terminal path$/,
+    ],
+    mustPass: SEARCH_LAYOUT_CONTROLS,
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1147",
+    suite: "test:search",
+    what: "reserve the physical drawer width even after the TOC closes",
+    file: CSS,
+    from: "    --workspace-toc-inset: 0px;",
+    to: "    --workspace-toc-inset: var(--toc-panel-width);",
+    expect: [
+      /^authored containers and TOC lookalikes do not become the application shell$/,
+      /^search layout shared allocation and control exposure$/,
+      /^closed TOC releases all search reservation while retaining its physical transition width$/,
+    ],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^TOC toggle transitions keep the whole search panel beside the moving drawer$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1148",
+    suite: "test:search",
+    what: "stop the narrow search control group wrapping into reachable rows",
+    file: CSS,
+    from: "    min-width: 0;\n    flex-wrap: wrap;\n    gap: min(8px, 1vw);",
+    to: "    min-width: 0;\n    flex-wrap: nowrap;\n    gap: min(8px, 1vw);",
+    expect: [
+      /^narrow search layout actually wraps without clipping icons or counter text$/,
+    ],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout returned sizes cross narrow and both sides of compact mode$/,
+      /^native input text changes the actual rendered search result to one match$/,
+      /^native close click cancels a genuinely pending term without late highlights$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1149",
+    suite: "test:search",
+    what: "let the search panel exceed its actual remaining workspace height",
+    file: CSS,
+    from: "    max-height: 100%;\n    overflow-y: auto;\n    align-items: flex-start;",
+    to: "    max-height: none;\n    overflow-y: auto;\n    align-items: flex-start;",
+    expect: [
+      /^short search layout has real overflow and a usable complete-control scrollport$/,
+      /^short search layout exposes each complete control after local vertical scrolling$/,
+      /^short search layout makes every counter text fragment reachable$/,
+    ],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout shared allocation and control exposure$/,
+      /^native next click changes the actual current match$/,
+      /^native previous click changes the actual current match$/,
+      /^native close click cancels a genuinely pending term without late highlights$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1150",
+    suite: "test:search",
+    what: "make the full-height search host swallow the workspace pointer",
+    file: CSS,
+    from: "    height: auto;\n    overflow: visible;\n    pointer-events: none;",
+    to: "    height: auto;\n    overflow: visible;\n    pointer-events: auto;",
+    expect: [
+      /^closed search host leaves the workspace pointer-transparent$/,
+      /^open search host leaves below-panel workspace pointer-transparent$/,
+    ],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout shared allocation and control exposure$/,
+      /^native input text changes the actual rendered search result to one match$/,
+      /^native close click cancels a genuinely pending term without late highlights$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1151",
+    suite: "test:tabs",
+    what: "remove the real panel and its controls from hit testing even when retracted",
+    file: CSS,
+    from: "    align-items: flex-start;\n    pointer-events: auto;",
+    to: "    align-items: flex-start;\n    pointer-events: none;",
+    expect: [
+      /^the search panel really opened, so the overlay assertions are not vacuous$/,
+      /^the retracted search panel remains a real lower hit-test candidate beneath the bar$/,
+    ],
+    mustPass: [
+      /^the search panel opens below the bar rather than covering it$/,
+      /^the tabs, reload and hamburger stay usable while search is open$/,
+      /^the retracted search panel really does overlap the bar, so this bites$/,
+      /^the bar stays clickable underneath the retracted search panel$/,
+      /^the toolbar is a single row and the tab strip lives inside it$/,
+      /^the error sentinel was demonstrably watching both channels$/,
+      /^nothing rendered a visible error at any point during the suite$/,
+      /^the suite's registered temp-directory cleanup completed before its definitive footer$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1152",
+    suite: "test:search",
+    what: "apply the new shell grid to authored Markdown containers",
+    file: CSS,
+    from: "@media screen {\n  body > .container {\n    --workspace-toc-inset: 0px;",
+    to: "@media screen {\n  .container {\n    --workspace-toc-inset: 0px;",
+    expect: [/^authored containers and TOC lookalikes do not become the application shell$/],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout shared allocation and control exposure$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1153",
+    suite: "test:search",
+    what: "leak the screen workspace grid and full-height search host into print",
+    file: CSS,
+    from: "@media screen {\n  body > .container {\n    --workspace-toc-inset: 0px;",
+    to: "@media all {\n  body > .container {\n    --workspace-toc-inset: 0px;",
+    expect: [/^print retains original non-grid shell and hidden search chrome$/],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout shared allocation and control exposure$/,
+      /^native input text changes the actual rendered search result to one match$/,
+      /^native close click cancels a genuinely pending term without late highlights$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1154",
+    suite: "test:tabs",
+    what: "clip the retracted panel out of the header hit-test stack",
+    file: CSS,
+    from: "    height: auto;\n    overflow: visible;\n    pointer-events: none;",
+    to: "    height: auto;\n    overflow: hidden;\n    pointer-events: none;",
+    expect: [/^the retracted search panel remains a real lower hit-test candidate beneath the bar$/],
+    mustPass: [
+      /^the search panel really opened, so the overlay assertions are not vacuous$/,
+      /^the search panel opens below the bar rather than covering it$/,
+      /^the tabs, reload and hamburger stay usable while search is open$/,
+      /^the retracted search panel really does overlap the bar, so this bites$/,
+      /^the bar stays clickable underneath the retracted search panel$/,
+      /^the toolbar is a single row and the tab strip lives inside it$/,
+      /^the error sentinel was demonstrably watching both channels$/,
+      /^nothing rendered a visible error at any point during the suite$/,
+      /^the suite's registered temp-directory cleanup completed before its definitive footer$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1155",
+    suite: "test:search",
+    what: "restore the flex shell without the search host's shared workspace row",
+    file: CSS,
+    from: "    --workspace-toc-inset: 0px;\n    display: grid;",
+    to: "    --workspace-toc-inset: 0px;\n    display: flex;",
+    expect: [
+      /^narrow search layout actually wraps without clipping icons or counter text$/,
+      /^closing viewport enlargement keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^closing token increase keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^rapid TOC reversals under width changes keep the whole search panel and exposed controls beside the live drawer$/,
+      /^search spans the workspace at actual 15 50 and 85 percent split ratios$/,
+      /^search layout shared allocation and control exposure$/,
+      /^search layout complete counter fragments remain inside the normal panel$/,
+      /^short search layout has real overflow and a usable complete-control scrollport$/,
+      /^short search layout exposes each complete control after local vertical scrolling$/,
+      /^short search layout makes every counter text fragment reachable$/,
+      /^native search searchNext preflight owns its center point$/,
+      /^harness ran to completion$/,
+      /^the complete search scenario sequence reached its terminal path$/,
+    ],
+    mustPass: SEARCH_LAYOUT_CONTROLS,
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1156",
+    suite: "test:search",
+    what: "let an authored TOC lookalike reserve the real application workspace",
+    file: CSS,
+    from: "  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) {",
+    to: "  body > .container:has(#indexPanel.visible) {",
+    expect: [/^authored containers and TOC lookalikes do not become the application shell$/],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout shared allocation and control exposure$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1157",
+    suite: "test:search",
+    what: "center overflowing search rows above the reachable scroll origin",
+    file: CSS,
+    from: "    max-height: 100%;\n    overflow-y: auto;\n    align-items: flex-start;",
+    to: "    max-height: 100%;\n    overflow-y: auto;\n    align-items: center;",
+    expect: [/^short search layout exposes each complete control after local vertical scrolling$/],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^search layout shared allocation and control exposure$/,
+      /^short search layout has real overflow and a usable complete-control scrollport$/,
+      /^short search layout makes every counter text fragment reachable$/,
+      /^native close click cancels a genuinely pending term without late highlights$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1158",
+    suite: "test:search",
+    what: "restore pixel-left interpolation that loses the closing drawer's live width",
+    file: CSS,
+    from: "@property --search-toc-exposure {\n  syntax: \"<number>\";\n  inherits: false;\n  initial-value: 0;\n}\n\n",
+    to: "",
+    also: [{
+      from: "    --search-toc-exposure: 0;\n" +
+        "    /* Opening reserves full width. Closing keeps a conservative live-width\n" +
+        "       inset for at most 0.3s after the last close, including rapid reversals. */\n" +
+        "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));",
+      to: "    left: var(--workspace-toc-inset);",
+    }, {
+      from: "    transition: transform 0.3s ease, --search-toc-exposure 0.3s ease;",
+      to: "    /* Closing follows the retreating drawer instead of jumping under it. */\n" +
+        "    transition: transform 0.3s ease, left 0.3s ease;",
+    }, {
+      from: "  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) > .search-anchor > .search-panel {\n" +
+        "    --search-toc-exposure: 1;\n" +
+        "    /* Reset the proxy while the full opening inset already covers the drawer. */\n" +
+        "    transition: transform 0.3s ease;\n  }",
+      to: "  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) > .search-anchor > .search-panel {\n" +
+        "    /* Opening and visible width changes must reserve the new width at once. */\n" +
+        "    transition: transform 0.3s ease;\n  }",
+    }],
+    expect: [
+      /^closing viewport enlargement keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^closing token increase keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^rapid TOC reversals under width changes keep the whole search panel and exposed controls beside the live drawer$/,
+    ],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^TOC toggle transitions keep the whole search panel beside the moving drawer$/,
+      /^visible TOC width changes reserve search space in the same layout$/,
+      /^closed TOC releases all search reservation while retaining its physical transition width$/,
+      /^search panel right edge stays flush with the actual workspace$/,
+      /^search layout shared allocation and control exposure$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1159",
+    suite: "test:search",
+    what: "undersize the search panel without overflowing the workspace's right edge",
+    file: CSS,
+    from: "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));\n    max-height: 100%;",
+    to: "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));\n    right: 4px;\n    max-height: 100%;",
+    expect: [
+      /^search spans the workspace at actual 15 50 and 85 percent split ratios$/,
+      /^search layout shared allocation and control exposure$/,
+      /^search panel right edge stays flush with the actual workspace$/,
+    ],
+    mustPass: [...SEARCH_LAYOUT_CONTROLS,
+      /^the search panel is actually visible on screen$/,
+      /^TOC toggle transitions keep the whole search panel beside the moving drawer$/,
+      /^closing viewport enlargement keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^closing token increase keeps the whole search panel and exposed controls beside the live drawer$/,
+      /^rapid TOC reversals under width changes keep the whole search panel and exposed controls beside the live drawer$/,
+      /^closed TOC releases all search reservation while retaining its physical transition width$/,
+      /^the complete search scenario sequence reached its terminal path$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
   {
     id: "R1115", what: "rebuild every hidden mirror span after small source edits",
     file: EDITOR_SCROLL,
@@ -1983,8 +2308,8 @@ const REVERTS = [
     id: "R125",
     what: "let the ToC drawer overlay the scroller instead of narrowing it",
     file: CSS,
-    from: ".content-wrapper:has(> #indexPanel.visible) {\n  margin-left: min(var(--toc-width), 40vw);",
-    to: ".content-wrapper:has(> #indexPanel.visible) {\n  margin-left: 0;",
+    from: "body > .container > .main-content > .content-wrapper:has(> #indexPanel.visible) {\n  margin-left: var(--workspace-toc-inset, var(--toc-panel-width));",
+    to: "body > .container > .main-content > .content-wrapper:has(> #indexPanel.visible) {\n  margin-left: 0;",
     expect: [
       /scroller starts at or after the ToC panel/,
       /re-measures breakout tables instead of clipping them under it/,
@@ -2853,6 +3178,8 @@ const REVERTS = [
     expect: [
       /^FEATURE table popup CSV export completes, so SEC-30's guard admits it$/,
       /^FEATURE table popup JSON export completes, so SEC-30's guard admits it$/,
+      /^SEC-31 the CSV export carries the RAW column title, not the escaped one$/,
+      /^FEATURE table popup JSON export preserves the real re-keyed row data$/,
       // The predicate check names the same breakage from the other direction:
       // blob: must be admitted, and here it is not.
       /^SEC-30 the download policy admits the app's blob: exports and nothing else$/,
@@ -2862,6 +3189,9 @@ const REVERTS = [
       /^FEATURE table popup JSON export still starts a download under CSP$/,
       /^SEC-30 the download policy is wired to the default session$/,
     ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+    expectedFailureCount: 5,
   },
   {
     id: "R456",
@@ -4862,12 +5192,16 @@ const REVERTS = [
     },
     expect: [
       /^SEC-06 table cell cannot terminate the popup's script element$/,
+      /^FEATURE table popup still builds the table from the data$/,
       /^SEC-31 the allow-list drops headerTooltip, so no tooltip is wired at all$/,
     ],
     mustPass: [
       /^SEC-06 the __pwned read channel is observable, so its absence checks mean something$/,
       /^SEC-31 a hostile column title renders as text, not markup$/,
     ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+    expectedFailureCount: 3,
   },
   {
     // THE ORACLE'S OWN REGRESSION, and it is not hypothetical - this is the
@@ -6829,65 +7163,106 @@ const REVERTS = [
     requireMustPassAssertions: true,
     requireExactFailures: true,
   },
-  {
-    id: "R217",
-    suite: "test:mermaid",
-    // Found by BOTH independent reviewers, and measured before being fixed: a
-    // webContents.reload() rebuilds the JS realm and its require('electron')
-    // module instance, so a one-shot trap install is destroyed by it.
-    //   before { flag: true,  openExternalPatched: true  }
-    //   after  { flag: false, openExternalPatched: false }
-    // The mermaid suite reloads mid-run to observe lazy loading from a clean
-    // realm, so every assertion after that point used to run with the real
-    // opener live - one clicked http link away from the leak this whole phase
-    // exists to close. The trap therefore re-arms on did-finish-load, and this
-    // revert removes that re-arm.
-    what: "install the external-open trap only once, so a mid-suite reload silently un-traps the harness",
-    file: VISUAL,
-    from: "  if (!trapRearmed.has(wc)) {",
-    to: "  if (false) {",
-    expect: [
-      /the external-open trap re-arms itself after a reload, so the rest of the suite still cannot reach the browser/,
-      /the re-armed trap really replaced the shell functions, not just its own marker/,
-    ],
-    // The reload itself, and the lazy-loading assertions it exists to serve,
-    // must be untouched - otherwise the revert has broken the suite rather
-    // than exposing the hole.
-    mustPass: [/mermaid is not loaded at startup/, /the lazy loader is present to fetch it later/],
-  },
+  // R217's renderer re-arm mechanism is obsolete. R216 now also proves
+  // process-owned interception across an actual page reload and window close.
   {
     id: "R216",
-    suite: "test:patch",
-    // REPORTED BY THE USER, not found by a reviewer: the suite dispatched a
-    // real click on a real http anchor, so renderer.js handed it to
-    // shell.openExternal and the OS opened it in whatever browser they were
-    // working in - stealing focus, and leaving one dead tab per suite run
-    // (a full revert chain runs the suite dozens of times). Nothing failed,
-    // which is why it survived until a human noticed their tab bar.
-    //
-    // The revert neutralises the install for EVERY suite at once, which is the
-    // right blast radius: the trap is a property of the harness, not of one
-    // test. Note what it does NOT do: it never clears a flag that was set. It
-    // makes the install block unreachable, so the marker and the two shell
-    // mutations disappear TOGETHER - and that pairing is what keeps the proof
-    // free. The patch suite refuses to dispatch the click unless the marker is
-    // set, so a revert that broke the mutation while leaving the marker true
-    // would prove the same point by performing the very leak it documents.
-    what: "stop trapping shell.openExternal in the harness, letting a clicked link reach the real browser",
+    suite: "test:visual",
+    // Independent safe fallbacks remain live even when installation is removed.
+    what: "leave Main shell openers untrapped in the isolated test process",
     file: VISUAL,
-    from: "    if (!window.__externalTrapInstalled) {",
-    to: "    if (false) {",
+    from: "  if (trappedShell === null) {",
+    to: "  if (false) {",
     expect: [
-      /external opens are trapped before any link is clicked, so the suite cannot reach the real browser/,
-      /clicking a link inside a heading does not collapse the section/,
-      /clicking a link inside a heading hands the URL to the external opener/,
+      /^default sentinel installs both actual Main opener guards$/,
+      /^Main opener guards record exact separate targets without fallback$/,
+      /^default opener guard installation leaves a clean sentinel report$/,
+      /^repeated opener installation preserves wrappers and existing records$/,
+      /^opener records are copied process-wide snapshots rather than page-owned arrays$/,
+      /^clearing opener records clears both process ledgers without removing guards$/,
+      /^Main opener guards and existing records survive a genuinely replaced page$/,
+      /^closing one synthetic window neither restores openers nor loses process records$/,
+      /^restoring test wrappers makes both opener guards observable again$/,
     ],
-    // The suite must otherwise be intact: if these fail too, the revert has
-    // broken the harness rather than demonstrating the leak.
     mustPass: [
-      /heading ids are slugs derived from the heading text/,
-      /an in-document anchor target resolves by slug/,
+      /^external guard setup uses an isolated Node-free page$/,
+      /^external guard fallback controls record both openers without OS launches$/,
+      /^sentinel ownership option preserves explicit Main shell guards$/,
+      /^the sound element is reported sound$/,
     ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1126",
+    suite: "test:visual",
+    what: "overwrite a suite's explicit Main shell guards through sentinel setup",
+    file: VISUAL,
+    from: "  if (o.trapExternal !== false) {",
+    to: "  if (true) {",
+    expect: [/^sentinel ownership option preserves explicit Main shell guards$/],
+    mustPass: [
+      /^default sentinel installs both actual Main opener guards$/,
+      /^Main opener guards record exact separate targets without fallback$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1127",
+    suite: "test:visual",
+    what: "silence failed Main opener guard installation in the error sentinel",
+    file: VISUAL,
+    from: "        if (ready !== true) hits.push({",
+    to: "        if (false) hits.push({",
+    expect: [/^sentinel reports opener installation failure even when its kind is ignored$/],
+    mustPass: [
+      /^a forged page marker cannot hide a replaced Main URL guard$/,
+      /^Main opener guards record exact separate targets without fallback$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1128",
+    suite: "test:patch",
+    what: "let the viewer collapse a heading when its internal anchor is clicked",
+    file: RENDERER,
+    from: "  if (e.target.tagName === 'A' || (e.target.closest && e.target.closest('a'))) return;",
+    to: "  // Reverted: link clicks also toggle their heading.",
+    expect: [/^clicking a link inside a heading does not collapse the section$/],
+    mustPass: [
+      /^the internal heading's non-link click control collapses and expands its body$/,
+      /^clicking a link inside a heading hands the URL to the external opener$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1130",
+    suite: "test:profile",
+    what: "wipe a redirected or non-directory profile before checking physical ownership",
+    file: path.join(ROOT, "test", "test-userdata-isolation.js"),
+    from: "      const entry = fs.lstatSync(directory, { throwIfNoEntry: false });",
+    to: "      const entry = undefined;",
+    expect: [
+      /^a redirected parent is refused before any profile wipe$/,
+      /^a redirected suite is refused before any profile wipe$/,
+      /^a non-directory parent is refused before profile removal, creation or enumeration$/,
+      /^a non-directory suite is refused before profile removal, creation or enumeration$/,
+    ],
+    mustPass: [
+      /^the profile ownership control starts with a real stale suite profile$/,
+      /^an owned ordinary test profile is wiped and relocated normally$/,
+      /^the trusted temp alias control genuinely resolves to its owned directory$/,
+      /^a trusted temp-directory alias preserves normal profile isolation$/,
+      /^the parent redirect control genuinely points outside the intended suite root$/,
+      /^the suite redirect control genuinely points outside the intended suite root$/,
+      /^the parent non-directory control is a real file at the profile boundary$/,
+      /^the suite non-directory control is a real file at the profile boundary$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
   },
   {
     id: "R215",
@@ -7444,6 +7819,7 @@ const REVERTS = [
       /the search panel opens below the bar rather than covering it/,
       /the search panel really opened, so the overlay assertions are not vacuous/,
       /the retracted search panel really does overlap the bar, so this bites/,
+      /^the retracted search panel remains a real lower hit-test candidate beneath the bar$/,
     ],
     mustPass: [
       /the tabs, reload and hamburger stay usable while search is open/,
@@ -15697,12 +16073,12 @@ const REVERTS = [
     file: "test/test-tab-refresh.js",
     from:
       "  app.exit(1);\n" +
-      "});\n\n" +
-      "// Captured for the shutdown block below.",
+      "});\n" +
+      'process.prependListener("unhandledRejection", terminalHarnessException);',
     to:
-      "  return; /* reverted for proof: uncaught exception may open Electron's modal */\n" +
-      "});\n\n" +
-      "// Captured for the shutdown block below.",
+      "  return; /* reverted for proof: runtime fatal handler may recover */\n" +
+      "});\n" +
+      'process.prependListener("unhandledRejection", terminalHarnessException);',
     expect: [
       /^uncaught harness exceptions terminate headlessly rather than recovering into a native modal$/,
     ],
@@ -18503,7 +18879,7 @@ const REVERTS = [
         },
         {
           id: "R714",
-          what: "read a changed clean-tab refresh in the renderer before its owner-bound main request",
+          what: "introduce a forbidden page-filesystem dependency before the owner-bound refresh request (source-architecture proof)",
           file: TABS,
           from:
             '      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({\n' +
@@ -18522,14 +18898,28 @@ const REVERTS = [
             "        owner: identity,\n" +
             "        diskVersion: startingVersion,\n" +
             "      });",
-          suite: "test:sec08-owned-read-core-evidence",
+          suite: "test:sec08-early-refresh-evidence",
           expect: [
-            /^SEC-08 changed clean-tab refresh reads through main without renderer content reads or a modal$/,
+            /^SEC-08 clean-tab refresh has no page filesystem dependency before its fixed Main request$/,
           ],
           mustPass: [
-            /^SEC-08 unchanged clean-tab refresh uses metadata-only main IPC without body reads or adoption$/,
-            /^SEC-08 main-owned tab reads refuse forged paths and foreign owners without denying the valid owner$/,
-            /^SEC-08 main snapshot retries a disk version that changes between read and second stat$/,
+            /^SEC-08 refresh source oracle rejects a page filesystem read and retains the owner-bound Main call$/,
+            /^SEC-08 async large-render bridge forwards only name and seconds at the raw Main boundary$/,
+            /^SEC-08 async large-render bridge preserves pending and settled boolean replies$/,
+            /^SEC-08 async large-render bridge rejects nonboolean Main replies$/,
+            /^SEC-08 async large-render bridge propagates a one-use Main invoke rejection$/,
+            /^SEC-08 async large-render raw-payload comparator rejects an extra key$/,
+            /^SEC-08 an actual isolated foreign window cannot open the main large-render modal$/,
+            /^SEC-08 Main refuses malformed large-render envelopes before presentation and resolves false$/,
+            /^SEC-08 real large-render bridge preserves themed approval cancellation and exact permission metadata$/,
+            /^SEC-08 themed large-render presentation failure fails closed without a native approval fallback$/,
+            /^SEC-08 early refresh controls retain an unmarked Node-free production launch$/,
+            /^the error sentinel was demonstrably watching both channels$/,
+            /^nothing rendered a visible error at any point during the suite$/,
+            /^the suite's registered temp-directory cleanup completed before its definitive footer$/,
+            /^the tab harness encountered no unowned native or Main-owned dialogs$/,
+            /^SEC-08 early refresh sentinel teardown completes before Main destruction$/,
+            /^SEC-08 early refresh destroys its exact owned Main window and webContents before fixture cleanup$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -20549,20 +20939,34 @@ const REVERTS = [
         },
         {
           id: "R819",
-          what: "accept nonboolean large-render replies as cancellation instead of protocol refusal",
+          what: "lose observable rejection of nonboolean async large-render replies",
           file: path.join(SRC, "main-preload.js"),
           from: '    if (typeof result !== "boolean") throw new TypeError("Invalid large render confirmation response");',
           to: "",
-          suite: "test:sec08-owned-read-evidence",
+          suite: "test:sec08-early-refresh-evidence",
           expect: [
-            /^SEC-08 an actual isolated foreign window cannot open the main large-render modal$/,
-            /^SEC-08 native modal failure remains protocol refusal rather than cached acceptance or cancellation$/,
-            /^SEC-08 large-render confirmation rejects nonboolean replies and surfaces same-stack send failure$/,
-            /^SEC-08 protocol refusal proceeds observably but never caches large-tab acceptance$/,
+            /^SEC-08 async large-render bridge rejects nonboolean Main replies$/,
+            /^SEC-08 tab guard exposes nonboolean confirmation rejection without changing the selected document$/,
           ],
           mustPass: [
-            /^SEC-08 actual tab guard preserves cancellation approval and accepted-revisit fast paths$/,
-            /^SEC-08 fixed confirmation scenario proves an expensive sample painted ordinary control and zero small-path IPC$/,
+            /^SEC-08 async large-render bridge forwards only name and seconds at the raw Main boundary$/,
+            /^SEC-08 async large-render bridge propagates a one-use Main invoke rejection$/,
+            /^SEC-08 native large-tab setup proves an expensive background admission and an ordinary painted control$/,
+            /^SEC-08 declined large-tab switches remain uncached until a current themed approval$/,
+            /^SEC-08 real large-render bridge preserves themed approval cancellation and exact permission metadata$/,
+            /^SEC-08 async large-render raw-payload comparator rejects an extra key$/,
+            /^SEC-08 async large-render bridge preserves pending and settled boolean replies$/,
+            /^SEC-08 async large-render bridge rejects malformed requests before Main IPC$/,
+            /^SEC-08 an actual isolated foreign window cannot open the main large-render modal$/,
+            /^SEC-08 Main refuses malformed large-render envelopes before presentation and resolves false$/,
+            /^SEC-08 themed large-render presentation failure fails closed without a native approval fallback$/,
+            /^SEC-08 early refresh controls retain an unmarked Node-free production launch$/,
+            /^the error sentinel was demonstrably watching both channels$/,
+            /^nothing rendered a visible error at any point during the suite$/,
+            /^the suite's registered temp-directory cleanup completed before its definitive footer$/,
+            /^the tab harness encountered no unowned native or Main-owned dialogs$/,
+            /^SEC-08 early refresh sentinel teardown completes before Main destruction$/,
+            /^SEC-08 early refresh destroys its exact owned Main window and webContents before fixture cleanup$/,
           ],
           requireMustPassAssertions: true, requireExactFailures: true,
         },
@@ -20655,11 +21059,27 @@ const REVERTS = [
           file: path.join(SRC, "main-preload.js"),
           from: "      name: request.name, seconds: request.seconds,",
           to: "      ...request,",
-          suite: "test:sec08-owned-read-evidence",
-          expect: [/^SEC-08 fixed large-render confirmation validates and copies only scalar metadata synchronously$/],
+          suite: "test:sec08-early-refresh-evidence",
+          expect: [/^SEC-08 async large-render bridge forwards only name and seconds at the raw Main boundary$/],
           mustPass: [
-            /^SEC-08 large-render confirmation rejects nonboolean replies and surfaces same-stack send failure$/,
-            /^SEC-08 real large-render bridge preserves native approval cancellation and exact modal metadata$/,
+            /^SEC-08 async large-render bridge rejects malformed requests before Main IPC$/,
+            /^SEC-08 async large-render bridge preserves pending and settled boolean replies$/,
+            /^SEC-08 async large-render bridge rejects nonboolean Main replies$/,
+            /^SEC-08 async large-render bridge propagates a one-use Main invoke rejection$/,
+            /^SEC-08 real large-render bridge preserves themed approval cancellation and exact permission metadata$/,
+            /^SEC-08 async large-render raw-payload comparator rejects an extra key$/,
+            /^SEC-08 native large-tab setup proves an expensive background admission and an ordinary painted control$/,
+            /^SEC-08 declined large-tab switches remain uncached until a current themed approval$/,
+            /^SEC-08 an actual isolated foreign window cannot open the main large-render modal$/,
+            /^SEC-08 Main refuses malformed large-render envelopes before presentation and resolves false$/,
+            /^SEC-08 themed large-render presentation failure fails closed without a native approval fallback$/,
+            /^SEC-08 early refresh controls retain an unmarked Node-free production launch$/,
+            /^the error sentinel was demonstrably watching both channels$/,
+            /^nothing rendered a visible error at any point during the suite$/,
+            /^the suite's registered temp-directory cleanup completed before its definitive footer$/,
+            /^the tab harness encountered no unowned native or Main-owned dialogs$/,
+            /^SEC-08 early refresh sentinel teardown completes before Main destruction$/,
+            /^SEC-08 early refresh destroys its exact owned Main window and webContents before fixture cleanup$/,
           ],
           requireMustPassAssertions: true, requireExactFailures: true,
         },
@@ -20751,12 +21171,23 @@ const REVERTS = [
           from: "    pageSession: approvalRendererPageSession, descriptor, provenance: entry.provenance,",
           to: "    pageSession: approvalRendererPageSession, descriptor,",
           suite: "test:document-session",
-          expect: [/^corrupt-unmarked: admission-only approved reopen retains native provenance without importing a corrupt manifest$/],
+          expect: [/^corrupt-unmarked: native chooser admits a current painted document while durable history is unavailable$/],
           mustPass: [
-            /^corrupt-unmarked: a native chooser still issues a real current reference while durable history is unavailable$/,
-            /^corrupt-unmarked: retiring the only native admission removes its browser reopen permission$/,
+            /^corrupt-unmarked: the initial admission consumes exactly its one-shot native chooser expectation$/,
+            /^corrupt-unmarked: the initial native chooser delivers one genuine current admission while durable history is unavailable$/,
+            /^corrupt-unmarked: corrupt or missing state fails closed rather than reimporting page paths$/,
           ],
           requireMustPassAssertions: true, requireExactFailures: true,
+          expectedFailureCount: 1,
+          expectedFailureEvidence: {
+            assertion: /^corrupt-unmarked: native chooser admits a current painted document while durable history is unavailable$/,
+            requireParentAssertionOutcome: false,
+            min: 1,
+            hits: [{
+              kind: "native-adoption-refusal",
+              detail: /^unapproved-adoption-source$/,
+            }],
+          },
         },
         {
           id: "R832",

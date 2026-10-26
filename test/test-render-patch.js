@@ -169,7 +169,7 @@ const TOP_BLOCKS = `
 `;
 
 async function run(win) {
-  const { startErrorSentinel, proveSentinelAlive, captureScreenshot, trapExternalOpens, readExternalOpens, clearExternalOpens } = require("./test-visual-utils");
+  const { admitTestDocument, startErrorSentinel, proveSentinelAlive, captureScreenshot, trapExternalOpens, readExternalOpens, clearExternalOpens, waitForExternalTrap } = require("./test-visual-utils");
   const sentinel = startErrorSentinel(win, { label: "patch" });
   // Before ANY click: this suite dispatches real anchor clicks, and an http
   // anchor would otherwise launch the user's browser. See trapExternalOpens().
@@ -755,45 +755,69 @@ async function run(win) {
     );
   }
 
-  // A link inside a heading must navigate, not collapse the section.
-  //
-  // "Navigate" was previously only half-asserted: the old check said the
-  // section did not collapse, which a link whose handler never ran at all would
-  // also satisfy. The external-open trap makes the other half observable, and
-  // asserting on it is also what PINS the trap - delete it and the real
-  // shell.openExternal fires, nothing is recorded, and this fails rather than
-  // silently going back to opening a browser tab on the user's desktop.
-  await render(exec, "# Plain\n\nbody\n\n# [Linked](https://example.invalid/x)\n\nmore body\n", "full");
+  // Main authorizes external links from an admitted document and trusted input.
+  await admitTestDocument(win, path.join(dir, "heading-link.md"),
+    "# Plain\n\nbody\n\n# [Linked](https://example.invalid/x)\n\nmore body\n\n# [Internal](#plain)\n\ninternal body\n");
   await clearExternalOpens(win);
-  // Checked BEFORE the click, and the click itself refuses to fire without it.
-  // Ordering is the whole point: an assertion placed after the dispatch would
-  // report the missing trap only once the browser tab had already opened, so
-  // proving this guard would cost the user the exact thing it prevents.
-  const trapReady = await exec(`window.__externalTrapInstalled === true`);
+  const trapReady = await waitForExternalTrap(win);
   check(
     "external opens are trapped before any link is clicked, so the suite cannot reach the real browser",
     trapReady === true,
     String(trapReady),
   );
-  const linkGuard = await exec(`
-    (() => {
-      if (window.__externalTrapInstalled !== true) return 'trap-missing';
-      const a = viewer.querySelector('h1 a');
-      if (!a) return 'no link in heading';
-      const h = a.closest('h1');
-      const w = viewer.querySelector('.collapsible-section[data-for-header="' + h.id + '"]');
-      const evt = new MouseEvent('click', { bubbles: true, cancelable: true });
-      a.dispatchEvent(evt);
-      return w.classList.contains('collapsed') ? 'collapsed' : 'ok';
-    })()
-  `);
-  check("clicking a link inside a heading does not collapse the section", linkGuard === "ok", linkGuard);
+  let linkGuard = "trap-missing";
+  if (trapReady) {
+    const target = await exec(`(() => {
+      const link=viewer.querySelector('h1 a');
+      if(!link)return null;
+      link.scrollIntoView({block:'center'});
+      const rect=link.getBoundingClientRect();
+      return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)};
+    })()`);
+    if (target) {
+      win.webContents.sendInputEvent({ type: "mouseDown", ...target, button: "left", clickCount: 1 });
+      win.webContents.sendInputEvent({ type: "mouseUp", ...target, button: "left", clickCount: 1 });
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if ((await readExternalOpens(win)).length) break;
+        await sleep(30);
+      }
+      linkGuard = await exec(`(() => {
+        const heading=viewer.querySelector('h1 a')?.closest('h1');
+        const wrapper=heading&&viewer.querySelector('.collapsible-section[data-for-header="'+heading.id+'"]');
+        return !wrapper?'missing section':wrapper.classList.contains('collapsed')?'collapsed':'ok';
+      })()`);
+    } else linkGuard = "no link in heading";
+  }
+  check("a trusted external heading link leaves its section expanded", linkGuard === "ok", linkGuard);
   const headingLinkOpens = await readExternalOpens(win);
   check(
     "clicking a link inside a heading hands the URL to the external opener",
     headingLinkOpens.length === 1 && headingLinkOpens[0] === "https://example.invalid/x",
     JSON.stringify(headingLinkOpens),
   );
+  // HTTP clicks stop in preload capture; an internal link reaches the viewer.
+  const internalLink = await exec(`(() => {
+    const link=viewer.querySelector('h1 a[href="#plain"]');
+    const heading=link?.closest('h1');
+    const wrapper=heading&&viewer.querySelector('.collapsible-section[data-for-header="'+heading.id+'"]');
+    if(!wrapper)return {missing:true};
+    const initiallyExpanded=!wrapper.classList.contains('collapsed');
+    heading.click();
+    const collapsed=wrapper.classList.contains('collapsed');
+    heading.click();
+    const expanded=!wrapper.classList.contains('collapsed');
+    let reachedViewer=false;
+    const observe=event=>{if(event.target===link)reachedViewer=true;};
+    viewer.addEventListener('click',observe);
+    try{link.click();}finally{viewer.removeEventListener('click',observe);}
+    return {initiallyExpanded,collapsed,expanded,reachedViewer,
+      preserved:!wrapper.classList.contains('collapsed')};
+  })()`);
+  check("the internal heading's non-link click control collapses and expands its body",
+    internalLink.initiallyExpanded && internalLink.collapsed && internalLink.expanded,
+    JSON.stringify(internalLink));
+  check("clicking a link inside a heading does not collapse the section",
+    internalLink.reachedViewer && internalLink.preserved, JSON.stringify(internalLink));
 
   // ---------------------------------------------------------------------
   // 7. Wrapping is idempotent.

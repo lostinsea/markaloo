@@ -263,7 +263,7 @@ async function repeatedEditorNoop() {
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'");
   win.setSize(1440, 920);
-  sentinel = startErrorSentinel(win, { label: "document-editor" });
+  sentinel = startErrorSentinel(win, { label: "document-editor", trapExternal: false });
   if (!proof || proof === "commands") await noDocumentCommands();
   if (proof === "commands") return finish();
   const alpha = await open(0), beta = await open(1);

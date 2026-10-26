@@ -130,7 +130,7 @@ if (typeof electron === "string") {
     if (process.env.FOLIA_READING_PERF) {
       await exec("if(!document.body.classList.contains('dark-mode'))document.getElementById('darkModeToggle').click();true");
     }
-    const sentinel = startErrorSentinel(win, { label: "reading" });
+    const sentinel = startErrorSentinel(win, { label: "reading", trapExternal: false });
     let watcherSnapshot = null;
     const send = win.webContents.send.bind(win.webContents);
     win.webContents.send = (channel, ...args) => {
@@ -387,19 +387,36 @@ if (typeof electron === "string") {
     fs.writeFileSync(first, markdown() + "\n\nExternal version three");
     await wait("subsequent actual notice", "document.getElementById('fileUpdateToast').classList.contains('show')");
     const dirty = await exec(`(()=>{
-      window.__readingClean=window.originalMarkdown;window.__readingConfirm=window.confirm;
       window.originalMarkdown='# Reading controls\\n\\nUNSAVED_READER_CHANGE';
       window.CustomTabs.updateTabContent(window.originalMarkdown,true);window.setUnsavedState(true);
-      window.__readingConfirms=0;window.confirm=()=>{window.__readingConfirms++;return false};
-      document.getElementById('reloadFileBtn').click();return true;
+      return hasUnsavedChanges&&window.CustomTabs.getActiveTab().hasUnsavedChanges;
     })()`);
-    await sleep(250);
-    check("declined dirty Reload keeps the notice and unsaved bytes", dirty && await exec("window.__readingConfirms===1&&window.originalMarkdown.includes('UNSAVED_READER_CHANGE')&&hasUnsavedChanges&&document.getElementById('fileUpdateToast').classList.contains('show')"));
-    await exec("window.confirm=()=>true;true");
-    await exec("document.getElementById('reloadFileBtn').click();true");
+    async function answerDirtyReload(choice) {
+      await exec("document.getElementById('reloadFileBtn').click();true");
+      await wait("actual dirty Reload confirmation", "document.getElementById('appMessageDialog')?.open===true");
+      const question = await exec(`({
+        title:document.getElementById('appMessageTitle').textContent,
+        message:document.getElementById('appMessageText').textContent,
+        buttons:[...document.querySelectorAll('#appMessageButtons button')].map(button=>({
+          choice:button.dataset.dialogChoice,label:button.textContent,focused:button===document.activeElement
+        }))
+      })`);
+      const matches = question.title === "Discard unsaved changes?" &&
+        question.message === "You have unsaved changes. Reload from disk and discard them?" &&
+        question.buttons.length === 2 &&
+        question.buttons[0].choice === "cancel" && question.buttons[0].label === "Cancel" &&
+        question.buttons[0].focused &&
+        question.buttons[1].choice === "proceed" && question.buttons[1].label === "Discard and reload";
+      check("dirty Reload " + choice + " answers the actual warning with Cancel as default", matches, question);
+      if (!matches) throw new Error("Refusing to answer an unexpected Reload confirmation");
+      await exec(`document.querySelector('#appMessageButtons [data-dialog-choice="${choice}"]').click();true`);
+      await wait("dirty Reload confirmation closed", "!document.getElementById('appMessageDialog').open");
+    }
+    await answerDirtyReload("cancel");
+    check("declined dirty Reload keeps the notice and unsaved bytes", dirty && await exec("window.originalMarkdown.includes('UNSAVED_READER_CHANGE')&&hasUnsavedChanges&&document.getElementById('fileUpdateToast').classList.contains('show')"));
+    await answerDirtyReload("proceed");
     await wait("accepted newest reload", "viewer.textContent.includes('External version three')&&!document.getElementById('fileUpdateToast').classList.contains('show')&&!loadingScreen.classList.contains('active')");
     check("Reload reads the newest version and dismisses only its notice", true);
-    await exec("window.confirm=window.__readingConfirm;true");
     fs.writeFileSync(first, markdown() + "\n\nExternal version four");
     await wait("notice before departure", "document.getElementById('fileUpdateToast').classList.contains('show')");
     chosen = other;
@@ -515,7 +532,7 @@ if (typeof electron === "string") {
     });
     fs.writeFileSync(first, "# Mermaid boundary controls\n\n" + Object.entries(fixtures).map(([name, code]) =>
       "## " + name + "\n\n```mermaid\n" + code + "\n```").join("\n\n"));
-    const sentinel = startErrorSentinel(win, { label: "borders" });
+    const sentinel = startErrorSentinel(win, { label: "borders", trapExternal: false });
     await exec("if(!document.body.classList.contains('dark-mode'))document.getElementById('darkModeToggle').click();document.getElementById('openFile').click();true");
     await wait("boundary fixture admitted and finished", "viewer.querySelector('h1')?.textContent==='Mermaid boundary controls'&&!loadingScreen.classList.contains('active')");
     await exec("(async()=>{await whenMermaidSettled();return true})()");
@@ -822,7 +839,7 @@ if (typeof electron === "string") {
     await capture("fresh-argument-toc");
   }
   async function fresh() {
-    const sentinel = startErrorSentinel(win, { label: "reading-panels" });
+    const sentinel = startErrorSentinel(win, { label: "reading-panels", trapExternal: false });
     check("fresh profile has no saved panel or documents and keeps the welcome open action",
       await exec("localStorage.getItem('readingSidePanel')===null&&window.CustomTabs.getTabs().length===0&&!!viewer.querySelector('.welcome')&&!!document.getElementById('welcomeOpenBtn')"));
     const welcome = await exec(panelState);
@@ -954,8 +971,14 @@ if (typeof electron === "string") {
     }
     session.defaultSession.flushStorageData();
     const summary = `=== reading ${phase}: ${results.filter(Boolean).length}/${results.length} passed ===`;
-    app.once("quit", () => console.log(summary));
-    app.once("will-quit", () => app.exit(failed || results.some(ok => !ok) ? 1 : 0));
+    if (failed || results.some(ok => !ok)) {
+      // Failed fixtures may still be dirty; do not ask the reader to close them.
+      fs.writeSync(1, summary + "\n");
+      app.exit(1);
+      return;
+    }
+    // Let Chromium finish persisting preferences before the next phase starts.
+    app.once("quit", () => fs.writeSync(1, summary + "\n"));
     app.quit();
   });
   setTimeout(() => { console.error("Reading watchdog expired"); app.exit(2); }, 160000);

@@ -94,7 +94,15 @@ if (typeof electron === "string") {
       if (await exec(expression)) return;
       await sleep(30);
     }
-    throw new Error("Timed out waiting for " + label);
+    const layout = await exec(`({
+      width:innerWidth,height:innerHeight,scale:devicePixelRatio,
+      hidden:document.hidden,visibility:document.visibilityState,
+      dialogs:[...document.querySelectorAll('dialog[open]')].map(dialog=>dialog.id)
+    })`);
+    throw new Error("Timed out waiting for " + label + " " + JSON.stringify({
+      content:win.getContentSize(),bounds:win.getBounds(),
+      zoom:win.webContents.getZoomFactor(),layout,
+    }));
   }
   async function settle() {
     await sleep(220);
@@ -499,7 +507,7 @@ if (typeof electron === "string") {
     win.setContentSize(1280, 800);
     try {
       await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
-      sentinel = startErrorSentinel(win, { label: "toc-toolbar" });
+      sentinel = startErrorSentinel(win, { label: "toc-toolbar", trapExternal: false });
       if (phase === "behavior") await behavior();
       else await restart();
       const required = phase !== "behavior" ? ["restart"] : proof ?
@@ -520,8 +528,14 @@ if (typeof electron === "string") {
       JSON.stringify({ proof, phase, executed: [...executed], sourceHashes, assertions: results }, null, 2));
     session.defaultSession.flushStorageData();
     const summary = `=== toc toolbar ${phase}: ${results.filter(value => value.ok).length}/${results.length} passed ===`;
-    app.once("quit", () => console.log(summary));
-    app.once("will-quit", () => app.exit(results.length && results.every(value => value.ok) ? 0 : 1));
+    if (!results.length || results.some(value => !value.ok)) {
+      // A failed editor fixture must not open a real shutdown-consent dialog.
+      fs.writeSync(1, summary + "\n");
+      app.exit(1);
+      return;
+    }
+    // Restart phases must observe a completed storage shutdown.
+    app.once("quit", () => fs.writeSync(1, summary + "\n"));
     app.quit();
   }).catch(error => {
     fs.writeSync(2, "TOC toolbar fatal: " + String(error.stack || error) + "\n");

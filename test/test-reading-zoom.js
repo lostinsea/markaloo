@@ -394,7 +394,7 @@ if (typeof electron === "string") {
     } finally {
       for (const listener of allClosed) app.on("window-all-closed", listener);
     }
-    sentinel = startErrorSentinel(win, { label: "zoom replacement" });
+    sentinel = startErrorSentinel(win, { label: "zoom replacement", trapExternal: false });
     const initial = await exec(state);
     check("zoom new same-profile reader starts at the existing application percentage",
       win !== old && initial.level === 160 && initial.scale === 1.6 && initial.label === "160%", initial);
@@ -543,7 +543,7 @@ if (typeof electron === "string") {
         ? Date.now() - Number(process.env.FOLIA_ZOOM_LAUNCH_AT) : performance.now() - started;
       if (seed) { seed.destroy(); seed = null; }
       win.setSize(1280, 850);
-      sentinel = startErrorSentinel(win, { label: "zoom" });
+      sentinel = startErrorSentinel(win, { label: "zoom", trapExternal: false });
       check("zoom uses an isolated production reader and disposable profile",
         app.getPath("userData") === profile && profile.startsWith(batch + path.sep) &&
         await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)"));

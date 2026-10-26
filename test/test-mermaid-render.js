@@ -22,11 +22,11 @@
 //    section 7 asserts the diagrams are actually visible - on screen, not
 //    collapsed, not covered, not clipped. A screenshot is also written to
 //    screenshots/ every run as a debugging artifact; nothing asserts on it.
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { randomUUID } = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { VISUAL_PROBE_SOURCE, inspectVisual, captureScreenshot, startErrorSentinel, proveSentinelAlive, LIVENESS_MUTE_REASON, trapExternalOpens, waitForExternalTrap, tempDir, releaseTempDir } = require("./test-visual-utils");
+const { VISUAL_PROBE_SOURCE, inspectVisual, captureScreenshot, startErrorSentinel, proveSentinelAlive, LIVENESS_MUTE_REASON, trapExternalOpens, waitForExternalTrap, readExternalOpens, readShellOpens, clearExternalOpens, tempDir, releaseTempDir } = require("./test-visual-utils");
 
 // Isolate this suite's userData profile before main.js exists and before the
 // app is ready. See test-userdata-isolation.js.
@@ -1348,40 +1348,25 @@ async function run(win) {
     `typeof renderMarkdown === 'function' && !!document.getElementById('viewer')`,
   );
 
-  // A reload rebuilds the JS realm AND its require('electron') module
-  // instance, so the external-open trap installed at the top of this suite is
-  // destroyed by the line above. MEASURED across this exact reload:
-  //   before { flag: true,  openExternalPatched: true  }
-  //   after  { flag: false, openExternalPatched: false }
-  // Everything after this point used to run with the real opener live, one
-  // clicked http link away from launching the user's browser. The trap re-arms
-  // itself on did-finish-load; this is the only place in the whole harness
-  // where that can be observed, so it is asserted here rather than trusted.
-  // Polled, not read once: our re-arm and the suite's own did-finish-load
-  // handler fire on the same event, so a single read would be a race.
-  const rearmed = await waitForExternalTrap(win);
+  const retained = await waitForExternalTrap(win);
   check(
-    "the external-open trap re-arms itself after a reload, so the rest of the suite still cannot reach the browser",
-    rearmed === true,
-    String(rearmed),
+    "Main external-open guards remain ready after document reload",
+    retained === true,
+    String(retained),
   );
-  const rearmedPatched = await exec(`
-    (() => {
-      const { shell } = require('electron');
-      return {
-        openExternal: !/\\[native code\\]/.test(String(shell.openExternal)),
-        openPath: !/\\[native code\\]/.test(String(shell.openPath)),
-      };
-    })()
-  `);
-  // The marker alone would be a weak oracle - it is set by the same code it is
-  // meant to describe. Look at the functions themselves: a native
-  // [native code] body means the real shell is back.
+  await clearExternalOpens(win);
+  const guardedPath = path.join(dir, "guard-reload.txt");
+  if (retained) {
+    await shell.openExternal("https://mermaid-guard.invalid/reload");
+    await shell.openPath(guardedPath);
+  }
   check(
-    "the re-armed trap really replaced the shell functions, not just its own marker",
-    rearmedPatched.openExternal === true && rearmedPatched.openPath === true,
-    JSON.stringify(rearmedPatched),
+    "retained Main guards still record both opener routes without page Node access",
+    JSON.stringify(await readExternalOpens(win)) === '["https://mermaid-guard.invalid/reload"]' &&
+      JSON.stringify(await readShellOpens(win)) === JSON.stringify([guardedPath]) &&
+      await exec("typeof require==='undefined'&&typeof process==='undefined'"),
   );
+  await clearExternalOpens(win);
 
   const atBoot = await exec(`
     ({ mermaidLoaded: typeof window.mermaid !== 'undefined',
