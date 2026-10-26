@@ -15,6 +15,7 @@ permissions:
 jobs:
   release:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
 
     strategy:
       matrix:
@@ -33,6 +34,7 @@ jobs:
           # The build jobs never push. Leaving the token in .git/config makes it
           # readable by anything the build runs, including postinstall scripts.
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -65,6 +67,30 @@ jobs:
       # build.
       - name: Check packaging and licence notices
         run: npm run test:packaging
+
+      - name: Check Windows table editing and editor scrolling
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-test-results | Out-Null
+          npm run test:table-cells 2>&1 | Tee-Object -FilePath release-test-results\table-cells.log
+          $tableExit = $LASTEXITCODE
+          npm run test:editor-scroll 2>&1 | Tee-Object -FilePath release-test-results\editor-scroll.log
+          $scrollExit = $LASTEXITCODE
+          "table-cells=$tableExit`neditor-scroll=$scrollExit" | Set-Content release-test-results\exit-codes.txt
+          if ($tableExit -ne 0 -or $scrollExit -ne 0) { exit 1 }
+
+      - name: Upload Windows focused test evidence
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-focused-tests
+          path: |
+            release-test-results/
+            screenshots/table-cell-editor/
+            tmp/editor-scroll/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Build Linux packages
         if: matrix.os == 'ubuntu-latest'
