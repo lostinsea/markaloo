@@ -34,10 +34,11 @@
 // whole chain rather than one suite. `.github/copilot-instructions.md` already
 // carries the correction; the claim is retracted here too because it is the
 // stated rationale for the isolation assertions below.
+const admission = require("./test-startup-admission");
 const isolation = require("./test-userdata-isolation");
+admission.acceptIsolation(isolation);
 
 const { app } = require("electron");
-const { BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
@@ -57,36 +58,39 @@ function cachedModulePaths(needle) {
 }
 
 let finishing = false;
-async function finish() {
+let feedServer = null;
+async function closeFeed() {
+  if (!feedServer) return;
+  const server = feedServer;
+  if (server.listening) {
+    const closed = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    server.closeAllConnections();
+    await closed;
+    admission.closedFeed(server);
+  }
+  feedServer = null;
+}
+async function finish(error) {
   if (finishing) return;
   finishing = true;
-  clearTimeout(watchdog);
-  const keepalive = new BrowserWindow({ show: false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  await Promise.all(BrowserWindow.getAllWindows().filter(win => win !== keepalive)
-    .map(win => new Promise(resolve => {
-      win.webContents.once("destroyed", resolve);
-      win.destroy();
-    })));
-  await new Promise(resolve => setImmediate(resolve));
+  if (error) check("startup harness completed", false, String(error.stack || error));
+  await closeFeed();
+  await admission.destroyWindows();
   results.push(`=== ${results.length - failed}/${results.length} passed ===`);
   const text = results.join("\n") + "\n";
   // Electron drops buffered stdout on app.exit() when redirected, so the file
   // is the authoritative record; the console copy is a convenience only.
-  fs.writeFileSync(path.join(__dirname, "test-startup-perf-results.txt"), text);
+  admission.writeReport(text);
   console.log(text);
-  app.exit(failed === 0 ? 0 : 1);
+  admission.exit(failed === 0 ? 0 : 1);
 }
 
-const watchdog = setTimeout(() => {
-  check("harness completed within 120s", false, "watchdog fired");
-  void finish();
-}, 120000);
-
 // Loading main.js starts the real application in this process.
-require("../src/main.js");
+const { __shutdown } = require("../src/main.js");
 
-app.whenReady().then(async () => {
+async function run() {
+  await app.whenReady();
+  await admission.ready(__shutdown);
   // Let the ready handlers, window creation and any deferred startup work run.
   // checkForUpdatesOnStartup() is on app.on("ready"); if it ever regressed to
   // loading electron-updater eagerly in dev, it would have done so by now.
@@ -113,34 +117,26 @@ app.whenReady().then(async () => {
   check(
     "the suite is not using the developer's real profile",
     isolation.REAL_USER_DATA !== null &&
-      path.resolve(activeUserData) !== path.resolve(isolation.REAL_USER_DATA),
-    `real=${isolation.REAL_USER_DATA}`,
+      path.resolve(activeUserData) !== path.resolve(isolation.REAL_USER_DATA) &&
+      path.resolve(activeUserData) !== path.resolve(admission.originalUserData),
+    `real=${admission.originalUserData}; helperPrevious=${isolation.REAL_USER_DATA}`,
   );
   // Pins the WIPE rather than the redirect. Isolation alone still lets a killed
   // run poison its own next run - a tab is persisted by saveTabs() the moment it
   // is created, long before any scenario cleanup closes it.
   check(
     "the suite booted from a profile with no inherited session",
-    isolation.POST_WIPE_ENTRIES === 0,
+    isolation.POST_WIPE_ENTRIES === 0 && !fs.existsSync(admission.witness),
     `entries=${isolation.POST_WIPE_ENTRIES}`,
   );
-  // The CAUSE, asserted beside the consequence above. main.js redirects a
-  // non-packaged run to a "<name>-dev" profile so a development launch does not
-  // fight the installed app over one userData directory - and userData is what
-  // requestSingleInstanceLock() is keyed on, so sharing it means the dev launch
-  // hands its file to the installed app and exits.
-  //
-  // That redirect has to decline when something has ALREADY relocated the
-  // profile, which is the case in every one of the nine suites that require
-  // main.js. Without the guard all nine would land in one shared "Electron-dev"
-  // directory - re-creating the exact cross-suite poisoning test-userdata-
-  // isolation.js exists to prevent, and doing it silently: the assertions above
-  // report only that the profile is not the one isolation chose, never why.
-  const devSibling = path.join(app.getPath("appData"), app.getName() + "-dev");
+  // Observe actual post-isolation selections. Guessing a sibling from
+  // app.getName() misses Main's retained Folia profile name after the rebrand.
+  const profileRedirects = admission.mainProfileRedirects();
   check(
     "main.js's dev-profile redirect declined an already-relocated userData directory",
-    path.resolve(activeUserData) !== path.resolve(devSibling),
-    `userData=${activeUserData} devSibling=${devSibling}`,
+    profileRedirects.length === 0 &&
+      path.resolve(activeUserData) === path.resolve(isolation.USER_DATA_DIR),
+    `userData=${activeUserData} redirects=${JSON.stringify(profileRedirects)}`,
   );
 
   // --- 1. The heavy module is not loaded by startup ------------------------
@@ -221,39 +217,58 @@ app.whenReady().then(async () => {
     res.writeHead(200, { "content-type": "text/yaml" });
     res.end("version: 99.0.0\npath: x.exe\nsha512: aaa\nreleaseDate: '2026-01-01'\n");
   });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  feedServer = server;
+  await new Promise((resolve, reject) => {
+    const failed = error => {
+      server.removeListener("listening", listening);
+      reject(error);
+    };
+    const listening = () => {
+      server.removeListener("error", failed);
+      server.on("error", admission.fatal);
+      resolve();
+    };
+    server.once("error", failed);
+    server.once("listening", listening);
+    server.listen(0, "127.0.0.1");
+  });
+  const feedURL = admission.allowFeed(server);
 
   const { autoUpdater } = require("electron-updater");
   autoUpdater.logger = null;
   autoUpdater.forceDevUpdateConfig = true; // dev builds have no app-update.yml
   autoUpdater.setFeedURL({
     provider: "generic",
-    url: `http://127.0.0.1:${server.address().port}/`,
+    url: feedURL,
   });
   let checkDetail = "";
   const packagedDescriptor = Object.getOwnPropertyDescriptor(app, "isPackaged");
+  let onAvailable, onError;
   const completed = new Promise(resolve => {
-    autoUpdater.once("update-available", resolve);
-    autoUpdater.once("error", error => {
+    onAvailable = resolve;
+    onError = error => {
       checkDetail = error.message.slice(0, 120);
       resolve();
-    });
+    };
+    autoUpdater.once("update-available", onAvailable);
+    autoUpdater.once("error", onError);
   });
   try {
     // Exercise the real document frame and production preload. A synthetic
     // ipcMain event has no sender identity and must be refused.
     Object.defineProperty(app, "isPackaged", { configurable: true, get: () => true });
-    const win = BrowserWindow.getAllWindows().find(candidate =>
-      candidate.webContents.getURL().endsWith("index.html"));
-    await win.webContents.executeJavaScript("window.folia.checkForUpdates();true");
+    await admission.execute("window.folia.checkForUpdates();true");
     await completed;
-  } catch (e) {
-    checkDetail = e.message.slice(0, 120);
   } finally {
     if (packagedDescriptor) Object.defineProperty(app, "isPackaged", packagedDescriptor);
     else delete app.isPackaged;
+    autoUpdater.removeListener("update-available", onAvailable);
+    autoUpdater.removeListener("error", onError);
   }
-  server.close();
+  if (autoUpdater.autoDownload !== false || autoUpdater.autoInstallOnAppQuit !== false) {
+    throw new Error("Production updater did not retain manual download/install");
+  }
+  await closeFeed();
 
   // Vacuity guard: an empty header set proves nothing if no request was made.
   check(
@@ -277,6 +292,5 @@ app.whenReady().then(async () => {
       `x-user-staging-id present=${seen[0] ? "x-user-staging-id" in seen[0] : "n/a"}`,
   );
 
-  clearTimeout(watchdog);
-  finish();
-});
+}
+run().then(() => finish(), error => finish(error)).catch(admission.fatal);
