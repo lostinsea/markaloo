@@ -966,6 +966,15 @@ async function main() {
   const ownedTerminalStart = ownedFixtureSource.lastIndexOf("  let restoreBatchQuit = null;");
   const ownedPathCleanup = ownedFixtureSource.lastIndexOf("rootReleased = releaseTempDir(dir);");
   const ownedTerminalFixture = ownedFixtureSource.slice(ownedTerminalStart);
+  const ownedMetadataTerminalStart = ownedTerminalFixture.indexOf(
+    "  if (ownedMetadataFocusedHarness) {",
+  );
+  const ownedMetadataTerminalFixture = ownedMetadataTerminalStart < 0
+    ? "" : ownedTerminalFixture.slice(ownedMetadataTerminalStart);
+  const ownedDestroyedListener = ownedMetadataTerminalFixture.indexOf('win.webContents.once("destroyed"');
+  const ownedDestroy = ownedMetadataTerminalFixture.indexOf("win.destroy();");
+  const ownedDestroyedWait = ownedMetadataTerminalFixture.indexOf("await destroyed;");
+  const ownedDestroyedTick = ownedMetadataTerminalFixture.indexOf("setImmediate(resolve)");
   check(
     "owned metadata freeze fixtures abort the exact native commit without resetting authority and prove refusal thaw and preserved baselines",
     ownedAbortFixture.includes("__shutdown.abortCommit(commitId + 1)") &&
@@ -982,10 +991,9 @@ async function main() {
   );
   check(
     "owned metadata terminal fixture awaits the actual destroyed producer and checks Main before its definitive footer",
-    ownedTerminalFixture.includes('win.webContents.once("destroyed"') &&
-      ownedTerminalFixture.indexOf("await destroyed;") > ownedTerminalFixture.indexOf("win.destroy();") &&
-      ownedTerminalFixture.indexOf("await destroyed;") < ownedTerminalFixture.indexOf("setImmediate(resolve)") &&
-      ownedTerminalFixture.includes('shutdown.rendererUnusableReason === "webContents destroyed"') &&
+    ownedDestroyedListener >= 0 && ownedDestroyedListener < ownedDestroy &&
+      ownedDestroy < ownedDestroyedWait && ownedDestroyedWait < ownedDestroyedTick &&
+      ownedMetadataTerminalFixture.includes('shutdown.rendererUnusableReason === "webContents destroyed"') &&
       ownedTerminalStart < ownedPathCleanup &&
       ownedTerminalStart + ownedTerminalFixture.indexOf("await destroyed;") < ownedPathCleanup &&
       ownedTerminalFixture.includes("ownedNativeReadsSettled = await waitUntil") &&
