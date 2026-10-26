@@ -1448,7 +1448,9 @@ require("./test-userdata-isolation");
       check("cell screenshot waits for enabled settled readable Cancel colors for " + name, readiness.ready, readiness);
       if (!readiness.ready) throw new Error("Cell dialog capture is not ready: " + JSON.stringify(readiness));
     }
-    const file = await captureScreenshot(win, "table-cell-editor-" + name);
+    const captureName = process.env.FOLIA_CELL_EVIDENCE
+      ? path.relative(ROOT, evidence) + "-" + name : "table-cell-editor-" + name;
+    const file = await captureScreenshot(win, captureName);
     const valid = !!file && fs.existsSync(file) && fs.statSync(file).size > 100;
     check("cell screenshot is freshly captured for " + name, valid, file);
     const preserved = path.join(evidence, name + ".png");
@@ -1622,6 +1624,78 @@ require("./test-userdata-isolation");
     win.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
     await settle();
   }
+  async function withCellViewport(label, width, height, emulated, run) {
+    const observations = [];
+    const observe = async phase => {
+      const state = { phase, bounds: win.getBounds(), content: win.getContentSize(),
+        maximized: win.isMaximized(), zoom: win.webContents.getZoomFactor(),
+        viewport: await page(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })) };
+      observations.push(state);
+      return state;
+    };
+    const before = await observe("before");
+    const normalBounds = win.getNormalBounds();
+    const debuggerAPI = win.webContents.debugger;
+    const command = (name, args) => bounded("cell viewport " + name, debuggerAPI.sendCommand(name, args));
+    // Width drives help wrapping; native height can round at fractional OS scale.
+    const heightRounding = emulated ? 0 : 2;
+    const viewportMatches = (targetWidth, targetHeight) =>
+      `innerWidth===${targetWidth}&&Math.abs(innerHeight-${targetHeight})<=${heightRounding}`;
+    let overrideAttempted = false;
+    const errors = [];
+    try {
+      if (emulated) {
+        // The reference must run even when the hosted desktop is narrower.
+        overrideAttempted = true;
+        await command("Emulation.setDeviceMetricsOverride", {
+          width, height, deviceScaleFactor: before.viewport.dpr, mobile: false,
+        });
+      } else {
+        if (before.maximized) {
+          win.unmaximize();
+          await waitMain(label + " unmaximizes", () => !win.isMaximized());
+        }
+        win.setContentSize(width, height);
+      }
+      await settle();
+      await observe("after requested size");
+      await wait(label + " content viewport", viewportMatches(width, height));
+      await exec("document.fonts.ready.then(()=>true)");
+      await settle();
+      const actual = await page(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }));
+      check("cell " + label + " viewport renders " +
+        (emulated ? "its exact reference size" : "its exact width and measured native height"),
+        actual.width === width && Math.abs(actual.height - height) <= heightRounding && debuggerAPI.isAttached(),
+        { requested: { width, height }, mode: emulated ? "CDP-emulated reference" : "native content size",
+          heightRounding, actual, nativeContentSize: win.getContentSize() });
+      await run();
+    } catch (error) {
+      errors.push({ phase: "setup or scenario", error: error.stack });
+    }
+    try {
+      if (overrideAttempted) await command("Emulation.clearDeviceMetricsOverride");
+      if (!emulated) {
+        win.setBounds(before.maximized ? normalBounds : before.bounds);
+        if (before.maximized) {
+          win.maximize();
+          await waitMain(label + " restores maximized state", () => win.isMaximized());
+        }
+      }
+      await settle();
+      await observe("after restoration request");
+      await wait(label + " restores the original content viewport",
+        viewportMatches(before.viewport.width, before.viewport.height));
+      await settle();
+      const restored = await observe("restored");
+      check("cell " + label + " restores the native Main viewport and debugger",
+        restored.viewport.dpr === before.viewport.dpr && restored.zoom === before.zoom &&
+        restored.maximized === before.maximized && debuggerAPI.isAttached(),
+        { before, restored, heightRounding, observations });
+    } catch (error) {
+      errors.push({ phase: "restoration", error: error.stack });
+    }
+    if (errors.length) throw new Error(label + " viewport failure: " + JSON.stringify({ errors, observations }));
+  }
   async function cellLayout() {
     return page(() => {
       const rect = node => node.getBoundingClientRect().toJSON();
@@ -1629,9 +1703,26 @@ require("./test-userdata-isolation");
       const footer = tableCellDialog.querySelector('.note-dialog-footer');
       const copy = footer.querySelector('.table-cell-footer-copy');
       const actions = footer.querySelector('.table-cell-footer-actions');
+      const text = node => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const style = getComputedStyle(node);
+        return { content: node.textContent, bounds: rect(node),
+          visible: style.visibility === 'visible' && style.opacity === '1' && style.display !== 'none',
+          rects: [...range.getClientRects()].map(box => box.toJSON()) };
+      };
+      const buttons = [tableCellUpdate, document.getElementById('tableCellCancel')];
       return { dialog: rect(tableCellDialog), header: rect(header), grid: rect(tableCellGrid),
         footer: rect(footer), copy: rect(copy), actions: rect(actions),
-        buttons: [tableCellUpdate, document.getElementById('tableCellCancel')].map(rect),
+        buttons: buttons.map(rect),
+        usableButtons: buttons.every(button => {
+          const box = button.getBoundingClientRect(), style = getComputedStyle(button);
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return !button.disabled && style.visibility === 'visible' && style.opacity === '1' &&
+            style.pointerEvents !== 'none' && !!hit && button.contains(hit);
+        }),
+        scopeText: text(document.getElementById('tableCellScope')),
+        helpText: text(document.getElementById('tableCellHelp')),
         viewport: { width: innerWidth, height: innerHeight },
         scopeInCopy: copy.contains(document.getElementById('tableCellScope')),
         helpInCopy: copy.contains(document.getElementById('tableCellHelp')),
@@ -1639,6 +1730,26 @@ require("./test-userdata-isolation");
         helpFont: parseFloat(getComputedStyle(document.getElementById('tableCellHelp')).fontSize),
         resize: getComputedStyle(tableCellDialog).resize };
     });
+  }
+  function readableCellFooter(layout, expectedScope, inline) {
+    const inside = (box, outer) => box.width > 0 && box.height > 0 &&
+      box.left >= outer.left - 1 && box.right <= outer.right + 1 &&
+      box.top >= outer.top - 1 && box.bottom <= outer.bottom + 1;
+    const viewport = { left: 0, top: 0, right: layout.viewport.width, bottom: layout.viewport.height };
+    const separated = layout.copy.right <= layout.actions.left - 4 ||
+      (!inline && layout.copy.bottom <= layout.actions.top - 4);
+    const expectedHelp = "Tab: next cell. Enter / Shift+Enter: next / previous row. Ctrl+Enter: update. Escape: cancel.";
+    return layout.scopeInCopy && layout.helpInCopy && layout.scopeFont === 12 && layout.helpFont === 12 &&
+      layout.scopeText.content === expectedScope && layout.helpText.content === expectedHelp &&
+      [layout.scopeText, layout.helpText].every(text => text.visible && text.rects.length > 0 &&
+        text.rects.every(box => inside(box, text.bounds) && inside(box, layout.copy) &&
+          inside(box, layout.footer) && inside(box, layout.dialog) && inside(box, viewport))) &&
+      separated && layout.usableButtons && inside(layout.copy, layout.footer) &&
+      inside(layout.actions, layout.footer) && inside(layout.footer, layout.dialog) && inside(layout.dialog, viewport) &&
+      layout.buttons.every(button => inside(button, layout.actions) && button.height >= 32) &&
+      layout.buttons[0].width >= 192 && layout.buttons[1].width >= 88 &&
+      Math.abs(layout.buttons[0].top - layout.buttons[1].top) <= 1 &&
+      layout.grid.top >= layout.header.bottom && layout.grid.top - layout.header.bottom <= 12;
   }
   async function resizeCellDialog(dx, dy) {
     const layout = await cellLayout();
@@ -1716,23 +1827,40 @@ require("./test-userdata-isolation");
     check("real DOM rich-cell safety validation is repeatedly idempotent", rich.safe);
     const originalTheme = await exec("({dark:document.body.classList.contains('dark-mode'),scheme:document.body.getAttribute('data-theme')})");
     try {
-      for (const theme of ["light", "dark"]) {
-        await page(dark => {
-          document.body.removeAttribute("data-theme");
-          document.body.classList.toggle("dark-mode", dark);
-        }, theme === "dark");
-        await settle();
-        const surface = await dialogSurface();
-        check("cell dialog has an opaque themed centered contained surface in " + theme + " mode",
-          surface.opaque && surface.themedText && surface.centered && surface.contained, surface);
-        const layout = await cellLayout();
-        check("cell help shares the compact button bar and leaves the grid directly below the header in " + theme + " mode",
-          layout.scopeInCopy && layout.helpInCopy && layout.copy.right <= layout.actions.left - 4 &&
-          layout.copy.height <= layout.actions.height + 2 &&
-          layout.scopeFont === 12 && layout.helpFont === 12 &&
-          layout.grid.top >= layout.header.bottom && layout.grid.top - layout.header.bottom <= 12, layout);
-        await gridLinkStyles(theme);
-      }
+      await withCellViewport("wide reference", 1188, 770, true, async () => {
+        for (const theme of ["light", "dark"]) {
+          await page(dark => {
+            document.body.removeAttribute("data-theme");
+            document.body.classList.toggle("dark-mode", dark);
+          }, theme === "dark");
+          await settle();
+          const surface = await dialogSurface();
+          check("cell dialog has an opaque themed centered contained surface in " + theme + " mode",
+            surface.opaque && surface.themedText && surface.centered && surface.contained, surface);
+          const layout = await cellLayout();
+          check("cell reference dialog actually reaches its qualified wide width in " + theme + " mode",
+            Math.abs(layout.dialog.width - 1100) <= 1, layout);
+          check("cell help shares the compact button bar and leaves the grid directly below the header in " + theme + " mode",
+            layout.scopeInCopy && layout.helpInCopy && layout.copy.right <= layout.actions.left - 4 &&
+            layout.copy.height <= layout.actions.height + 2 &&
+            layout.scopeFont === 12 && layout.helpFont === 12 &&
+            layout.grid.top >= layout.header.bottom && layout.grid.top - layout.header.bottom <= 12, layout);
+          await gridLinkStyles(theme);
+        }
+      });
+      await withCellViewport("hosted narrow", 1008, 681, false, async () => {
+        for (const theme of ["light", "dark"]) {
+          await page(dark => {
+            document.body.removeAttribute("data-theme");
+            document.body.classList.toggle("dark-mode", dark);
+          }, theme === "dark");
+          await settle();
+          const layout = await cellLayout();
+          check("hosted-size cell footer keeps complete readable help beside usable actions in " + theme + " mode",
+            readableCellFooter(layout, "4 rows, 3 columns. Only these cells will be updated.", true), layout);
+          await screenshot("hosted-grid-" + theme);
+        }
+      });
     } finally {
       await page(theme => {
         document.body.classList.toggle("dark-mode", theme.dark);
@@ -2674,17 +2802,20 @@ require("./test-userdata-isolation");
     const geometry = await exec(`(() => {
       const cells=__cells.inputs(),grid=tableCellGrid;
       const initiallyOverflowing=grid.scrollHeight>grid.clientHeight+100;
+      const before=grid.scrollTop;
       cells.at(-1).focus();
       const g=grid.getBoundingClientRect(), c=cells.at(-1).getBoundingClientRect();
       const footer=tableCellUpdate.getBoundingClientRect();
-      return {count:cells.length,initiallyOverflowing,scroll:grid.scrollTop,
+      return {count:cells.length,initiallyOverflowing,before,scroll:grid.scrollTop,
         lastVisible:c.top>=g.top&&c.bottom<=g.bottom+1,
         updateVisible:footer.top>=0&&footer.bottom<=innerHeight};
     })()`);
     check("many-row cell grid scrolls the focused final cell while keeping Update usable",
-      geometry.count === 243 && geometry.initiallyOverflowing && geometry.scroll > 0 &&
+      geometry.count === 243 && geometry.initiallyOverflowing && geometry.before === 0 && geometry.scroll > geometry.before &&
       geometry.lastVisible && geometry.updateVisible, geometry);
     const originalLayout = await cellLayout(), sourceBefore = await state();
+    check("hosted-size many-row footer keeps complete readable help and usable actions",
+      readableCellFooter(originalLayout, "81 rows, 3 columns. Only these cells will be updated.", true), originalLayout);
     const narrow = await resizeCellDialog(-480, -220);
     const contained = layout => layout.header.top >= layout.dialog.top &&
       layout.footer.bottom <= layout.dialog.bottom + 1 && layout.grid.height >= 80 &&
@@ -2695,6 +2826,8 @@ require("./test-userdata-isolation");
     check("native corner dragging shrinks both popup dimensions while retaining its header grid and actions",
       narrow.resize === "both" && originalLayout.dialog.width - narrow.dialog.width >= 100 &&
       originalLayout.dialog.height - narrow.dialog.height >= 80 && contained(narrow), { originalLayout, narrow });
+    check("resized narrow footer retains complete readable help and usable actions",
+      readableCellFooter(narrow, "81 rows, 3 columns. Only these cells will be updated.", false), narrow);
     await screenshot("resized-grid-narrow");
     const grown = await resizeCellDialog(180, 140);
     check("native corner dragging grows the grid rather than wasting popup space",
@@ -2805,7 +2938,10 @@ require("./test-userdata-isolation");
         await pureInRenderer();
         for (const [name, run] of Object.entries({ menus, provenance, noop, transaction, adoption, stale, keyboard, many })) {
           if (!selected(name)) continue;
-          try { await run(); }
+          try {
+            if (name === "many") await withCellViewport("hosted many-row", 1008, 681, false, run);
+            else await run();
+          }
           catch (error) { check("cell " + name + " scenario completed", false, error.stack); throw error; }
           finally {
             try { await cleanupActors(); }

@@ -913,6 +913,8 @@ const REVERTS = [
     expect: [
       /^cell help shares the compact button bar and leaves the grid directly below the header in light mode$/,
       /^cell help shares the compact button bar and leaves the grid directly below the header in dark mode$/,
+      /^hosted-size cell footer keeps complete readable help beside usable actions in light mode$/,
+      /^hosted-size cell footer keeps complete readable help beside usable actions in dark mode$/,
     ],
     mustPass: [
       /^preview actual menu full table uses its owning table$/,
@@ -923,7 +925,7 @@ const REVERTS = [
       /^cell scenarios introduce no renderer or visible document errors$/,
       /^cell product source remains unchanged throughout the run$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
   },
   {
     id: "R1141", what: "disable native resizing of the cell editor",
