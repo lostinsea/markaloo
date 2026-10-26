@@ -170,6 +170,14 @@ const TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL = Object.freeze([
   "Shutdown approval renderer unusable: webContents destroyed",
 ]);
 const VIRTUAL_SUITES = Object.freeze({
+  ...Object.fromEntries(["selection", "rows", "splice", "inline", "menus", "provenance", "noop",
+    "transaction", "adoption", "stale", "keyboard", "many"].map(group => [
+    "test:table-cells-" + group, Object.freeze({
+      npmScript: ["selection", "rows", "splice", "inline"].includes(group)
+        ? "test:table-cells-source" : "test:table-cells-ui",
+      environment: Object.freeze({ FOLIA_CELL_PROOF: group }),
+    }),
+  ])),
   ...Object.fromEntries(SYNTAX_COMPONENT_REVERTS.map(([, language]) => [
     "test:syntax-" + language, Object.freeze({
       npmScript: "test:syntax-source",
@@ -479,6 +487,309 @@ const VIRTUAL_SUITES = Object.freeze({
 });
 
 const REVERTS = [
+  {
+    id: "R1136", what: "make the cell dialog transparent with undefined theme roles",
+    file: CSS,
+    from: ".table-cell-dialog {\n  color: var(--text-primary);\n  background: var(--bg-secondary);",
+    to: ".table-cell-dialog {\n  color: var(--text-color);\n  background: var(--bg-color);",
+    suite: "test:table-cells-menus",
+    expect: [
+      /^cell dialog has an opaque themed centered contained surface in light mode$/,
+      /^cell dialog has an opaque themed centered contained surface in dark mode$/,
+    ],
+    mustPass: [
+      /^preview actual menu full table uses its owning table$/,
+      /^source actual menu full table uses its owning table$/,
+      /^cell dialog is a native focused formatted grid with links code images and no raw-source editor$/,
+      /^real DOM rich-cell safety validation is repeatedly idempotent$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1137", what: "let the global margin reset pin the cell modal to the viewport corner",
+    file: CSS,
+    from: "  padding: 0;\n  margin: auto;\n  width: min(1100px, calc(100vw - 48px));",
+    to: "  padding: 0;\n  width: min(1100px, calc(100vw - 48px));",
+    suite: "test:table-cells-menus",
+    expect: [
+      /^cell dialog has an opaque themed centered contained surface in light mode$/,
+      /^cell dialog has an opaque themed centered contained surface in dark mode$/,
+    ],
+    mustPass: [
+      /^preview actual menu full table uses its owning table$/,
+      /^source actual menu full table uses its owning table$/,
+      /^cell dialog is a native focused formatted grid with links code images and no raw-source editor$/,
+      /^real DOM rich-cell safety validation is repeatedly idempotent$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1138", what: "leave editable grid links in browser-default colors",
+    file: CSS,
+    from: ".table-cell-grid a,\n.table-cell-grid a:visited {\n  color: var(--accent-main);",
+    to: ".table-cell-grid a,\n.table-cell-grid a:visited {",
+    suite: "test:table-cells-menus",
+    expect: [
+      /^cell grid links use theme color in light normal and visited states$/,
+      /^cell grid links use theme color in dark normal and visited states$/,
+    ],
+    mustPass: [
+      /^preview actual menu full table uses its owning table$/,
+      /^source actual menu full table uses its owning table$/,
+      /^cell dialog is a native focused formatted grid with links code images and no raw-source editor$/,
+      /^cell grid forced visited selector is observable and restored in light$/,
+      /^cell grid forced visited selector is observable and restored in dark$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1139", what: "let modal cell history reach Chromium's source textarea history",
+    file: RENDERER,
+    from: "  // Chromium can route cell Undo to the textarea's native history.\n" +
+      "  if (tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&",
+    to: "  // Chromium can route cell Undo to the textarea's native history.\n" +
+      "  if (false && tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&",
+    suite: "test:table-cells-keyboard",
+    expect: [
+      /^Ctrl Z in a fresh untouched cell cannot reach Chromium textarea Undo$/,
+      /^trusted Undo and Redo in an untouched cell preserve source authority caret revisions and timers$/,
+      /^native cell Undo is live and independent of document history$/,
+      /^native cell Redo restores its real edit without source history or authority changes$/,
+      /^exhausted cell Undo cannot escape into source history$/,
+      /^clipboard Update splices only its exact cell and leaves trusted source typing other bytes and disk untouched$/,
+      /^trusted untouched-cell Redo cancels actual source history before input without consuming it$/,
+      /^Cancel restores normal source native Undo and Redo without saving$/,
+    ],
+    mustPass: [
+      /^native-Undo fixture proves real trusted textarea typing and live Chromium source Undo and Redo$/,
+      /^cell keyboard diagnostic observer sees the actual trusted textarea setup input$/,
+      /^cell dialog setup has a real selected table and visible menu action$/,
+      /^cell Enter moves to the next actual row in the same column$/,
+      /^cell Shift Enter returns to the preceding actual row$/,
+      /^native Tab advances to the next editable cell$/,
+      /^cell keyboard commands and IME cannot reach document Undo Save search or arrows$/,
+      /^native modal paste preserves its BR text structure safe serialization and other cell DOM$/,
+      /^untouched-cell Redo control starts with actual undone native source typing$/,
+      /^cell error sentinel detects both deliberately provoked channels$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+      /^cell product source remains unchanged throughout the run$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 8,
+  },
+  {
+    id: "R1140", what: "spend a separate footer row on the cell-editor help",
+    file: CSS,
+    from: ".table-cell-footer-copy { flex: 1 1 22rem; min-width: 0; font-size: 12px; line-height: 1.25; }",
+    to: ".table-cell-footer-copy { flex: 0 0 100%; min-width: 0; font-size: 12px; line-height: 1.25; }",
+    suite: "test:table-cells-menus",
+    expect: [
+      /^cell help shares the compact button bar and leaves the grid directly below the header in light mode$/,
+      /^cell help shares the compact button bar and leaves the grid directly below the header in dark mode$/,
+    ],
+    mustPass: [
+      /^preview actual menu full table uses its owning table$/,
+      /^source actual menu full table uses its owning table$/,
+      /^cell dialog is a native focused formatted grid with links code images and no raw-source editor$/,
+      /^cell grid links use theme color in light normal and visited states$/,
+      /^cell grid links use theme color in dark normal and visited states$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+      /^cell product source remains unchanged throughout the run$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1141", what: "disable native resizing of the cell editor",
+    file: CSS,
+    from: "  min-height: min(320px, calc(100vh - 32px));\n  resize: both;\n  overflow: auto;",
+    to: "  min-height: min(320px, calc(100vh - 32px));\n  resize: none;\n  overflow: auto;",
+    suite: "test:table-cells-many",
+    expect: [
+      /^native corner dragging shrinks both popup dimensions while retaining its header grid and actions$/,
+      /^native corner dragging grows the grid rather than wasting popup space$/,
+    ],
+    mustPass: [
+      /^many-row cell grid scrolls the focused final cell while keeping Update usable$/,
+      /^popup resizing preserves source history and captured table authority$/,
+      /^resized grid still scrolls the final editable row into view$/,
+      /^cell error sentinel detects both deliberately provoked channels$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+      /^cell product source remains unchanged throughout the run$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1116", what: "treat a collapsed caret inside a source table as explicit selection",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "    if (start === end) fail('tableCells.select');",
+    to: "",
+    suite: "test:table-cells-selection",
+    expect: [/^collapsed caret inside a real table is not an explicit table selection$/],
+    mustPass: [
+      /^cell source helper exports the production operations$/,
+      /^cell parser fixture contains two independently located identical writable tables$/,
+      /^source resolver refuses none and multiple actual tables$/,
+      /^source prose around one duplicate resolves its exact owning table$/,
+      /^duplicate reference definitions never shift a later identical table or its effective reference$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1117", what: "drop partially intersected actual header and data rows",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "    const table = tables[0], rows = rowsOnly ? table.rows.filter(intersects) : table.rows;",
+    to: "    const table = tables[0], rows = rowsOnly ? table.rows.filter(row => start <= row.start && end >= row.end) : table.rows;",
+    suite: "test:table-cells-rows",
+    expect: [/^partial source boundaries include the intersected header and data rows$/],
+    mustPass: [
+      /^cell parser fixture contains two independently located identical writable tables$/,
+      /^delimiter-only selection has no editable row$/,
+      /^full action from a source row subset loads its entire owning table$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1118", what: "normalize unrelated source bytes during a changed-cell splice",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "    candidate += model.source.slice(cursor);",
+    to: "    candidate += model.source.slice(cursor);\n    if (ordered.length) candidate = normalise(candidate);",
+    suite: "test:table-cells-splice",
+    expect: [
+      /^source splice preserves all other exact bytes including BOM Unicode mixed endings and EOF$/,
+      /^cell source splice keeps every native ending BOM and terminal-table EOF case exact$/,
+    ],
+    mustPass: [
+      /^cell parser fixture contains two independently located identical writable tables$/,
+      /^empty cell replacement is an exact no-op$/,
+      /^cell source splice rejects a cell belonging to another duplicate$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1119", what: "authorize changed preview DOM from a stale source receipt",
+    file: EDITOR_SCROLL,
+    from: "      return receipt && sealed?.presented === table.innerHTML\n        ? { start: receipt.start, end: receipt.end } : null;",
+    to: "      return receipt ? { start: receipt.start, end: receipt.end } : null;",
+    suite: "test:table-cells-provenance",
+    expect: [/^changed preview DOM cannot borrow an old receipt or authorize a cell grid$/],
+    mustPass: [
+      /^cell provenance setup has identical DOM tables with distinct exact source receipts$/,
+      /^text-identical cloned table has no edit authority from text or ordinal$/,
+      /^cell error sentinel detects both deliberately provoked channels$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+      /^cell product source remains unchanged throughout the run$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1120", what: "commit an unchanged rich-cell grid as a document edit",
+    file: RENDERER,
+    from: "    if (!edits.length) {\n      closeTableCellEditor();\n      return;\n    }",
+    to: "    if (false && !edits.length) {\n      closeTableCellEditor();\n      return;\n    }",
+    suite: "test:table-cells-noop",
+    expect: [/^unchanged cell Update closes without mutation history dirty state or Save$/],
+    mustPass: [
+      /^cell dialog setup has a real selected table and visible menu action$/,
+      /^cell Cancel discards edits without any document transaction$/,
+      /^native Escape cancels the cell dialog and restores preview focus$/,
+      /^cell error sentinel detects both deliberately provoked channels$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1121", what: "record edited output rather than the exact pre-edit source for Undo",
+    file: RENDERER,
+    from: "    historyPushExact(session.exact);",
+    to: "    historyPushExact(candidate);",
+    suite: "test:table-cells-transaction",
+    expect: [
+      /^one document Undo and Redo restore the independently expected exact source bytes$/,
+      /^second typing Undo before debounce restores the exact original table bytes$/,
+      /^typing history keeps the table Redo separate and never implicitly saves before debounce$/,
+      /^second typing Undo after debounce restores the exact original table bytes$/,
+      /^typing history keeps the table Redo separate and never implicitly saves after debounce$/,
+    ],
+    mustPass: [
+      /^cell transaction setup resolves prose plus just the second duplicate through the textarea menu$/,
+      /^cell transaction splices only changed cells and retains every non-table and unchanged-cell byte$/,
+      /^cell repeated Ctrl Enter submits once while a real preview render is pending$/,
+      /^selected-row Update changes only the intersected row of the correct duplicate$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 5,
+  },
+  {
+    id: "R1122", what: "discard exact mixed newline spelling at the tab adoption boundary",
+    file: TABS,
+    from: "    state.content = content;\n    state.foldedLive = normaliseNewlines(content);",
+    to: "    state.content = normaliseNewlines(content);\n    state.foldedLive = normaliseNewlines(content);",
+    suite: "test:table-cells-adoption",
+    expect: [/^exact editor adoption retains BOM and mixed newline spelling instead of refitting repeated rows$/],
+    mustPass: [
+      /^cell fixtures prove independently authored source and exact duplicate boundaries$/,
+      /^cell error sentinel detects both deliberately provoked channels$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+      /^cell product source remains unchanged throughout the run$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1123", what: "skip permanent dialog-intent invalidation at shutdown freeze",
+    file: TABS,
+    from: "    // Thawing must not revive a dialog authorized before shutdown began.\n    dialogDecisionIntent++;",
+    to: "",
+    suite: "test:table-cells-stale",
+    expect: [/^shutdown freeze advances dialog intent without restoring it on thaw$/],
+    mustPass: [
+      /^cell stale caret-key setup reaches the intended lifecycle boundary$/,
+      /^cell stale freeze-thaw setup reaches the intended lifecycle boundary$/,
+      /^cell stale caret-key refuses without source cache history or disk mutation$/,
+      /^cell stale freeze refuses without source cache history or disk mutation$/,
+      /^cell stale freeze-thaw refuses without source cache history or disk mutation$/,
+      /^cell stale undo-samebytes refuses without source cache history or disk mutation$/,
+      /^cell stale tab-back refuses without source cache history or disk mutation$/,
+      /^cell stale save-request refuses without source cache history or disk mutation$/,
+      /^cell stale save-result refuses without source cache history or disk mutation$/,
+      /^cell error sentinel detects both deliberately provoked channels$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1124", what: "leak cell Find into the document shortcut handlers",
+    file: RENDERER,
+    from: "  // Keep native rich-cell Undo/Copy/Paste, but never run document commands.\n  event.stopPropagation();",
+    to: "  // Keep native rich-cell Undo/Copy/Paste, but never run document commands.\n" +
+      "  if (!((event.ctrlKey || event.metaKey) && event.key === 'f')) event.stopPropagation();",
+    suite: "test:table-cells-keyboard",
+    expect: [/^cell keyboard commands and IME cannot reach document Undo Save search or arrows$/],
+    mustPass: [
+      /^cell Enter moves to the next actual row in the same column$/,
+      /^cell Shift Enter returns to the preceding actual row$/,
+      /^native Tab advances to the next editable cell$/,
+      /^native cell Undo is live and independent of document history$/,
+      /^cell scenarios introduce no renderer or visible document errors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1125", what: "let edited cell text introduce a literal Markdown pipe",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "      char => '&#' + char.charCodeAt(0) + ';');",
+    to: "      char => char === '|' ? '|' : '&#' + char.charCodeAt(0) + ';');",
+    suite: "test:table-cells-inline",
+    expect: [/^cell serializer keeps formatting while encoding Markdown structure and attributes$/],
+    mustPass: [
+      /^cell source helper exports the production operations$/,
+      /^cell serializer rejects nested table structure$/,
+      /^cell serializer refuses inline event handlers$/,
+      /^edited literal block starts stay inline instead of becoming Markdown block syntax$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
   {
     id: "R1115", what: "rebuild every hidden mirror span after small source edits",
     file: EDITOR_SCROLL,
@@ -6829,65 +7140,91 @@ const REVERTS = [
     requireMustPassAssertions: true,
     requireExactFailures: true,
   },
-  {
-    id: "R217",
-    suite: "test:mermaid",
-    // Found by BOTH independent reviewers, and measured before being fixed: a
-    // webContents.reload() rebuilds the JS realm and its require('electron')
-    // module instance, so a one-shot trap install is destroyed by it.
-    //   before { flag: true,  openExternalPatched: true  }
-    //   after  { flag: false, openExternalPatched: false }
-    // The mermaid suite reloads mid-run to observe lazy loading from a clean
-    // realm, so every assertion after that point used to run with the real
-    // opener live - one clicked http link away from the leak this whole phase
-    // exists to close. The trap therefore re-arms on did-finish-load, and this
-    // revert removes that re-arm.
-    what: "install the external-open trap only once, so a mid-suite reload silently un-traps the harness",
-    file: VISUAL,
-    from: "  if (!trapRearmed.has(wc)) {",
-    to: "  if (false) {",
-    expect: [
-      /the external-open trap re-arms itself after a reload, so the rest of the suite still cannot reach the browser/,
-      /the re-armed trap really replaced the shell functions, not just its own marker/,
-    ],
-    // The reload itself, and the lazy-loading assertions it exists to serve,
-    // must be untouched - otherwise the revert has broken the suite rather
-    // than exposing the hole.
-    mustPass: [/mermaid is not loaded at startup/, /the lazy loader is present to fetch it later/],
-  },
+  // R217's renderer re-arm mechanism is obsolete. R216 now also proves
+  // process-owned interception across an actual page reload and window close.
   {
     id: "R216",
-    suite: "test:patch",
-    // REPORTED BY THE USER, not found by a reviewer: the suite dispatched a
-    // real click on a real http anchor, so renderer.js handed it to
-    // shell.openExternal and the OS opened it in whatever browser they were
-    // working in - stealing focus, and leaving one dead tab per suite run
-    // (a full revert chain runs the suite dozens of times). Nothing failed,
-    // which is why it survived until a human noticed their tab bar.
-    //
-    // The revert neutralises the install for EVERY suite at once, which is the
-    // right blast radius: the trap is a property of the harness, not of one
-    // test. Note what it does NOT do: it never clears a flag that was set. It
-    // makes the install block unreachable, so the marker and the two shell
-    // mutations disappear TOGETHER - and that pairing is what keeps the proof
-    // free. The patch suite refuses to dispatch the click unless the marker is
-    // set, so a revert that broke the mutation while leaving the marker true
-    // would prove the same point by performing the very leak it documents.
-    what: "stop trapping shell.openExternal in the harness, letting a clicked link reach the real browser",
+    suite: "test:visual",
+    // Independent safe fallbacks remain live even when installation is removed.
+    what: "leave Main shell openers untrapped in the isolated test process",
     file: VISUAL,
-    from: "    if (!window.__externalTrapInstalled) {",
-    to: "    if (false) {",
+    from: "  if (trappedShell === null) {",
+    to: "  if (false) {",
     expect: [
-      /external opens are trapped before any link is clicked, so the suite cannot reach the real browser/,
-      /clicking a link inside a heading does not collapse the section/,
-      /clicking a link inside a heading hands the URL to the external opener/,
+      /^default sentinel installs both actual Main opener guards$/,
+      /^Main opener guards record exact separate targets without fallback$/,
+      /^default opener guard installation leaves a clean sentinel report$/,
+      /^repeated opener installation preserves wrappers and existing records$/,
+      /^opener records are copied process-wide snapshots rather than page-owned arrays$/,
+      /^clearing opener records clears both process ledgers without removing guards$/,
+      /^Main opener guards and existing records survive a genuinely replaced page$/,
+      /^closing one synthetic window neither restores openers nor loses process records$/,
+      /^restoring test wrappers makes both opener guards observable again$/,
     ],
-    // The suite must otherwise be intact: if these fail too, the revert has
-    // broken the harness rather than demonstrating the leak.
     mustPass: [
-      /heading ids are slugs derived from the heading text/,
-      /an in-document anchor target resolves by slug/,
+      /^external guard setup uses an isolated Node-free page$/,
+      /^external guard fallback controls record both openers without OS launches$/,
+      /^sentinel ownership option preserves explicit Main shell guards$/,
+      /^the sound element is reported sound$/,
     ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1126",
+    suite: "test:visual",
+    what: "overwrite a suite's explicit Main shell guards through sentinel setup",
+    file: VISUAL,
+    from: "  if (o.trapExternal !== false) {",
+    to: "  if (true) {",
+    expect: [/^sentinel ownership option preserves explicit Main shell guards$/],
+    mustPass: [
+      /^default sentinel installs both actual Main opener guards$/,
+      /^Main opener guards record exact separate targets without fallback$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1127",
+    suite: "test:visual",
+    what: "silence failed Main opener guard installation in the error sentinel",
+    file: VISUAL,
+    from: "        if (ready !== true) hits.push({",
+    to: "        if (false) hits.push({",
+    expect: [/^sentinel reports opener installation failure even when its kind is ignored$/],
+    mustPass: [
+      /^a forged page marker cannot hide a replaced Main URL guard$/,
+      /^Main opener guards record exact separate targets without fallback$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
+  },
+  {
+    id: "R1130",
+    suite: "test:profile",
+    what: "wipe a redirected or non-directory profile before checking physical ownership",
+    file: path.join(ROOT, "test", "test-userdata-isolation.js"),
+    from: "      const entry = fs.lstatSync(directory, { throwIfNoEntry: false });",
+    to: "      const entry = undefined;",
+    expect: [
+      /^a redirected parent is refused before any profile wipe$/,
+      /^a redirected suite is refused before any profile wipe$/,
+      /^a non-directory parent is refused before profile removal, creation or enumeration$/,
+      /^a non-directory suite is refused before profile removal, creation or enumeration$/,
+    ],
+    mustPass: [
+      /^the profile ownership control starts with a real stale suite profile$/,
+      /^an owned ordinary test profile is wiped and relocated normally$/,
+      /^the trusted temp alias control genuinely resolves to its owned directory$/,
+      /^a trusted temp-directory alias preserves normal profile isolation$/,
+      /^the parent redirect control genuinely points outside the intended suite root$/,
+      /^the suite redirect control genuinely points outside the intended suite root$/,
+      /^the parent non-directory control is a real file at the profile boundary$/,
+      /^the suite non-directory control is a real file at the profile boundary$/,
+    ],
+    requireMustPassAssertions: true,
+    requireExactFailures: true,
   },
   {
     id: "R215",
@@ -17773,12 +18110,14 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
             '    <script src="emoji-parser.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="utils.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
@@ -17856,6 +18195,7 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
@@ -17863,6 +18203,7 @@ const REVERTS = [
             '    <script src="utils.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
@@ -17953,6 +18294,7 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
@@ -17961,6 +18303,7 @@ const REVERTS = [
             '    <script src="mermaid-config.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>',
@@ -18282,12 +18625,14 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>',
           to:
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>',
@@ -20204,8 +20549,8 @@ const REVERTS = [
           id: "R797",
           what: "load the browser document registry after both consumers",
           file: HTML,
-          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
-          to: '    <script src="app-dialogs.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
+          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
+          to: '    <script src="app-dialogs.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
           suite: "test:packaging",
           expect: [
             /^SEC-08 document-events\.js loads exactly once before both consumers$/,
@@ -23528,8 +23873,9 @@ const REVERTS = [
         {
           id: "R1008", what: "forget the new source occurrence when a rendered block is reused",
           file: EDITOR_SCROLL,
-          from: "    adopt(fresh, adopted, bindings) {\n      const nodes = [fresh, ...fresh.querySelectorAll('*')];",
-          to: "    adopt(fresh, adopted, bindings) {\n      if (fresh !== adopted) return;\n      const nodes = [fresh, ...fresh.querySelectorAll('*')];",
+          // Keep table receipt adoption; skip only the legacy paragraph mappings.
+          from: "      const nodes = [fresh, ...fresh.querySelectorAll('*')];\n      const counts = new Map(), adoptedTags = new Map();",
+          to: "      if (fresh !== adopted) return;\n      const nodes = [fresh, ...fresh.querySelectorAll('*')];\n      const counts = new Map(), adoptedTags = new Map();",
           suite: "test:editor-scroll-edits",
           expect: [/^insertion updates the source position of reused repeated blocks$/,
             /^undo rebuilds mapping for the restored source$/,
@@ -23758,8 +24104,8 @@ const REVERTS = [
           from: "  cancelEditorDeferredWork();\n  editorModeRevision++;\n  editorScroll.reset();",
           to: "  editorModeRevision++;\n  editorScroll.reset();",
           also: [{
-            from: "    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      historyPush(markdownEditor.value);",
-            to: "    if (isEditMode) {\n      historyPush(markdownEditor.value);",
+            from: "    if (!exact && isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      historyPush(markdownEditor.value);",
+            to: "    if (!exact && isEditMode) {\n      historyPush(markdownEditor.value);",
           }, {
             from: "    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      renderMarkdown(markdownEditor.value);",
             to: "    if (isEditMode) {\n      renderMarkdown(markdownEditor.value);",
@@ -25611,7 +25957,7 @@ function proveCompanionTranscriptRoles() {
       r.requireMustPassAssertions === true && r.mustPass.length > 0) &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
-      .join(",") === "R1115,R1111,R1112,R1113,R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
+      .join(",") === "R1136,R1137,R1138,R1139,R1140,R1141,R1116,R1117,R1118,R1119,R1120,R1121,R1122,R1123,R1124,R1125,R1115,R1111,R1112,R1113,R72,R454,R467,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,

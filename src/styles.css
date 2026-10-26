@@ -4571,3 +4571,55 @@ pre[class*="language-"] {
   color: var(--tok-builtin-class);
 }
 /* SYNTAX HIGHLIGHTING END */
+/* The footer stays reachable while a large table scrolls in both directions. */
+.table-cell-dialog {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 0;
+  margin: auto;
+  width: min(1100px, calc(100vw - 48px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 32px);
+  min-width: min(480px, calc(100vw - 24px));
+  min-height: min(320px, calc(100vh - 32px));
+  resize: both;
+  overflow: auto;
+}
+.table-cell-dialog[open] { display: flex; flex-direction: column; }
+.table-cell-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+.table-cell-dialog h2 { margin: 0; font-size: 18px; }
+.table-cell-dialog > p { margin: 8px 20px; font-size: 13px; }
+.table-cell-grid { flex: 1 1 auto; overflow: auto; min-height: 0; min-width: 0; margin: 8px 20px; overscroll-behavior: contain; }
+.table-cell-grid table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.table-cell-grid th, .table-cell-grid td {
+  border: 1px solid var(--border-color);
+  padding: 0;
+  min-width: 150px;
+  vertical-align: top;
+}
+.table-cell-grid th:first-child { min-width: 65px; padding: 8px; }
+.table-cell-grid thead { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); }
+.table-cell-grid [contenteditable] {
+  min-height: 38px;
+  padding: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.table-cell-grid [contenteditable]:focus { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+.table-cell-grid img { max-width: 160px; max-height: 100px; }
+.table-cell-grid a,
+.table-cell-grid a:visited {
+  color: var(--accent-main);
+  text-decoration: none;
+  pointer-events: none;
+}
+.table-cell-error { color: var(--error-color, #c33); min-height: 1.3em; }
+.table-cell-dialog .note-dialog-header,
+.table-cell-dialog .table-cell-error,
+.table-cell-dialog .note-dialog-footer { flex-shrink: 0; }
+.table-cell-footer-copy { flex: 1 1 22rem; min-width: 0; font-size: 12px; line-height: 1.25; }
+.table-cell-footer-copy p { margin: 0; font: inherit; }
+.table-cell-footer-copy p + p { margin-top: 2px; }
+.table-cell-footer-actions { display: flex; gap: 10px; flex-shrink: 0; margin-left: auto; }

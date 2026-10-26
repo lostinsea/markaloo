@@ -455,6 +455,151 @@ async function checkDiagnosticLogging() {
   );
 }
 
+function checkTestIsolationOwnership() {
+  const helper = path.join(__dirname, "test-userdata-isolation.js");
+  const helperSource = fs.readFileSync(helper, "utf8");
+  const suite = "test-isolation-probe";
+  function run(privateTemp, creationFailurePath = null) {
+    const operations = { rmSync: [], mkdirSync: [], readdirSync: [] };
+    const diagnostics = [];
+    const exitSignal = new Error("controlled isolation exit");
+    let exitCode = null, userData = path.join(privateTemp, "fake-installed");
+    const facade = Object.create(fs);
+    for (const method of Object.keys(operations)) {
+      facade[method] = (target, ...args) => {
+        operations[method].push(path.resolve(target));
+        return fs[method](target, ...args);
+      };
+    }
+    facade.writeSync = (fd, value, ...args) => {
+      if (fd !== 2) return fs.writeSync(fd, value, ...args);
+      diagnostics.push(String(value));
+      return Buffer.byteLength(value);
+    };
+    const module = { exports: {} };
+    let refused = false, creationError = null;
+    try {
+      const context = {
+        require(name) {
+          if (name === "fs") return facade;
+          if (name === "os") return { tmpdir: () => privateTemp };
+          if (name === "electron") return { app: {
+            isReady: () => false,
+            getPath: () => userData,
+            setPath: (_name, value) => { userData = value; },
+          } };
+          return require(name);
+        },
+        process: {
+          argv: ["node", suite + ".js"], platform: process.platform,
+          exit(code) { exitCode = code; throw exitSignal; },
+        },
+        module, console, __dirname, __filename: helper,
+      };
+      context.global = context;
+      vm.runInNewContext(helperSource, context, { filename: helper });
+    } catch (error) {
+      if (error === exitSignal) {
+        refused = true;
+      } else if (creationFailurePath && error.code === "ENOTDIR" &&
+          error.syscall === "mkdir" && typeof error.path === "string" &&
+          path.resolve(error.path) === creationFailurePath &&
+          operations.mkdirSync.includes(creationFailurePath)) {
+        // A missing guard can reach mkdir; this owned-fixture error must fail
+        // the refusal assertion instead of preventing the suite's verdict.
+        creationError = error.message;
+      } else {
+        throw error;
+      }
+    }
+    return { refused, exitCode, operations, diagnostics, creationError,
+      exported: module.exports, userData };
+  }
+
+  const ordinary = path.join(root, "isolation-ordinary");
+  const ordinaryProfile = path.join(ordinary, "folia-test-userdata", suite);
+  fs.mkdirSync(ordinaryProfile, { recursive: true });
+  const stale = path.join(ordinaryProfile, "stale.txt");
+  fs.writeFileSync(stale, "stale test state");
+  check("the profile ownership control starts with a real stale suite profile",
+    fs.statSync(stale).isFile() && fs.readFileSync(stale, "utf8") === "stale test state");
+  const expectedProfile = fs.realpathSync.native(ordinaryProfile);
+  const clean = run(ordinary);
+  check("an owned ordinary test profile is wiped and relocated normally",
+    !clean.refused && clean.operations.rmSync.length === 1 &&
+      clean.operations.rmSync[0] === expectedProfile && !fs.existsSync(stale) &&
+      clean.exported.POST_WIPE_ENTRIES === 0 &&
+      fs.realpathSync.native(clean.userData) === expectedProfile);
+
+  const aliasTarget = path.join(root, "isolation-temp-target");
+  const aliasProfile = path.join(aliasTarget, "folia-test-userdata", suite);
+  fs.mkdirSync(aliasProfile, { recursive: true });
+  const aliasStale = path.join(aliasProfile, "stale.txt");
+  fs.writeFileSync(aliasStale, "stale alias state");
+  const tempAlias = path.join(root, "isolation-temp-alias");
+  fs.symlinkSync(aliasTarget, tempAlias, "junction");
+  const expectedAliasProfile = fs.realpathSync.native(aliasProfile);
+  check("the trusted temp alias control genuinely resolves to its owned directory",
+    fs.lstatSync(tempAlias).isSymbolicLink() &&
+      fs.realpathSync.native(tempAlias) === fs.realpathSync.native(aliasTarget) &&
+      fs.readFileSync(aliasStale, "utf8") === "stale alias state");
+  const alias = run(tempAlias);
+  check("a trusted temp-directory alias preserves normal profile isolation",
+    !alias.refused && alias.operations.rmSync.length === 1 &&
+      alias.operations.rmSync[0] === expectedAliasProfile && !fs.existsSync(aliasStale) &&
+      alias.exported.POST_WIPE_ENTRIES === 0 &&
+      fs.realpathSync.native(alias.userData) === expectedAliasProfile);
+
+  for (const kind of ["parent", "suite"]) {
+    const privateTemp = path.join(root, "isolation-" + kind);
+    const parent = path.join(privateTemp, "folia-test-userdata");
+    const profile = path.join(parent, suite);
+    const outside = path.join(root, "isolation-" + kind + "-outside");
+    const outsideProfile = kind === "parent" ? path.join(outside, suite) : outside;
+    fs.mkdirSync(outsideProfile, { recursive: true });
+    fs.mkdirSync(kind === "parent" ? privateTemp : parent, { recursive: true });
+    const witness = path.join(outsideProfile, "must-survive.txt");
+    fs.writeFileSync(witness, "owned redirect witness");
+    const redirect = kind === "parent" ? parent : profile;
+    fs.symlinkSync(outside, redirect, "junction");
+    check("the " + kind + " redirect control genuinely points outside the intended suite root",
+      fs.lstatSync(redirect).isSymbolicLink() &&
+        fs.realpathSync.native(redirect) === fs.realpathSync.native(outside));
+    const result = run(privateTemp);
+    check("a redirected " + kind + " is refused before any profile wipe",
+      result.refused && result.exitCode === 1 && result.diagnostics.length > 0 &&
+        Object.values(result.operations).every((calls) => calls.length === 0) &&
+        fs.existsSync(witness) &&
+        fs.readFileSync(witness, "utf8") === "owned redirect witness" &&
+        fs.lstatSync(redirect).isSymbolicLink(),
+      JSON.stringify({ refused: result.refused, exitCode: result.exitCode,
+        operations: result.operations, diagnostics: result.diagnostics.length }));
+  }
+
+  for (const kind of ["parent", "suite"]) {
+    const privateTemp = path.join(root, "isolation-file-" + kind);
+    const parent = path.join(privateTemp, "folia-test-userdata");
+    fs.mkdirSync(kind === "parent" ? privateTemp : parent, { recursive: true });
+    const obstruction = kind === "parent" ? parent : path.join(parent, suite);
+    fs.writeFileSync(obstruction, "owned non-directory witness");
+    check("the " + kind + " non-directory control is a real file at the profile boundary",
+      fs.lstatSync(obstruction).isFile() &&
+        fs.readFileSync(obstruction, "utf8") === "owned non-directory witness");
+    const result = run(privateTemp, kind === "parent"
+      ? path.join(fs.realpathSync.native(privateTemp), "folia-test-userdata", suite)
+      : null);
+    check("a non-directory " + kind + " is refused before profile removal, creation or enumeration",
+      result.refused && result.exitCode === 1 && result.diagnostics.length > 0 &&
+        Object.values(result.operations).every((calls) => calls.length === 0) &&
+        fs.existsSync(obstruction) && fs.lstatSync(obstruction).isFile() &&
+        fs.readFileSync(obstruction, "utf8") === "owned non-directory witness",
+      JSON.stringify({ refused: result.refused, exitCode: result.exitCode,
+        operations: result.operations, diagnostics: result.diagnostics.length,
+        creationError: result.creationError }));
+  }
+}
+
+checkTestIsolationOwnership();
 checkDiagnosticLogging().then(
   () => {
     console.log("\n=== " + pass + "/" + (pass + fail) + " passed ===");

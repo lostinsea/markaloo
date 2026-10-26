@@ -38,6 +38,208 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `visual-table-cell-editing` - **ACTIVE: RUNTIME QUALIFICATION / REVIEW CORRECTIONS**.
+  - Isolated branch: `users/vinma-microsoft/visual-table-editing`, based on
+    `5c659f629b4f990b8351c8783cf72cec1676698c`. No integration or publication.
+  - Edit mode offers Edit table and Edit selected rows in both the rendered
+    preview and Markdown editor. The new popup edits rendered cells, not source.
+  - A Markdown selection may include surrounding prose. Resolve exactly one
+    actual table; replace only changed cell spans. Preserve all non-table text,
+    unselected rows, original cell spelling and line endings.
+  - No selection, multiple tables, unsafe mappings and unsupported structures
+    produce an error. Update is one guarded, undoable document operation, not
+    a disk Save. Cancel does not mutate the document.
+  - Astra completed the source-backed design. Independent Sol/Luna evaluated
+    the design; history semantics, exact newline Undo, concrete preview
+    provenance and dialog command isolation informed implementation.
+  - Latest Sol/high owns product, behavioral tests, screenshots and proof code.
+    An unvalidated test draft was handed off without concurrent writers.
+    Runtime qualification and
+    final independent reviews are pending; syntax checks are not completion.
+  - R1116-R1125 are reserved exclusively for this feature; allocate only the
+    records needed and report each executed outcome. Preserve R1115.
+    R1136-R1145 are also confirmed feature-only; R1126-R1135 are release-owned.
+  - Mirror retention and the 400 ms preview delay remain unchanged.
+  - Locked dependencies and local Electron 43.4.1 are restored. The current
+    source route passes 38/38; packaging source checks pass 432/432 with both
+    built-ASAR checks skipped because no package was built.
+  - R1's single authorized UI invocation reached Main bootstrap, then its
+    180-second watchdog exited before any UI scenario. No screenshots were
+    produced. Exact-source receipts and zero-owned-process cleanup are retained
+    in `tmp\table-cells-r1`. Its host slot is released.
+  - R2 reached visible Main and both guard acknowledgements, then failed closed
+    because the actual document had no executed prompt guard. It completed no
+    UI scenario. Source-bound receipts and zero-owned-process cleanup remain
+    in `tmp\table-cells-r2`; its host slot is released.
+  - CDP registration now runs immediately in existing contexts as well as
+    future documents. Duplicate installation accepts only the matching frozen
+    guard and three functions; conflicts fail closed. Entry/completion and
+    registration diagnostics preserve the actual document identity.
+    R3 confirmed actual guard execution and Main readiness.
+  - R3 is an **unassisted failed run**, not feature qualification: UI 44/52.
+    Nested-context Update left its owner dirty; the next fixture clicked Open
+    and reached the embedded HTML discard confirmation before its chooser.
+    The user did not press either button. Native and separate-window guards
+    did not cover this dialog; the final native-only assertion was insufficient.
+    Receipts, viewed capture findings and zero-owned-process cleanup remain in
+    `tmp\table-cells-r3`. Its host slot is released.
+  - Runtime permission now has a two-stage safety gate. Source repairs add
+    before-show HTML-dialog refusal, a one-use allowance for the exact feature
+    modal, clean-tab fixture admission without discarding the dirty owner, and
+    fail-fast scenario setup. Plain-Node checks exercise the guard script; they
+    do not prove Chromium behavior. Sol accepted the repair; Luna found a
+    missing dirty-owner preservation check. That check now verifies exact
+    source, retained history, owner, dirty state and unchanged disk after
+    admission. Fresh independent Sol/Luna accept the corrected source.
+    The actual-Chromium dirty-Open negative probe is proven: the exact themed
+    confirmation was refused before its original presentation, with zero
+    original calls and both open/modal state false. Expected fatal exit 1,
+    private profile, unconsumed chooser, unchanged source and zero owned
+    processes are recorded in `tmp\table-cells-dirty-open-negative-r1`.
+    This proves the safety refusal, not feature behavior.
+    One complete same-suite attempt is now conditionally authorized.
+    Each stage needs a current non-overlapping release-owner slot; changing
+    the guard or admission source invalidates the probe. No feature proof,
+    performance or build campaign is authorized.
+  - The viewed R3 grid exposed transparent surfaces and lost native centering.
+    Correct theme tokens and automatic margins replace the invalid CSS.
+    R4 passed actual light/dark surface and centering checks; all four captures
+    were viewed. Button-transition readiness and Cancel contrast still need
+    settled-state evidence. The update capture contains a prior intentional
+    provenance-error notification and is not a clean-success deliverable.
+  - R4 is partial and failed: UI 162/167, source 38/38. No unexpected prompt,
+    no source changes, zero owned processes and no forced cleanup.
+    Reload, Save and freeze actors use incorrect interception/identity APIs.
+    In particular, the Save observer's wrong channel makes its earlier
+    no-implicit-Save count assertions unqualified. Correct the Main observer
+    and prove it alive with an explicit owned Save before relying on absence.
+    Freeze/reload/keyboard/many-row completion remains pending.
+  - Sol/high handed off the actor/readiness correction: qualified Main Reload
+    capture, a real Save observer and positive control, correlated results,
+    freeze identity/acknowledgement and fail-fast setup before Update.
+    Capture readiness waits for settled button colors and the known expected
+    notification to expire. These corrections have no new UI result yet.
+    The renderer guard, dirty-fixture admission and negative probe match the
+    executed source byte for byte. Fresh independent Sol/Luna preflight is
+    reviewing the correction and the combined launch-safety inputs.
+    Sol identified a missing owner check around held Save-result delivery;
+    Luna did not report that actor defect. Parent Sol validated and corrected
+    it: delivery and settlement must retain the original fixture's session,
+    document identity, source and history before Update can be attempted.
+    Both Save cases also validate that same owner immediately before Update
+    and use the validated state as the comparison baseline. Fresh independent
+    Sol/Luna accept the corrected source for the narrow negative-probe gate.
+    No new runtime result is implied.
+  - Completed shared pre-wipe safety was imported from the verified minimal
+    release patch. Both helper files match the reviewed release bytes; the
+    local Node profile suite passes 72/72. Only release record R1130 was added
+    to the proof file; feature records remain intact.
+    This changed launch-safety inputs, so fresh independent preflight and a
+    new actual dirty-Open negative gate were required.
+    That new gate passed on the corrected source: refusal before original
+    presentation, zero original calls, open/modal both false, expected exit 1,
+    unchanged source and zero owned processes without forced cleanup.
+    Evidence is in `tmp\table-cells-dirty-open-negative-r2`; its slot is released.
+    A full UI retry still needs a separate current release-owner slot.
+  - R1136/R1137 cover the independently observed transparent-surface and
+    lost-centering regressions. They are authored only, not executed proofs.
+    Independent review found proof transcript and inventory mismatches.
+    UI proof routes now use a UI-only command, assertion details use the
+    standard separator, and the ordered inventory includes the new records.
+    These source corrections also await fresh review.
+  - R5 ran every selected scenario and failed 217/218, with source 38/38.
+    Qualified Main Save/Reload controls, freeze/thaw, keyboard isolation and
+    many-row scrolling passed. The clipboard Update exact-splice assertion
+    failed; source-backed actor/product diagnosis is still pending.
+    No unexpected dialog, source change or forced cleanup occurred.
+    Zero owned processes and the released slot are recorded in
+    `tmp\table-cells-r5`.
+  - All R5 captures were viewed. Cancel is enabled and settled; the successful
+    Update image has no stale rejection toast. The final row remains visible
+    with the header, footer and actions reachable.
+    Dark-popup links still used browser-default blue. A scoped grid rule now
+    reuses the existing theme link role for normal/visited links without
+    changing interaction. Independent review and actual rendering are pending.
+    R1138 is authored for this theme-role regression, not an executed proof.
+  - Astra found another textarea input-handler execution after the keyboard
+    baseline settled, but the existing receipt does not identify its phase or
+    the actual Update refusal. This is not yet an actor or product diagnosis.
+    Sol handed off a test-only phase/event/authority witness and explicit
+    successful Update checks. No production authority, revision or cache rule
+    is relaxed. Light/dark link checks identify forced visited state as
+    Chromium rendering simulation, not real history.
+    Fresh independent Sol/Luna accept this diagnostic source, the scoped link
+    correction and authored R1138. Guard/admission/startup and shared safety
+    inputs remain unchanged, so the actual R2 negative covers those inputs,
+    not execution of the new whole suite. A new owner slot is still required.
+  - R6 completed 224/225 with source 38/38. The same clipboard case failed,
+    now with its actual stale-document error and pre-cleanup phase/event
+    witness. The owner remained current, but the captured selection authority
+    was already invalid before Update. Analysis of the first invalidating
+    event is pending; no product repair is assumed.
+    All link-role checks passed in light/dark and explicitly forced Chromium
+    visited states. Every capture was viewed. No unexpected dialog, source
+    change or forced cleanup; zero owned processes and the released slot are
+    recorded in `tmp\table-cells-r6`. This is not feature qualification.
+  - Astra traced R6 to trusted untouched-cell Ctrl+Z: Chromium sends native
+    history input to the source textarea despite cell focus. That source input
+    correctly invalidates the session. Sol now cancels only cancelable,
+    trusted source-targeted Undo/Redo before input while the actual table modal
+    owns focus. Cell history, other source input and stale checks are unchanged.
+    Native-event controls now check authority, caret, revisions and timers,
+    actual cell Undo/Redo, exhausted history and source history after Cancel.
+    Existing source-input and same-byte stale controls remain required.
+    Fresh independent Sol/Luna review and a new finite owner slot are pending.
+    Both fresh reviews now accept the pinned correction. Sol identified a
+    Redo coverage gap: canceling Undo creates no Redo entry. A separate fixture
+    now actually Undoes trusted source typing before modal Ctrl+Y and requires
+    that same Redo to remain available after Cancel. Both final reviewers
+    accept the strengthened controls and unchanged protected safety inputs.
+    Node source checks pass 38/38; packaging passes with both ASAR checks
+    skipped. The candidate is frozen for one normal UI request, not qualified.
+  - R7 passed the complete functional invocation: source 38/38, UI 234/234,
+    exit 0. Actual trusted source-targeted Undo and seeded Redo were cancelable
+    and canceled before source input. Cell Undo/Redo and exhausted history kept
+    source authority, caret, revisions and timers unchanged. Source history
+    remained usable after Cancel. Genuine programmatic source edits and
+    same-byte Undo still invalidated stale Update and remained preserved.
+    Clipboard Update committed its exact cell as one transaction and closed.
+    Every capture was viewed; normal/forced-visited links, the clean Update
+    image and final-row layout remain correct. No unexpected dialog or source
+    change, no teardown errors, no forced kill and zero owned processes.
+    The slot is explicitly released. Source-bound receipts and separate
+    keyboard witnesses are in `tmp\table-cells-r7`.
+    This is functional evidence, not release qualification. The native-history
+    correction still needs its revert record/proof; all feature proofs,
+    performance, final release carry-forward and combined review remain open.
+  - The user requested both help lines beside the footer buttons, smaller
+    readable text within that bar, and a resizable popup. Astra recommends
+    scoped flex layout and native two-axis CSS resizing. Sol is implementing
+    the layout and actual drag/geometry controls. Proof execution is paused
+    until this unit is reviewed and a new normal source-bound baseline passes.
+    No GUI slot is held; R7 remains evidence for its frozen source only.
+  - The completed release Main-opener/sentinel unit is integrated by verified
+    source-pinned patches, with exact non-overlapping file hashes. The feature
+    uses its own Main shell guards and the shared sentinel's explicit opt-out.
+    No duplicate page trap or local sentinel remains.
+  - Fresh independent Sol/Luna implementation reviews disagree: Sol found
+    note metadata loss, a subsequent-typing Undo boundary defect, overly broad
+    nested-table selection bounds and an incorrect paste assertion; Luna
+    reported none. Sol validated and corrected those findings. Subsequent
+    rounds corrected mixed-ending input and formatting boundaries, decoded
+    note lookup and split HTML spans. Both reviewers found the final
+    reading-mode history gate defect and accepted its correction.
+    The new DOM regressions remain unexecuted.
+  - No feature performance comparison, build or proof execution has run.
+    Reserved records remain unproven. Further UI attempts require renewed
+    safety preflight and a current non-overlapping release-owner host slot.
+  - Carry forward every final reviewed 0.10.1 product/test/harness/CI/doc change
+    by exact commits after release-owner handoff. Reconcile register/inventory
+    changes and rerun combined-source gates before calling 0.11.0 complete.
+    A published 0.10.1 is not required: the user permits direct 0.11.0 release
+    if its fully qualified combined candidate is ready first. Shared fixes,
+    final combined checks and the current publication hold still apply.
+
 - `performance-architecture` - **MIRROR LOCALLY ADOPTED; REMAINING-EDIT DIAGNOSTIC CLOSED** (2026-10-24).
   - Remaining-edit diagnostic completed two baseline-only journeys from local
     `572f3744`, with mirror retention and 400 ms unchanged. Exact native
@@ -2536,12 +2738,12 @@ fix.
 
 | Subtask | What it covers |
 |---|---|
-| `design-review` | Independent review of the shutdown state machine *before* implementation — the states, the transitions, and which of them can be re-entered — by the three reviewers named in *Model roles and the delivery handoff*. |
+| `design-review` | Independent review of the shutdown state machine *before* implementation — the states, the transitions, and which of them can be re-entered — by Sol and Luna, as specified in *Model roles and the delivery handoff*. |
 | `main-protocol` | The main-process side: intercept close / quit / update-install, ask the renderer for approval, honour the answer. |
 | `renderer-protocol` | The renderer side: snapshot the tabs, detect which are dirty, return an approval decision. |
 | `tests` | Live Electron shutdown scenarios — every path above, exercised for real, not simulated. |
 | `reverts` | Isolated revert proofs in `scripts/prove-table-fixes.js`, one per independently breakable behaviour. |
-| `code-review` | Final independent review by GPT-5.6 Sol, GPT-5.6 Terra and GPT-5.6 Luna in three fresh contexts, and the corrections it produces — product fixes to Sol at high reasoning effort, test and automation fixes to Terra. See *Model roles and the delivery handoff*. |
+| `code-review` | Final independent review by the latest Sol and Luna in fresh contexts. Sol at high reasoning effort owns all corrections, including tests and automation. See *Model roles and the delivery handoff*. |
 
 **Completion criteria.** All four shutdown paths prompt (or preserve) for a
 dirty tab and do not prompt for a clean one; every fix carries a revert with
@@ -5141,7 +5343,7 @@ closed performance gate all exist in the **uncommitted working tree**; they have
 **not landed on `main`**, and nothing here is merged. `w2-f22` remains
 **ACTIVE**. What is complete: implementation, tests, revert records, the
 execution gates (suites, anchors, `--expects`, individual proofs) and the
-performance gate. What remains: the final three-reviewer round over the executed
+performance gate. What remains: the final independent Sol/Luna round over the executed
 state, and serialised integration. The permanent record required before landing
 is now written — `bench/BASELINE.md` (method and runs) and `docs/PERF-AUDIT.md`
 (PERF-10, the defect and the fix) — so an uncommitted bench file is no longer the
@@ -7147,7 +7349,7 @@ records' semantics, align the fixture with observed totals,
 and make the count branch sensitive to break/restore.
 If that demands substantially more harness machinery,
 stop and report rather than expand the unit. A material
-correction must repeat the three fresh reviews.
+correction must repeat both fresh independent Sol/Luna reviews.
 The bounded correction preserved legacy R454/R660 acceptance,
 aligned the synthetic 361/363 footer and routed the live
 mutation verdict through a shared classifier. Clean theme
@@ -7379,7 +7581,6 @@ the item entry.
 | **2026-09-02** | **Make this register discoverable from the repository's documented entry points.** The tracker it mirrors does not survive a session, so a register nothing links to is one lost session away from being invisible. | `.github/copilot-instructions.md` lists `docs/PLANNED-WORK.md` among the load-bearing documents and adds a startup rule: read it before selecting or starting work; treat its IDs, status, dependencies, decision gates, performance gates and parallel-worktree process as authoritative; update it at every status transition and after every merge; only the integration owner writes it. `README.md`'s *Planned next* links here as the live roadmap instead of restating a subset of it. Both pointers are now load-bearing: renaming or moving this file must update them in the same commit, and `readme-story` carries a criterion that the link survives the README rewrite. |
 | **2026-09-02** | **`w2-f22`'s close-path measurement is unconditional.** The gate applies to any change touching IPC or DOM traversal, and this item adds a shutdown IPC round trip and an all-tab dirty scan; it is benchmarked, not argued. | A first measurement was taken the same day: `bench/bench-f22-shutdown.js`, Electron 43.4.1 / Node 24.18.1, two runs; worst p95 **3.09 ms** at 25 tabs, once per shutdown. There is no "before" figure because the approval path did not previously exist. **Superseded in part on 2026-09-03:** that run is initial characterization, not a passed gate — one fixture, no before-path, and no budget declared in advance. `w2-f22` is **ACTIVE** and the final gate is pending. |
 | **2026-09-02** | **Narrow `w2-privacy` to "off by default", and defer diagnostic-log hardening.** Because the diagnostic file will not be created in packaged/release builds by default, rotation, size/count retention and detailed sanitising need not ship inside the release-blocking item. | `w2-privacy` stays a wave-2 release blocker with minimal, tested scope. Rotation, retention, path/`argv` redaction, safe structured updater-error fields, and the detailed opt-in documentation/tests/reverts move to the new `diagnostic-log-hardening` item, PENDING · DEFERRED and explicitly **not** a wave-2 blocker. **Accepted tradeoff, not an eliminated risk:** a user who sets `FOLIA_DIAGNOSTIC_LOG=1` still gets the unhardened file, which records paths and `argv` and writes updater `err.message` verbatim — and that message can carry response metadata. Documentation must tell users to enable diagnostics only temporarily until hardening lands. |
-| **2026-09-02** | **Fix the model for each role, and make code review three independent reviews rather than two.** GPT-5.6 Sol at high reasoning effort implements product change; GPT-5.6 Terra owns tests, benchmark, screenshot and revert-harness automation; GPT-5.6 Sol, GPT-5.6 Terra and GPT-5.6 Luna review independently in fresh contexts; Claude Opus 5 explores and researches, and no longer owns product implementation. | These assignments apply **going forward** and **supersede every earlier *current-process* model assignment in this register** — the `w2-f22` `code-review` and `design-review` subtasks, the per-stream quality loop, the completion criteria and *Process controls* are all restated accordingly. Explicitly historical records of who did what keep their names and are labelled historical rather than rewritten. The full procedure — the deterministic handoff order, how it composes with the isolated-worktree and file-ownership rules, and who owns which evidence — is in *Model roles and the delivery handoff*. **Accepted cost, not an eliminated one:** a third reviewer plus a mandatory re-review after every material correction adds a round to each unit, and because the agent that produced the work cannot review it, each unit now needs more separate fresh contexts than before. **What it buys:** the reviewer that finds a defect is never the agent that wrote it, and a fix is never blessed by the round that demanded it. **No item status changes because of this decision** — nothing here closes or advances an item, and `w2-f22` remains **ACTIVE** with its review still outstanding. |
 | **2026-09-03** | **Corrections from the first three-reviewer gate, applied to the process documents.** The gate ran fresh, independent reviews by GPT-5.6 Sol, GPT-5.6 Terra and GPT-5.6 Luna over this register and `.github/copilot-instructions.md`. Five findings were accepted. | **Sol (HIGH):** `fullrun` was declared non-blocking while the milestone gates demanded the complete revert harness — a self-contradiction. `fullrun` is now a `w2-release` prerequisite. **Luna (HIGH), same area, independently:** `shots` and `final-cleanup` conflicted with the milestone and visual-verification rules for the same reason; both are now prerequisites too, and `shots` must be **regenerated and viewed**, not captured. **Luna (HIGH):** `w2-f22` could not be called a performance-gate pass — one fixture, no before-path, no budget declared in advance; downgraded to initial characterization with the final gate pending, and GPT-5.6 Terra owes a predeclared UX budget and a wider fixture matrix before the final run. **Terra (MEDIUM):** the instructions still said *"commit directly to `main`"*, contradicting the isolated-worktree and serialized-integration process; replaced. **Luna (MEDIUM):** the instructions hardcoded harness counts that had already rotted; the numbers were removed rather than refreshed, and counts are now derived from the harness. **Where they differed:** each HIGH came from a different reviewer, and only the `fullrun`/`shots`/`final-cleanup` contradiction was found by two independently — evidence that the three-reviewer gate is doing work a two-reviewer one did not. No reviewer contradicted another; nothing was rejected. **These corrections are documentation only** and have not themselves been through a review round — the follow-up three-reviewer pass has not run. |
 | **2026-09-04** | **Two review findings about the portable updater's temp-file surface are rejected as out of scope, not as wrong.** Both are real properties of the design; neither is introduced by this work, and both would need a different mechanism rather than a bigger check. | **Rejected — "the acknowledgement token is readable by another same-user process".** True: it is embedded in `update.bat` inside a `mkdtemp` directory, and `mode: 0o600` does nothing to Windows ACLs, so any process running as the same user can read it and forge an `ack`. The token is what the review round asked for and it does what it can — it makes a *stale* or *blind* marker useless and raises a forgery from "guess the directory name" to "read the directory". It cannot defend against a same-user process, and neither can anything else here: that process can already replace `update.bat` before it runs, replace the downloaded installer, or kill the app. A genuine fix is an OS-protected channel (a named pipe with an ACL, or a helper process), which is a design change, not a hardening tweak. **Residual risk, accepted and recorded:** a same-user local process can make Folia quit without an installer having started. It cannot make it quit with unsaved work, because the commit re-asks whenever the document has moved. **Rejected — "`%` in an interpolated path is expanded by `cmd.exe`".** Also true, also pre-existing: `downloadedUpdatePath` and the batch directory have been interpolated into this script since SEC-20. Nothing in this round widened it, and the `if not exist "<installer>" goto failed` line added here makes the failure mode *observable and fail-closed* where it used to be a silent no-install. A real fix means not building a batch file at all. |
 | **2026-09-04** | **Two implementation decisions taken while fixing the `w2-f22` review findings.** No sealed finding was rejected — all ten were valid — but both of these changed something a reader could reasonably expect to have been left alone, so they are recorded rather than absorbed. | **The portable spawn handler no longer cancels merely because another question is open.** The old guard was `if (pendingShutdown \|\| !isSameShutdownDocumentSession(...))`. The commit now raises its own force-fresh approval, and `requestShutdown` already **queues** a force-fresh intent behind an open question and re-raises it on settle — which is what the installed updater's public commit does, and what *"an updater commit arriving behind another question remains a required fresh question"* already asserts. Cancelling would make the portable path the only one that silently drops a stronger intent. The document-session half of the guard is kept, and the acknowledgement boundary re-checks both. **Cost, not an eliminated risk:** a portable child can now sit parked while an unrelated close question is on screen. It is bounded — the queued intent either runs or is declined, and a decline stands the child down through the new `onDeclined` channel. **R560's id is repurposed, not reused.** Its mutation (`return attempt.committed` → `return false`) is provably inert: `attempt.committed` is true only when the commit fired synchronously, and that path has already revoked the authorization and raised a fresh request, so both return values leave identical state. The record keeps its id and its subject — authorization across the installed updater's deferred-commit gap — and gains a mutation that can actually fail, plus a new assertion written for it. Deleting it and allocating a fresh id instead would have left a silent gap where a record used to be. |
@@ -7391,50 +7592,38 @@ the item entry.
 
 ## Model roles and the delivery handoff
 
-**Maintainer decision, 2026-09-02 — mandatory.** These role assignments apply
-**going forward** and supersede every earlier *current-process* model assignment
-in this register. Where a passage is explicitly historical — a record of what a
-particular round or commit already did — it keeps the names it had and is
-labelled historical; it is not a description of how work is delivered now.
+- Use the latest available version of each model.
+- Sol uses **high reasoning effort** for all coding and documentation.
 
 ### The roles
 
 | Role | Model | What the role owns |
 |---|---|---|
-| **Product coding and implementation** | **GPT-5.6 Sol** — `gpt-5.6-sol` | Reasoning effort **high**, always. Product source and any behavioural change to shipped code. |
-| **Tests and automations** | **GPT-5.6 Terra** — `gpt-5.6-terra` | Test design and implementation, benchmark automation, screenshot-capture automation, revert-harness records in `scripts/prove-table-fixes.js`, and orchestration of the proofs. |
-| **Code review** | **GPT-5.6 Sol** — `gpt-5.6-sol`, **GPT-5.6 Terra** — `gpt-5.6-terra`, and **GPT-5.6 Luna** — `gpt-5.6-luna` | Three *independent* reviews, each in a **fresh context**, read-only. Agreements and disagreements are both surfaced. |
-| **Exploration and research** | **Claude Opus 5** — `claude-opus-5` | Maps architecture, history and risk, and supplies the evidence a change is planned against. It does **not** own product implementation under this process. |
+| **Coding and documentation** | **Latest GPT Sol**, high reasoning | Product code, tests, automation, benchmarks, screenshots, revert records, proof orchestration and documentation. |
+| **Independent review** | **Latest GPT Sol and GPT Luna** | Two read-only reviews, each in a fresh context. Report agreements and disagreements. |
+| **Research and design** | **Latest GPT Astra** | Architecture, risks, design and supporting evidence. No coding or documentation edits. |
 
-**Independence is structural, not nominal.** The Sol agent that wrote the code is
-**not** the independent Sol reviewer, and the Terra agent that wrote the tests is
-**not** the independent Terra reviewer. An agent that has already committed to a
-change cannot find its own blind spot — that is the entire reason there are
-three. Each review starts from a fresh context and the diff, not from the
-conversation that produced them.
-
-**Blocking findings return to the role owner, not to whoever found them.**
-Product defects go back to Sol at high reasoning effort; test, benchmark,
-screenshot and revert-harness defects go back to Terra. **A product fix that a
-Terra test exposed is still Sol's work.** After any material correction the
-three-reviewer gate **repeats** — a fix is not blessed by the round that demanded
-it. Stop when a round produces no new blocking findings.
+- The implementer cannot count as the independent Sol reviewer.
+- Each review starts from a fresh context and the diff, not the implementation conversation.
+- Sol at high reasoning effort owns every correction, including tests and documentation.
+- Repeat both independent reviews after any material correction.
+- Stop when a round produces no new blocking findings.
 
 ### The handoff sequence
 
 Deterministic, and in this order for every behavioural unit:
 
-1. **Opus 5 — exploration.** Architecture, history, risk, and the evidence the
-   change will be judged against. Read-only; no product edits.
+1. **Astra — research and design.** Architecture, risks and the evidence the
+   change will be judged against. Read-only; no coding or documentation edits.
 2. **Sol at high reasoning effort — the product change.** Only the files the
    stream owns.
-3. **Terra — tests, automation and evidence.** The targeted suite, the
-   revert-harness records, the benchmark and screenshot automation, and the
-   recorded results.
-4. **Independent review — Sol, Terra and Luna**, three fresh contexts. These may
+3. **Sol at high reasoning effort — tests, automation, documentation and evidence.**
+   The targeted suite, revert records, benchmark and screenshot automation,
+   documentation and recorded results.
+4. **Independent review — Sol and Luna**, two fresh contexts. These may
    run at once, because review is read-only.
-5. **Corrections by the role owner** — product to Sol at high reasoning effort,
-   tests and automation to Terra.
+5. **Corrections by Sol at high reasoning effort**, including tests, automation
+   and documentation.
 6. **Repeat step 4** after any material correction, until a round produces no new
    blocking findings.
 7. **Serialised integration** — one stream merges at a time, per *Integration is
@@ -7442,7 +7631,7 @@ Deterministic, and in this order for every behavioural unit:
 
 **Where an item carries its own pre-implementation design review** — `w2-f22`'s
 `design-review` subtask is the only current example — that review sits **between
-steps 1 and 2**, runs with the same three independent reviewers, and
+steps 1 and 2**, runs with the same two independent reviewers, and
 **supplements rather than replaces** the review at step 4. Reviewing a state
 machine before it is built and reviewing the code that implements it are two
 different questions.
@@ -7452,21 +7641,20 @@ different questions.
 The role split changes **who** performs a step. It relaxes nothing in *Parallel
 delivery without reducing quality*.
 
-- **One behavioural unit is edited by exactly one role owner at a time.** Sol and
-  Terra never hold the same file concurrently, and never edit the same
-  behavioural unit concurrently. If a product fix and its test live in the same
-  file, they are sequential steps, not parallel ones.
+- **One behavioural unit has exactly one editing owner at a time.** Product,
+  test, automation and documentation edits use Sol at high reasoning effort.
+  Separate Sol agents must not edit the same file or unit concurrently.
 - **Research and test *design* may run in parallel with an edit** — but only
   while they stay read-only and touch nothing the editing owner holds. Reading
   and designing compose safely; writing does not.
 - **Test *automation* must not run a mutation harness while an edit is in flight
   in the worktree that harness will mutate.** `scripts/prove-table-fixes.js`
-  rewrites the working tree of the worktree it runs in, so Terra runs it when
+  rewrites the working tree of the worktree it runs in, so Sol runs it when
   nobody is editing that worktree — never alongside an edit there, and never two
   harnesses at once anywhere on the machine.
 - **Screenshots, performance measurement and the full harness remain
   machine-exclusive** across all worktrees, exactly as *Machine-level
-  exclusivity* states. Three reviewers do not make a shared machine safe.
+  exclusivity* states. Read-only review does not relax this rule.
 - **The per-unit gates stand unchanged except for the explicit R545/R568
   individual-proof deferral recorded above**: the targeted suite,
   individually proven revert records for other fixes, screenshots actually
@@ -7477,9 +7665,9 @@ delivery without reducing quality*.
 
 | Evidence | Owner | What that owner is accountable for |
 |---|---|---|
-| Commands, results and sample counts | **Terra** | Recording the exact command, the machine and runtime versions, the sample count and the p50/p95 — and building automation that reproduces them. A result nobody else can re-run is not evidence. |
-| Product behaviour and performance correctness | **Sol** | That the change does what this register says it does, and that the numbers Terra recorded actually clear the *Performance acceptance gates* rather than merely existing. |
-| Non-vacuity of the evidence, and the claims made about it | **The three reviewers** | That each test can fail, that each revert is proven individually with `expect` *and* `mustPass`, that screenshots were viewed rather than captured, and that every claim in the diff and the commit message is supported. Assume a new green result is vacuous until shown otherwise. |
+| Commands, results and sample counts | **Sol** | Recording the exact command, the machine and runtime versions, the sample count and the p50/p95 — and building automation that reproduces them. A result nobody else can re-run is not evidence. |
+| Product behaviour and performance correctness | **Sol** | That the change does what this register says it does, and that the recorded numbers clear the *Performance acceptance gates* rather than merely existing. |
+| Non-vacuity of the evidence, and the claims made about it | **Independent Sol and Luna reviewers** | That each test can fail, that each revert is proven individually with `expect` *and* `mustPass`, that screenshots were viewed rather than captured, and that every claim in the diff and the commit message is supported. Assume a new green result is vacuous until shown otherwise. |
 | This register | **The integration owner** | Updating `docs/PLANNED-WORK.md` at **every** transition — role handoff, review round, material correction, status change and merge — under the single-writer protocol in *Process controls*. |
 
 ---
@@ -7498,10 +7686,9 @@ Per-item criteria are stated with each entry. These apply to **every** item:
    reformat.** Anchor rot is the one failure this project cannot detect by
    testing; it reports `SETUP-FAILED` rather than a false pass, but only when it
    is actually run.
-4. **Three-reviewer independent review** — GPT-5.6 Sol (`gpt-5.6-sol`), GPT-5.6
-   Terra (`gpt-5.6-terra`) and GPT-5.6 Luna (`gpt-5.6-luna`), each in a fresh
+4. **Independent Sol/Luna review** — the latest versions, each in a fresh
    context, agreements and disagreements both surfaced. Two to three rounds is
-   the usual shape, not a cap: blocking findings return to the role owner and
+   the usual shape, not a cap: Sol at high reasoning effort owns corrections and
    the full round repeats after any material correction. Stop when a round
    produces no new blocking findings. See *Model roles and the delivery
    handoff*.
@@ -7779,20 +7966,21 @@ every unit of work it takes on:**
 
 1. **Baseline** — measurements and a green targeted suite *before* touching
    anything, so the after-number has something to compare against. This is
-   Terra's execution and it runs against unmodified source, alongside Opus 5's
-   exploration and Terra's read-only test *design*. No product edit and no new
+   Sol's execution at high reasoning effort against unmodified source, alongside
+   Astra's research and read-only test *design*. No product edit and no new
    test or harness record exists yet at this point.
 2. **Scoped implementation by Sol at high reasoning effort** — only the files
    the stream owns.
-3. **Targeted suite, written by Terra** — the narrowest suite that covers the
-   changed behaviour.
-4. **Isolated revert proofs, recorded by Terra** — each fix gets a record with
-   `expect` and `mustPass`; each is proven individually, not as a batch.
-5. **Independent review in three fresh contexts** — GPT-5.6 Sol, GPT-5.6 Terra
-   and GPT-5.6 Luna, none of them the agent that produced the work under review.
-6. **Reviewer feedback returned to the role owner** — product to Sol at high
-   reasoning effort, tests and automation to Terra — for validation and
-   correction, with agreements and disagreements both surfaced. Re-run the three
+3. **Targeted suite, written by Sol at high reasoning effort** — the narrowest
+   suite that covers the changed behaviour.
+4. **Isolated revert proofs, recorded by Sol at high reasoning effort** — each
+   fix gets a record with `expect` and `mustPass`; each is proven individually,
+   not as a batch.
+5. **Independent review in two fresh contexts** — the latest Sol and Luna,
+   neither the agent that produced the work under review.
+6. **Reviewer feedback returned to Sol at high reasoning effort** — including
+   tests, automation and documentation — for validation and correction, with
+   agreements and disagreements both surfaced. Re-run both
    reviews after any material correction. Stop when a round produces no new
    blocking findings.
 7. **Performance comparison** against the stream's own baseline, per the gates
@@ -7853,13 +8041,14 @@ nothing was recoverable when it stopped.
    something is genuinely undecidable — a gate, a contradiction in the evidence,
    a missing measurement — report it precisely and stop. Hours of speculative
    exploration are how a run becomes opaque.
-4. **One editing owner per unit; every reviewer is read-only.** The role owner
-   edits — Sol for product, Terra for tests and automation — and the three
-   reviewers only read and report. Two agents editing the same unit produce
+4. **One editing owner per unit; every reviewer is read-only.** Sol at high
+   reasoning effort edits product code, tests, automation and documentation.
+   Independent Sol and Luna reviewers only read and report. Two agents editing
+   the same unit produce
    interleaved changes that neither can account for, and that is as true of two
    role owners as it is of two reviewers.
 5. **Parallelise research, review and test design early** — those are read-only
-   and compose safely, which is why the three independent reviews run at once.
+   and compose safely, which is why the two independent reviews run at once.
    **Never parallelise editing within a unit**, and never run a mutation harness
    while an edit is in flight in the worktree that harness will mutate.
 6. **The integration owner updates this register** after every merge, every role

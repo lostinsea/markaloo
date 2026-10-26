@@ -3339,10 +3339,33 @@
         // disk read, so re-statting here would pair old bytes with a newer
         // external version and make the next switch skip the needed reload.
       }
+
       tab.hasUnsavedChanges = hasChanges;
       renderTabs();
       saveTabs();
     }
+  }
+
+  function snapshotExactEditorContent() {
+    const tab = getActiveTab();
+    if (!tab || !inEditMode()) throw new Error("An active editor is required.");
+    return cachedSpellingFor(tab, liveDocument());
+  }
+
+  function adoptExactEditorContent(content) {
+    if (!mayMutateDocument("tab:exact-editor-content")) return false;
+    const tab = getActiveTab(), state = tab && documentState.get(tab);
+    if (!state || !inEditMode() || typeof content !== "string") return false;
+    // A source-splice transaction already owns every newline. Re-aligning it
+    // against repeated lines would discard information the transaction kept.
+    state.content = content;
+    state.foldedLive = normaliseNewlines(content);
+    state.dirty = !sameDocument(content, state.originalContent);
+    tab.hasUnsavedChanges = state.dirty;
+    bumpDocumentRevision(tab);
+    renderTabs();
+    saveTabs();
+    return true;
   }
 
   let sessionRestoreStarted = false;
@@ -6125,6 +6148,8 @@
   // request retainFreeze so UAC/process startup cannot expose editable text to
   // the installer's forced process-kill phase.
   function freezeDocument(id, generation) {
+    // Thawing must not revive a dialog authorized before shutdown began.
+    dialogDecisionIntent++;
     if (shutdownFreeze) {
       // The replacement commit has already re-checked its revision. Keep IPC
       // results parked while swapping freezes; replaying here would mutate the
@@ -6412,6 +6437,8 @@
     requestReloadWithConfirmation,
     confirmDocumentReplacement,
     captureDialogContext,
+    snapshotExactEditorContent,
+    adoptExactEditorContent,
     showDocumentConfirmation,
     // Exposed so the regression suite can assert that scroll save/restore
     // targets the element the engine actually scrolls, rather than re-deriving
@@ -6498,6 +6525,7 @@
     __shutdownFreeze: () => {
       return Object.freeze({
         frozen: !!shutdownFreeze,
+        dialogDecisionIntent,
         id: shutdownFreeze ? shutdownFreeze.id : 0,
         editorReadOnly: !!(window.markdownEditor && window.markdownEditor.readOnly),
         wrapperInert: !!(

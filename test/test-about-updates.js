@@ -607,7 +607,7 @@ if (typeof electron === "string") {
     }
     await pageWait("production updater bridge", "!!window.MarkalooUpdates&&!!window.folia?.getUpdateState");
     await pageWait("shutdown renderer registered", "typeof window.CustomTabs?.getTabs==='function'");
-    sentinel = startErrorSentinel(win, { label: "about-updates" });
+    sentinel = startErrorSentinel(win, { label: "about-updates", trapExternal: false });
     const alive = await proveSentinelAlive(win, sentinel);
     check("About sentinel proves both error channels alive", alive.console && alive.dom, alive);
     check("About uses frozen production preload without Node or raw IPC",

@@ -499,7 +499,7 @@ if (typeof electron === "string") {
     win.setContentSize(1280, 800);
     try {
       await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
-      sentinel = startErrorSentinel(win, { label: "toc-toolbar" });
+      sentinel = startErrorSentinel(win, { label: "toc-toolbar", trapExternal: false });
       if (phase === "behavior") await behavior();
       else await restart();
       const required = phase !== "behavior" ? ["restart"] : proof ?

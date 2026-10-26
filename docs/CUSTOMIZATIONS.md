@@ -27,6 +27,41 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Visual table-cell editing
+
+```mermaid
+flowchart LR
+    A["Select in either pane"] --> B["Verify one source table"]
+    B --> C["Edit table or selected rows"]
+    C --> D["Rendered cell grid"]
+    D --> E["Update once; retain Undo"]
+    E --> F["Normal preview render"]
+```
+
+- In edit mode, both pane menus offer Edit table and Edit selected rows.
+- A partial row selection edits that row. Edit table loads its whole table.
+- Markdown selections may include prose before or after the table. Only changed
+  cells are replaced; surrounding text and unselected rows stay unchanged.
+- The popup shows rendered cells, never a Markdown textarea or source toggle.
+  Existing inline formatting remains visible. Changed cells use safe inline HTML
+  internally; unchanged cells keep their original source spelling. Existing
+  note IDs, titles, contents and colors survive edits within their cell.
+- Tab moves between cells. Enter and Shift+Enter move down and up a column.
+  Ctrl+Enter updates; Escape cancels. Cell Undo is separate from document Undo.
+  Native cell Undo/Redo cannot consume the Markdown editor's history.
+- Scope and keyboard help sit beside the footer buttons in smaller readable
+  text. Drag the popup's bottom-right corner to resize it; the grid uses the
+  available space while the header and actions stay reachable.
+- Update is one document Undo step. It does not save to disk. Cancel is a no-op.
+  Later Markdown typing has its own Undo boundary.
+- Source, tab, mode, reload and Save changes invalidate an open transaction.
+  Duplicate tables use verified source identity, never matching cell text.
+- Regular, rectangular Markdown tables support optional outer pipes, alignment,
+  empty cells, escaped pipes, Unicode and end-of-file tables.
+- Raw HTML tables, nested tables and ragged rows are refused instead of guessed.
+  Unsupported cell structures show an error without changing the document.
+- Table insertion and Mermaid editing keep their existing separate behavior.
+
 ### Offline fenced-code languages
 
 - One local Prism bundle keeps the existing grammars and adds official Prism

@@ -176,8 +176,17 @@ themselves the moment you confirm them.
 
 ### Mermaid and table dialogs
 
-Right-click anywhere to insert or edit a diagram or table without writing the
-markup by hand. Insert, edit and delete are all available for both.
+- In edit mode, select one table or some of its rows in the preview or Markdown
+  editor, then right-click **Edit table** or **Edit selected rows**.
+- Edit table opens the whole table, even when only some rows are selected.
+  Edit selected rows opens just those rows in the same visual cell grid.
+- The table editor shows formatted cells, not Markdown source. Tab moves between
+  cells; Enter moves down a column. Drag the bottom-right corner to resize it.
+- **Update the document** applies one undoable change and closes the popup.
+  It does not save the file. Cancel leaves the document unchanged.
+- Select exactly one supported Markdown table. Missing or ambiguous selections,
+  unsupported tables and stale documents show an error without changing text.
+- Table insertion and Mermaid dialogs keep their existing behavior.
 
 <div align="center">
   <img src="docs/images/mermaid-template-dialog-with-live-preview.png" alt="Mermaid Template Dialog with live preview" width="700">
@@ -226,7 +235,7 @@ The menu adapts to the mode you are in.
 - **Collapsible headings** - fold and unfold sections, individually or all at once
 - **Recent files** - the last 100
 - **OS-level file watching** - external changes are noticed immediately, without polling
-- The Mermaid and table dialogs are resizable, and never taller than the window they open in
+- The Mermaid, Insert table and Edit table dialogs are resizable, and never taller than the window they open in
 - Click the file path to copy it
 
 ---

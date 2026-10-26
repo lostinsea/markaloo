@@ -2843,6 +2843,8 @@ async function main() {
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
       "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js",
       "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
+      "test:table-cells": "npm run test:table-cells-source && electron test/test-table-cell-editor.js",
+      "test:table-cells-source": "node --check src/table-cell-editor.js && node --check test/test-table-cell-editor.js && node test/test-table-cell-editor.js --source",
       "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     };
     const featureScripts = Object.keys(featureCommands);
@@ -2893,6 +2895,15 @@ async function main() {
       !beforeLegacy(orderedCalls({ ...fixtureScripts, test: fixtureScripts.test + " && npm run test:features" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm run test:missing" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm test" }, "test")));
+    const nestedCellRoutes = { ...fixtureScripts, ...featureCommands,
+      "test:features": featureScripts.filter(name => name !== "test:table-cells-source")
+        .map(name => "npm run " + name).join(" && ") };
+    check("feature gate follows the real cell source subroute and rejects its omission or duplication",
+      beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:table-cells": "electron test/test-table-cell-editor.js" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:features": nestedCellRoutes["test:features"] + " && npm run test:table-cells-source" }, "test")));
     function phaseSelection(file, context) {
       const expressions = [...stripJsComments(read(file)).matchAll(/const phases = ([\s\S]*?);\r?\n/g)];
       if (expressions.length !== 1) return null;
@@ -4156,23 +4167,22 @@ async function main() {
       "an image control was added or removed without the README bullet moving with it",
     );
 
-    // "The Mermaid and table dialogs are resizable" - named rather than
-    // generalised, because the note, find-note and edit-text dialogs are NOT.
-    // Asserted as an exact set so widening the CSS without widening the prose
-    // fails, and so does the reverse.
+    // Keep an exact set: note, find-note and edit-text dialogs do not resize.
+    // Changing either the CSS or README must update the other.
     const resizable = [...read("src/styles.css").matchAll(/([^\n{}]+)\{[^}]*resize:\s*both[^}]*\}/g)]
       .map((m) => m[1].trim())
       .sort();
     check(
-      "exactly the two dialogs the README names are the resizable ones",
-      resizable.length === 2
+      "exactly the dialogs the README names are the resizable ones",
+      resizable.length === 3
         && resizable[0] === ".mermaid-template-dialog"
-        && resizable[1] === ".table-insert-dialog",
+        && resizable[1] === ".table-cell-dialog"
+        && resizable[2] === ".table-insert-dialog",
       JSON.stringify(resizable),
     );
     check(
-      "the README names those two dialogs rather than claiming all dialogs resize",
-      /The Mermaid and table dialogs are resizable/.test(readme),
+      "the README names those dialogs rather than claiming all dialogs resize",
+      /The Mermaid, Insert table and Edit table dialogs are resizable/.test(readme),
       "the dialog-resize claim was reworded, so it is no longer checked",
     );
   }
@@ -6798,14 +6808,34 @@ async function main() {
     // the reason this list is explicit rather than a bare i18n() match - an
     // overlay key reachable ONLY through t() would otherwise be swept up as
     // dead and deleted. Any future indirection must be added here too.
-    const orphaned = uiKeys.filter((k) => {
+    const cellModel = stripJsComments(read("src/table-cell-editor.js"));
+    const errorKeys = source => [...source.matchAll(/\bfail\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
+      .map(match => match[1]);
+    const modelErrorKeys = new Set(errorKeys(cellModel));
+    const rendererErrors = [...stripJsComments(rendererSrc).matchAll(/throw new Error\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
+      .map(match => match[1]);
+    const dynamicConsumers = new Set([...modelErrorKeys, ...rendererErrors]);
+    check("cell model error keys are shipped literal failures with guarded translated renderer consumers",
+      shippedScripts.includes("src/table-cell-editor.js") &&
+      /const fail = key => \{\s*throw new Error\(key\);\s*\}/.test(cellModel) &&
+      ["select", "multiple", "unsupported", "mapping", "rows", "invalid", "cellType"]
+        .every(key => modelErrorKeys.has("tableCells." + key)) &&
+      [...dynamicConsumers].every(key => uiKeys.includes(key)) &&
+      /Object\.hasOwn\(UI_STRINGS, key\)\s*\?\s*i18n\(key\)/.test(rendererSrc),
+      [...dynamicConsumers].sort().join(", "));
+    function hasConsumer(k, source, dynamic) {
       const q = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return (
-        !new RegExp(`i18n\\(\\s*['"\`]${q}['"\`]`).test(allSrc) &&
-        !new RegExp(`\\bt\\(\\s*['"\`]${q}['"\`]`).test(allSrc) &&
-        !new RegExp(`data-i18n(?:-title|-placeholder)?="${q}"`).test(allSrc)
-      );
-    });
+      return dynamic.has(k) ||
+        new RegExp(`i18n\\(\\s*['"\`]${q}['"\`]`).test(source) ||
+        new RegExp(`\\bt\\(\\s*['"\`]${q}['"\`]`).test(source) ||
+        new RegExp(`data-i18n(?:-title|-placeholder)?="${q}"`).test(source);
+    }
+    const withoutMapping = cellModel.replace(/\bfail\(\s*['"]tableCells\.mapping['"]\s*\)/g, "void 0");
+    check("dynamic UI consumer oracle rejects invented keys and notices removal of a real model error",
+      hasConsumer("tableCells.mapping", allSrc, dynamicConsumers) &&
+      !hasConsumer("tableCells.mapping", allSrc, new Set([...errorKeys(withoutMapping), ...rendererErrors])) &&
+      !hasConsumer("tableCells.unusedFixture", "const keys = { 'tableCells.unusedFixture': 'unused' };", dynamicConsumers));
+    const orphaned = uiKeys.filter(key => !hasConsumer(key, allSrc, dynamicConsumers));
     check(
       "every UI string has a consumer",
       orphaned.length === 0,

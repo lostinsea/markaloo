@@ -123,7 +123,32 @@ if (app) {
     );
   }
 
-  USER_DATA_DIR = path.join(os.tmpdir(), "folia-test-userdata", suiteName());
+  let guardStage = "trusted temporary root";
+  try {
+    // Accept an aliased temp root, but never let a profile junction redefine
+    // the subtree that the recursive wipe is allowed to remove.
+    const trustedTempRoot = fs.realpathSync.native(os.tmpdir());
+    const parent = path.join(trustedTempRoot, "folia-test-userdata");
+    const suite = suiteName();
+    guardStage = "suite name";
+    if (!suite || suite === "." || suite === "..")
+      throw new Error("Invalid isolated suite directory");
+    USER_DATA_DIR = path.join(parent, suite);
+    const key = value => process.platform === "win32" ? value.toLowerCase() : value;
+    for (const [directory, stage] of [
+      [parent, "profile parent"], [USER_DATA_DIR, "suite directory"],
+    ]) {
+      guardStage = stage;
+      const entry = fs.lstatSync(directory, { throwIfNoEntry: false });
+      if (!entry) break;
+      if (!entry.isDirectory() || entry.isSymbolicLink())
+        throw new Error("Isolated profile path is not a real directory");
+      if (key(fs.realpathSync.native(directory)) !== key(directory))
+        throw new Error("Isolated profile escaped its trusted directory");
+    }
+  } catch {
+    fatal("refused unsafe isolated profile before wipe at " + guardStage);
+  }
 
   try {
     fs.rmSync(USER_DATA_DIR, {

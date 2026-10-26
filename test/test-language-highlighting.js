@@ -292,7 +292,7 @@ async function browserChecks() {
     win.webContents.setBackgroundThrottling(false);
     win.setSize(1440, 920);
     await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof window.foliaThemes?.setScheme==='function'");
-    sentinel = startErrorSentinel(win, { label: "official-language-highlighting" });
+    sentinel = startErrorSentinel(win, { label: "official-language-highlighting", trapExternal: false });
     const preferences = win.webContents.getLastWebPreferences();
     check("syntax UI uses production preload with sandbox isolation and no page Node",
       preferences.nodeIntegration === false && preferences.contextIsolation === true && preferences.sandbox === true &&

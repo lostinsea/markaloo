@@ -920,6 +920,27 @@ const UI_STRINGS = {
   'search.counter': '${current} of ${total}',
   'search.zero': '0 of 0',
   'table.invalidFormat': '\u26A0 Invalid table format. Check the markdown table syntax (columns separated by | are required).',
+  'ctx.editTable': 'Edit table',
+  'ctx.editSelectedRows': 'Edit selected rows',
+  'tableCells.title': 'Edit table',
+  'tableCells.selectedTitle': 'Edit selected rows',
+  'tableCells.update': 'Update the document',
+  'tableCells.scope': '${rows} rows, ${columns} columns. Only these cells will be updated.',
+  'tableCells.help': 'Tab: next cell. Enter / Shift+Enter: next / previous row. Ctrl+Enter: update. Escape: cancel.',
+  'tableCells.row': 'Row ${row}',
+  'tableCells.header': 'Header',
+  'tableCells.cell': '${row}, column ${column}',
+  'tableCells.select': 'Select a table or its rows first. The selection must contain exactly one table.',
+  'tableCells.multiple': 'More than one table is selected. Select just one table.',
+  'tableCells.rows': 'Select at least one header or data row, not only the separator line.',
+  'tableCells.unsupported': 'This table cannot be edited as cells. Use a regular Markdown table with the same number of cells in every row.',
+  'tableCells.mapping': 'The table could not be matched safely to the current document. Wait for the preview, then select it again.',
+  'tableCells.stale': 'The document changed while this editor was open. Cancel and select the table again. Nothing was updated.',
+  'tableCells.invalid': 'These cells would change the table structure. Check the cell contents and try again.',
+  'tableCells.cellType': 'This cell contains content that cannot be edited safely here. The document has not changed.',
+  'tableCells.commitFailed': 'The table could not be updated. The document has not changed.',
+  'tableCells.renderFailed': 'The document was updated, but the preview could not be refreshed. Close this editor and retry the preview; do not submit again.',
+  'tableCells.close': 'Close',
   'render.failed': 'Error rendering markdown:',
   'render.unknownError': 'Unknown rendering error',
 };
@@ -1146,9 +1167,16 @@ const MAX_UNDO_HISTORY = 100;
 let undoHistory = [];   // past states (string[])
 let redoHistory = [];   // future states (string[])
 let undoRedoRendering = false; // suppress loading screen & scrollTop reset during undo/redo
+let exactTypingSource = null;
+let exactInputWitness = null;
 
 function historyPush(content) {
   if (!mayMutateRendererDocument('history-push')) return;
+  if (isEditMode && exactTypingSource !== null) {
+    cancelEditorDeferredWork();
+    historyPushExact(window.CustomTabs.snapshotExactEditorContent());
+    return;
+  }
   // NOT gated on isEditMode, and that is a decision rather than an omission.
   // A reviewer proposed `if (!isEditMode) return;` here, arguing that since
   // Ctrl+Z/Ctrl+Y are now edit-mode only, a view-mode push strands an entry
@@ -1172,6 +1200,43 @@ function historyPush(content) {
   redoHistory = []; // clear redo on new change
 }
 
+function historyPushExact(source) {
+  const previous = undoHistory.at(-1);
+  if (previous && sameReloadDocument(typeof previous === 'string' ? previous : previous.source, source)) {
+    undoHistory[undoHistory.length - 1] = Object.freeze({ source });
+  } else {
+    undoHistory.push(Object.freeze({ source }));
+    if (undoHistory.length > MAX_UNDO_HISTORY) undoHistory.shift();
+  }
+  redoHistory = [];
+}
+
+function historyCurrentFor(entry, content) {
+  return typeof entry === 'string' ? content :
+    Object.freeze({ source: window.CustomTabs.snapshotExactEditorContent() });
+}
+
+function historyApply(entry) {
+  if (typeof entry === 'string') return entry;
+  if (!window.CustomTabs.adoptExactEditorContent(entry.source)) {
+    throw new Error(i18n('tableCells.commitFailed'));
+  }
+  return entry.source;
+}
+
+function replaceEditorSourceRange(start, end, replacement) {
+  if (exactTypingSource !== null) {
+    const source = window.CustomTabs.snapshotExactEditorContent();
+    const candidate = FoliaTableCells.spliceInput(source, start, end, replacement);
+    historyPush(source);
+    if (!window.CustomTabs.adoptExactEditorContent(candidate)) throw new Error('tableCells.commitFailed');
+    markdownEditor.value = candidate;
+    exactTypingSource = candidate;
+  } else {
+    markdownEditor.value = markdownEditor.value.slice(0, start) + replacement + markdownEditor.value.slice(end);
+  }
+}
+
 // Snapshot and restore the whole history. Used to roll a discarded edit-mode
 // session back to exactly the history the user had when the session started.
 //
@@ -1184,26 +1249,33 @@ function historyPush(content) {
 // that the session's own pushes cleared. The copies hold references to strings
 // that already exist, not duplicates of the document text.
 function historySnapshot() {
-  return { undo: undoHistory.slice(), redo: redoHistory.slice() };
+  return { undo: undoHistory.slice(), redo: redoHistory.slice(), exactTypingSource };
 }
 
 function historyRestore(snapshot) {
   if (!snapshot) return;
   undoHistory = snapshot.undo.slice();
   redoHistory = snapshot.redo.slice();
+  exactTypingSource = snapshot.exactTypingSource ?? null;
+  exactInputWitness = null;
 }
 
 function historyUndo() {
   if (!mayMutateRendererDocument('history-undo')) return;
   if (undoHistory.length === 0) return;
+  cancelEditorDeferredWork();
   const currentContent = isEditMode ? markdownEditor.value : originalMarkdown;
-  redoHistory.push(currentContent);
-  const prevContent = undoHistory.pop();
+  const entry = undoHistory.at(-1);
+  const reverse = historyCurrentFor(entry, currentContent);
+  const prevContent = historyApply(entry);
+  undoHistory.pop();
+  redoHistory.push(reverse);
   const scrollPos = contentWrapper.scrollTop;
 
   undoRedoRendering = true;
   if (isEditMode) {
     markdownEditor.value = prevContent;
+    if (exactTypingSource !== null) exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
     setDocumentDirtyFromContent(prevContent);
     clearTimeout(previewDebounceTimer);
     renderMarkdown(prevContent).then(() => {
@@ -1223,14 +1295,19 @@ function historyUndo() {
 function historyRedo() {
   if (!mayMutateRendererDocument('history-redo')) return;
   if (redoHistory.length === 0) return;
+  cancelEditorDeferredWork();
   const currentContent = isEditMode ? markdownEditor.value : originalMarkdown;
-  undoHistory.push(currentContent);
-  const nextContent = redoHistory.pop();
+  const entry = redoHistory.at(-1);
+  const reverse = historyCurrentFor(entry, currentContent);
+  const nextContent = historyApply(entry);
+  redoHistory.pop();
+  undoHistory.push(reverse);
   const scrollPos = contentWrapper.scrollTop;
 
   undoRedoRendering = true;
   if (isEditMode) {
     markdownEditor.value = nextContent;
+    if (exactTypingSource !== null) exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
     setDocumentDirtyFromContent(nextContent);
     clearTimeout(previewDebounceTimer);
     renderMarkdown(nextContent).then(() => {
@@ -1250,6 +1327,8 @@ function historyRedo() {
 function historyClear() {
   undoHistory = [];
   redoHistory = [];
+  exactTypingSource = null;
+  exactInputWitness = null;
 }
 
 
@@ -3674,7 +3753,8 @@ function captureDocumentEditor() {
     open: isEditMode,
     rendererMarkdown: originalMarkdown,
     history: historySnapshot(),
-    pendingHistory: historyDebounceTimer !== null && isEditMode ? markdownEditor.value : null,
+    pendingHistory: exactTypingSource === null && historyDebounceTimer !== null && isEditMode
+      ? markdownEditor.value : null,
     selection: { start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
       direction: markdownEditor.selectionDirection },
     scrollTop: markdownEditor.scrollTop,
@@ -3684,7 +3764,8 @@ function captureDocumentEditor() {
 }
 
 function historyForEditorState(state) {
-  const history = { undo: state.history.undo.slice(), redo: state.history.redo.slice() };
+  const history = { undo: state.history.undo.slice(), redo: state.history.redo.slice(),
+    exactTypingSource: state.history.exactTypingSource ?? null };
   if (state.pendingHistory !== null && history.undo.at(-1) !== state.pendingHistory) {
     history.undo.push(state.pendingHistory);
     if (history.undo.length > MAX_UNDO_HISTORY) history.undo.shift();
@@ -3697,6 +3778,7 @@ function cancelEditorDeferredWork() {
   clearTimeout(previewDebounceTimer);
   clearTimeout(historyDebounceTimer);
   previewDebounceTimer = historyDebounceTimer = null;
+  exactInputWitness = null;
 }
 
 function retainCurrentDocumentEditor() {
@@ -4048,6 +4130,17 @@ if (editorSplitter) {
   });
 }
 
+function captureExactInput(event) {
+  if (!isEditMode || exactTypingSource === null) return;
+  exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+  exactInputWitness = { source: exactTypingSource, value: markdownEditor.value,
+    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd, type: event.inputType };
+}
+
+// Capture programmatic key edits too: textarea Tab does not emit beforeinput.
+markdownEditor.addEventListener('keydown', captureExactInput, { capture: true });
+markdownEditor.addEventListener('beforeinput', captureExactInput);
+
 // Tab key → insert 2 spaces (prevent focus change)
 markdownEditor.addEventListener('keydown', (e) => {
   if (e.key === 'Tab') {
@@ -4071,11 +4164,36 @@ for (const type of ['input', 'keydown', 'pointerdown', 'wheel']) {
 markdownEditor.addEventListener('input', () => {
   if (!mayMutateRendererDocument('editor-input-history')) return;
   if (!isEditMode) return;
+  // Discrete cell edits record past states. Keep the next typing burst
+  // separate without pushing its output as an immediate no-op Undo.
+  const exact = exactTypingSource !== null;
+  if (exact) {
+    if (historyDebounceTimer === null) historyPushExact(exactTypingSource);
+    const witness = exactInputWitness;
+    exactInputWitness = null;
+    if (witness && FoliaTableCells.normalise(witness.source) === witness.value) {
+      const value = markdownEditor.value;
+      let { start, end } = witness;
+      if (start === end && value.length < witness.value.length) {
+        const removed = witness.value.length - value.length;
+        if (witness.type?.endsWith('Backward')) start -= removed;
+        else end += removed;
+      }
+      const prefix = witness.value.slice(0, start), suffix = witness.value.slice(end);
+      if (start >= 0 && value.startsWith(prefix) && value.endsWith(suffix) &&
+          value.length >= prefix.length + suffix.length) {
+        const inserted = value.slice(prefix.length, value.length - suffix.length);
+        const source = FoliaTableCells.spliceInput(witness.source, start, end, inserted);
+        if (!window.CustomTabs.adoptExactEditorContent(source)) throw new Error('tableCells.commitFailed');
+        exactTypingSource = source;
+      } else exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+    } else exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+  }
   clearTimeout(historyDebounceTimer);
   const sequence = fileOpenSequence, revision = editorModeRevision;
   historyDebounceTimer = setTimeout(() => {
     historyDebounceTimer = null;
-    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {
+    if (!exact && isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {
       historyPush(markdownEditor.value);
     }
   }, 800);
@@ -9518,6 +9636,7 @@ let rightClickLabelPos = null; // {left, top} relative to viewer
 let savedCursorPosition = null;
 
 function showContextMenu(x, y) {
+  captureTableMenuSelection();
   // Get and save selected text
   const selection = window.getSelection();
   const hasSelection = selection && selection.toString().trim().length > 0;
@@ -9670,7 +9789,7 @@ function editOnlyTargetDecidedItems() {
     ctxEditText,
     ctxDeleteImage,
     ctxEditMermaid, ctxDeleteMermaid,
-    ctxEditTable, ctxDeleteTable,
+    ctxEditTable, ctxEditSelectedRows, ctxDeleteTable,
   ];
 }
 
@@ -9893,10 +10012,7 @@ function applyMarkdownFormat(wrapper, multiline = false) {
         : wrapper + selectedText + wrapper;
     }
 
-    markdownEditor.value =
-      markdownEditor.value.substring(0, start) +
-      formattedText +
-      markdownEditor.value.substring(end);
+    replaceEditorSourceRange(start, end, formattedText);
 
     markdownEditor.focus();
     markdownEditor.selectionStart = start;
@@ -10000,10 +10116,7 @@ ctxCode.addEventListener('click', () => {
     const start = markdownEditor.selectionStart;
     const end = markdownEditor.selectionEnd;
 
-    markdownEditor.value =
-      markdownEditor.value.substring(0, start) +
-      formattedText +
-      markdownEditor.value.substring(end);
+    replaceEditorSourceRange(start, end, formattedText);
 
     // Restore selection
     markdownEditor.focus();
@@ -10078,10 +10191,7 @@ ctxRemoveFormat.addEventListener('click', () => {
       .replace(/^> /gm, '')               // Blockquotes
       .replace(/^#+\s/gm, '');            // Headers
 
-    markdownEditor.value =
-      markdownEditor.value.substring(0, start) +
-      cleanText +
-      markdownEditor.value.substring(end);
+    replaceEditorSourceRange(start, end, cleanText);
 
     // Restore selection
     markdownEditor.focus();
@@ -10278,6 +10388,24 @@ function getNextNoteId(source) {
 function findNoteSpanInSource(source, noteEl) {
   const rawTitle = noteEl.getAttribute('data-note-title') || '';
   const rawContent = noteEl.getAttribute('data-note-content') || '';
+  const noteId = noteEl.getAttribute('data-note-id');
+  if (noteId) {
+    // Cell serialization may use equivalent numeric entities. Match the
+    // retained ID and decoded metadata, not one spelling of each attribute.
+    const candidates = new RegExp(
+      `<span\\b(?=[^>]*\\bdata-note-id="${escapeRegex(noteId)}")[^>]*>([\\s\\S]*?)</span>`, 'g');
+    for (const match of source.matchAll(candidates)) {
+      const template = document.createElement('template');
+      template.innerHTML = match[0];
+      const span = template.content.firstElementChild;
+      if (span?.getAttribute('data-note-id') === noteId &&
+          (span.getAttribute('data-note-title') || '') === rawTitle &&
+          (span.getAttribute('data-note-content') || '') === rawContent &&
+          ['note-label', 'noted-image', 'noted-text'].some(name =>
+            noteEl.classList.contains(name) && span.classList.contains(name))) return match;
+    }
+    return null;
+  }
 
   // Re-escape the same way they were escaped when creating the note
   const srcTitle = rawTitle.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -10445,10 +10573,7 @@ ctxDeleteNote.addEventListener('click', () => {
       // For labels, remove the entire span (no original content to restore)
       // For noted-text/noted-image, restore inner content
       const replacement = isLabel ? '' : match[1];
-      markdownEditor.value =
-        editorVal.substring(0, match.index) +
-        replacement +
-        editorVal.substring(match.index + match[0].length);
+      replaceEditorSourceRange(match.index, match.index + match[0].length, replacement);
 
       setDocumentDirtyFromContent(markdownEditor.value);
 
@@ -10560,10 +10685,7 @@ noteSaveBtn.addEventListener('click', () => {
           newNoteHtml = `<span class="noted-text"${noteIdAttr} data-note-title="${escTitle}" data-note-content="${escContent}" data-note-color="${color}" style="${_noteStyle}">${innerContent}</span>`;
         }
 
-        markdownEditor.value =
-          editorVal.substring(0, match.index) +
-          newNoteHtml +
-          editorVal.substring(match.index + match[0].length);
+        replaceEditorSourceRange(match.index, match.index + match[0].length, newNoteHtml);
 
         setDocumentDirtyFromContent(markdownEditor.value);
 
@@ -10688,10 +10810,7 @@ noteSaveBtn.addEventListener('click', () => {
         replacement = wrapWithNoteSpan(selectedText, noteId, escTitle, escContent, color);
       }
 
-      markdownEditor.value =
-        editorVal.substring(0, start) +
-        replacement +
-        editorVal.substring(end);
+      replaceEditorSourceRange(start, end, replacement);
 
       markdownEditor.focus();
       markdownEditor.selectionStart = start;
@@ -10765,7 +10884,7 @@ noteSaveBtn.addEventListener('click', () => {
     if (isEditMode) {
       historyPush(markdownEditor.value);
       const editorVal = markdownEditor.value;
-      markdownEditor.value = editorVal + '\n' + noteHtml;
+      replaceEditorSourceRange(editorVal.length, editorVal.length, '\n' + noteHtml);
 
       markdownEditor.focus();
       const newPos = markdownEditor.value.length;
@@ -10988,10 +11107,7 @@ editTextSaveBtn.addEventListener('click', () => {
     const editorVal = markdownEditor.value;
     const textIndex = findNthOccurrence(editorVal, editTextOriginal, editTextOccurrence);
     if (textIndex !== -1) {
-      markdownEditor.value =
-        editorVal.substring(0, textIndex) +
-        newText +
-        editorVal.substring(textIndex + editTextOriginal.length);
+      replaceEditorSourceRange(textIndex, textIndex + editTextOriginal.length, newText);
 
       setDocumentDirtyFromContent(markdownEditor.value);
 
@@ -11391,7 +11507,7 @@ function insertImageMarkdown(imageMarkdown, originalSize, compressedSize) {
     const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
     const suffix = after.length > 0 && !after.startsWith('\n') ? '\n' : '';
 
-    markdownEditor.value = before + prefix + imageMarkdown + suffix + after;
+    replaceEditorSourceRange(cursorPos, cursorPos, prefix + imageMarkdown + suffix);
 
     const newPos = cursorPos + prefix.length + imageMarkdown.length + suffix.length;
     markdownEditor.focus();
@@ -11510,7 +11626,7 @@ ctxDeleteImage.addEventListener('click', () => {
     // Clean up trailing newline
     if (removeEnd < content.length && content[removeEnd] === '\n') removeEnd++;
 
-    markdownEditor.value = content.substring(0, removeStart) + content.substring(removeEnd);
+    replaceEditorSourceRange(removeStart, removeEnd, '');
 
     setDocumentDirtyFromContent(markdownEditor.value);
     clearTimeout(previewDebounceTimer);
@@ -11549,6 +11665,7 @@ const ctxInsertMermaid = document.getElementById('ctxInsertMermaid');
 const ctxInsertTable = document.getElementById('ctxInsertTable');
 const ctxEditMermaid = document.getElementById('ctxEditMermaid');
 const ctxEditTable = document.getElementById('ctxEditTable');
+const ctxEditSelectedRows = document.getElementById('ctxEditSelectedRows');
 const ctxDeleteMermaid = document.getElementById('ctxDeleteMermaid');
 const ctxDeleteTable = document.getElementById('ctxDeleteTable');
 const ctxCopyCode = document.getElementById('ctxCopyCode');
@@ -11620,33 +11737,232 @@ ctxEditMermaid && ctxEditMermaid.addEventListener('click', () => {
   openMermaidTemplateDialog(mermaidEl.dataset.mermaidSrc?.trim() || '', 'edit');
 });
 
-// Edit Table — open dialog prefilled with the matched markdown source
-ctxEditTable && ctxEditTable.addEventListener('click', () => {
-  hideContextMenu();
-  const tableEl = rightClickTarget?.closest('table');
-  if (!tableEl) return;
-  editingTableEl = tableEl;
+let tableMenuSelection = null;
+let tableCellSession = null;
+const tableCellDialog = document.getElementById('tableCellDialog');
+const tableCellGrid = document.getElementById('tableCellGrid');
+const tableCellError = document.getElementById('tableCellError');
+const tableCellUpdate = document.getElementById('tableCellUpdate');
+document.getElementById('tableCellClose').setAttribute('aria-label', i18n('tableCells.close'));
 
-  const content = isEditMode ? markdownEditor.value : originalMarkdown;
-  const headers = [...tableEl.querySelectorAll('th')].map(th => th.textContent.trim());
-  const cellTexts = [...tableEl.querySelectorAll('td')].map(td => td.textContent.trim());
+function captureTableMenuSelection() {
+  tableMenuSelection = null;
+  if (!isEditMode || !currentDocumentActionOwner()) return;
+  const tab = currentDocumentActionOwner(), source = markdownEditor.value;
+  const mode = editorModeRevision, sequence = fileOpenSequence;
+  const interaction = editorInteractionRevision;
+  const contextCurrent = window.CustomTabs.captureDialogContext(tab);
+  const selection = window.getSelection();
+  tableMenuSelection = {
+    tab, source, mode, sequence,
+    origin: rightClickTarget === markdownEditor ? 'markdown' : 'preview',
+    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
+    direction: markdownEditor.selectionDirection,
+    range: selection?.rangeCount === 1 ? selection.getRangeAt(0).cloneRange() : null,
+    focus: document.activeElement,
+    isCurrent: () => contextCurrent() && isEditMode &&
+      currentDocumentActionOwner() === tab && editorModeRevision === mode &&
+      fileOpenSequence === sequence && editorInteractionRevision === interaction &&
+      markdownEditor.value === source,
+  };
+}
 
-  const tableRegex = /(\|[^\n]+\|[ \t]*\n)+\|[^\n]+\|[ \t]*(?:\n|$)/g;
-  let m;
-  let bestMatchText = null;
-  let bestScore = -1;
+function protectTableSource(text, mask) {
+  return text.replace(RAW_HTML_FENCE, mask)
+    .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
+}
 
-  while ((m = tableRegex.exec(content)) !== null) {
-    const tableText = m[0];
-    const firstLine = tableText.split('\n').filter(l => l.trim())[0] || '';
-    let score = 0;
-    for (const h of headers) { if (firstLine.includes(h)) score += 2; }
-    for (const c of cellTexts.slice(0, 6)) { if (tableText.includes(c)) score++; }
-    if (score > bestScore) { bestScore = score; bestMatchText = tableText; }
+function closeTableCellEditor() {
+  const session = tableCellSession;
+  tableCellSession = null;
+  if (tableCellDialog.open) tableCellDialog.close();
+  tableCellGrid.replaceChildren();
+  if (session?.selection.isCurrent()) {
+    if (session.selection.origin === 'markdown') {
+      markdownEditor.focus();
+      markdownEditor.setSelectionRange(session.selection.start, session.selection.end, session.selection.direction);
+    } else {
+      viewer.focus({ preventScroll: true });
+    }
   }
+}
 
-  openTableInsertDialog(bestMatchText || '', 'edit');
+function showTableCellError(error) {
+  const key = error instanceof Error ? error.message : 'tableCells.commitFailed';
+  tableCellError.textContent = Object.hasOwn(UI_STRINGS, key) ? i18n(key) : i18n('tableCells.commitFailed');
+  if (!Object.hasOwn(UI_STRINGS, key)) console.error('Table cell editor failed:', error);
+}
+
+function serializeSafeTableCell(input) {
+  const serialized = FoliaTableCells.serializeCell(input);
+  const checked = document.createElement('div');
+  checked.innerHTML = sanitizeTableHtml(serialized);
+  if (FoliaTableCells.serializeCell(checked.firstElementChild) !== serialized) throw new Error('tableCells.cellType');
+  return serialized;
+}
+
+function openTableCellEditor(rowsOnly) {
+  hideContextMenu();
+  const selection = tableMenuSelection;
+  if (!selection?.isCurrent()) {
+    showNotification(i18n('tableCells.stale'), 5000);
+    return;
+  }
+  try {
+    const exact = window.CustomTabs.snapshotExactEditorContent();
+    const model = FoliaTableCells.index(exact, marked, protectTableSource);
+    const target = selection.origin === 'markdown'
+      ? FoliaTableCells.resolveSource(model, selection.start, selection.end, rowsOnly)
+      : FoliaTableCells.resolvePreview(model, selection.range, viewer,
+          node => editorScroll.tableSource(node), rowsOnly);
+    const session = { selection, target, exact, cells: [], submitting: false, applied: false };
+    const table = document.createElement('table'), head = table.createTHead(), body = table.createTBody();
+    const header = target.table.rows[0];
+    const displayRows = target.rows.includes(header) ? target.rows : [header, ...target.rows];
+    for (const row of displayRows) {
+      const rowIndex = target.table.rows.indexOf(row);
+      const editable = target.rows.includes(row);
+      const tr = (rowIndex === 0 ? head : body).insertRow();
+      const label = document.createElement('th');
+      label.scope = 'row';
+      label.textContent = rowIndex === 0 ? i18n('tableCells.header') : i18n('tableCells.row', { row: rowIndex });
+      tr.appendChild(label);
+      for (let c = 0; c < row.cells.length; c++) {
+        const cell = row.cells[c], container = document.createElement(rowIndex === 0 ? 'th' : 'td');
+        const input = document.createElement('div');
+        if (rowIndex === 0) container.scope = 'col';
+        if (editable) {
+          input.contentEditable = 'true';
+          input.setAttribute('role', 'textbox');
+          input.setAttribute('aria-multiline', 'false');
+        }
+        input.setAttribute('aria-label', i18n('tableCells.cell', { row: label.textContent, column: c + 1 }));
+        const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
+        lexer.tokens.links = model.links;
+        input.innerHTML = sanitizeTableHtml(marked.Parser.parseInline(lexer.inlineTokens(parseEmojis(cell.text))));
+        // Validate before exposing a partially editable table.
+        if (editable) {
+          serializeSafeTableCell(input);
+          session.cells.push({ cell, input, initial: input.innerHTML, row: rowIndex, column: c });
+        }
+        container.appendChild(input);
+        tr.appendChild(container);
+      }
+    }
+    tableCellGrid.replaceChildren(table);
+    tableCellError.textContent = '';
+    document.getElementById('tableCellTitle').textContent = rowsOnly
+      ? i18n('tableCells.selectedTitle') : i18n('tableCells.title');
+    document.getElementById('tableCellScope').textContent = i18n('tableCells.scope',
+      { rows: target.rows.length, columns: target.table.rows[0].cells.length });
+    document.getElementById('tableCellHelp').textContent = i18n('tableCells.help');
+    tableCellUpdate.textContent = i18n('tableCells.update');
+    tableCellUpdate.disabled = false;
+    tableCellSession = session;
+    tableCellDialog.showModal();
+    session.cells[0].input.focus();
+  } catch (error) {
+    const key = error instanceof Error ? error.message : '';
+    showNotification(Object.hasOwn(UI_STRINGS, key) ? i18n(key) : i18n('tableCells.commitFailed'), 6000);
+    if (!Object.hasOwn(UI_STRINGS, key)) console.error('Table cell editor could not open:', error);
+  }
+}
+
+async function updateTableCells() {
+  const session = tableCellSession;
+  if (!session || session.submitting || session.applied) return;
+  try {
+    if (!session.selection.isCurrent() || !mayMutateRendererDocument('table-cell-commit') ||
+        window.CustomTabs.snapshotExactEditorContent() !== session.exact) throw new Error('tableCells.stale');
+    const edits = session.cells.filter(cell => cell.input.innerHTML !== cell.initial).map(cell => ({
+      cell: cell.cell, text: serializeSafeTableCell(cell.input),
+    }));
+    if (!edits.length) {
+      closeTableCellEditor();
+      return;
+    }
+    const candidate = FoliaTableCells.replaceCells(session.target, edits, marked, protectTableSource);
+    if (!session.selection.isCurrent()) throw new Error('tableCells.stale');
+    session.submitting = true;
+    // No await or event dispatch may split source adoption and its undo entry.
+    if (!window.CustomTabs.adoptExactEditorContent(candidate)) throw new Error('tableCells.commitFailed');
+    cancelEditorDeferredWork();
+    historyPushExact(session.exact);
+    markdownEditor.value = candidate;
+    exactTypingSource = candidate;
+    setDocumentDirtyFromContent(markdownEditor.value);
+    retainCurrentDocumentEditor();
+    session.applied = true;
+    tableCellUpdate.disabled = true;
+    await renderMarkdown(markdownEditor.value);
+    if (tableCellSession !== session) return;
+    if (currentDocumentActionOwner() !== session.selection.tab ||
+        editorModeRevision !== session.selection.mode || fileOpenSequence !== session.selection.sequence ||
+        !editorScroll.isCurrentSource(FoliaTableCells.normalise(candidate))) {
+      throw new Error('tableCells.renderFailed');
+    }
+    closeTableCellEditor();
+  } catch (error) {
+    showTableCellError(session.applied ? new Error('tableCells.renderFailed') : error);
+  } finally {
+    session.submitting = false;
+  }
+}
+
+ctxEditTable?.addEventListener('click', () => openTableCellEditor(false));
+ctxEditSelectedRows?.addEventListener('click', () => openTableCellEditor(true));
+tableCellUpdate.addEventListener('click', updateTableCells);
+document.getElementById('tableCellCancel').addEventListener('click', closeTableCellEditor);
+document.getElementById('tableCellClose').addEventListener('click', closeTableCellEditor);
+tableCellDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  closeTableCellEditor();
 });
+document.addEventListener('beforeinput', event => {
+  // Chromium can route cell Undo to the textarea's native history.
+  if (tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&
+      event.target === markdownEditor && event.isTrusted && event.cancelable &&
+      (event.inputType === 'historyUndo' || event.inputType === 'historyRedo')) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, true);
+tableCellDialog.addEventListener('keydown', event => {
+  // Keep native rich-cell Undo/Copy/Paste, but never run document commands.
+  event.stopPropagation();
+  if (event.isComposing) return;
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+    event.preventDefault();
+    updateTableCells();
+  } else if (event.key === 'Enter') {
+    const current = tableCellSession?.cells.find(cell => cell.input === event.target);
+    if (!current) return;
+    event.preventDefault();
+    const next = tableCellSession.cells.find(cell =>
+      cell.column === current.column && cell.row === current.row + (event.shiftKey ? -1 : 1));
+    next?.input.focus();
+  } else if ((event.ctrlKey || event.metaKey) &&
+      !['a', 'c', 'x', 'v', 'z', 'y', 'b', 'i', 'u'].includes(event.key.toLowerCase())) {
+    event.preventDefault();
+  }
+});
+tableCellDialog.addEventListener('paste', event => {
+  if (!event.target.isContentEditable) return;
+  event.preventDefault();
+  const lines = event.clipboardData.getData('text/plain').split(/\r\n?|\n/);
+  document.execCommand('insertHTML', false, lines.map(escapeHtml).join('<br>'));
+});
+tableCellDialog.addEventListener('drop', event => event.preventDefault());
+tableCellDialog.addEventListener('click', event => {
+  if (event.target.closest('a')) event.preventDefault();
+});
+tableCellDialog.addEventListener('auxclick', event => event.preventDefault());
+tableCellDialog.addEventListener('wheel', event => {
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}, { passive: false });
 
 // Delete Mermaid — remove mermaid block from source
 ctxDeleteMermaid && ctxDeleteMermaid.addEventListener('click', () => {
@@ -11747,7 +12063,7 @@ function deleteMermaidFromSource(svgTexts, mermaidEl) {
   historyPush(originalMarkdown);
   originalMarkdown = isEditMode ? originalMarkdown : newContent;
   if (isEditMode) {
-    markdownEditor.value = newContent;
+    replaceEditorSourceRange(removeStart, removeEnd, '');
     setDocumentDirtyFromContent(markdownEditor.value);
   }
   syncEditorWithStore();
@@ -11832,7 +12148,7 @@ function deleteTableFromSource(tableEl, headers, cellTexts = []) {
   historyPush(originalMarkdown);
   originalMarkdown = isEditMode ? originalMarkdown : newTableContent;
   if (isEditMode) {
-    markdownEditor.value = newTableContent;
+    replaceEditorSourceRange(removeStart, removeEnd, '');
     setDocumentDirtyFromContent(markdownEditor.value);
   }
   syncEditorWithStore();
@@ -11852,7 +12168,8 @@ function updateNewContextMenuItems() {
   const isImg = target.tagName === 'IMG' || !!target.closest?.('img');
 
   ctxEditMermaid && (ctxEditMermaid.style.display = isMermaid ? '' : 'none');
-  ctxEditTable && (ctxEditTable.style.display = isTable ? '' : 'none');
+  ctxEditTable && (ctxEditTable.style.display = '');
+  ctxEditSelectedRows && (ctxEditSelectedRows.style.display = '');
   ctxDeleteMermaid && (ctxDeleteMermaid.style.display = isMermaid ? '' : 'none');
   ctxDeleteTable && (ctxDeleteTable.style.display = isTable ? '' : 'none');
   ctxCopyCode && (ctxCopyCode.style.display = isCode ? '' : 'none');
@@ -12036,8 +12353,6 @@ let editingMermaidGeneration = null;
 // re-entrancy latch for the validation window. See insertMermaidFromDialog().
 let mermaidDialogSession = 0;
 let mermaidDialogSubmitting = false;
-let tableDialogMode = 'insert';   // 'insert' | 'edit'
-let editingTableEl = null;
 
 const MERMAID_TEMPLATES = {
   flowchart: `flowchart TD
@@ -12396,7 +12711,7 @@ async function insertMermaidFromDialog() {
     historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
 
     if (isEditMode) {
-      markdownEditor.value = newContent;
+      replaceEditorSourceRange(hit.start, hit.end, '```mermaid\n' + code + '\n```');
       setDocumentDirtyFromContent(markdownEditor.value);
     } else {
       originalMarkdown = newContent;
@@ -12417,7 +12732,7 @@ async function insertMermaidFromDialog() {
       const safePos = skipPastCodeBlock(markdownEditor.value, cursorPos);
       const before = markdownEditor.value.substring(0, safePos);
       const after = markdownEditor.value.substring(safePos);
-      markdownEditor.value = before + mermaidBlock + after;
+      replaceEditorSourceRange(safePos, safePos, mermaidBlock);
       const newCursor = safePos + mermaidBlock.length;
       markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
       markdownEditor.focus();
@@ -12568,22 +12883,12 @@ function updateTablePreview() {
   }
 }
 
-function openTableInsertDialog(md = null, mode = 'insert') {
+function openTableInsertDialog() {
   if (!tableInsertOverlay) return;
-  tableDialogMode = mode;
-
-  if (md !== null && mode === 'edit') {
-    // Pre-fill the markdown textarea and render preview directly
-    if (tableInsertMarkdownEl) tableInsertMarkdownEl.value = md.trim();
-    if (tableInsertPreviewEl) {
-      tableInsertPreviewEl.innerHTML = sanitizeTableHtml(marked.parse(md.trim()));
-    }
-  } else {
-    updateTablePreview();
-  }
+  updateTablePreview();
 
   if (tableInsertBtn) {
-    tableInsertBtn.textContent = mode === 'edit' ? 'Update' : 'Insert';
+    tableInsertBtn.textContent = 'Insert';
   }
 
   tableInsertOverlay.classList.add('visible');
@@ -12628,55 +12933,7 @@ function insertTableFromDialog() {
 
   closeTableInsertDialog();
 
-  // Capture and reset state immediately
-  const mode = tableDialogMode;
-  const editTarget = editingTableEl;
-  tableDialogMode = 'insert';
-  editingTableEl = null;
-
-  if (mode === 'edit') {
-    if (!editTarget) return;
-
-    const content = isEditMode ? markdownEditor.value : originalMarkdown;
-    const headers = [...editTarget.querySelectorAll('th')].map(th => th.textContent.trim());
-    const cellTexts = [...editTarget.querySelectorAll('td')].map(td => td.textContent.trim());
-
-    // Find the best-matching table block in source (same scoring as deleteTableFromSource)
-    const tableRegex = /(\|[^\n]+\|[ \t]*\n)+\|[^\n]+\|[ \t]*(?:\n|$)/g;
-    let m;
-    let bestStart = -1;
-    let bestEnd = -1;
-    let bestScore = -1;
-
-    while ((m = tableRegex.exec(content)) !== null) {
-      const tableText = m[0];
-      const firstLine = tableText.split('\n').filter(l => l.trim())[0] || '';
-      let score = 0;
-      for (const h of headers) { if (firstLine.includes(h)) score += 2; }
-      for (const c of cellTexts.slice(0, 6)) { if (tableText.includes(c)) score++; }
-      if (score > bestScore) { bestScore = score; bestStart = m.index; bestEnd = m.index + m[0].length; }
-    }
-
-    let newContent = content;
-    if (bestStart !== -1) {
-      newContent = content.substring(0, bestStart) + md + content.substring(bestEnd);
-    }
-
-    historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
-
-    if (isEditMode) {
-      markdownEditor.value = newContent;
-      setDocumentDirtyFromContent(markdownEditor.value);
-    } else {
-      originalMarkdown = newContent;
-      setDocumentDirtyFromContent(originalMarkdown);
-    }
-    syncEditorWithStore();
-
-    renderTableInDOM(md, 'replace', editTarget);
-    showNotification('Table updated', 1500);
-
-  } else {
+  {
     // INSERT mode
     historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
 
@@ -12685,7 +12942,7 @@ function insertTableFromDialog() {
       const safePos = skipPastCodeBlock(markdownEditor.value, cursorPos);
       const before = markdownEditor.value.substring(0, safePos);
       const after = markdownEditor.value.substring(safePos);
-      markdownEditor.value = before + '\n' + md + '\n' + after;
+      replaceEditorSourceRange(safePos, safePos, '\n' + md + '\n');
       const newCursor = safePos + md.length + 2;
       markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
       markdownEditor.focus();
@@ -12747,7 +13004,7 @@ function insertContentAtCursor(content) {
     const before = markdownEditor.value.substring(0, safePos);
     const after = markdownEditor.value.substring(safePos);
     const newContent = before + content + after;
-    markdownEditor.value = newContent;
+    replaceEditorSourceRange(safePos, safePos, content);
     const newCursor = safePos + content.length;
     markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
     markdownEditor.focus();
@@ -12970,10 +13227,7 @@ ctxNotesPanelDelete.addEventListener('click', () => {
     const match = findNoteSpanInSource(editorVal, noteEl);
     if (match) {
       const replacement = isLabel ? '' : match[1];
-      markdownEditor.value =
-        editorVal.substring(0, match.index) +
-        replacement +
-        editorVal.substring(match.index + match[0].length);
+      replaceEditorSourceRange(match.index, match.index + match[0].length, replacement);
 
       setDocumentDirtyFromContent(markdownEditor.value);
 

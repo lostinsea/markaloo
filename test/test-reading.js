@@ -130,7 +130,7 @@ if (typeof electron === "string") {
     if (process.env.FOLIA_READING_PERF) {
       await exec("if(!document.body.classList.contains('dark-mode'))document.getElementById('darkModeToggle').click();true");
     }
-    const sentinel = startErrorSentinel(win, { label: "reading" });
+    const sentinel = startErrorSentinel(win, { label: "reading", trapExternal: false });
     let watcherSnapshot = null;
     const send = win.webContents.send.bind(win.webContents);
     win.webContents.send = (channel, ...args) => {
@@ -515,7 +515,7 @@ if (typeof electron === "string") {
     });
     fs.writeFileSync(first, "# Mermaid boundary controls\n\n" + Object.entries(fixtures).map(([name, code]) =>
       "## " + name + "\n\n```mermaid\n" + code + "\n```").join("\n\n"));
-    const sentinel = startErrorSentinel(win, { label: "borders" });
+    const sentinel = startErrorSentinel(win, { label: "borders", trapExternal: false });
     await exec("if(!document.body.classList.contains('dark-mode'))document.getElementById('darkModeToggle').click();document.getElementById('openFile').click();true");
     await wait("boundary fixture admitted and finished", "viewer.querySelector('h1')?.textContent==='Mermaid boundary controls'&&!loadingScreen.classList.contains('active')");
     await exec("(async()=>{await whenMermaidSettled();return true})()");
@@ -822,7 +822,7 @@ if (typeof electron === "string") {
     await capture("fresh-argument-toc");
   }
   async function fresh() {
-    const sentinel = startErrorSentinel(win, { label: "reading-panels" });
+    const sentinel = startErrorSentinel(win, { label: "reading-panels", trapExternal: false });
     check("fresh profile has no saved panel or documents and keeps the welcome open action",
       await exec("localStorage.getItem('readingSidePanel')===null&&window.CustomTabs.getTabs().length===0&&!!viewer.querySelector('.welcome')&&!!document.getElementById('welcomeOpenBtn')"));
     const welcome = await exec(panelState);

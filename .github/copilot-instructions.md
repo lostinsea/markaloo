@@ -135,12 +135,12 @@ profiles scored 1.3x; the same formula scored 3.6x on the four profiles it had
 not seen. The honest number is the held-out one. Never tune a constant on the
 same data used to report its quality.
 
-**Three independent reviewers, 2-3 rounds.** Non-trivial changes get reviewed
-independently by the three reviewers named under *Model roles — mandatory*
+**Independent Sol/Luna reviews, 2-3 rounds.** Non-trivial changes get reviewed
+independently by the two reviewers named under *Model roles — mandatory*
 below, each in a fresh context; agreements and disagreements are both surfaced.
 Stop when a round produces no new blocking findings — do not loop indefinitely,
 but a material correction always earns another round. The convergence is worth
-it: *(historical, from the earlier two-reviewer process)* on the `marked 18`
+it: *(historical)* on the `marked 18`
 upgrade both reviewers independently found the same defect, and one proposed a
 fix that was strictly better than the other's by exactly one case (`Infinity`).
 
@@ -154,23 +154,19 @@ decide *not* to do something, write down why where the next person will look.
 
 ## Model roles — mandatory
 
-**Maintainer decision, 2026-09-02.** Not advisory. These assignments apply going
-forward and supersede any earlier statement in this repository that Opus 5
-implements, or that review is Luna alone or an Opus/Luna pair.
+- Use the latest available version of each model.
+- Sol uses **high reasoning effort** for all coding and documentation.
 
 | Role | Model | Notes |
 |---|---|---|
-| Product coding and implementation | **GPT-5.6 Sol** — `gpt-5.6-sol` | Reasoning effort **high**, always. |
-| Tests and automations | **GPT-5.6 Terra** — `gpt-5.6-terra` | Test design and implementation, benchmark automation, screenshot-capture automation, revert-harness records, proof orchestration. |
-| Code review | **GPT-5.6 Sol** — `gpt-5.6-sol`, **GPT-5.6 Terra** — `gpt-5.6-terra`, **GPT-5.6 Luna** — `gpt-5.6-luna` | Three independent reviews, each in a **fresh context**. The Sol agent that wrote the code and the Terra agent that wrote the tests do **not** count as those reviewers. |
-| Exploration and research | **Claude Opus 5** — `claude-opus-5` | Maps architecture, history and risk and supplies evidence. Does **not** own product implementation. |
+| Coding and documentation | **Latest GPT Sol**, high reasoning | Product code, tests, automation, benchmarks, screenshots, revert records, proof orchestration and documentation. |
+| Independent review | **Latest GPT Sol and GPT Luna** | Two read-only reviews, each in a **fresh context**. The author cannot count as the independent Sol reviewer. Surface agreements and disagreements. |
+| Research and design | **Latest GPT Astra** | Architecture, risks, design and supporting evidence. No coding or documentation edits. |
 
-Handoff order, one behavioural unit at a time: **Opus explores -> Sol (high)
-changes the product -> Terra writes the tests, automation and evidence -> Sol,
-Terra and Luna review independently in fresh contexts -> the role owner corrects
-(product to Sol, tests and automation to Terra) -> the three reviews repeat after
-any material correction -> integration is serialised, one stream at a time.** A
-product defect that a Terra test exposed is still Sol's fix.
+Handoff order, one behavioural unit at a time: **Astra researches and designs ->
+Sol (high) writes the code, tests, proofs and documentation -> fresh Sol and Luna
+review independently -> Sol (high) corrects -> both reviews repeat after any
+material correction -> integration is serialised, one stream at a time.**
 
 The procedure that goes with this — how it composes with the isolated-worktree
 and file-ownership rules, what each role owns as evidence, and the per-unit gates
@@ -349,6 +345,13 @@ gated on `refs/tags/`.
 `npm ci`, which fails when they disagree.
 
 ## Behaviours worth knowing before you change them
+
+**Visual table edits keep exact source authority.** Both panes use the same
+cell-grid transaction. Resolve one table from the current selection; never guess
+from cell text or table order. Replace only changed cell spans, preserve outside
+text and unselected rows, and keep Update as one document Undo step, not Save.
+The popup has no Markdown pane. Tab, source, mode, reload, Save and shutdown
+changes invalidate its captured transaction. Keep insertion and Mermaid separate.
 
 **Tabs render lazily.** `createTab()` only stores text; `switchToTab()` pays the
 render cost. So guarding the *read* paths saves nothing — the cost lands on the

@@ -9,6 +9,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   let sourceMarkers = [];
   const scrollPoints = { editor: [], preview: [] };
   const measuredSizes = new WeakMap();
+  const tableReceipts = new WeakMap();
   let pendingSource = false, lastEditor = 0, lastPreview = 0;
   const stats = { builds: 0, scrolls: 0, writes: 0, callbacks: [] };
 
@@ -133,6 +134,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       this.attribute = attribute + '-' + this.nonce;
       this.descriptors = [];
       this.bindings = [];
+      this.editableTables = new Map();
       this.textSpecs = new WeakMap();
       this.textGroups = [];
       this.warnings = new Set();
@@ -492,6 +494,19 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       return bindings;
     }
     adopt(fresh, adopted, bindings) {
+      const table = bindings?.get(fresh);
+      if (fresh.tagName === 'TABLE' && table?.kind === 'table' && table.root) {
+        const target = fresh === adopted ? fresh :
+          adopted.tagName === 'TABLE' ? adopted :
+          adopted.classList.contains('table-container') ? adopted.querySelector(':scope > table') : null;
+        const previous = target && tableReceipts.get(target);
+        // Hash/LCS matching is a rendering optimization, not edit authority.
+        if (target && (target === fresh || (previous?.canonical === fresh.innerHTML &&
+            previous.presented === target.innerHTML))) {
+          this.editableTables.set(target, { start: table.start, end: table.end,
+            canonical: fresh.innerHTML });
+        }
+      }
       const nodes = [fresh, ...fresh.querySelectorAll('*')];
       const counts = new Map(), adoptedTags = new Map();
       for (const node of nodes) {
@@ -867,6 +882,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     commit(source) {
       if (committed?.selection !== source.selection) owner = 'preview';
       committed = source;
+      for (const [table, receipt] of source.editableTables) {
+        tableReceipts.set(table, { ...receipt, presented: table.innerHTML });
+      }
       pendingSource = false;
       observe();
       invalidate();
@@ -901,6 +919,15 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       sourceMarkers = [];
     },
     previewNavigation() { claim('preview'); schedule(); },
+    isCurrentSource(text) { return !!usable() && committed.source === text; },
+    tableSource(table) {
+      if (!usable() || committed.source !== editor.value || !table.isConnected ||
+          !preview.contains(table)) return null;
+      const receipt = committed.editableTables.get(table);
+      const sealed = tableReceipts.get(table);
+      return receipt && sealed?.presented === table.innerHTML
+        ? { start: receipt.start, end: receipt.end } : null;
+    },
     invalidate,
     diagnostics() {
       return { ready: !!usable() && anchors.length > 0, pendingGeometry: dirty || !!frame, owner, anchors: anchors.length,

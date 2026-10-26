@@ -1,16 +1,35 @@
 // Self-check for test-visual-utils' probe: proves it actually detects each
 // failure mode it claims to. A visual assertion that cannot fail is worse than
 // no assertion, because it reads as coverage. Run with: npm run test:visual
-// Isolate this suite's userData profile before the app is ready. See
-// test-userdata-isolation.js.
-require("./test-userdata-isolation");
+const { app, BrowserWindow, shell, dialog } = require("electron");
+function failUnattended(error) {
+  try {
+    require("fs").writeSync(2, "Visual selfcheck fatal: " + String(error?.stack || error) + "\n");
+  } finally {
+    app.exit(2);
+  }
+}
+process.on("uncaughtException", failUnattended);
+process.on("unhandledRejection", failUnattended);
+for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog",
+  "showOpenDialogSync", "showSaveDialog", "showSaveDialogSync", "showErrorBox"]) {
+  dialog[method] = () => failUnattended(new Error("Unexpected native dialog: " + method));
+}
+const watchdog = setTimeout(() => failUnattended(new Error("Visual selfcheck watchdog expired")), 90000);
 
-const { app, BrowserWindow } = require("electron");
+// Isolate before any window or profile access, including failures during setup.
+require("./test-userdata-isolation");
 const {
   inspectVisual,
   captureScreenshot,
   mergeDisabledFeatures,
   DISABLED_FEATURES,
+  startErrorSentinel,
+  trapExternalOpens,
+  readExternalOpens,
+  readShellOpens,
+  clearExternalOpens,
+  waitForExternalTrap,
 } = require("./test-visual-utils");
 
 const PAGE =
@@ -39,6 +58,118 @@ const expect = (name, ok, detail) => {
   console.log(line);
 };
 
+async function checkExternalTrap() {
+  const windows = [];
+  const createWindow = async () => {
+    const win = new BrowserWindow({
+      show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+    });
+    windows.push(win);
+    await win.loadURL("data:text/html,<body>External-open guard selfcheck</body>");
+    return win;
+  };
+  const fallback = [];
+  const fallbackExternal = async value => { fallback.push(["url", value]); };
+  const fallbackPath = async value => { fallback.push(["path", value]); return "safe fallback"; };
+  // These remain safe if a mutation removes the shared installation.
+  shell.openExternal = fallbackExternal;
+  shell.openPath = fallbackPath;
+  try {
+    const first = await createWindow();
+    expect("external guard setup uses an isolated Node-free page",
+      await first.webContents.executeJavaScript("typeof require==='undefined'&&typeof process==='undefined'"));
+    const fallbackUrlResult = await shell.openExternal("https://guard-control.invalid/");
+    const fallbackPathResult = await shell.openPath("guard-control.txt");
+    expect("external guard fallback controls record both openers without OS launches",
+      fallback.length === 2 && fallbackUrlResult === undefined && fallbackPathResult === "safe fallback");
+    fallback.length = 0;
+    expect("external guard setup is genuinely uninstalled", !await waitForExternalTrap(first, 0));
+
+    const owned = startErrorSentinel(first, { label: "owned-shell", trapExternal: false });
+    const ownedReport = await owned.stop();
+    expect("sentinel ownership option preserves explicit Main shell guards",
+      shell.openExternal === fallbackExternal && shell.openPath === fallbackPath &&
+        !await waitForExternalTrap(first, 0) && ownedReport.hits.length === 0);
+
+    const automatic = startErrorSentinel(first, { label: "shared-shell" });
+    expect("default sentinel installs both actual Main opener guards",
+      await waitForExternalTrap(first, 100));
+    const guardedExternal = shell.openExternal, guardedPath = shell.openPath;
+    const urlResult = await shell.openExternal("https://guard-first.invalid/");
+    const pathResult = await shell.openPath("guard-first.txt");
+    expect("Main opener guards record exact separate targets without fallback",
+      JSON.stringify(await readExternalOpens(first)) === '["https://guard-first.invalid/"]' &&
+        JSON.stringify(await readShellOpens(first)) === '["guard-first.txt"]' &&
+        urlResult === undefined && pathResult === "" && fallback.length === 0);
+    expect("default opener guard installation leaves a clean sentinel report",
+      (await automatic.stop()).hits.length === 0);
+
+    const second = await createWindow();
+    expect("repeated opener installation preserves wrappers and existing records",
+      await trapExternalOpens(first) && await trapExternalOpens(second) &&
+        shell.openExternal === guardedExternal && shell.openPath === guardedPath &&
+        (await readExternalOpens(second)).length === 1 && (await readShellOpens(second)).length === 1);
+    const copied = await readExternalOpens(second);
+    copied.length = 0;
+    expect("opener records are copied process-wide snapshots rather than page-owned arrays",
+      JSON.stringify(await readExternalOpens(first)) === JSON.stringify(await readExternalOpens(second)) &&
+        (await readExternalOpens(first)).length === 1);
+    await clearExternalOpens(second);
+    expect("clearing opener records clears both process ledgers without removing guards",
+      (await readExternalOpens(first)).length === 0 && (await readShellOpens(first)).length === 0 &&
+        await waitForExternalTrap(first, 0));
+
+    await shell.openExternal("https://guard-before-reload.invalid/");
+    await first.webContents.executeJavaScript("window.__guardReloadWitness=true;true");
+    let timer;
+    const loaded = new Promise((resolve, reject) => {
+      const finished = () => { clearTimeout(timer); resolve(); };
+      first.webContents.once("did-finish-load", finished);
+      timer = setTimeout(() => {
+        first.webContents.removeListener("did-finish-load", finished);
+        reject(new Error("External guard selfcheck reload did not complete"));
+      }, 8000);
+    });
+    first.webContents.reload();
+    try { await loaded; } finally { clearTimeout(timer); }
+    const newPage = await first.webContents.executeJavaScript("window.__guardReloadWitness===undefined");
+    await shell.openExternal("https://guard-after-reload.invalid/");
+    expect("Main opener guards and existing records survive a genuinely replaced page",
+      newPage && await waitForExternalTrap(first, 0) &&
+        shell.openExternal === guardedExternal && shell.openPath === guardedPath &&
+        JSON.stringify(await readExternalOpens(first)) ===
+          '["https://guard-before-reload.invalid/","https://guard-after-reload.invalid/"]');
+    first.destroy();
+    await shell.openPath("guard-after-owner-close.txt");
+    expect("closing one synthetic window neither restores openers nor loses process records",
+      await trapExternalOpens(second) && (await readExternalOpens(first)).length === 2 &&
+        JSON.stringify(await readShellOpens(second)) === '["guard-after-owner-close.txt"]' &&
+        fallback.length === 0);
+
+    await second.webContents.executeJavaScript("window.__externalTrapInstalled=true;true");
+    shell.openExternal = fallbackExternal;
+    expect("a forged page marker cannot hide a replaced Main URL guard",
+      !await waitForExternalTrap(second, 0) && !await trapExternalOpens(second));
+    const broken = startErrorSentinel(second, {
+      label: "replaced-shell", ignoreKinds: ["external-trap-error"],
+    });
+    const brokenReport = await broken.stop();
+    expect("sentinel reports opener installation failure even when its kind is ignored",
+      brokenReport.hits.some(hit => hit.kind === "external-trap-error"));
+    shell.openExternal = guardedExternal;
+    shell.openPath = fallbackPath;
+    expect("opener readiness also rejects replacement of only the Main path guard",
+      !await waitForExternalTrap(second, 0));
+    shell.openPath = guardedPath;
+    expect("restoring test wrappers makes both opener guards observable again",
+      await waitForExternalTrap(second, 0) && fallback.length === 0);
+    await clearExternalOpens(second);
+  } finally {
+    for (const win of windows) if (!win.isDestroyed()) win.destroy();
+  }
+}
+
 app.whenReady().then(async () => {
   const done = (code) => {
     const passed = results.filter(Boolean).length;
@@ -47,12 +178,6 @@ app.whenReady().then(async () => {
     require("fs").writeFileSync("test-visual-results.txt", lines.concat(line).join("\n") + "\n");
     app.exit(code !== undefined ? code : passed === results.length ? 0 : 1);
   };
-  const watchdog = setTimeout(() => {
-    console.log("TIMED OUT");
-    lines.push("TIMED OUT");
-    done(1);
-  }, 90000);
-
   try {
     // ---------------------------------------------------------------------
     // The occlusion switches. Every geometric suite depends on these: with
@@ -103,8 +228,12 @@ app.whenReady().then(async () => {
       ]),
     );
 
-    const win = new BrowserWindow({ show: false, width: 900, height: 900 });
+    const win = new BrowserWindow({
+      show: false, width: 900, height: 900,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+    });
     await win.loadURL(PAGE);
+    await checkExternalTrap();
 
     const v = await inspectVisual(win, ".t", { minWidth: 2, minHeight: 2 });
     const by = {};
@@ -573,6 +702,13 @@ app.whenReady().then(async () => {
         "  };",
         "});",
         'const { app } = require("electron");',
+        'const fail = error => { try { fs.writeSync(2, String(error?.stack || error) + "\\n"); } finally { app.exit(2); } };',
+        'process.on("uncaughtException", fail);',
+        'process.on("unhandledRejection", fail);',
+        'const { dialog } = require("electron");',
+        'for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog", "showOpenDialogSync", "showSaveDialog", "showSaveDialogSync", "showErrorBox"]) {',
+        '  dialog[method] = () => fail(new Error("Unexpected sweep-child dialog: " + method));',
+        '}',
         "utils = require(" +
           JSON.stringify(pathx.join(__dirname, "test-visual-utils.js")) +
           ");",

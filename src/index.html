@@ -1253,7 +1253,10 @@
             d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
           ></path>
         </svg>
-        <span>Edit Table</span>
+        <span data-i18n="ctx.editTable">Edit table</span>
+      </div>
+      <div class="context-menu-item" id="ctxEditSelectedRows" style="display: none">
+        <span data-i18n="ctx.editSelectedRows">Edit selected rows</span>
       </div>
       <div class="context-menu-item" id="ctxDeleteTable" style="display: none">
         <svg
@@ -1746,6 +1749,26 @@
       </div>
     </div>
 
+    <dialog id="tableCellDialog" class="table-cell-dialog" aria-labelledby="tableCellTitle"
+      aria-describedby="tableCellScope tableCellHelp">
+      <div class="note-dialog-header">
+        <h2 id="tableCellTitle"></h2>
+        <button id="tableCellClose" class="close-btn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div id="tableCellGrid" class="table-cell-grid"></div>
+      <p id="tableCellError" role="alert" class="table-cell-error"></p>
+      <div class="note-dialog-footer">
+        <div class="table-cell-footer-copy">
+          <p id="tableCellScope"></p>
+          <p id="tableCellHelp"></p>
+        </div>
+        <div class="table-cell-footer-actions">
+          <button id="tableCellUpdate" class="note-dialog-btn primary" type="button"></button>
+          <button id="tableCellCancel" class="note-dialog-btn secondary" type="button" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog
       id="reloadDocumentDialog"
       class="note-dialog reload-document-dialog"
@@ -1783,6 +1806,7 @@
     <script src="file-helpers-core.js"></script>
     <script src="document-events.js"></script>
     <script src="app-dialogs.js"></script>
+    <script src="table-cell-editor.js"></script>
     <script src="renderer.js"></script>
     <script src="custom-tabs.js"></script>
     <script src="app-updates.js"></script>
