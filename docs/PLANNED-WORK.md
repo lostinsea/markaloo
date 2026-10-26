@@ -49,6 +49,18 @@ section is kept here so the register has a visible edge.
     the 400 ms preview delay stay unchanged.
   - Export one exact combined commit and source/runtime/lock inventory for
     all three sessions before candidate qualification.
+  - A and C imported provisional seed `e57a0199` and matched its manifest's
+    155 source and 30 product hashes. B's table source checks pass 47/47; syntax source checks
+    pass 31/31. These are Node checks, not combined UI qualification.
+  - Independent Sol `16734d38` and Luna `92b080c3` both returned PASS for B's
+    baseline-compatible setup and cleanup corrections. The cache and dirty-owner
+    checks in `test/test-table-cell-editor.js:2754-2764` now require exact authored
+    source, cache, unchanged disk and a dirty owner before recording a result.
+    Feature-absent execution and all performance comparisons remain pending.
+  - The combined companion-transcript-role self-check still fails; A owns its
+    correction. C's reviewed packaging-oracle correction passes its Node suite
+    with 432 passed and no failures; two built-archive checks remain skipped.
+    Its R893 proof and built-archive qualification are still pending. No gate is waived.
   - Earlier ordinary runs and individual sensitivity proofs keep their actual
     source bindings. They are not passes for the combined candidate.
   - B owns manifests and product docs. Fixes in another owner's files go

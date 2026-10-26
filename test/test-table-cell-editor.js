@@ -2756,8 +2756,10 @@ require("./test-userdata-isolation");
         check("finite " + profile + " sample " + rep + " preserves its independently authored complete source", preserved);
         if (!preserved) throw new Error("Performance edit did not preserve its authored source cache and disk");
         const owner = await commonState(), previous = performanceSources.get(fixture.id);
-        if (!previous || owner.owner !== fixture.id || owner.path !== fixture.file ||
-            !sameOwner(owner.identity, previous.identity)) throw new Error("Performance edit changed its owning document");
+        if (!previous || !owner.dirty || owner.owner !== fixture.id || owner.path !== fixture.file ||
+            !sameOwner(owner.identity, previous.identity)) {
+          throw new Error("Performance edit changed its owning document or did not leave it dirty");
+        }
         performanceSources.set(fixture.id, { ...previous, source: expected });
         receipt.samples.push({ profile, rep, openAndSplitMs, inputToPaintMs, callbacks: observed.callbacks });
       }
