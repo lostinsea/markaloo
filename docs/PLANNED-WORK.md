@@ -38,44 +38,41 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `direct-0.11.0-test-candidate` - **PROVISIONAL COMBINED SOURCE; NOT RELEASE QUALIFIED**.
-  - The user selected direct 0.11.0 testing in three isolated sessions.
-    A owns layout/reading; B owns editing/rendering and shared integration;
-    C owns state/security/packaging. Each test group has one owner.
-  - B combines feature checkpoint `58ce884a` with common-source handoff
-    `f13469ee`. The handoff includes reviewed source and explicitly unqualified
-    candidate test/layout fixes. No separate 0.10.1 pass is required first.
-  - Package and lock versions are 0.11.0. Dependencies, mirror retention and
-    the 400 ms preview delay stay unchanged.
-  - Export one exact combined commit and source/runtime/lock inventory for
-    all three sessions before candidate qualification.
-  - A and C imported provisional seed `e57a0199` and matched its manifest's
-    155 source and 30 product hashes. B's table source checks pass 47/47; syntax source checks
-    pass 31/31. These are Node checks, not combined UI qualification.
-  - Independent Sol `16734d38` and Luna `92b080c3` both returned PASS for B's
-    baseline-compatible setup and cleanup corrections. The cache and dirty-owner
-    checks in `test/test-table-cell-editor.js:2754-2764` now require exact authored
-    source, cache, unchanged disk and a dirty owner before recording a result.
-    Feature-absent execution and all performance comparisons remain pending.
-  - A's reviewed companion-transcript-role inventory correction is integrated.
-    The combined Node-only `--anchors` dry run passes. Anchor resolution is
-    not a sensitivity proof. C's reviewed packaging-oracle correction passes its Node suite
-    with 432 passed and no failures; two built-archive checks remain skipped.
-    Its R893 proof and built-archive qualification are still pending. No gate is waived.
-  - Earlier ordinary runs and individual sensitivity proofs keep their actual
-    source bindings. They are not passes for the combined candidate.
-  - B owns manifests and product docs. Fixes in another owner's files go
-    through the coordinator; integration is serialized.
-  - Source work and safe Node checks may run in parallel. GUI/performance
-    work needs a fresh finite parent allocation and all-peer quiescence.
-  - No dependency upgrades, performance timings, builds, installer runs,
-    publication or PRs are authorized by this test-candidate handoff.
-  - The feature-free performance comparator and runner compatibility still
-    need qualification. Programmatic edit timing is not physical-key latency.
-  - Older workset notes below retain their original evidence scope; this
-    direct-test plan replaces their release ordering and total-wait gate.
+- `direct-0.11.0-test-candidate` - **RELEASE PREPARATION; NOT PUBLISHED**.
+  - The user chose to release the current product as 0.11.0, then repair the
+    tests and ship any resulting product fixes in 0.11.1. This replaces the
+    per-suite activation plan, not the actual recorded test outcomes.
+  - The source checkpoint is `23dcfb34`. Package and lock already say 0.11.0.
+    Release preparation must not change product bytes, dependencies, mirror
+    retention or the 400 ms preview delay.
+  - The full table run on `d704ddc2` passed 47 source and 245 UI checks; all
+    eight captures were viewed. The parent accepted narrow carry to unchanged
+    product bytes after the test/helper-only integrations. This is not a new
+    run on `23dcfb34` or a full-suite pass.
+  - The document-editor host controls passed 63 PowerShell and 14 VM checks.
+    These are not the ordinary document-editor suite or its npm/Electron route.
+    Private per-suite activation work is stopped.
+  - Full ordinary failures and unrun groups remain deferred, not passing.
+    The 31 syntax source checks do not qualify the composed Electron suite.
+    Older packaging results do not qualify changed source scans or a built ASAR.
+  - Combined-candidate performance and the feature-free comparison remain
+    unmeasured. No general performance pass or smoother-typing claim is made.
+  - Focused feature/performance decisions and artifact checks still need to
+    be settled before main, tags or release publication are authorized.
+  - B is the sole integration/docs owner. C owns the minimal reviewed release
+    workflow gates for table editing, editor scrolling and retained artifacts.
+    Integrate that reviewed commit with these docs before the build-only run.
+    A dedicated preparation branch may be pushed to `lostinsea/markaloo`;
+    canonical main must remain an ancestor. No history overwrite is allowed.
+  - C will dispatch the existing workflow on that branch for focused checks,
+    builds and strict archive verification, then own isolated packaged checks.
+    A branch dispatch does not publish. No local Node, Electron, test, build,
+    installer or broad CI redesign is authorized by this docs step.
+    Old evidence and private artifacts stay intact.
+  - Older detailed entries retain their original source bindings and outcomes;
+    they do not override this release decision or become current passing results.
 
-- `visual-table-cell-editing` - **ACTIVE: RUNTIME QUALIFICATION / REVIEW CORRECTIONS**.
+- `visual-table-cell-editing` - **FOCUSED RUN ACCEPTED; RELEASE PREPARATION**.
   - Isolated branch: `users/vinma-microsoft/visual-table-editing`, based on
     `5c659f629b4f990b8351c8783cf72cec1676698c`. No integration or publication.
   - Edit mode offers Edit table and Edit selected rows in both the rendered
@@ -86,6 +83,10 @@ section is kept here so the register has a visible edge.
   - No selection, multiple tables, unsafe mappings and unsupported structures
     produce an error. Update is one guarded, undoable document operation, not
     a disk Save. Cancel does not mutate the document.
+  - The accepted full run is 47 source and 245 UI checks with viewed captures.
+    No concrete table-feature blocker is known from that run and its reviews.
+    Remaining ordinary/performance work is not silently marked passing.
+  - The older run and review notes below preserve their historical scope.
   - Astra completed the source-backed design. Independent Sol/Luna evaluated
     the design; history semantics, exact newline Undo, concrete preview
     provenance and dialog command isolation informed implementation.

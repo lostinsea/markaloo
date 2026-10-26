@@ -1,6 +1,4 @@
-# Markaloo 0.11.0 test candidate
-
-- Provisional source for testing, not a published or qualified release.
+# Markaloo 0.11.0
 
 ## Visual table editing
 
@@ -16,8 +14,21 @@
   mirror attached instead of rebuilding every span.
 - Source offsets and wrapping measurements are refreshed for the current text
   and layout. Unicode boundaries and the end-of-document marker are preserved.
+- Search stays below the toolbar and beside the open table of contents.
+  Search controls wrap to fit narrow windows.
+
+## Qualification and known limits
+
+- The focused table run passed 47 source checks and 245 UI checks. All eight
+  captures were viewed. This evidence carries to the unchanged product bytes;
+  it is not a new run of every test on the release-preparation commit.
+- The full ordinary test suite has not passed for 0.11.0. The user chose to
+  release the current product and defer test repairs, and any resulting product
+  fixes, to 0.11.1. Deferred or failed checks are not recorded as passing.
 - Combined-candidate performance has not been measured. Some long input delays
   remain; no general speedup or smooth-typing guarantee is claimed.
+- Build and artifact checks are required before publishing. Live installation
+  and upgrade have not been tested.
 
 ## Unchanged
 
@@ -35,4 +46,3 @@
   macOS automatic updating is not supported by these unsigned builds.
 - Runnable downloads have GitHub build attestations, not operating-system
   code signatures.
-- Candidate builds, live installation and upgrade have not been tested.
