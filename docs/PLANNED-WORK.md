@@ -57,8 +57,9 @@ section is kept here so the register has a visible edge.
     checks in `test/test-table-cell-editor.js:2754-2764` now require exact authored
     source, cache, unchanged disk and a dirty owner before recording a result.
     Feature-absent execution and all performance comparisons remain pending.
-  - The combined companion-transcript-role self-check still fails; A owns its
-    correction. C's reviewed packaging-oracle correction passes its Node suite
+  - A's reviewed companion-transcript-role inventory correction is integrated.
+    The combined Node-only `--anchors` dry run passes. Anchor resolution is
+    not a sensitivity proof. C's reviewed packaging-oracle correction passes its Node suite
     with 432 passed and no failures; two built-archive checks remain skipped.
     Its R893 proof and built-archive qualification are still pending. No gate is waived.
   - Earlier ordinary runs and individual sensitivity proofs keep their actual
