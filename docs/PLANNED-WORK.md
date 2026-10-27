@@ -38,10 +38,10 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `post-0.11.1-ordinary-tests` - **ACTIVE; C NODE CHECKS PASSED; GUI QUEUED**.
-  - Resume the existing A9/B7/C12 split after verified 0.11.1 publication.
-    Published baseline is `e24af07f`, tree `af160b79`. C starts at `6659ef45`;
-    only this register differs, not product, test, package or workflow bytes.
+- `post-0.11.1-ordinary-tests` - **PAUSED FOR 0.11.2; C NODE EVIDENCE RETAINED**.
+  - Resume the existing A9/B7/C12 split only after verified 0.11.2 publication.
+    Retained C Node results used published 0.11.1 product/test bytes at
+    `e24af07f`, tree `af160b79`, with only register changes at `6659ef45`.
   - C owns `test:packaging`, `test:profile`, `test:corpus`, `test:startup`,
     `test:document-session`, `test:updates` and all its children, `test:tabs`,
     `test:reload-dialog`, `test:owned-dialogs`, `test:dialogs`, `test:security`
@@ -59,15 +59,76 @@ section is kept here so the register has a visible edge.
     negative lifecycle probes. Their named assertions pass; no real worker
     was launched. Keep these diagnostics distinct from suite failures.
   - The updates group is incomplete: its ordinary Node launcher starts
-    Electron children. All Electron/UI/native-input runs wait for the
-    coordinator's exclusive A -> B -> C transfer after prior cleanup.
+    Electron children. The undelivered B -> C slot allocation is withdrawn.
+    Broad Electron/UI/native-input runs wait for verified 0.11.2 publication
+    and the coordinator's fresh exclusive transfer after prior cleanup.
     No C Electron run or installed-app/profile access has started.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
     findings go to their owner; C alone writes package/workflow/register files.
   - No new controller, admission framework, unsafe proof runner, dependency
-    upgrade, performance campaign or publication. Formal-proof/R1140 deferrals
-    and failed/incomparable performance remain separate, not passing.
+    upgrade, performance campaign or publication from this broad-test stage.
+    Formal-proof/R1140 deferrals and failed/incomparable performance remain
+    separate, not passing.
+
+- `table-cell-typed-emphasis-0.11.2` - **REVIEWED SOURCE; PROOF DECISION PENDING**.
+  - Reviewed candidate scope: typing `**bold**` and `*italic*` formats immediately
+    and stays formatted after Update and reopening. Underline, buttons and shortcut
+    enablement are out of scope. Keep the popup Ctrl/Command+B/I/U block.
+  - Start from published `e24af07f`; `6659ef45` adds only its publication closure.
+    Preserve the 0.11.1 CODE, paste, source-ownership and stale-target policies.
+  - Retained Astra designed the source-owned typing path. Sol owns this focused
+    source, tests and related documentation until the reviewed source handoff.
+    C then owns version/lock/build/ref/publication work. No new release exists yet.
+  - C verified source commit `45d7e53f`, tree `6027a454`, parent `6659ef45`,
+    against the frozen handoff, committed patch and supplied file/product pins.
+    C preserves its existing register-only commits and Node/strict-audit receipts.
+    C is now the sole version/lock/build/ref, register and release-note writer.
+    B's source stays frozen. Publication waits for the coordinator's explicit
+    0.11.2 proof-policy decision and confirmation of the narrowed scope above;
+    do not claim an underline fix or extend the 0.11.1 proof deferral.
+  - Shipping-parser-confirmed typing creates captured emphasis owners. Retained
+    source atoms and enclosing owners survive one validated native replacement.
+    Context-aware delimiter repair keeps the intended nesting without HTML
+    promotion. New literal text is not general Markdown or HTML authority.
+  - Unchanged 0.11.1 reproduced the new basic regressions: 39/51 passed.
+    Combined r6 passed source 55/55, fresh input 2124/2124, remaining 514/514
+    and document-editor 60/60. Both new emphasis captures were actually viewed.
+    Node packaging passed 433 checks with two expected pre-build ASAR skips.
+  - R6 Luna found no significant issue. Sol found a modeled zero-width-owner
+    risk; bounded native input confirmed image loss at opening and closing
+    delimiter boundaries, including after Update (r7: 102/106).
+    Conversion now requires every consumed captured semantic owner to appear
+    exactly once in the independently built body. Focused r8 passed 106/106.
+    Final r9 passed source 55/55, fresh input 2124/2124, remaining 522/522
+    and document-editor 60/60, with complete/disjoint UI groups and clean teardown.
+    Node packaging passed 433 checks with two pre-build ASAR skips. Final emphasis
+    captures were viewed. Read-only anchors resolve; that is not mutation proof.
+    Fresh independent Sol/Luna reviews found no significant blocker in the same
+    frozen candidate. Both agree on the source handoff. Sol reported the minor
+    modeled refusal below; Luna reported no significant issue.
+  - **Deferred minor, modeled only:** wrapping an entire existing italic owner
+    in new bold can refuse conversion instead of finding another delimiter
+    family. A bounded Node probe confirmed refusal before native replacement;
+    no native reproduction was performed. Existing text/formatting is preserved.
+    Record it for later work, not another implementation/review cycle now.
+  - Expanded input exposed lost enclosing formatting during native subrange
+    insertion. Whole-cell native replacement now retains that ancestry.
+    A protected-content fixture was corrected to put both delimiter runs outside
+    authored HTML; its earlier closing run actually entered the HTML owner.
+  - Natural baseline reds are functional evidence, not individual mutation proof.
+    Formal individual proofs are **NOT RUN**; no new formal records were added.
+    The unsafe shared helper stays held. Parent is resolving the 0.11.2 proof
+    policy with the user; a prior waiver is not silently extended.
+    C owns the version/build/publication stage after this source handoff and
+    must retain that separate proof status until the explicit decision.
+  - The seven initial B ordinary routes on exact `e24af07f` failed at Electron
+    bootstrap before GUI assertions. Those raw results remain preserved.
+    A merged-output pipeline subsequently ran the existing document-editor
+    route 60/60 without dependency changes; the original failure cause is not
+    established. Do not relabel the initial seven routes as passing.
+  - Broader A/B/C testing stays parked until verified 0.11.2 publication.
+    Record and defer new minor findings; significant failures remain explicit.
 
 - `table-cell-markdown-0.11.1` - **PUBLISHED; BROAD TESTING PENDING**.
   - Start from `8741c7a7`; keep `v0.11.0` unchanged.

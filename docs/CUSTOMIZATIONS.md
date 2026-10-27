@@ -49,8 +49,16 @@ flowchart LR
   changed cells are replaced; surrounding text and unselected rows stay unchanged.
 - Right-click and Cancel preserve the original selection, including its direction.
 - The popup shows rendered cells, never a Markdown textarea or source toggle.
-  Closing backticks format code immediately, with the same appearance as loaded
-  code. Caret placement, composition and Undo stay inside the cell editor.
+  Closing backticks format code immediately. Typing `**bold**` or `*italic*`
+  also formats immediately and keeps that formatting after Update and reopening.
+  Caret placement, composition and Undo stay inside the cell editor.
+- New emphasis requires source-eligible asterisk runs confirmed by the shipping
+  parser in their real cell context. Escaped/entity stars and stars inside code
+  stay literal. Complete retained code, HTML and source atoms keep their owners.
+  Delimiter removal cannot consume an image or comment: captured semantic owners
+  must appear one-for-one in the independently built replacement body.
+  One validated native replacement preserves enclosing formatting and cell Undo;
+  continuation stays outside the new frame but inside its retained ancestor.
 - Unchanged source fragments keep authored spans, notes, escapes, entities and
   emoji shortcodes. Editor-owned markers never enter Markdown; authored spans
   are not stripped. New code uses Markdown code spans where they round-trip.
@@ -105,9 +113,10 @@ flowchart LR
   code points, including supplementary letters. Follow touching owned ancestor
   and child delimiters; shared marker runs and mixed families stay distinct.
   Protected atoms, authored tags and code keep their boundaries.
-- Fully wrapped formatting nests keep delimiter families and lengths, preserving
-  their nesting order. Repair an invalid underscore join by encoding only the
-  adjacent ordinary literal character, not by rewriting nested marker families.
+- Fully wrapped same-capture nests keep delimiter families and lengths.
+  A new typed frame may use the other Markdown marker family to preserve its
+  nesting order. Repair an invalid authored underscore join by encoding only
+  the adjacent ordinary literal character, not by rewriting its nested families.
 - Adjacent unstyled bold, emphasis or strike content may become one continuous
   span when the separating text is deleted. Code, links and attributed elements
   keep their individual boundaries. Check new joins after normalization too.
@@ -121,15 +130,17 @@ flowchart LR
   Normal code stays backtick Markdown. Only literal emoji-name and
   backslash-before-pipe limits may use a content-preserving `<code>` tag.
   Leaving the cell or moving its caret abandons an unfinished typed delimiter.
-- Loading, live code and Update use the same emoji, Markdown and sanitization
+- Loading, live formatting and Update use the same emoji, Markdown and sanitization
   pipeline. New literal text stays literal rather than becoming a link or emoji.
 - Tab moves between cells. Enter and Shift+Enter move down and up a column.
   Ctrl+Enter updates; Escape cancels. Cell Undo is separate from document Undo.
   Native cell Undo/Redo cannot consume the Markdown editor's history.
 - Bold, italic and underline shortcuts are blocked inside editable popup cells,
   with a clear message before any browser formatting. This is an intentional
-  0.11.1 limitation, not an app-wide shortcut change. Existing rich content,
-  backtick code, typing, paste and Undo/Redo remain available.
+  popup-only limit, not an app-wide shortcut change. Typed bold/italic and
+  backtick code, existing rich content, paste and Undo/Redo remain available.
+  There is no underline syntax, formatting toolbar or live underscore conversion;
+  existing Markdown underscores keep their standard bold/italic meaning.
 - Scope and keyboard help sit beside the footer buttons in smaller readable
   text. Drag the popup's bottom-right corner to resize it; the grid uses the
   available space while the header and actions stay reachable.
