@@ -204,7 +204,23 @@ section is kept here so the register has a visible edge.
     significant issue or disagreement.
     Actual decoding, admission, note auto-save and owner retirement remain
     **NOT RUN**.
-    Later raw-IPC actors remain pending; do not add a product authority fallback.
+    The bounded pre-N11 SEC-12 source correction at `0c4a94e7` preserves real
+    expected consent and target-tab retirement. Pure Node controls passed
+    120/120, with 6/6
+    separate bad-source reproduction/negative checks, in author and C runs.
+    The parent temporarily transferred `test/test-visual-utils.js` to C for
+    only a synchronous data-only trap endpoint helper and this consumer fix.
+    The helper and consumer now use a synchronous terminal snapshot/comparison/
+    release; awaited work and effectful callbacks stay outside that boundary.
+    Fresh full-unit Sol/Luna reviews both cleared these exact bytes.
+    Earlier Sol findings were accepted and corrected; no review disagreement
+    remains. Helper ownership returns to A with the final local handoff.
+    No native behavior or full ordinary route is qualified by these controls.
+    Later raw-IPC actors and downstream-runtime compatibility remain pending;
+    do not add a product authority fallback.
+    The existing N11 recovery requirement stays **PENDING** for a separate
+    actual-Main reload/restore/admission unit. Do not replace it with fail-stop,
+    retire its claims or expand into that journey/framework now.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
     findings go to their owner; C alone writes package/workflow/register files.
