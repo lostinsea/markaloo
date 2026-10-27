@@ -260,6 +260,64 @@ async function hoverColumn(popup, field) {
   assertDocumentScope(scope);
 }
 
+function consumeLoadFileDelegation(state, contents, method, suppliedURL) {
+  const pending = state.loadFileDelegation;
+  if (method !== "loadURL" || !pending || state.wc !== contents) return false;
+  state.loadFileDelegation = null;
+  if (typeof suppliedURL !== "string" || !suppliedURL.startsWith("file:///") ||
+      state.originalURL !== pending.url) return false;
+  // Electron can pass Windows separators to loadURL. Keep every other URL byte
+  // exact; parsing a file URL would also erase distinctions this guard rejects.
+  const url = process.platform === "win32" ? suppliedURL.replace(/\\/g, "/") : suppliedURL;
+  return url === pending.url;
+}
+
+function checkLoadFileDelegation() {
+  const wc = {}, url = "file:///C:/popup%20suite/index.html";
+  const fresh = () => ({ wc, originalURL: url, loadFileDelegation: { url } });
+  const state = fresh();
+  check("initial loadFile delegation accepts its exact URL once",
+    consumeLoadFileDelegation(state, wc, "loadURL", url) &&
+      !consumeLoadFileDelegation(state, wc, "loadURL", url));
+  check("initial loadFile delegation accepts Windows spelling only on Windows",
+    consumeLoadFileDelegation(fresh(), wc, "loadURL", url.replace(/\//g, "\\")) === false &&
+      consumeLoadFileDelegation(fresh(), wc, "loadURL",
+        "file:///C:\\popup%20suite\\index.html") === (process.platform === "win32"));
+  const other = fresh(), pending = other.loadFileDelegation;
+  check("another contents cannot consume the initial loadFile delegation",
+    !consumeLoadFileDelegation(other, {}, "loadURL", url) &&
+      other.loadFileDelegation === pending);
+  check("a nested loadFile is not a delegated loadURL",
+    !consumeLoadFileDelegation(fresh(), wc, "loadFile", url));
+  check("a later loadURL has no initial delegation",
+    !consumeLoadFileDelegation({ wc, originalURL: url, loadFileDelegation: null }, wc, "loadURL", url));
+  const changedOwner = fresh();
+  changedOwner.originalURL += "#changed";
+  check("a changed owner URL cannot consume an older delegation",
+    !consumeLoadFileDelegation(changedOwner, wc, "loadURL", url));
+  for (const [name, candidate] of [
+    ["another file", url.replace("index.html", "other.html")],
+    ["the same basename elsewhere", url.replace("popup%20suite", "elsewhere")],
+    ["an owned dialog", url.replace("index.html", "owned-dialog.html")],
+    ["a query", url + "?x=1"], ["an empty query", url + "?"],
+    ["a fragment", url + "#x"], ["an empty fragment", url + "#"],
+    ["an authority", url.replace("file:///", "file://localhost/")],
+    ["a remote authority", url.replace("file:///", "file://example.invalid/")],
+    ["another scheme", url.replace("file:", "https:")],
+    ["changed escaping", url.replace("%20", " ")],
+    ["encoded filename spelling", url.replace("index", "%69ndex")],
+    ["a dot segment", url.replace("index", "./index")],
+    ["encoded separators", url.replace("/index", "%2Findex")],
+    ["a malformed URL", "file:\\C:\\popup%20suite\\index.html"],
+    ["a non-string URL", null],
+  ]) {
+    const changed = fresh();
+    check("initial loadFile delegation rejects " + name,
+      !consumeLoadFileDelegation(changed, wc, "loadURL", candidate) &&
+        !consumeLoadFileDelegation(changed, wc, "loadURL", url));
+  }
+}
+
 app.on("web-contents-created", (_event, wc) => {
   const contentsId = wc.id;
   const state = { wc, enabled: false, installed: false, originalURL: null, timer: null,
@@ -320,12 +378,13 @@ app.on("web-contents-created", (_event, wc) => {
   for (const method of ["loadFile", "loadURL"]) {
     const original = wc[method];
     wc[method] = function (...args) {
-      const url = method === "loadFile" ? pathToFileURL(path.resolve(args[0])).href : args[0];
+      const suppliedURL = method === "loadFile" ? pathToFileURL(path.resolve(args[0])).href : args[0];
       const record = [...windows.values()].find(value => value.wc === wc);
       // Electron's loadFile may synchronously delegate to this same contents'
       // loadURL. That is one issued navigation, not permission for a later one.
-      const delegated = state.issuing === true && method === "loadURL" && url === state.originalURL;
-      if (!record || (state.originalURL && !delegated) || /owned-dialog\.html/i.test(url)) {
+      const delegated = consumeLoadFileDelegation(state, this, method, suppliedURL);
+      const url = delegated ? state.originalURL : suppliedURL;
+      if (this !== wc || !record || (state.originalURL && !delegated) || /owned-dialog\.html/i.test(url)) {
         fatal(new Error("unexpected or repeated owned navigation: " + url));
         return Promise.resolve(); // Fatal owns exit; do not mint an unobserved rejection.
       }
@@ -342,14 +401,16 @@ app.on("web-contents-created", (_event, wc) => {
         return Promise.resolve();
       }
       state.originalURL = record.originalURL = url;
-      state.issuing = true;
+      if (!delegated) state.loadFileDelegation = method === "loadFile" ? { url } : null;
       try {
         const loading = original.apply(this, args);
         loading?.catch(error => {
           if (!tearingDown && !closing.has(contentsId)) fatal(error);
         });
         return loading;
-      } finally { state.issuing = false; }
+      } finally {
+        if (!delegated) state.loadFileDelegation = null;
+      }
     };
   }
 });
@@ -981,6 +1042,7 @@ async function finish(error) {
 }
 
 async function run() {
+  checkLoadFileDelegation();
   await waitUntil(() => mainStartup?.loadIssued && mainStartup.record?.kind === "main" &&
     main.__shutdown.state().renderer === "ready" && mainStartup.record.wc.getURL() === indexURL &&
     !mainStartup.record.wc.isLoadingMainFrame(), "intended Main index commit and bridge readiness");
