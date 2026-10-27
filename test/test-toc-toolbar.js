@@ -142,13 +142,79 @@ if (!isElectron) {
   const sourceHashes = hashes();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const exec = code => win.webContents.executeJavaScript(code, true);
+  function observeFirstWidth(receiver) {
+    const contents = receiver.webContents, samples = [], counts = {}, listeners = [];
+    const diagnostic = {
+      phase, windowId: receiver.id, webContentsId: contents.id, targetWidth: null,
+      expression: null, outcome: "incomplete", samples,
+      observerEffect: "Native reads, listeners and enriched polls can change timing; a pass is not a fix.",
+    };
+    for (const [emitter, prefix, events] of [
+      [receiver, "window", ["resize", "resized", "show", "hide", "minimize", "restore", "close", "closed"]],
+      [contents, "contents", ["did-start-loading", "did-stop-loading", "did-finish-load", "render-process-gone", "destroyed"]],
+    ]) {
+      for (const event of events) {
+        const key = prefix + "." + event;
+        counts[key] = 0;
+        const listener = () => { counts[key]++; };
+        emitter.on(event, listener);
+        listeners.push([emitter, event, listener]);
+      }
+    }
+    diagnostic.sample = (stage, layout = null, geometry = null) => {
+      const sample = { stage, at: Date.now(), layout, lifecycle: { ...counts } };
+      try {
+        const destroyed = receiver.isDestroyed(), contentsDestroyed = contents.isDestroyed();
+        sample.native = {
+          sameReceiver: win === receiver, destroyed, contentsDestroyed,
+          sameContents: !destroyed && receiver.webContents === contents,
+          ownerWindowId: contentsDestroyed ? null : BrowserWindow.fromWebContents(contents)?.id,
+          ...(destroyed ? {} : {
+            content: geometry ? geometry.content : receiver.getContentSize(),
+            bounds: geometry ? geometry.bounds : receiver.getBounds(),
+            visible: receiver.isVisible(), focused: receiver.isFocused(),
+            minimized: receiver.isMinimized(), maximized: receiver.isMaximized(),
+            fullScreen: receiver.isFullScreen(),
+          }),
+          ...(contentsDestroyed ? {} : {
+            processId: contents.getOSProcessId(),
+            zoom: geometry ? geometry.zoom : contents.getZoomFactor(),
+          }),
+        };
+      } catch (error) {
+        // A diagnostic read must not replace the original gate's result or error.
+        sample.observationError = String(error.stack || error).slice(0, 400);
+      }
+      samples.push(sample);
+    };
+    diagnostic.finish = () => {
+      for (const [emitter, event, listener] of listeners) emitter.removeListener(event, listener);
+      console.log("TOC_TOOLBAR_FIRST_WIDTH_DIAGNOSTIC " + JSON.stringify(diagnostic));
+    };
+    diagnostic.sample("before-set");
+    return diagnostic;
+  }
   function check(name, ok, detail) {
     results.push({ name, ok: !!ok });
     console.log(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : "  -> " + JSON.stringify(detail)}`);
   }
-  async function wait(label, expression) {
+  async function wait(label, expression, diagnostic = null) {
     for (let i = 0; i < 300; i++) {
-      if (await exec(expression)) return;
+      const checkpoint = diagnostic && (i === 0 || i === 99 || i === 299);
+      const observed = await exec(checkpoint ? `(() => {
+        const matched=(${expression});
+        try {
+          return {matched,layout:{at:Date.now(),width:innerWidth,height:innerHeight,scale:devicePixelRatio,
+            hidden:document.hidden,visibility:document.visibilityState,ready:document.readyState}};
+        } catch(error) {
+          return {matched,layout:{observationError:String(error.stack||error).slice(0,400)}};
+        }
+      })()` : expression);
+      if (checkpoint) diagnostic.sample("poll-" + i, observed.layout);
+      if (checkpoint ? observed.matched : observed) {
+        if (diagnostic) diagnostic.outcome = "matched";
+        return;
+      }
       await sleep(30);
     }
     const layout = await exec(`({
@@ -156,10 +222,15 @@ if (!isElectron) {
       hidden:document.hidden,visibility:document.visibilityState,
       dialogs:[...document.querySelectorAll('dialog[open]')].map(dialog=>dialog.id)
     })`);
-    throw new Error("Timed out waiting for " + label + " " + JSON.stringify({
+    const detail = {
       content:win.getContentSize(),bounds:win.getBounds(),
       zoom:win.webContents.getZoomFactor(),layout,
-    }));
+    };
+    if (diagnostic) {
+      diagnostic.outcome = "timeout";
+      diagnostic.sample("timeout", layout, detail);
+    }
+    throw new Error("Timed out waiting for " + label + " " + JSON.stringify(detail));
   }
   async function settle() {
     await sleep(220);
@@ -307,8 +378,20 @@ if (!isElectron) {
   async function grouping() {
     const samples = [];
     for (const width of [1280, 420, 100]) {
-      win.setContentSize(width, 720);
-      await wait("toolbar width " + width, `Math.abs(innerWidth-${win.getContentSize()[0]})<=1`);
+      const diagnostic = width === 1280 ? observeFirstWidth(win) : null;
+      try {
+        win.setContentSize(width, 720);
+        const targetWidth = win.getContentSize()[0];
+        const expression = `Math.abs(innerWidth-${targetWidth})<=1`;
+        if (diagnostic) {
+          diagnostic.targetWidth = targetWidth;
+          diagnostic.expression = expression;
+          diagnostic.sample("after-target");
+        }
+        await wait("toolbar width " + width, expression, diagnostic);
+      } finally {
+        if (diagnostic) diagnostic.finish();
+      }
       await settle();
       samples.push(await exec(`(() => {
         const buttons=['refreshBtn','openEditorBtn','toggleTocBtn','menuBtn'].map(id=>{
