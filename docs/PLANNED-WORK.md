@@ -186,8 +186,9 @@ section is kept here so the register has a visible edge.
     lifecycle actors still need correction while keeping actual Main authority.
     The next ordinary read/conditional-refresh actor candidate keeps genuine
     Main replies before one-use reply faults. Node preload checks passed 23/23
-    and pure observer controls passed 12/12. It is handed to fresh independent
-    Sol/Luna source review; native transport, consent, disk and lifecycle
+    and pure observer controls passed 12/12. Fresh independent Sol/Luna source
+    reviews both found no significant issue or disagreement. Candidate
+    `1ece419e` is committed; native transport, consent, disk and lifecycle
     qualification remain **NOT RUN**.
     The separate frozen-bridge
     popup-PDF consumer-fault seam is queued with B after video capture.
@@ -195,8 +196,14 @@ section is kept here so the register has a visible edge.
   - The four render-security module/global failures trace to a stale exact
     Mermaid export inventory and an absent earlier fixture prerequisite.
     Their narrow test-only corrections have Node publication/guard checks,
-    not an ordinary Electron pass. A bounded image/note actor correction is
-    in progress using genuine chooser admission and owner/DOM readiness.
+    not an ordinary Electron pass. The image/note actor at `ff07c5b5` requires
+    genuine chooser admission, owner/DOM readiness and confirmed retirement.
+    Its pure Node controls passed 69/69 in separate author and parent runs.
+    Sol's failed-fixture retention finding and Luna's pending-image finding
+    are corrected. Fresh independent Sol/Luna source reviews both found no
+    significant issue or disagreement.
+    Actual decoding, admission, note auto-save and owner retirement remain
+    **NOT RUN**.
     Later raw-IPC actors remain pending; do not add a product authority fallback.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
