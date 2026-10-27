@@ -971,6 +971,10 @@ async function readShellOpens(_win) {
   return shellOpens.slice();
 }
 
+function snapshotExternalOpenCounts() {
+  return { shell: shellOpens.length, external: externalOpens.length };
+}
+
 async function clearExternalOpens(_win) {
   externalOpens.length = 0;
   shellOpens.length = 0;
@@ -1243,6 +1247,7 @@ module.exports = {
   trapExternalOpens,
   readExternalOpens,
   readShellOpens,
+  snapshotExternalOpenCounts,
   clearExternalOpens,
   waitForExternalTrap,
   proveSentinelAlive,

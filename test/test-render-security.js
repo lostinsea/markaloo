@@ -11,7 +11,7 @@
 // Payloads set window.__pwned rather than spawning a process. The property that
 // matters is whether document content executes in the isolated renderer;
 // no payload starts another process.
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -33,6 +33,8 @@ const SEC08_FILE_HELPERS_MISSING_GLOBAL_HARNESS =
   process.env.SEC08_FILE_HELPERS_MISSING_GLOBAL_HARNESS === "1";
 let observedMain = null;
 let chooserAllowance = null;
+let expectedSecurityQuestion = null;
+const securityGestureRegistration = { handler: null, installed: null, count: 0, observer: null };
 let dir = null;
 let registeredTempDirs = null;
 let abortingSecurityHarness = false;
@@ -40,6 +42,7 @@ const securityWindows = new Map();
 
 function failSecurityUnattended(error) {
   chooserAllowance = null;
+  expectedSecurityQuestion = null;
   if (dir) registeredTempDirs?.delete(dir);
   try {
     fs.writeSync(2, "FAIL  security harness aborted  -> " +
@@ -98,8 +101,66 @@ for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog",
   }
 }
 const { OwnedDialogs } = require("../src/owned-dialogs");
-const blockSecurityOwnedDialog = () =>
-  failSecurityUnattended(new Error("Unexpected Main-owned security dialog"));
+const realSecurityOwnedShow = OwnedDialogs.prototype.show;
+function securityQuestionMatches(allowance, broker, owner, options) {
+  try {
+    const action = allowance?.action;
+    const entry = action?.entry;
+    return !!allowance && !allowance.consumed && action?.pending === true &&
+      allowance.isCurrent() === true && owner === observedMain && owner === allowance.win &&
+      !owner.isDestroyed() && owner.webContents === allowance.contents &&
+      !allowance.contents.isDestroyed() && allowance.contents.mainFrame === allowance.frame &&
+      !allowance.frame.isDestroyed() && allowance.contents.getURL() === allowance.pageUrl &&
+      allowance.frame.url === allowance.pageUrl &&
+      entry?.kind === "link" && entry.href === allowance.href &&
+      entry.documentRef === allowance.documentRef && entry.owner === true && entry.frame === true &&
+      entry.windowId === owner.id && entry.frameId === allowance.frame.frameTreeNodeId &&
+      action.entries === 1 && !action.question && !action.settled &&
+      ((allowance.basename === "diagram.svg" && action.label === "svg" &&
+          (allowance.choice === 0 || allowance.choice === 1)) ||
+        (allowance.basename === "LICENSE" && action.label === "license" && allowance.choice === 1)) &&
+      broker.owners.size === 0 && broker.requests.size === 0 &&
+      isDeepStrictEqual(Object.keys(options).sort(), [
+        "allowUnavailableRenderer", "buttons", "cancelId", "defaultId", "isCurrent",
+        "message", "onFailure", "title", "type",
+      ]) &&
+      options.type === "question" && options.title === "Open external file" &&
+      options.message === `Open "${allowance.basename}" with its system application?` &&
+      isDeepStrictEqual(options.buttons, ["Cancel", "Open"]) &&
+      options.defaultId === 0 && options.cancelId === 0 &&
+      options.allowUnavailableRenderer === false &&
+      typeof options.onFailure === "function" && typeof options.isCurrent === "function" &&
+      options.isCurrent() === true;
+  } catch { return false; }
+}
+const blockSecurityOwnedDialog = function(owner, options) {
+  const allowance = expectedSecurityQuestion;
+  expectedSecurityQuestion = null;
+  if (!securityQuestionMatches(allowance, this, owner, options)) {
+    return failSecurityUnattended(new Error("Unexpected Main-owned security dialog"));
+  }
+  // Consume before entering the real broker: neither a reentrant question nor
+  // another request can borrow this gesture's explicitly expected choice.
+  allowance.consumed = true;
+  const answer = realSecurityOwnedShow.apply(this, arguments);
+  const request = this.owners.get(owner)?.active;
+  if (!request || request.options !== options || request.owner !== owner ||
+      request.sender !== allowance.contents || request.frame !== allowance.frame ||
+      request.ownerUrl !== allowance.pageUrl || request.state.queue.length !== 0 ||
+      this.requests.get(request.id) !== request) {
+    return failSecurityUnattended(new Error("Expected question did not retain its actual Main request"));
+  }
+  allowance.action.question = { broker: this, request, answer, settled: false, result: null };
+  const question = allowance.action.question;
+  Promise.resolve(answer).then(result => {
+    question.result = result;
+    question.settled = true;
+  }, error => {
+    question.error = String(error?.message || error);
+    question.settled = true;
+  });
+  return answer;
+};
 OwnedDialogs.prototype.show = blockSecurityOwnedDialog;
 const securityDialogGuardsIntact = () =>
   Object.entries(nativeDialogGuards).every(([method, guard]) => dialog[method] === guard) &&
@@ -127,7 +188,49 @@ if (
     failSecurityUnattended(new Error("A window existed before security Main observation"));
   }
   app.once("browser-window-created", (_event, win) => { observedMain = win; });
-  require("../src/main.js");
+  // Capture only the one actual registration. The fixed dispatcher always
+  // forwards the original receiver/arguments/result, including Promise identity;
+  // local observation never obtains a private transport or invokes Main itself.
+  const registerSecurityHandle = ipcMain.handle;
+  const securityRegisterDescriptor = Object.getOwnPropertyDescriptor(ipcMain, "handle");
+  const captureSecurityHandle = function(channel, handler) {
+    if (channel !== "private-trusted-document-gesture") {
+      return registerSecurityHandle.apply(this, arguments);
+    }
+    if (++securityGestureRegistration.count !== 1 || typeof handler !== "function") {
+      throw new Error("Unexpected trusted-gesture Main registration");
+    }
+    securityGestureRegistration.handler = handler;
+    const forwarded = function(event, data) {
+      const observer = securityGestureRegistration.observer;
+      const record = observer?.enter(event, data);
+      let result;
+      try { result = handler.apply(this, arguments); }
+      catch (error) {
+        observer?.finish(record, undefined, error);
+        throw error;
+      }
+      if (observer) Promise.resolve(result).then(
+        reply => observer.finish(record, reply, null),
+        error => observer.finish(record, undefined, error),
+      );
+      return result;
+    };
+    securityGestureRegistration.installed = forwarded;
+    return registerSecurityHandle.call(this, channel, forwarded);
+  };
+  ipcMain.handle = captureSecurityHandle;
+  try { require("../src/main.js"); }
+  finally {
+    if (ipcMain.handle !== captureSecurityHandle) {
+      throw new Error("Security Main registration capture lost ownership");
+    }
+    if (securityRegisterDescriptor) Object.defineProperty(ipcMain, "handle", securityRegisterDescriptor);
+    else delete ipcMain.handle;
+    if (ipcMain.handle !== registerSecurityHandle) {
+      throw new Error("Security Main registration capture did not restore its original registrar");
+    }
+  }
 }
 
 const results = [];
@@ -3032,11 +3135,11 @@ async function run(win) {
   // attacker-supplied binary through the system shell - with no prompt, and no
   // indication in the link text that anything but a diagram would open.
   //
-  // Every assertion below drives the REAL anchor-click handler on a REAL file
-  // on disk; nothing is asserted about source text. shell.openPath, confirm(),
-  // ipcRenderer.send and fs.existsSync are stubbed only so the harness can
-  // observe what the handler decided to do (and so a native confirm() does not
-  // block executeJavaScript forever, as it does in test-tab-refresh.js).
+  // Local rows use admitted immutable sources and trusted pointer input through
+  // the unchanged isolated preload. Main policy, real-target classification and
+  // owned consent remain real; only the shared OS-opening trap records handoff.
+  // N11's legacy recovery dependency below is retained, NOT initialized here.
+  // Its actual-Main reload/restore/admission repair remains separately pending.
   // ==========================================================================
   const s12dir = path.join(dir, "sec12");
   fs.mkdirSync(s12dir, { recursive: true });
@@ -3051,13 +3154,15 @@ async function run(win) {
     fs.writeFileSync(path.join(s12dir, f), "placeholder");
   }
   const s12doc = path.join(s12dir, "doc.md");
-  fs.writeFileSync(s12doc, "# doc\n");
+  fs.writeFileSync(s12doc, [
+    "# Local links", "", "[exe](./setup.exe)", "", "[ps1](./script.ps1)", "",
+    "[docm](./report.docm)", "", "[txt](./notes.txt)", "", "[svg](./diagram.svg)", "",
+    "[md](./linked.md)", "", "[unc](//attacker.invalid/share/payload.txt)", "",
+  ].join("\n"));
 
-  // Held in a const and installed through a helper rather than written inline,
-  // because the N11 block below can lose the entire JS context mid-section and
-  // has to be able to put this back. See n11Click(). Re-running it is safe: it
-  // re-captures __s12Restore from whatever is currently installed, and after a
-  // context wipe that is the pristine set.
+  // Deferred N11 recovery still references this legacy string and s12Reset.
+  // Neither is used by the local actor. Their renderer-Node assumptions remain
+  // incompatible and unqualified; do not emulate their globals to hide that.
   const S12_INSTALL = `
     (() => {
       const { shell, ipcRenderer } = require('electron');
@@ -3090,7 +3195,6 @@ async function run(win) {
       return null;
     })()
   `;
-  await exec(S12_INSTALL);
 
   // Wipe-safe on purpose. This used to dereference window.__s12 unconditionally
   // and it is the FIRST thing n11Click() does, so when a click below replaced
@@ -3109,219 +3213,929 @@ async function run(win) {
       })()
     `);
 
-  // Click the rendered anchor whose visible text matches, then report what the
-  // handler did. Selecting by link text is deliberate: it is the only thing the
-  // reader sees, and the whole point of the finding is that it says nothing
-  // about what will be opened.
-  const s12Click = async (text) => {
-    await s12Reset();
-    const clicked = await exec(`
-      (() => {
-        const a = Array.from(document.querySelectorAll('#viewer a'))
-          .find((x) => x.textContent.trim() === ${JSON.stringify(text)});
-        if (!a) return { found: false };
-        a.click();
-        return { found: true, href: a.getAttribute('href') };
-      })()
-    `);
-    await sleep(120);
-    const state = await exec(`window.__s12`);
-    return { ...state, clicked };
-  };
+  {
+    function securityLocalProjection(event, data, contents, frame) {
+      return {
+        kind: data?.kind, href: data?.href, documentRef: data?.documentRef,
+        owner: event.sender === contents, frame: event.senderFrame === frame &&
+          event.senderFrame === contents.mainFrame,
+        windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? null,
+        frameId: event.senderFrame?.frameTreeNodeId ?? null,
+      };
+    }
 
-  await render(
-    [
-      "# Local links",
-      "",
-      "[exe](./setup.exe)",
-      "",
-      "[ps1](./script.ps1)",
-      "",
-      "[docm](./report.docm)",
-      "",
-      "[txt](./notes.txt)",
-      "",
-      "[svg](./diagram.svg)",
-      "",
-      "[md](./linked.md)",
-      "",
-      "[unc](//attacker.invalid/share/payload.txt)",
-      "",
-    ].join("\n"),
-    "full",
-  );
+    function securityLocalSlice(records, start) {
+      if (!Number.isSafeInteger(start) || start < 0 || start > records.length) {
+        throw new Error("Local observation history was truncated or has an invalid mark");
+      }
+      return records.slice(start);
+    }
 
-  for (const [label, text] of [
-    ["Windows executable", "exe"],
-    ["PowerShell script", "ps1"],
-    ["macro-enabled Office document", "docm"],
-  ]) {
-    const r = await s12Click(text);
-    check(
-      `SEC-12 a link to a ${label} is refused outright`,
-      r.clicked.found === true &&
-        r.openPath.length === 0 &&
-        r.ipc.length === 0 &&
-        r.confirms.length === 0 &&
-        r.notes.length === 1,
-      JSON.stringify(r),
-    );
+    function securityLocalSeal(before, validated) {
+      // Only the slices adjudicated for this case may advance its endpoints.
+      // A fresh count after an await can silently adopt an unvalidated late open.
+      return Object.freeze({
+        shell: before.shell + validated.shell.length,
+        external: before.external + validated.external.length,
+        sends: before.sends + validated.sends.length,
+        entries: before.entries + validated.entries.length,
+        work: before.work + validated.work.length,
+        navigation: before.navigation + validated.navigation.length,
+        clicks: before.clicks + validated.clicks.length,
+        errors: before.errors + validated.errors.length,
+        faults: before.faults + validated.faults.length,
+      });
+    }
+
+    function restoreSecurityLocalSlot(object, key, installed, original, descriptor) {
+      if (object[key] !== installed) throw new Error("Local observation lost ownership: " + key);
+      if (descriptor) Object.defineProperty(object, key, descriptor);
+      else delete object[key];
+      if (object[key] !== original ||
+          !isDeepStrictEqual(Object.getOwnPropertyDescriptor(object, key), descriptor)) {
+        throw new Error("Local observation did not restore: " + key);
+      }
+    }
+
+    function securityLocalTargetMatches(target, retained, source, sourcePath, sourceBody,
+      targetPath, targetBody, targetHeading) {
+      const descriptor = target.descriptor, identity = target.identity;
+      return Number.isSafeInteger(target.id) && target.id > 0 && target.id !== source.id &&
+        target.tabs.length === 2 &&
+        target.tabs.filter(tab => tab.id === source.id && tab.path === sourcePath).length === 1 &&
+        target.tabs.filter(tab => tab.id === target.id && tab.path === targetPath).length === 1 &&
+        target.path === targetPath && target.current === targetPath &&
+        target.content === targetBody && target.original === targetBody && target.live === targetBody &&
+        descriptor?.logicalPath === targetPath &&
+        descriptor.documentUrl === pathToFileURL(targetPath).href &&
+        typeof descriptor.ref === "string" && /^[a-f0-9]{64}$/.test(descriptor.ref) &&
+        descriptor.ref !== source.descriptor.ref &&
+        identity?.tabId === target.id && identity.documentRef === descriptor.ref &&
+        target.pageSession === source.pageSession && identity.pageSession === source.pageSession &&
+        identity.rendererGeneration === source.identity.rendererGeneration &&
+        Number.isSafeInteger(identity.documentGeneration) && identity.documentGeneration > 0 &&
+        typeof identity.pathKey === "string" && identity.pathKey.length > 0 &&
+        identity.pathKey !== source.identity.pathKey &&
+        target.state?.maintained === true && target.state.dirty === false &&
+        target.state.liveWitnessMatchesContent === true && target.markedDirty === false &&
+        target.pending.pending === false && target.pending.count === 0 &&
+        target.heading === targetHeading && target.loading === false && !target.welcome &&
+        target.images.length === 0 && retained?.id === source.id && retained.path === sourcePath &&
+        retained.content === sourceBody && retained.original === sourceBody &&
+        retained.markedDirty === false && retained.state?.maintained === true &&
+        retained.state.dirty === false && retained.state.liveWitnessMatchesContent === true &&
+        isDeepStrictEqual(retained.descriptor, source.descriptor) &&
+        isDeepStrictEqual(retained.identity, source.identity);
+    }
+
+    const contents = win.webContents, frame = contents.mainFrame, pageUrl = contents.getURL();
+    const registration = { handler: securityGestureRegistration.handler,
+      installed: securityGestureRegistration.installed };
+    if (securityGestureRegistration.count !== 1 || typeof registration.handler !== "function" ||
+        typeof registration.installed !== "function" || securityGestureRegistration.observer !== null ||
+        expectedSecurityQuestion !== null || !securityDialogGuardsIntact() ||
+        !await waitForExternalTrap(win)) {
+      throw new Error("SEC-12 requires the captured actual Main handler and intact guards");
+    }
+    const realSend = contents.send, realPathHost = fs.realpathSync;
+    const realPath = realPathHost.native, realStat = fs.statSync;
+    const sharedTrapShell = require("electron").shell;
+    const trapOpeners = Object.freeze({
+      openPath: sharedTrapShell.openPath, openExternal: sharedTrapShell.openExternal,
+    });
+    const originalSlots = {
+      observer: Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer"),
+      send: Object.getOwnPropertyDescriptor(contents, "send"),
+      realPath: Object.getOwnPropertyDescriptor(realPathHost, "native"),
+      stat: Object.getOwnPropertyDescriptor(fs, "statSync"),
+    };
+    const linkedPath = path.join(s12dir, "linked.md");
+    const linkedBody = "# Security linked target\n\nSEC12_ACTUAL_LINKED_DISK_BODY\n";
+    fs.writeFileSync(linkedPath, linkedBody, "utf8");
+    const localBody = fs.readFileSync(s12doc, "utf8");
+    const resolutionPath = path.join(s12dir, "resolution.md");
+    const resolutionBody = "# Resolution\n\n[symlink](./diagram-link.png)\n\n[folder](./subfolder)\n";
+    const extPath = path.join(s12dir, "ext.md");
+    const extBody = "# Ext\n\n[license](./LICENSE)\n";
+    fs.writeFileSync(resolutionPath, resolutionBody, "utf8");
+    fs.writeFileSync(extPath, extBody, "utf8");
+    const licensePath = path.join(s12dir, "LICENSE");
+    fs.writeFileSync(licensePath, "MIT\n", { encoding: "utf8", mode: 0o644 });
+    const licenseStats = realStat(licensePath);
+    const inertLicense = licenseStats.isFile() && fs.readFileSync(licensePath, "utf8") === "MIT\n" &&
+      (process.platform === "win32" || (licenseStats.mode & 0o111) === 0);
+    check("SETUP SEC-12 LICENSE is an actual non-executable regular MIT file", inertLicense);
+    if (!inertLicense) throw new Error("Extensionless fixture is not the intended inert regular file");
+    const s12link = path.join(s12dir, "diagram-link.png");
+    let symlinksAvailable = true;
+    try { fs.symlinkSync(path.join(s12dir, "script.ps1"), s12link, "file"); }
+    catch (e) {
+      // Windows needs Developer Mode or SeCreateSymbolicLinkPrivilege.
+      symlinksAvailable = false;
+      console.log(
+        `SKIP  SEC-12 symlink coverage - cannot create a symlink here (${e.code || e.message})`,
+      );
+      skipped.push("SEC-12 symlink");
+    }
+    const s12subdir = path.join(s12dir, "subfolder");
+    fs.mkdirSync(s12subdir, { recursive: true });
+    const targets = new Map();
+    for (const name of ["setup.exe", "script.ps1", "report.docm", "notes.txt",
+      "diagram.svg", "linked.md", "subfolder", "LICENSE",
+      ...(symlinksAvailable ? ["diagram-link.png"] : [])]) {
+      const logical = path.join(s12dir, name);
+      targets.set(name, { logical, real: realPath(logical) });
+    }
+    if (symlinksAvailable) {
+      const actualSymlink = fs.lstatSync(s12link).isSymbolicLink() &&
+        targets.get("diagram-link.png").real === targets.get("script.ps1").real;
+      check("SETUP SEC-12 the real safe-looking symlink resolves to the actual PowerShell fixture",
+        actualSymlink);
+      if (!actualSymlink) throw new Error("SEC-12 symlink setup did not establish its actual script target");
+    }
+    const sends = [], fileWork = [], entries = [], navigation = [], actions = [], faults = [];
+    let activeAction = null, source = null, sourcePath = null, sourceBody = null, sourceHeading = null;
+    let sealed = null, pageInstalled = false;
+    const knownOwners = new Map();
+    let localFailure = null;
+    const networkTarget = value => /^(\\\\|\/\/)/.test(value) || /attacker\.invalid/i.test(value);
+    const observer = {
+      enter(event, data) {
+        const record = securityLocalProjection(event, data, contents, frame);
+        entries.push(record);
+        const action = activeAction;
+        if (!action || !action.pending || action.settled || ++action.entries !== 1 ||
+            !record.owner || !record.frame || record.windowId !== win.id ||
+            record.kind !== "link" || record.href !== action.href ||
+            record.documentRef !== action.source.descriptor.ref) {
+          faults.push("Unexpected or stale actual Main gesture entry");
+          throw new Error(faults.at(-1));
+        }
+        action.entry = record;
+        return { record, action };
+      },
+      finish(observation, reply, error) {
+        const action = observation?.action;
+        if (!action || activeAction !== action || action.settled) {
+          faults.push("Actual Main gesture settlement lost its local owner");
+          return;
+        }
+        action.result = reply;
+        action.error = error ? String(error.message || error) : null;
+        action.settled = true;
+      },
+    };
+    const observedSend = function(channel, value) {
+      if (channel === "external-file-open-request" || channel === "show-error") {
+        const action = activeAction;
+        sends.push({ action: action?.id ?? null, channel,
+          ...(channel === "show-error" ? { message: value } : { path: value?.filePath }) });
+        if (!action?.pending) faults.push("Unattributed late Main link delivery");
+      }
+      return realSend.apply(this, arguments);
+    };
+    function observeSecurityLocalFS(kind, original, receiver, args) {
+      const file = String(args[0]), action = activeAction;
+      const forbidden = networkTarget(file);
+      const relevant = action?.entry && action.pending && !action.settled &&
+        (forbidden || file === action.target?.logical || file === action.target?.real);
+      const record = forbidden || relevant ? {
+        action: action?.id ?? null, kind, file, forbidden, terminal: false,
+      } : null;
+      if (record) fileWork.push(record);
+      if (forbidden) {
+        // Recording precedes the safety stop. This is a FAILED product-policy
+        // observation, never evidence that Main itself blocked network I/O.
+        faults.push("Main attempted forbidden remote filesystem work: " + kind);
+        check("SEC-12 Main never attempts forbidden remote filesystem work",
+          false, JSON.stringify(record));
+        throw new Error("Test safety stop after forbidden remote filesystem attempt");
+      }
+      try {
+        const result = original.apply(receiver, args);
+        if (record) Object.assign(record, kind === "realpath" ? { resolved: result } :
+          { regular: result.isFile(), directory: result.isDirectory(), mode: result.mode });
+        return result;
+      } catch (error) {
+        if (record) record.error = String(error.message || error);
+        throw error;
+      } finally { if (record) record.terminal = true; }
+    }
+    const observedRealPath = function() {
+      return observeSecurityLocalFS("realpath", realPath, this, arguments);
+    };
+    const observedStat = function() {
+      return observeSecurityLocalFS("stat", realStat, this, arguments);
+    };
+    const observeFrameNavigation = (_event, details) => {
+      if (details.isMainFrame) navigation.push({ kind: "will-frame-navigate", url: details.url });
+    };
+    const observeNavigation = (_event, url) => navigation.push({ kind: "will-navigate", url });
+    const observeStartedNavigation = (_event, url, _inPlace, isMainFrame) => {
+      if (isMainFrame) navigation.push({ kind: "did-start-navigation", url });
+    };
+    const samePage = () => !win.isDestroyed() && !contents.isDestroyed() &&
+      win.webContents === contents && contents.mainFrame === frame && !frame.isDestroyed() &&
+      contents.getURL() === pageUrl && frame.url === pageUrl;
+    async function readPage() {
+      if (!samePage()) throw new Error("SEC-12 lost its actual source page; no recovery was attempted");
+      return exec(`(() => {
+        const probe = window.__securityLocalLinks;
+        if (!probe || probe.tabs !== window.CustomTabs || probe.folia !== window.folia ||
+            probe.pageSession !== window.getReloadRequestSession()) {
+          throw new Error('Local link page observation lost ownership');
+        }
+        return {
+          clicks: probe.clicks.map(item => ({
+            href: item.href, text: item.text, selected: item.selected,
+            trusted: item.event.isTrusted, canceled: item.event.defaultPrevented,
+          })),
+          errors: probe.errors.slice(), close: !!window.__securityLocalTargetClose,
+          notification: (() => {
+            const toast = document.getElementById('notificationToast');
+            return { text: document.getElementById('notificationMessage')?.textContent,
+              visible: !!toast && toast.classList.contains('show') &&
+                toast.getClientRects().length > 0 && getComputedStyle(toast).visibility !== 'hidden' &&
+                Number(getComputedStyle(toast).opacity) > 0 };
+          })(),
+        };
+      })()`);
+    }
+    async function pageBarrier() {
+      if (!samePage()) throw new Error("Cannot drain a replaced SEC-12 source page");
+      await exec(`new Promise(resolve => requestAnimationFrame(() =>
+        requestAnimationFrame(() => resolve(true))))`);
+      // A real public round-trip drains earlier Main deliveries without exposing
+      // or synthesizing any private request.
+      await exec("window.folia.getVersion()");
+    }
+    async function counts() {
+      const page = await readPage();
+      return { shell: (await visualUtils.readShellOpens(win)).length,
+        external: (await visualUtils.readExternalOpens(win)).length,
+        sends: sends.length, entries: entries.length, work: fileWork.length,
+        navigation: navigation.length, clicks: page.clicks.length, errors: page.errors.length,
+        faults: faults.length };
+    }
+    async function assertNoLate() {
+      if (!sealed) return;
+      await pageBarrier();
+      const trapReady = await waitForExternalTrap(win);
+      const now = await counts();
+      if (!isDeepStrictEqual(now, sealed) || faults.length || navigation.length ||
+          expectedSecurityQuestion !== null || !securityDialogGuardsIntact() ||
+          !trapReady) {
+        check("SEC-12 terminal accounting rejects late or unattributed effects", false,
+          JSON.stringify({ sealed, now, faults, navigation }));
+        throw new Error("SEC-12 has late effects or changed observation authority");
+      }
+    }
+    async function waitLocal(predicate, label) {
+      const deadline = Date.now() + 12000;
+      for (;;) {
+        if (!samePage() || faults.length || navigation.length || !securityDialogGuardsIntact()) {
+          throw new Error("SEC-12 authority/navigation failure during " + label + ": " + faults.join("; "));
+        }
+        const value = await predicate();
+        if (value) return value;
+        if (Date.now() >= deadline) throw new Error("SEC-12 timed out: " + label);
+        await sleep(40);
+      }
+    }
+    async function requireSource(label) {
+      const owner = await readSecurityImageOwner(sourcePath);
+      const ok = securityImageOwnerMatches(owner, sourcePath, sourceBody, sourceHeading) &&
+        owner.id === source.id && isDeepStrictEqual(owner.identity, source.identity) &&
+        isDeepStrictEqual(owner.descriptor, source.descriptor) && owner.images.length === 0 &&
+        fs.readFileSync(sourcePath, "utf8") === sourceBody && samePage();
+      check("SETUP SEC-12 exact admitted source remains current and clean: " + label,
+        ok, JSON.stringify(owner));
+      if (!ok) throw new Error("SEC-12 source ownership is uncertain: " + label);
+      return owner;
+    }
+    async function enterSource(file, body, heading, carriers) {
+      await assertNoLate();
+      source = await admitSecurityImageFixture(file, body, heading, [], []);
+      sourcePath = file; sourceBody = body; sourceHeading = heading;
+      knownOwners.set(source.id, source);
+      const links = await exec(`Array.from(document.querySelectorAll('#viewer a'), a =>
+        [a.textContent.trim(), a.getAttribute('href')])`);
+      check("SETUP SEC-12 exact sanitizer-retained link inventory: " + heading,
+        isDeepStrictEqual(links, carriers), JSON.stringify(links));
+      if (!isDeepStrictEqual(links, carriers)) throw new Error("SEC-12 link inventory changed");
+      await assertNoLate();
+    }
+    async function leaveSource() {
+      await assertNoLate();
+      await requireSource("before source retirement");
+      await closeSecurityImageFixture(source, sourcePath, sourceBody, sourceHeading);
+      source = null;
+      await assertNoLate();
+      if (faults.length || expectedSecurityQuestion !== null) {
+        throw new Error("SEC-12 source retirement left an unsettled observation");
+      }
+    }
+    async function answerExpectedQuestion(action, allowance, choice) {
+      await waitLocal(() => action.question?.request.displayed === true && action.question,
+        "actual owned question display");
+      const question = action.question, request = question.request, child = request.window;
+      const childContents = child.webContents;
+      const preferences = childContents.getLastWebPreferences();
+      const appearance = await childContents.executeJavaScript(`({
+        title: document.getElementById('appMessageTitle')?.textContent,
+        text: document.getElementById('appMessageText')?.textContent,
+        buttons: Array.from(document.querySelectorAll('[data-dialog-choice]'), button => ({
+          label: button.textContent, id: button.dataset.dialogChoice,
+          visible: button.getClientRects().length > 0 && !button.disabled,
+        })),
+        focused: document.activeElement?.dataset.dialogChoice,
+        open: !!document.querySelector('dialog[open]'), node: typeof require,
+      })`, true);
+      const ready = allowance.consumed && expectedSecurityQuestion === null &&
+        !request.done && request.owner === win && request.sender === contents && request.frame === frame &&
+        request.options.isCurrent() === true && question.broker.current(request) === true &&
+        question.broker.owners.get(win)?.active === request && request.state.queue.length === 0 &&
+        child.getParentWindow() === win && child.isVisible() && !child.isDestroyed() &&
+        childContents.session !== contents.session && childContents.mainFrame.url === question.broker.url &&
+        question.broker.requests.get(request.id) === request &&
+        preferences.sandbox === true && preferences.contextIsolation === true &&
+        preferences.nodeIntegration === false && appearance.node === "undefined" &&
+        appearance.open && appearance.title === "Open external file" &&
+        appearance.text === `Open "${allowance.basename}" with its system application?` &&
+        isDeepStrictEqual(appearance.buttons, [
+          { label: "Cancel", id: "0", visible: true }, { label: "Open", id: "1", visible: true },
+        ]) && appearance.focused === "0" &&
+        request.presentation.defaultId === 0 && request.presentation.cancelId === 0;
+      check("SETUP SEC-12 expected real question has exact labels and default Cancel focus: " +
+        action.label, ready, JSON.stringify(appearance));
+      if (!ready) throw new Error("SEC-12 owned question is not the expected visible presentation");
+      let closed;
+      const closing = new Promise(resolve => {
+        closed = resolve;
+        child.once("closed", closed);
+      });
+      try {
+        // Only this explicit, already-verified button is selected. Destruction
+        // may win the evaluation response, but never substitutes for Main's result.
+        await Promise.race([closing, childContents.executeJavaScript(`(() => {
+          const button = document.querySelector('[data-dialog-choice="${choice}"]');
+          if (!button || button.disabled || !button.getClientRects().length) {
+            throw new Error('Expected choice is not visible');
+          }
+          button.click();
+          return true;
+        })()`, true)]);
+        await waitLocal(() => question.settled && request.done && child.isDestroyed() &&
+          childContents.isDestroyed() && !question.broker.owners.has(win),
+        "actual owned question result and child retirement");
+      } finally { child.removeListener("closed", closed); }
+      const result = question.result;
+      const accepted = !question.error && result?.response === choice && result.cause === "choice" &&
+        result.failed === false && result.displayed === true;
+      check("SEC-12 explicit question choice settles through the actual broker: " + action.label,
+        accepted, JSON.stringify({ result, error: question.error }));
+      if (!accepted) throw new Error("SEC-12 question did not settle with its explicit visible choice");
+    }
+    async function readRetainedSource() {
+      return exec(`(() => {
+        const tabs = window.CustomTabs;
+        const tab = tabs.getTabs().find(item => item.id === ${source.id});
+        return tab ? {
+          id: tab.id, path: tab.filePath, content: tab.content, original: tab.originalContent,
+          markedDirty: tab.hasUnsavedChanges, state: tabs.__documentState(tab),
+          descriptor: tabs.getDocumentDescriptor(tab.id),
+          identity: tabs.getDocumentIdentityForTab(tab.id, ${JSON.stringify(sourcePath)},
+            window.getReloadRequestSession()),
+        } : null;
+      })()`);
+    }
+    async function retireLinkedTarget() {
+      let target, retained;
+      await waitLocal(async () => {
+        target = await readSecurityImageOwner(linkedPath);
+        retained = await readRetainedSource();
+        return securityLocalTargetMatches(target, retained, source, sourcePath, sourceBody,
+          linkedPath, linkedBody, "Security linked target");
+      }, "actual linked document read, admission and two-tab DOM");
+      knownOwners.set(target.id, target);
+      const actual = securityLocalTargetMatches(target, retained, source, sourcePath, sourceBody,
+        linkedPath, linkedBody, "Security linked target") &&
+        fs.readFileSync(linkedPath, "utf8") === linkedBody &&
+        fs.readFileSync(sourcePath, "utf8") === sourceBody;
+      check("SETUP SEC-12 Markdown target and retained source have exact actual two-tab identities",
+        actual, JSON.stringify({ target, retained }));
+      if (!actual) throw new Error("SEC-12 refuses to retire an unproven linked target");
+      try {
+        await exec(`(() => {
+        const dialogs = window.MarkalooDialogs;
+        if (!dialogs || typeof dialogs.show !== 'function' ||
+            window.__securityLocalTargetClose || document.querySelector('#appMessageDialog[open]')) {
+          throw new Error('Target retirement starts with an unexpected dialog/observer');
+        }
+        const observation = window.__securityLocalTargetClose = {
+          dialogs, confirm: window.confirm, calls: [], confirmations: [],
+          opened: false, done: false, error: null,
+          dialogsDescriptor: Object.getOwnPropertyDescriptor(window, 'MarkalooDialogs'),
+          confirmDescriptor: Object.getOwnPropertyDescriptor(window, 'confirm'),
+        };
+        window.__securityLocalLinks.targetClose = observation;
+        observation.observedDialogs = Object.freeze({ ...dialogs, show(...args) {
+          observation.calls.push(String(args[0]?.title || 'untitled'));
+          return dialogs.show(...args);
+        } });
+        window.MarkalooDialogs = observation.observedDialogs;
+        observation.observedConfirm = message => {
+          observation.confirmations.push(String(message));
+          throw new Error('Unexpected linked-target confirmation');
+        };
+        window.confirm = observation.observedConfirm;
+        observation.observer = new MutationObserver(records => {
+          if (document.querySelector('#appMessageDialog[open]') ||
+              records.some(record => record.target.id === 'appMessageDialog' &&
+                record.attributeName === 'open' && record.oldValue !== null)) observation.opened = true;
+        });
+        observation.observer.observe(document.body, {
+          subtree: true, childList: true, attributes: true,
+          attributeFilter: ['open'], attributeOldValue: true,
+        });
+        Promise.resolve().then(() => {
+          const tabs = window.CustomTabs, tab = tabs.getActiveTab();
+          const state = tab && tabs.__documentState(tab), pending = window.getPendingSaveStatus();
+          if (tab?.id !== ${target.id} || tab.filePath !== ${JSON.stringify(linkedPath)} ||
+              tab.content !== ${JSON.stringify(linkedBody)} ||
+              tab.originalContent !== ${JSON.stringify(linkedBody)} || tab.hasUnsavedChanges ||
+              window.currentFilePath !== ${JSON.stringify(linkedPath)} ||
+              window.originalMarkdown !== ${JSON.stringify(linkedBody)} ||
+              pending.pending || pending.count !== 0 || !state?.maintained || state.dirty ||
+              !state.liveWitnessMatchesContent || tabs.getTabs().length !== 2 ||
+              document.querySelector('#viewer h1')?.textContent !== 'Security linked target' ||
+              document.getElementById('loadingScreen')?.classList.contains('active') !== false ||
+              JSON.stringify(tabs.getDocumentDescriptor()) !== ${JSON.stringify(JSON.stringify(target.descriptor))} ||
+              JSON.stringify(tabs.getActiveDocumentIdentity(${JSON.stringify(linkedPath)},
+                window.getReloadRequestSession())) !== ${JSON.stringify(JSON.stringify(target.identity))}) {
+            throw new Error('Linked target changed before its real close');
+          }
+          return tabs.closeTab(${target.id});
+        })
+          .then(() => { observation.done = true; }, error => {
+            observation.error = String(error?.stack || error); observation.done = true;
+          });
+        return true;
+      })()`);
+        await waitLocal(async () => {
+          const closed = await exec(`(() => {
+            const o = window.__securityLocalTargetClose;
+            return { done: o.done, error: o.error, calls: o.calls, confirmations: o.confirmations,
+              opened: o.opened || !!document.querySelector('#appMessageDialog[open]'),
+              observing: window.MarkalooDialogs === o.observedDialogs &&
+                window.confirm === o.observedConfirm };
+          })()`);
+          if (!closed.observing || closed.error || closed.opened ||
+              closed.calls.length || closed.confirmations.length) {
+            check("SEC-12 target retirement never answers unexpected application consent",
+              false, JSON.stringify(closed));
+            throw new Error("SEC-12 linked-target close encountered unexpected consent or failure");
+          }
+          return closed.done;
+        }, "clean linked-target close");
+        await waitLocal(async () => {
+          const after = await readSecurityImageOwner(sourcePath);
+          return securityImageOwnerMatches(after, sourcePath, sourceBody, sourceHeading) &&
+            after.id === source.id && isDeepStrictEqual(after.identity, source.identity) &&
+            isDeepStrictEqual(after.descriptor, source.descriptor) && after.images.length === 0;
+        }, "original source sole-owner restoration after actual target retirement");
+        await requireSource("after actual linked-target retirement");
+      } finally {
+        await restoreTargetClose();
+      }
+      return true;
+    }
+    async function requireKnownPageOwners() {
+      if (!samePage()) throw new Error("Local witness belongs to a lost page; fixtures retained");
+      const owners = await exec(`window.CustomTabs.getTabs().map(tab => ({
+        id: tab.id, path: tab.filePath, descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
+        identity: window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath,
+          window.getReloadRequestSession()),
+      }))`);
+      if (owners.some(owner => {
+        const known = knownOwners.get(owner.id);
+        return !known || owner.path !== known.path ||
+          !isDeepStrictEqual(owner.descriptor, known.descriptor) ||
+          !isDeepStrictEqual(owner.identity, known.identity);
+      })) throw new Error("Unknown owner during local witness disposal; fixtures retained");
+      await readPage();
+    }
+    async function restoreTargetClose() {
+      await requireKnownPageOwners();
+      await exec(`(() => {
+        const probe = window.__securityLocalLinks, o = probe.targetClose;
+        if (!o && !window.__securityLocalTargetClose) return true;
+        if (!o || window.__securityLocalTargetClose !== o) {
+          throw new Error('Target-close witness lost ownership');
+        }
+        const failures = [];
+        try { o.observer?.disconnect(); } catch { failures.push('observer'); }
+        try {
+          if (window.MarkalooDialogs !== o.observedDialogs) throw new Error('ownership');
+          if (o.dialogsDescriptor) Object.defineProperty(window, 'MarkalooDialogs', o.dialogsDescriptor);
+          else delete window.MarkalooDialogs;
+          if (window.MarkalooDialogs !== o.dialogs) throw new Error('identity');
+        } catch { failures.push('dialogs'); }
+        try {
+          if (window.confirm !== o.observedConfirm) throw new Error('ownership');
+          if (o.confirmDescriptor) Object.defineProperty(window, 'confirm', o.confirmDescriptor);
+          else delete window.confirm;
+          if (window.confirm !== o.confirm) throw new Error('identity');
+        } catch { failures.push('confirm'); }
+        if (!failures.length) {
+          delete window.__securityLocalTargetClose; delete probe.targetClose;
+        }
+        if (failures.length) throw new Error('Target-close restoration lost ownership: ' + failures);
+        return true;
+      })()`);
+    }
+    async function s12Click(label, href, name, outcome, choice = null) {
+      await assertNoLate();
+      await requireSource(label);
+      await assertNoLate();
+      const before = sealed;
+      const action = { id: actions.length + 1, label, href, target: targets.get(name),
+        source, pending: true, entries: 0, settled: false, entry: null, question: null };
+      actions.push(action);
+      const point = await exec(`(async () => {
+        const links = Array.from(document.querySelectorAll('#viewer a'))
+          .filter(a => a.textContent.trim() === ${JSON.stringify(label)});
+        if (links.length !== 1 || links[0].getAttribute('href') !== ${JSON.stringify(href)}) {
+          throw new Error('Exact local link carrier is missing');
+        }
+        const a = links[0], probe = window.__securityLocalLinks;
+        a.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const r = a.getBoundingClientRect();
+        const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        const hit = document.elementFromPoint(x, y)?.closest('#viewer a');
+        probe.target = a;
+        return { x, y, hit: hit === a, width: r.width, height: r.height,
+          href: a.getAttribute('href'), text: a.textContent.trim() };
+      })()`);
+      const hit = point.hit && point.width > 0 && point.height > 0 &&
+        point.href === href && point.text === label;
+      check("SETUP SEC-12 exact visible anchor is the actual pointer hit target: " + label,
+        hit, JSON.stringify(point));
+      if (!hit) throw new Error("SEC-12 trusted pointer has no exact hit target");
+      await requireSource("pointer-ready " + label);
+      await assertNoLate();
+      let allowance = null;
+      activeAction = action;
+      try {
+        if (choice !== null) {
+          if (expectedSecurityQuestion !== null || !action.target) {
+            throw new Error("SEC-12 expected-question slot is not empty");
+          }
+          allowance = {
+            action, win, contents, frame, pageUrl, href, choice,
+            documentRef: source.descriptor.ref, basename: path.basename(action.target.real),
+            consumed: false,
+            isCurrent: () => activeAction === action && source === action.source && samePage() &&
+              faults.length === 0 && navigation.length === 0 &&
+              action.pending && !action.settled && action.entry?.documentRef === source.descriptor.ref &&
+              fileWork.some(item => item.action === action.id && item.kind === "realpath" &&
+                item.file === action.target.logical && item.resolved === action.target.real) &&
+              fileWork.some(item => item.action === action.id && item.kind === "stat" &&
+                item.file === action.target.real && item.regular === true && item.directory === false),
+          };
+          expectedSecurityQuestion = allowance;
+        }
+        contents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y,
+          button: "left", clickCount: 1 });
+        contents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y,
+          button: "left", clickCount: 1 });
+        await waitLocal(async () => {
+          const page = await readPage();
+          return page.clicks.length > before.clicks && action.entry;
+        }, "trusted input and actual Main entry for " + label);
+        if (choice !== null) {
+          await waitLocal(() => action.question || action.settled,
+            "actual expected-question entry or Main settlement for " + label);
+          if (action.question) await answerExpectedQuestion(action, allowance, choice);
+        }
+        await waitLocal(() => action.settled, "actual Main handler settlement for " + label);
+        if (action.error) throw new Error("SEC-12 actual Main handler rejected: " + action.error);
+        expectedSecurityQuestion = null;
+        let targetRetired = false;
+        const terminalDeliveries = securityLocalSlice(sends, before.sends);
+        const terminalOffers = terminalDeliveries.filter(item => item.channel === "external-file-open-request");
+        if (outcome === "document" && terminalOffers.length === 1 &&
+            terminalOffers[0].path === linkedPath) targetRetired = await retireLinkedTarget();
+        const terminalNotices = terminalDeliveries.filter(item => item.channel === "show-error");
+        if (terminalNotices.length) {
+          await waitLocal(async () => {
+            const page = await readPage();
+            return page.errors.length >= before.errors + terminalNotices.length &&
+              page.notification.visible && page.notification.text === terminalNotices.at(-1).message;
+          }, "typed public refusal delivery and visible notification for " + label);
+        }
+        await requireSource("terminal " + label);
+        await pageBarrier();
+        const page = await readPage();
+        const clicks = securityLocalSlice(page.clicks, before.clicks);
+        const errors = securityLocalSlice(page.errors, before.errors);
+        const opened = securityLocalSlice(await visualUtils.readShellOpens(win), before.shell);
+        const external = securityLocalSlice(await visualUtils.readExternalOpens(win), before.external);
+        const deliveries = securityLocalSlice(sends, before.sends);
+        const work = securityLocalSlice(fileWork, before.work);
+        const routed = securityLocalSlice(entries, before.entries);
+        const navigations = securityLocalSlice(navigation, before.navigation);
+        const observedFaults = securityLocalSlice(faults, before.faults);
+        const offers = deliveries.filter(item => item.channel === "external-file-open-request");
+        const notices = deliveries.filter(item => item.channel === "show-error");
+        const refused = outcome === "refuse";
+        const expectedMessage = !refused ? null : name === "remote" ?
+          "Network file paths are blocked" :
+          "Executable links are blocked: " + path.basename(action.target.real);
+        const localFS = name === "remote" ? work.length === 0 :
+          work.some(item => item.kind === "realpath" && item.file === action.target.logical &&
+            item.resolved === action.target.real && item.terminal && !item.error) &&
+          work.some(item => item.kind === "stat" && item.file === action.target.real &&
+            item.regular === (name !== "subfolder") && item.directory === (name === "subfolder") &&
+            item.terminal && !item.error);
+        const explicitConsent = choice === null ? action.question === null :
+          allowance.consumed && action.question?.settled &&
+          action.question.result?.response === choice && action.question.result?.cause === "choice" &&
+          action.question.request.window.isDestroyed() &&
+          !action.question.broker.owners.has(win);
+        const ok = clicks.length === 1 && clicks[0].href === href && clicks[0].text === label &&
+          clicks[0].selected && clicks[0].trusted && clicks[0].canceled &&
+          routed.length === 1 && routed[0] === action.entry && action.entries === 1 &&
+          action.entry.documentRef === action.source.descriptor.ref &&
+          action.result === (!refused && outcome !== "cancel") &&
+          opened.length === (outcome === "open" ? 1 : 0) &&
+          (outcome !== "open" || opened[0] === action.target.real) &&
+          external.length === 0 && offers.length === (outcome === "document" ? 1 : 0) &&
+          (outcome !== "document" || offers[0].path === linkedPath && targetRetired) &&
+          notices.length === (refused ? 1 : 0) && errors.length === (refused ? 1 : 0) &&
+          (!refused || notices[0].message === expectedMessage && errors[0].message === expectedMessage &&
+            errors[0].visible && errors[0].text === expectedMessage &&
+            page.notification.visible && page.notification.text === expectedMessage) &&
+          deliveries.every(item => item.action === action.id) &&
+          work.every(item => item.action === action.id && !item.forbidden && item.terminal && !item.error) &&
+          localFS && explicitConsent && expectedSecurityQuestion === null &&
+          navigations.length === 0 && observedFaults.length === 0 && await waitForExternalTrap(win);
+        const report = { ok, entry: action.entry, result: action.result, clicks, opened, external,
+          offers, notices, errors, work, question: action.question ? {
+            result: action.question.result, displayed: action.question.request.displayed,
+            destroyed: action.question.request.window.isDestroyed(),
+          } : null, targetRetired };
+        // Never resample a baseline here: effects arriving during validation or
+        // the following awaited count must disagree with these exact endpoints.
+        sealed = securityLocalSeal(before, {
+          shell: opened, external, sends: deliveries, entries: routed, work,
+          navigation: navigations, clicks, errors, faults: observedFaults,
+        });
+        action.pending = false;
+        activeAction = null;
+        await assertNoLate();
+        return report;
+      } finally {
+        expectedSecurityQuestion = null;
+        action.pending = false;
+        activeAction = null;
+      }
+    }
+    function assertCase(name, result) { check(name, result.ok, JSON.stringify(result)); }
+    // Both shared trap snapshots are requested in one Main turn, before local
+    // observation starts. Newly owned histories must still be empty after setup.
+    const startingOpens = await Promise.all([
+      visualUtils.readShellOpens(win), visualUtils.readExternalOpens(win),
+    ]);
+    const startingSeal = Object.freeze({
+      shell: startingOpens[0].length, external: startingOpens[1].length,
+      sends: 0, entries: 0, work: 0, navigation: 0, clicks: 0, errors: 0, faults: 0,
+    });
+    securityGestureRegistration.observer = observer;
+    contents.send = observedSend;
+    realPathHost.native = observedRealPath;
+    fs.statSync = observedStat;
+    contents.on("will-frame-navigate", observeFrameNavigation);
+    contents.on("will-navigate", observeNavigation);
+    contents.on("did-start-navigation", observeStartedNavigation);
+    try {
+      await exec(`(() => {
+        if (window.__securityLocalLinks) throw new Error('Local link witness already exists');
+        const probe = window.__securityLocalLinks = {
+          clicks: [], errors: [], target: null, tabs: window.CustomTabs, folia: window.folia,
+          pageSession: window.getReloadRequestSession(),
+        };
+        probe.capture = event => {
+          const a = event.target?.closest?.('#viewer a');
+          if (a) probe.clicks.push({ event, href: a.getAttribute('href'),
+            text: a.textContent.trim(), selected: a === probe.target });
+        };
+        window.addEventListener('click', probe.capture, true);
+        probe.unsubscribe = window.folia.onError(message => {
+          const toast = document.getElementById('notificationToast');
+          const text = document.getElementById('notificationMessage');
+          probe.errors.push({ message, text: text?.textContent,
+            visible: !!toast && toast.classList.contains('show') &&
+              toast.getClientRects().length > 0 && getComputedStyle(toast).visibility !== 'hidden' });
+        });
+        return true;
+      })()`);
+      pageInstalled = true;
+      sealed = startingSeal;
+      await assertNoLate();
+      await enterSource(s12doc, localBody, "Local links", [
+        ["exe", "./setup.exe"], ["ps1", "./script.ps1"], ["docm", "./report.docm"],
+        ["txt", "./notes.txt"], ["svg", "./diagram.svg"], ["md", "./linked.md"],
+        ["unc", "//attacker.invalid/share/payload.txt"],
+      ]);
+      for (const [label, text, name] of [
+        ["Windows executable", "exe", "setup.exe"],
+        ["PowerShell script", "ps1", "script.ps1"],
+        ["macro-enabled Office document", "docm", "report.docm"],
+      ]) {
+        assertCase(`SEC-12 a link to a ${label} is refused outright`,
+          await s12Click(text, "./" + name, name, "refuse"));
+      }
+      const s12Txt = await s12Click("txt", "./notes.txt", "notes.txt", "open");
+      assertCase("FEATURE an inert document (.txt) still opens without a prompt", s12Txt);
+      check("SETUP SEC-12 actual local filesystem recorder is alive on the inert target",
+        s12Txt.work.some(item => item.kind === "realpath") &&
+          s12Txt.work.some(item => item.kind === "stat" && item.regular), JSON.stringify(s12Txt.work));
+      assertCase("FEATURE a markdown link still opens inside the app, never via the shell",
+        await s12Click("md", "./linked.md", "linked.md", "document"));
+      assertCase("SEC-12 an unrecognised type asks first, and declining opens nothing",
+        await s12Click("svg", "./diagram.svg", "diagram.svg", "cancel", 0));
+      assertCase("FEATURE accepting the prompt opens the unrecognised type",
+        await s12Click("svg", "./diagram.svg", "diagram.svg", "open", 1));
+      assertCase("SEC-12 a protocol-relative UNC link is blocked and never reaches the filesystem",
+        await s12Click("unc", "//attacker.invalid/share/payload.txt", "remote", "refuse"));
+      // marked consumes backslash escapes, so retain the original real-DOM
+      // injection while using the same trusted actor and Main policy evidence.
+      const uncHref = "\\\\attacker.invalid\\share\\payload.txt";
+      await exec(`(() => {
+        const a = document.createElement('a');
+        a.setAttribute('href', ${JSON.stringify(uncHref)}); a.textContent = 'unc2';
+        window.__securityLocalLinks.injected = a;
+        document.getElementById('viewer').appendChild(a);
+        return true;
+      })()`);
+      assertCase("SEC-12 a backslash UNC link is blocked before Main filesystem access touches the network",
+        await s12Click("unc2", uncHref, "remote", "refuse"));
+      await exec(`(() => {
+        const probe = window.__securityLocalLinks;
+        if (probe.injected?.getAttribute('href') !== ${JSON.stringify(uncHref)} ||
+            probe.injected.parentElement !== document.getElementById('viewer')) {
+          throw new Error('Injected UNC witness lost its owner');
+        }
+        probe.injected.remove(); delete probe.injected; return true;
+      })()`);
+      await leaveSource();
+      await enterSource(resolutionPath, resolutionBody, "Resolution", [
+        ["symlink", "./diagram-link.png"], ["folder", "./subfolder"],
+      ]);
+      if (symlinksAvailable) {
+        assertCase("SEC-12 a symlink with a safe-looking name is judged by its real target",
+          await s12Click("symlink", "./diagram-link.png", "diagram-link.png", "refuse"));
+      }
+      const s12Dir = await s12Click("folder", "./subfolder", "subfolder", "open");
+      assertCase("FEATURE a link to a folder still opens it, and is not mistaken for an executable", s12Dir);
+      check("SETUP SEC-12 actual local filesystem recorder distinguishes the real directory",
+        s12Dir.work.some(item => item.kind === "stat" && item.directory && !item.regular),
+        JSON.stringify(s12Dir.work));
+      await leaveSource();
+      await enterSource(extPath, extBody, "Ext", [["license", "./LICENSE"]]);
+      assertCase("SEC-12 an extensionless file asks rather than being refused as an executable",
+        await s12Click("license", "./LICENSE", "LICENSE", "open", 1));
+      await leaveSource();
+      await assertNoLate();
+      const empty = await readSecurityImageOwner(null);
+      await assertNoLate();
+      const retired = empty.tabs.length === 0 && empty.id === null && empty.current === null &&
+        empty.descriptor === null && empty.identity === null &&
+        empty.pending.pending === false && empty.pending.count === 0 &&
+        empty.welcome && empty.heading === "Welcome to Markaloo" && empty.loading === false &&
+        actions.every(action => !action.pending && action.settled &&
+          (!action.question || action.question.settled && action.question.request.window.isDestroyed()));
+      check("SEC-12 local sources and expected questions retire before deferred N11", retired,
+        JSON.stringify(empty));
+      if (!retired) throw new Error("SEC-12 local owner retirement is incomplete");
+    } catch (error) {
+      localFailure = error;
+      throw error;
+    } finally {
+      expectedSecurityQuestion = null;
+      const restorationErrors = [];
+      const restore = async (label, operation) => {
+        try { await operation(); }
+        catch (error) { restorationErrors.push(label + ": " + String(error.message || error)); }
+      };
+      const release = (label, operation) => {
+        try { operation(); }
+        catch (error) { restorationErrors.push(label + ": " + String(error.message || error)); }
+      };
+      let retiredPage = null, trapReady = false, finalEndpoints = null;
+      // Main observations stay armed while owner checks and page disposal await
+      // the renderer. The page returns its last endpoints as it releases itself.
+      await restore("target-close witness", async () => {
+        if (pageInstalled) await restoreTargetClose();
+      });
+      await restore("page witness", async () => {
+        if (!pageInstalled) return;
+        await requireKnownPageOwners();
+        retiredPage = Object.freeze(await exec(`(() => {
+          const probe = window.__securityLocalLinks;
+          if (!probe || probe.tabs !== window.CustomTabs || probe.folia !== window.folia ||
+              probe.pageSession !== window.getReloadRequestSession()) {
+            throw new Error('Local link page disposal lost ownership');
+          }
+          if (probe.targetClose || window.__securityLocalTargetClose) {
+            throw new Error('Target-close observation is still owned; retain its page witness');
+          }
+          window.removeEventListener('click', probe.capture, true);
+          probe.unsubscribe();
+          if (probe.injected?.isConnected) probe.injected.remove();
+          const endpoints = { clicks: probe.clicks.length, errors: probe.errors.length };
+          delete window.__securityLocalLinks;
+          return endpoints;
+        })()`));
+      });
+      await restore("shared trap readiness", async () => {
+        trapReady = await waitForExternalTrap(win);
+      });
+      // Listener removal can invoke application callbacks. Finish it before the
+      // protected snapshot/compare/property-restoration tail.
+      release("navigation listeners", () => {
+        contents.removeListener("will-frame-navigate", observeFrameNavigation);
+        contents.removeListener("will-navigate", observeNavigation);
+        contents.removeListener("did-start-navigation", observeStartedNavigation);
+      });
+      try {
+        // Even immediate async readers yield after cloning. Snapshot the retained
+        // Main counts synchronously; no await or application callback may separate
+        // this finite endpoint comparison from releasing the owned properties.
+        finalEndpoints = visualUtils.snapshotExternalOpenCounts();
+      } catch (error) {
+        restorationErrors.push("final shared histories: " + String(error.message || error));
+      }
+      const finalCounts = {
+        shell: finalEndpoints?.shell ?? null, external: finalEndpoints?.external ?? null,
+        sends: sends.length, entries: entries.length, work: fileWork.length,
+        navigation: navigation.length, clicks: retiredPage?.clicks ?? null,
+        errors: retiredPage?.errors ?? null, faults: faults.length,
+      };
+      const accounted = sealed !== null && isDeepStrictEqual(finalCounts, sealed) &&
+        faults.length === 0 && navigation.length === 0 &&
+        expectedSecurityQuestion === null && securityDialogGuardsIntact() && trapReady &&
+        sharedTrapShell.openPath === trapOpeners.openPath &&
+        sharedTrapShell.openExternal === trapOpeners.openExternal;
+      try {
+        restoreSecurityLocalSlot(securityGestureRegistration, "observer", observer, null,
+          originalSlots.observer);
+      } catch (error) {
+        restorationErrors.push("Main gesture observer: " + String(error.message || error));
+      }
+      try {
+        restoreSecurityLocalSlot(contents, "send", observedSend, realSend, originalSlots.send);
+      } catch (error) {
+        restorationErrors.push("Main send: " + String(error.message || error));
+      }
+      try {
+        restoreSecurityLocalSlot(realPathHost, "native", observedRealPath, realPath, originalSlots.realPath);
+      } catch (error) {
+        restorationErrors.push("realpath: " + String(error.message || error));
+      }
+      try {
+        restoreSecurityLocalSlot(fs, "statSync", observedStat, realStat, originalSlots.stat);
+      } catch (error) {
+        restorationErrors.push("stat: " + String(error.message || error));
+      }
+      // Reporting is outside the protected tail too: a logger is a callback.
+      check("SEC-12 final immutable accounting covers owner verification and asynchronous disposal",
+        accounted, JSON.stringify({ sealed, finalCounts, faults, navigation }));
+      if (!accounted) restorationErrors.push("final immutable endpoint comparison failed");
+      const restored = securityGestureRegistration.observer === null &&
+        securityGestureRegistration.handler === registration.handler &&
+        securityGestureRegistration.installed === registration.installed &&
+        securityGestureRegistration.count === 1 && contents.send === realSend &&
+        fs.realpathSync === realPathHost && realPathHost.native === realPath && fs.statSync === realStat &&
+        isDeepStrictEqual(Object.getOwnPropertyDescriptor(contents, "send"), originalSlots.send) &&
+        isDeepStrictEqual(Object.getOwnPropertyDescriptor(realPathHost, "native"), originalSlots.realPath) &&
+        isDeepStrictEqual(Object.getOwnPropertyDescriptor(fs, "statSync"), originalSlots.stat) &&
+        expectedSecurityQuestion === null && securityDialogGuardsIntact() &&
+        trapReady && sharedTrapShell.openPath === trapOpeners.openPath &&
+        sharedTrapShell.openExternal === trapOpeners.openExternal;
+      check("SEC-12 scoped observations restore exact Main identities and disarmed guards",
+        restored && restorationErrors.length === 0, JSON.stringify(restorationErrors));
+      if (!restored || restorationErrors.length) {
+        throw new Error("SEC-12 restoration failed; live/failed fixtures retained: " +
+          restorationErrors.join("; ") +
+          (localFailure ? "\nOriginal local failure: " + String(localFailure.stack || localFailure) : ""));
+      }
+    }
+    // Keep s12dir and its immutable sources alive: unchanged N11 still creates
+    // siblings there and retains its separate, pending legacy recovery contract.
   }
-
-  const s12Txt = await s12Click("txt");
-  check(
-    "FEATURE an inert document (.txt) still opens without a prompt",
-    s12Txt.openPath.length === 1 &&
-      s12Txt.openPath[0].endsWith("notes.txt") &&
-      s12Txt.confirms.length === 0,
-    JSON.stringify(s12Txt),
-  );
-
-  const s12Md = await s12Click("md");
-  check(
-    "FEATURE a markdown link still opens inside the app, never via the shell",
-    s12Md.ipc.length === 1 &&
-      s12Md.ipc[0].endsWith("linked.md") &&
-      s12Md.openPath.length === 0,
-    JSON.stringify(s12Md),
-  );
-
-  // .svg is in neither set: script-capable when the system handler is a
-  // browser, but a legitimate thing to link to. It must ask.
-  await exec(`window.__s12ConfirmAnswer = false; null`);
-  const s12SvgNo = await s12Click("svg");
-  check(
-    "SEC-12 an unrecognised type asks first, and declining opens nothing",
-    s12SvgNo.confirms.length === 1 &&
-      s12SvgNo.confirms[0].includes("diagram.svg") &&
-      s12SvgNo.openPath.length === 0,
-    JSON.stringify(s12SvgNo),
-  );
-
-  await exec(`window.__s12ConfirmAnswer = true; null`);
-  const s12SvgYes = await s12Click("svg");
-  check(
-    "FEATURE accepting the prompt opens the unrecognised type",
-    s12SvgYes.confirms.length === 1 &&
-      s12SvgYes.openPath.length === 1 &&
-      s12SvgYes.openPath[0].endsWith("diagram.svg"),
-    JSON.stringify(s12SvgYes),
-  );
-  await exec(`window.__s12ConfirmAnswer = false; null`);
-
-  const s12Unc = await s12Click("unc");
-  check(
-    "SEC-12 a protocol-relative UNC link is blocked and never reaches the filesystem",
-    // The href assertion is load-bearing: without it this would still pass if
-    // DOMPurify had stripped the href and the handler never ran at all.
-    s12Unc.clicked.href === "//attacker.invalid/share/payload.txt" &&
-      s12Unc.notes.length === 1 &&
-      s12Unc.openPath.length === 0 &&
-      s12Unc.confirms.length === 0 &&
-      !s12Unc.exists.some((p) => /attacker\.invalid/i.test(p)),
-    JSON.stringify(s12Unc),
-  );
-
-  // The backslash form cannot be authored in markdown (marked eats the
-  // escapes), so it is injected as a real anchor. What is under test is the
-  // handler, not the parser. The ordering assertion is the important half: on
-  // Windows, fs.existsSync() on a UNC path opens the SMB connection and leaks
-  // an NTLMv2 challenge/response before anything is ever "opened".
-  await s12Reset();
-  const s12Unc2 = await exec(`
-    (async () => {
-      const a = document.createElement('a');
-      a.setAttribute('href', '\\\\\\\\attacker.invalid\\\\share\\\\payload.txt');
-      a.textContent = 'unc2';
-      document.getElementById('viewer').appendChild(a);
-      a.click();
-      await new Promise((r) => setTimeout(r, 120));
-      const s = window.__s12;
-      a.remove();
-      return { openPath: s.openPath.slice(), confirms: s.confirms.slice(), exists: s.exists.slice(), notes: s.notes.slice() };
-    })()
-  `);
-  check(
-    "SEC-12 a backslash UNC link is blocked before fs.existsSync() touches the network",
-    s12Unc2.openPath.length === 0 &&
-      s12Unc2.confirms.length === 0 &&
-      s12Unc2.exists.length === 0 &&
-      s12Unc2.notes.length === 1,
-    JSON.stringify(s12Unc2),
-  );
-
-  // --- symlinks and directories -------------------------------------------
-  // The policy is decided from the extension, so it has to be decided from the
-  // extension of what the link *actually resolves to*. A symlink named
-  // diagram.png pointing at payload.ps1 is opened by the shell as the script.
-  // Symlinks are ordinary on the macOS and Linux release targets.
-  const s12link = path.join(s12dir, "diagram-link.png");
-  let symlinksAvailable = true;
-  try {
-    fs.symlinkSync(path.join(s12dir, "script.ps1"), s12link, "file");
-  } catch (e) {
-    // Windows needs Developer Mode or SeCreateSymbolicLinkPrivilege.
-    symlinksAvailable = false;
-    console.log(
-      `SKIP  SEC-12 symlink coverage - cannot create a symlink here (${e.code || e.message})`,
-    );
-    skipped.push("SEC-12 symlink");
-  }
-
-  const s12subdir = path.join(s12dir, "subfolder");
-  fs.mkdirSync(s12subdir, { recursive: true });
-
-  await render(
-    [
-      "# Resolution",
-      "",
-      "[symlink](./diagram-link.png)",
-      "",
-      "[folder](./subfolder)",
-      "",
-    ].join("\n"),
-    "full",
-  );
-
-  if (symlinksAvailable) {
-    const s12Sym = await s12Click("symlink");
-    check(
-      "SEC-12 a symlink with a safe-looking name is judged by its real target",
-      s12Sym.clicked.found === true &&
-        s12Sym.openPath.length === 0 &&
-        s12Sym.confirms.length === 0 &&
-        s12Sym.notes.length === 1,
-      JSON.stringify(s12Sym),
-    );
-  }
-
-  const s12Dir = await s12Click("folder");
-  check(
-    "FEATURE a link to a folder still opens it, and is not mistaken for an executable",
-    s12Dir.clicked.found === true &&
-      s12Dir.openPath.length === 1 &&
-      s12Dir.openPath[0].endsWith("subfolder") &&
-      s12Dir.notes.length === 0,
-    JSON.stringify(s12Dir),
-  );
-
-  // An extensionless file is ambiguous, not automatically hostile. LICENSE,
-  // README, Makefile and .bashrc are ordinary link targets; an earlier
-  // revision of this fix refused them all outright and told the user they
-  // were executables.
-  fs.writeFileSync(path.join(s12dir, "LICENSE"), "MIT\n");
-  await render("# Ext\n\n[license](./LICENSE)\n", "full");
-  await exec(`window.__s12ConfirmAnswer = true; null`);
-  const s12Lic = await s12Click("license");
-  await exec(`window.__s12ConfirmAnswer = false; null`);
-  check(
-    "SEC-12 an extensionless file asks rather than being refused as an executable",
-    s12Lic.clicked.found === true &&
-      s12Lic.confirms.length === 1 &&
-      s12Lic.confirms[0].includes("LICENSE") &&
-      s12Lic.openPath.length === 1,
-    JSON.stringify(s12Lic),
-  );
 
   // ==========================================================================
   // N11 - the click delegation was not TOTAL, and the hole was shaped like a
