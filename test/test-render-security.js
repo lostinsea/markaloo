@@ -11,10 +11,12 @@
 // Payloads set window.__pwned rather than spawning a process. The property that
 // matters is whether document content executes in the isolated renderer;
 // no payload starts another process.
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { pathToFileURL } = require("url");
+const { isDeepStrictEqual } = require("util");
 
 // Isolate this suite's userData profile before main.js exists and before the
 // app is ready. See test-userdata-isolation.js.
@@ -29,6 +31,91 @@ const SEC08_FILE_HELPERS_DOTFILE_HARNESS =
   process.env.SEC08_FILE_HELPERS_DOTFILE_HARNESS === "1";
 const SEC08_FILE_HELPERS_MISSING_GLOBAL_HARNESS =
   process.env.SEC08_FILE_HELPERS_MISSING_GLOBAL_HARNESS === "1";
+let observedMain = null;
+let chooserAllowance = null;
+let dir = null;
+let registeredTempDirs = null;
+let abortingSecurityHarness = false;
+const securityWindows = new Map();
+
+function failSecurityUnattended(error) {
+  chooserAllowance = null;
+  if (dir) registeredTempDirs?.delete(dir);
+  try {
+    fs.writeSync(2, "FAIL  security harness aborted  -> " +
+      String(error?.stack || error) + "\n" +
+      (dir ? "RETAINED security fixtures outside shared sweeps: " + dir + "\n" : ""));
+  } catch { /* Reporting cannot postpone the nonzero exit. */ }
+  if (abortingSecurityHarness) {
+    process.exit(2);
+    return;
+  }
+  abortingSecurityHarness = true;
+  try { app.exit(2); } finally { process.exit(2); }
+}
+process.on("uncaughtException", failSecurityUnattended);
+process.on("unhandledRejection", failSecurityUnattended);
+
+const nativeDialogGuards = {};
+for (const method of ["showMessageBox", "showMessageBoxSync", "showOpenDialog",
+  "showOpenDialogSync", "showSaveDialog", "showSaveDialogSync", "showErrorBox"]) {
+  const guard = method === "showOpenDialog" ? (...args) => {
+    const allowance = chooserAllowance;
+    chooserAllowance = null;
+    let fixtureMatches = false;
+    if (allowance && typeof allowance.fixture === "string" &&
+        path.isAbsolute(allowance.fixture) && typeof allowance.markdown === "string") {
+      try {
+        fixtureMatches = fs.readFileSync(allowance.fixture, "utf8") === allowance.markdown;
+      } catch { /* Missing or changed bytes cannot receive a chooser grant. */ }
+    }
+    const expected = {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+        { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    };
+    if (!allowance || allowance.consumed || args.length !== 2 ||
+        args[0] !== observedMain || args[0] !== allowance.win ||
+        args[0].isDestroyed() || args[0].webContents !== allowance.contents ||
+        allowance.contents.isDestroyed() ||
+        allowance.contents.mainFrame !== allowance.frame ||
+        allowance.frame.isDestroyed() ||
+        allowance.contents.getURL() !== allowance.pageUrl ||
+        !isDeepStrictEqual(args[1], expected) || !fixtureMatches) {
+      return failSecurityUnattended(new Error("Unexpected native dialog: " + method));
+    }
+    allowance.consumed = true;
+    return Promise.resolve({ canceled: false, filePaths: [allowance.fixture] });
+  } : () => failSecurityUnattended(new Error("Unexpected native dialog: " + method));
+  nativeDialogGuards[method] = guard;
+  if (method === "showOpenDialog") {
+    Object.defineProperty(dialog, method, { value: guard, writable: false, configurable: false });
+  } else {
+    dialog[method] = guard;
+  }
+}
+const { OwnedDialogs } = require("../src/owned-dialogs");
+const blockSecurityOwnedDialog = () =>
+  failSecurityUnattended(new Error("Unexpected Main-owned security dialog"));
+OwnedDialogs.prototype.show = blockSecurityOwnedDialog;
+const securityDialogGuardsIntact = () =>
+  Object.entries(nativeDialogGuards).every(([method, guard]) => dialog[method] === guard) &&
+  Object.getOwnPropertyDescriptor(dialog, "showOpenDialog").writable === false &&
+  OwnedDialogs.prototype.show === blockSecurityOwnedDialog;
+
+const visualUtils = require("./test-visual-utils");
+registeredTempDirs = visualUtils.REGISTERED_TEMP_DIRS;
+dir = visualUtils.tempDir("mdv-sec-");
+// Neither shared exit sweep may remove watched fixtures from a live or
+// unconfirmed owner. Only the terminal destruction check returns this entry.
+registeredTempDirs.delete(dir);
+// Keep the shared recording trap, including its positive external-link probes.
+// Installing it before Main does not turn expected shell observations into vetoes.
+const securityShellTrap = visualUtils.trapExternalOpens(null);
+app.on("browser-window-created", (_event, win) => securityWindows.set(win, win.webContents));
 if (
   !SEC08_LOADER_FOCUSED_HARNESS &&
   !SEC08_FILE_HELPERS_FOCUSED_HARNESS &&
@@ -36,10 +123,12 @@ if (
   !SEC08_FILE_HELPERS_DOTFILE_HARNESS &&
   !SEC08_FILE_HELPERS_MISSING_GLOBAL_HARNESS
 ) {
+  if (BrowserWindow.getAllWindows().length !== 0) {
+    failSecurityUnattended(new Error("A window existed before security Main observation"));
+  }
+  app.once("browser-window-created", (_event, win) => { observedMain = win; });
   require("../src/main.js");
 }
-
-const dir = require("./test-visual-utils").tempDir("mdv-sec-");
 
 const results = [];
 const skipped = [];
@@ -56,6 +145,7 @@ const {
   captureScreenshot,
   trapExternalOpens,
   waitForExternalTrap,
+  admitTestDocument,
 } = require("./test-visual-utils");
 
 // THE SUITE-LEVEL half of the renderer's state, extracted so that a document
@@ -2385,11 +2475,208 @@ async function run(win) {
   // pointing at a remote SMB share is fetched automatically and can hand the
   // user's NTLM credentials to a host named by untrusted markdown.
   // ==========================================================================
-  // No document is open here, so a relative src has nothing to resolve against
-  // and must survive verbatim. Set explicitly rather than relying on the order
-  // the sections happen to run in - i5 below is exactly the case the
-  // document-relative resolver rewrites once a file IS open.
-  await exec(`window.currentFilePath = null; true`);
+  async function readSecurityImageOwner(filePath) {
+    return exec(`(() => {
+      const tabs = window.CustomTabs;
+      const tab = tabs.getActiveTab();
+      const state = tab && tabs.__documentState(tab);
+      const pageSession = window.getReloadRequestSession();
+      const loading = document.getElementById('loadingScreen');
+      return {
+        id: tab?.id ?? null, path: tab?.filePath ?? null,
+        content: tab?.content, original: tab?.originalContent,
+        live: window.originalMarkdown, current: window.currentFilePath,
+        tabs: tabs.getTabs().map(item => ({ id: item.id, path: item.filePath })),
+        descriptor: tabs.getDocumentDescriptor(),
+        identity: tabs.getActiveDocumentIdentity(${JSON.stringify(filePath)}, pageSession),
+        pageSession, state, markedDirty: tab?.hasUnsavedChanges,
+        pending: window.getPendingSaveStatus(),
+        heading: document.querySelector('#viewer h1')?.textContent,
+        welcome: !!document.querySelector('#viewer .welcome'),
+        loading: loading ? loading.classList.contains('active') : null,
+        images: Array.from(document.querySelectorAll('#viewer img'), image => ({
+          alt: image.getAttribute('alt'), complete: image.complete,
+          width: image.naturalWidth, src: image.getAttribute('src'),
+          authored: image.getAttribute('data-original-src'),
+          noted: !!image.closest('.noted-image'),
+        })),
+      };
+    })()`);
+  }
+
+  function securityImageOwnerMatches(owner, filePath, markdown, heading) {
+    const identity = owner.identity, descriptor = owner.descriptor;
+    return Number.isSafeInteger(owner.id) && owner.id > 0 &&
+      owner.tabs.length === 1 && owner.tabs[0].id === owner.id &&
+      owner.tabs[0].path === filePath && owner.path === filePath &&
+      owner.current === filePath && owner.content === markdown &&
+      owner.original === markdown && owner.live === markdown &&
+      descriptor?.logicalPath === filePath &&
+      descriptor.documentUrl === pathToFileURL(filePath).href &&
+      typeof descriptor.ref === "string" && /^[a-f0-9]{64}$/.test(descriptor.ref) &&
+      identity?.tabId === owner.id && identity.documentRef === descriptor.ref &&
+      typeof owner.pageSession === "string" && owner.pageSession.length > 0 &&
+      identity.pageSession === owner.pageSession &&
+      Number.isSafeInteger(identity.rendererGeneration) && identity.rendererGeneration > 0 &&
+      Number.isSafeInteger(identity.documentGeneration) && identity.documentGeneration > 0 &&
+      typeof identity.pathKey === "string" && identity.pathKey.length > 0 &&
+      owner.state?.maintained === true && owner.state.dirty === false &&
+      owner.state.liveWitnessMatchesContent === true &&
+      owner.markedDirty === false &&
+      owner.pending.pending === false && owner.pending.count === 0 &&
+      owner.heading === heading && owner.loading === false && !owner.welcome;
+  }
+
+  async function admitSecurityImageFixture(filePath, markdown, heading, alts, validAlts) {
+    const before = await readSecurityImageOwner(filePath);
+    const empty = before.tabs.length === 0 && before.id === null &&
+      before.current === null && before.descriptor === null && before.identity === null &&
+      before.pending.pending === false && before.pending.count === 0 &&
+      before.heading !== heading;
+    check("SETUP image admission starts without an existing document owner: " + heading,
+      empty && win === observedMain && securityDialogGuardsIntact(), JSON.stringify(before));
+    if (!empty || win !== observedMain || !securityDialogGuardsIntact()) {
+      throw new Error("Image admission has an unexpected owner or dialog guard");
+    }
+    const allowance = {
+      win, contents: win.webContents, frame: win.webContents.mainFrame,
+      pageUrl: win.webContents.getURL(), fixture: filePath, markdown, consumed: false,
+    };
+    chooserAllowance = allowance;
+    try {
+      await admitTestDocument(win, filePath, markdown, { externallyManagedChooser: true });
+      check("SETUP image admission consumes its exact one-use Main chooser: " + heading,
+        allowance.consumed && chooserAllowance === null && securityDialogGuardsIntact());
+      if (!allowance.consumed || chooserAllowance !== null || !securityDialogGuardsIntact()) {
+        throw new Error("Image fixture bypassed its scoped Main chooser");
+      }
+    } finally {
+      chooserAllowance = null;
+    }
+    let owner = null, ready = false;
+    for (let attempt = 0; attempt < 160; attempt++) {
+      owner = await readSecurityImageOwner(filePath);
+      ready = securityImageOwnerMatches(owner, filePath, markdown, heading) &&
+        owner.pageSession === before.pageSession &&
+        fs.readFileSync(filePath, "utf8") === markdown &&
+        isDeepStrictEqual(owner.images.map(image => image.alt), alts) &&
+        validAlts.every(alt => owner.images.find(image => image.alt === alt)?.complete === true) &&
+        (!alts.includes("missing") ||
+          owner.images.find(image => image.alt === "missing")?.complete === true);
+      if (ready) break;
+      await sleep(50);
+    }
+    check("SETUP admitted image owner, disk body and current completed-image DOM agree: " + heading,
+      ready, JSON.stringify(owner));
+    if (!ready) throw new Error("Image fixture did not reach its current admitted DOM");
+    return owner;
+  }
+
+  async function closeSecurityImageFixture(owner, filePath, markdown, heading) {
+    const before = await readSecurityImageOwner(filePath);
+    const clean = securityImageOwnerMatches(before, filePath, markdown, heading) &&
+      before.id === owner.id && before.pageSession === owner.pageSession &&
+      isDeepStrictEqual(before.identity, owner.identity) &&
+      before.descriptor.ref === owner.descriptor.ref &&
+      fs.readFileSync(filePath, "utf8") === markdown;
+    check("SETUP only the known clean image owner exists before close: " + heading,
+      clean, JSON.stringify(before));
+    if (!clean) throw new Error("Refusing to close an unknown, dirty or saving image owner");
+    await exec(`(() => {
+      const dialogs = window.MarkalooDialogs;
+      if (!dialogs || typeof dialogs.show !== 'function' ||
+          document.querySelector('#appMessageDialog[open]')) {
+        throw new Error('Image close starts with an unexpected application dialog');
+      }
+      const observation = window.__securityImageClose = {
+        dialogs, confirm: window.confirm, calls: [], confirmations: [],
+        opened: false, done: false, error: null,
+      };
+      observation.observedDialogs = Object.freeze({
+        ...dialogs,
+        show(...args) {
+          observation.calls.push(String(args[0]?.title || 'untitled'));
+          return dialogs.show(...args);
+        },
+      });
+      window.MarkalooDialogs = observation.observedDialogs;
+      window.confirm = message => {
+        observation.confirmations.push(String(message));
+        throw new Error('Unexpected image-close confirmation');
+      };
+      observation.observer = new MutationObserver(records => {
+        if (document.querySelector('#appMessageDialog[open]') ||
+            records.some(record => record.target.id === 'appMessageDialog' &&
+              record.attributeName === 'open' && record.oldValue !== null)) {
+          observation.opened = true;
+        }
+      });
+      observation.observer.observe(document.body, {
+        subtree: true, childList: true, attributes: true,
+        attributeFilter: ['open'], attributeOldValue: true,
+      });
+      if (window.MarkalooDialogs !== observation.observedDialogs) {
+        throw new Error('Image-close dialog observation was not installed');
+      }
+      Promise.resolve().then(() => window.CustomTabs.closeTab(${JSON.stringify(owner.id)}))
+        .then(() => { observation.done = true; }, error => {
+          observation.error = String(error?.stack || error);
+          observation.done = true;
+        });
+      return true;
+    })()`);
+    let closed = null;
+    try {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        closed = await exec(`(() => {
+          const observation = window.__securityImageClose;
+          return {
+            done: observation.done, error: observation.error,
+            calls: observation.calls.slice(), confirmations: observation.confirmations.slice(),
+            opened: observation.opened || !!document.querySelector('#appMessageDialog[open]'),
+            observing: window.MarkalooDialogs === observation.observedDialogs,
+          };
+        })()`);
+        if (!closed.observing || closed.calls.length || closed.confirmations.length ||
+            closed.opened || closed.error) {
+          check("image close never opens or answers an unexpected confirmation: " + heading,
+            false, JSON.stringify(closed));
+          throw new Error("Unexpected image-close dialog or failure; no answer was supplied");
+        }
+        if (closed.done) break;
+        await sleep(50);
+      }
+      const after = await readSecurityImageOwner(filePath);
+      const retired = closed?.done === true && after.tabs.length === 0 &&
+        after.id === null && after.path === null && after.current === null &&
+        after.descriptor === null && after.identity === null &&
+        after.pending.pending === false && after.pending.count === 0 &&
+        after.welcome && after.heading === "Welcome to Markaloo" && after.loading === false;
+      check("the clean image owner retires without confirmation and restores welcome DOM: " + heading,
+        retired, JSON.stringify({ closed, after }));
+      if (!retired) throw new Error("Image owner did not retire into a real no-document state");
+    } finally {
+      await exec(`(() => {
+        const observation = window.__securityImageClose;
+        observation.observer.disconnect();
+        window.MarkalooDialogs = observation.dialogs;
+        window.confirm = observation.confirm;
+        delete window.__securityImageClose;
+        return true;
+      })()`);
+    }
+  }
+
+  // No document may be invented by assigning currentFilePath. The direct-render
+  // hook control is valid only while the real tab model has no owner at all.
+  const imageHookOwner = await readSecurityImageOwner(null);
+  const noImageHookOwner = imageHookOwner.tabs.length === 0 && imageHookOwner.id === null &&
+    imageHookOwner.current === null && imageHookOwner.descriptor === null &&
+    imageHookOwner.identity === null && imageHookOwner.pending.pending === false &&
+    imageHookOwner.pending.count === 0;
+  check("SETUP local-image hook control has no admitted document or pending save",
+    noImageHookOwner, JSON.stringify(imageHookOwner));
+  if (!noImageHookOwner) throw new Error("Local-image hook control has an unexpected owner");
   await render(
     "# Doc\n\n" +
       "<img id=i1 src=\"C:\\pics\\a.png\">\n\n" +
@@ -2458,7 +2745,20 @@ async function run(win) {
   }
   fs.writeFileSync(path.join(relDir, "sibling.png"), relPng);
   const relDoc = path.join(relDir, "doc.md");
-  fs.writeFileSync(relDoc, "placeholder", "utf8");
+  const relHeading = "Security admitted relative images";
+  const relMarkdown = "# " + relHeading + "\n\n" +
+    "![plain](shots/a.png)\n\n" +
+    "![dot](./shots/b.png)\n\n" +
+    "![space](<shots/my pic.png>)\n\n" +
+    "![hash](shots/hash%23tag.png)\n\n" +
+    "![sibling](sibling.png)\n\n" +
+    "![dotdot](sub/../shots/a.png)\n\n" +
+    '<img alt="rawhtml" src="shots/raw.png">\n\n' +
+    "![missing](shots/nope.png)\n\n" +
+    "![unc](//attacker/share/x.png)\n\n" +
+    "![frag](#nope)\n\n" +
+    '<img alt="abs" src="C:\\pics\\a.png">\n';
+  fs.writeFileSync(relDoc, relMarkdown, "utf8");
 
   // VACUITY GUARD: if the fixtures are not on disk every naturalWidth below is
   // 0 for a reason that has nothing to do with the resolver, and the suite
@@ -2472,28 +2772,18 @@ async function run(win) {
     relDir,
   );
 
-  await exec(`window.currentFilePath = ${JSON.stringify(relDoc)}; true`);
-  await render(
-    "# Doc\n\n" +
-      "![plain](shots/a.png)\n\n" +
-      "![dot](./shots/b.png)\n\n" +
-      "![space](<shots/my pic.png>)\n\n" +
-      "![hash](shots/hash%23tag.png)\n\n" +
-      "![sibling](sibling.png)\n\n" +
-      "![dotdot](sub/../shots/a.png)\n\n" +
-      '<img alt="rawhtml" src="shots/raw.png">\n\n' +
-      "![missing](shots/nope.png)\n\n" +
-      "![unc](//attacker/share/x.png)\n\n" +
-      "![frag](#nope)\n\n" +
-      '<img alt="abs" src="C:\\pics\\a.png">\n',
-    "full",
-    1800,
+  const relOwner = await admitSecurityImageFixture(
+    relDoc, relMarkdown, relHeading,
+    ["plain", "dot", "space", "hash", "sibling", "dotdot", "rawhtml",
+      "missing", "unc", "frag", "abs"],
+    ["plain", "dot", "space", "hash", "sibling", "dotdot", "rawhtml"],
   );
   const rel = await exec(`
     (() => {
       const out = {};
       for (const i of document.querySelectorAll('#viewer img')) {
         out[i.getAttribute('alt') || '?'] = {
+          complete: i.complete,
           w: i.naturalWidth,
           attr: i.getAttribute('src'),
           authored: i.getAttribute('data-original-src')
@@ -2541,7 +2831,8 @@ async function run(win) {
   );
   check(
     "FEATURE a relative image naming a missing file stays broken, not silently rewritten elsewhere",
-    !!rel.missing && rel.missing.w === 0 && /shots\/nope\.png$/.test(rel.missing.attr || ""),
+    !!rel.missing && rel.missing.complete === true && rel.missing.w === 0 &&
+      /shots\/nope\.png$/.test(rel.missing.attr || ""),
     JSON.stringify(rel),
   );
   // A fragment-only src names no image. Resolving it would write the
@@ -2555,14 +2846,23 @@ async function run(win) {
 
   // With no document open there is nothing to resolve against, and the src must
   // be left alone rather than resolved against the app's own directory.
-  await exec(`window.currentFilePath = null; true`);
-  await render("# Doc\n\n![nodoc](shots/a.png)\n", "full", 900);
+  await closeSecurityImageFixture(relOwner, relDoc, relMarkdown, relHeading);
+  await render("# Security no-document image control\n\n![nodoc](shots/a.png)\n", "full", 900);
   const noDoc = await exec(`
     (() => {
       const i = document.querySelector('#viewer img');
       return i ? { attr: i.getAttribute('src'), authored: i.getAttribute('data-original-src') } : null;
     })()
   `);
+  const noDocOwner = await readSecurityImageOwner(null);
+  check("SETUP no-document image control renders only after actual owner retirement",
+    noDocOwner.tabs.length === 0 && noDocOwner.id === null &&
+      noDocOwner.current === null && noDocOwner.descriptor === null &&
+      noDocOwner.identity === null && noDocOwner.pending.pending === false &&
+      noDocOwner.pending.count === 0 && noDocOwner.loading === false &&
+      noDocOwner.heading === "Security no-document image control" &&
+      noDocOwner.images.length === 1 && noDocOwner.images[0].alt === "nodoc",
+    JSON.stringify(noDocOwner));
   check(
     "FEATURE with no file open a relative image src is left untouched",
     !!noDoc && noDoc.attr === "shots/a.png" && !noDoc.authored,
@@ -2591,63 +2891,51 @@ async function run(win) {
   // image: a contextmenu event to set the right-click target, then a click on
   // the actual menu item. Nothing is asserted about source text alone.
   // ==========================================================================
-  const normSrc = "# Doc\n\n![space](<shots/my pic.png>)\n";
-  fs.writeFileSync(relDoc, normSrc, "utf8");
-  await exec(`window.ipcRenderer.send('open-file-path', { filePath: ${JSON.stringify(relDoc)} }); null`);
-  let noteOwner = null;
-  for (let i = 0; i < 100; i++) {
-    noteOwner = await exec(`(() => {
-      const tab = window.CustomTabs.getActiveTab();
-      return {
-        id: tab && tab.id,
-        path: tab && tab.filePath,
-        content: tab && tab.content,
-        original: tab && tab.originalContent,
-        live: window.originalMarkdown,
-      };
-    })()`);
-    if (noteOwner.path === relDoc &&
-        noteOwner.content === normSrc &&
-        noteOwner.original === normSrc &&
-        noteOwner.live === normSrc) break;
-    await sleep(50);
-  }
-  check(
-    "the note fixture owns its real disk document before auto-save",
-    noteOwner.path === relDoc &&
-      noteOwner.content === normSrc &&
-      noteOwner.original === normSrc &&
-      noteOwner.live === normSrc,
-    JSON.stringify(noteOwner),
+  const noteDoc = path.join(relDir, "image-note.md");
+  const noteHeading = "Security admitted normalized image note";
+  const normSrc = "# " + noteHeading + "\n\n![space](<shots/my pic.png>)\n";
+  const noteOwner = await admitSecurityImageFixture(
+    noteDoc, normSrc, noteHeading, ["space"], ["space"],
   );
-  if (noteOwner.path !== relDoc || noteOwner.original !== normSrc ||
-      noteOwner.content !== normSrc || noteOwner.live !== normSrc) {
-    throw new Error("Note fixture did not acquire a disk-backed tab owner");
+  check("SETUP the separate admitted note image loads its normalized destination",
+    noteDoc !== relDoc && noteOwner.images[0].width > 0 &&
+      noteOwner.images[0].authored === "shots/my%20pic.png" &&
+      noteOwner.images[0].src === pathToFileURL(path.join(relShots, "my pic.png")).href,
+    JSON.stringify(noteOwner.images));
+  if (noteOwner.images[0].width <= 0 ||
+      noteOwner.images[0].authored !== "shots/my%20pic.png" ||
+      noteOwner.images[0].src !== pathToFileURL(path.join(relShots, "my pic.png")).href) {
+    throw new Error("The note fixture lacks its current normalized image");
   }
   await exec(`(() => {
     window.__noteFixture = {
-      alerts: [], confirmations: [],
-      alert: window.alert, confirm: window.confirm,
+      alerts: [], alert: window.alert,
     };
     window.alert = message => window.__noteFixture.alerts.push(String(message));
-    window.confirm = message => {
-      window.__noteFixture.confirmations.push(String(message));
-      return false;
-    };
+    return true;
   })()`);
   try {
-    await render(normSrc, "full", 1500);
-    await exec(`
+    const noteAction = await exec(`
       (() => {
         const img = document.querySelector('#viewer img[alt="space"]');
-        if (!img) return false;
+        if (!img || !img.complete || img.naturalWidth <= 0 ||
+            document.querySelector('#viewer h1')?.textContent !== ${JSON.stringify(noteHeading)}) {
+          throw new Error('Current admitted note image is not ready');
+        }
         img.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-        document.getElementById('ctxAddNote').click();
+        const addNote = document.getElementById('ctxAddNote');
+        if (addNote.classList.contains('disabled')) throw new Error('Image note menu is disabled');
+        addNote.click();
+        if (!document.getElementById('noteDialogOverlay').classList.contains('visible')) {
+          throw new Error('The image context-menu did not open its real note dialog');
+        }
         document.getElementById('noteTitle').value = 'a note';
         document.getElementById('noteSaveBtn').click();
         return true;
       })()
     `);
+    check("SETUP the admitted image context-menu and actual note Save action run",
+      noteAction === true);
     await sleep(1500);
     const noteSrc = await exec(`window.originalMarkdown`);
     check(
@@ -2659,7 +2947,7 @@ async function run(win) {
     );
     let noteSaved = null;
     for (let i = 0; i < 100; i++) {
-      const disk = fs.readFileSync(relDoc, "utf8");
+      const disk = fs.readFileSync(noteDoc, "utf8");
       noteSaved = await exec(`(() => {
         const tab = window.CustomTabs.getActiveTab();
         const state = tab && window.CustomTabs.__documentState(tab);
@@ -2671,13 +2959,16 @@ async function run(win) {
           live: window.originalMarkdown,
           dirty: state && state.dirty,
           markedDirty: tab && tab.hasUnsavedChanges,
-          pending: window.getPendingSaveStatus([${JSON.stringify(relDoc)}]).pending,
+          pending: window.getPendingSaveStatus([${JSON.stringify(noteDoc)}]).pending,
           alerts: window.__noteFixture.alerts.slice(),
+          heading: document.querySelector('#viewer h1')?.textContent,
+          notedImageComplete: document.querySelector('#viewer .noted-image img[alt="space"]')?.complete,
+          noteDialogClosed: !document.getElementById('noteDialogOverlay').classList.contains('visible'),
         };
       })()`);
       noteSaved.diskMatches = disk === noteSrc;
       if (noteSaved.id === noteOwner.id &&
-          noteSaved.path === relDoc &&
+          noteSaved.path === noteDoc &&
           noteSaved.diskMatches &&
           noteSaved.content === noteSrc &&
           noteSaved.original === noteSrc &&
@@ -2685,13 +2976,16 @@ async function run(win) {
           noteSaved.dirty === false &&
           noteSaved.markedDirty === false &&
           noteSaved.pending === false &&
+          noteSaved.heading === noteHeading &&
+          noteSaved.notedImageComplete === true &&
+          noteSaved.noteDialogClosed === true &&
           noteSaved.alerts.length === 0) break;
       if (noteSaved.alerts.length) break;
       await sleep(50);
     }
     const settled = noteSaved &&
       noteSaved.id === noteOwner.id &&
-      noteSaved.path === relDoc &&
+      noteSaved.path === noteDoc &&
       noteSaved.diskMatches &&
       noteSaved.content === noteSrc &&
       noteSaved.original === noteSrc &&
@@ -2699,32 +2993,34 @@ async function run(win) {
       noteSaved.dirty === false &&
       noteSaved.markedDirty === false &&
       noteSaved.pending === false &&
+      noteSaved.heading === noteHeading &&
+      noteSaved.notedImageComplete === true &&
+      noteSaved.noteDialogClosed === true &&
       noteSaved.alerts.length === 0;
     check("the note auto-save settles on its disk-backed tab", settled, JSON.stringify(noteSaved));
     if (!settled) throw new Error("Note auto-save did not settle on its clean owner");
-    const closed = await exec(`(async () => {
-      await window.CustomTabs.closeTab(${noteOwner.id});
-      return {
-        removed: !window.CustomTabs.getTabs().some(tab => tab.id === ${noteOwner.id}),
-        confirmations: window.__noteFixture.confirmations.slice(),
-      };
-    })()`);
+    const savedOwner = await readSecurityImageOwner(noteDoc);
     check(
-      "the saved note tab closes without an unsaved-work confirmation",
-      closed.removed && closed.confirmations.length === 0,
-      JSON.stringify(closed),
+      "the note save preserves its admitted owner and normalized source destination",
+      savedOwner.id === noteOwner.id &&
+        savedOwner.descriptor?.ref === noteOwner.descriptor.ref &&
+        isDeepStrictEqual(savedOwner.identity, noteOwner.identity) &&
+        savedOwner.heading === noteHeading &&
+        savedOwner.images.length === 1 && savedOwner.images[0].noted &&
+        savedOwner.images[0].complete && savedOwner.images[0].width > 0 &&
+        savedOwner.images[0].src === pathToFileURL(path.join(relShots, "my pic.png")).href &&
+        /<img src="shots\/my%20pic\.png" alt="space">/.test(noteSrc) &&
+        fs.readFileSync(relDoc, "utf8") === relMarkdown,
+      JSON.stringify({ savedOwner, noteSrc }),
     );
-    if (!closed.removed || closed.confirmations.length) {
-      throw new Error("Note fixture tab could not close cleanly");
-    }
+    await closeSecurityImageFixture(noteOwner, noteDoc, noteSrc, noteHeading);
   } finally {
     await exec(`(() => {
       window.alert = window.__noteFixture.alert;
-      window.confirm = window.__noteFixture.confirm;
       delete window.__noteFixture;
+      return true;
     })()`);
   }
-  await exec(`window.currentFilePath = null; true`);
 
   // ==========================================================================
   // SEC-12 - a link to a local file was handed straight to shell.openPath()
@@ -5734,7 +6030,7 @@ app.whenReady().then(async () => {
     console.log(
       `\n=== TIMED OUT after ${results.length - failed}/${results.length} checks ===`,
     );
-    app.exit(1);
+    failSecurityUnattended(new Error("Security watchdog expired"));
   }, 180000);
   watchdog.unref?.();
 
@@ -5757,8 +6053,17 @@ app.whenReady().then(async () => {
       await runFocusedLoaderProbes();
     } else {
       await sleep(2500);
-      const win = BrowserWindow.getAllWindows()[0];
-      if (!win) throw new Error("no BrowserWindow was created");
+      const win = observedMain;
+      check("security observes the actual Main before creating loader fixtures",
+        !!win && !win.isDestroyed() && BrowserWindow.getAllWindows().length === 1 &&
+          BrowserWindow.getAllWindows()[0] === win && securityDialogGuardsIntact());
+      if (!win || win.isDestroyed() || BrowserWindow.getAllWindows().length !== 1 ||
+          BrowserWindow.getAllWindows()[0] !== win || !securityDialogGuardsIntact()) {
+        throw new Error("The security Main window or its dialog guards were not observed");
+      }
+      if (!(await securityShellTrap) || !(await waitForExternalTrap(win))) {
+        throw new Error("Security lost its Main recording shell trap");
+      }
 
       await runUtilsLoaderProbe();
       await runMermaidConfigLoaderProbe();
@@ -5776,16 +6081,41 @@ app.whenReady().then(async () => {
     results.push({ name: "harness", ok: false });
   }
 
-  const failed = results.filter((r) => !r.ok).length;
   clearTimeout(watchdog);
+  // Keep the last watched owner from triggering Main's window-all-closed quit
+  // before its destruction and the failure footer have been verified.
+  const cleanupKeepalive = new BrowserWindow({
+    show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
+  });
+  let destructionConfirmed = true;
+  for (const [owner, contents] of securityWindows) {
+    if (owner === cleanupKeepalive) continue;
+    try {
+      if (!owner.isDestroyed()) owner.destroy();
+      if (!owner.isDestroyed() || !contents.isDestroyed()) destructionConfirmed = false;
+    } catch {
+      destructionConfirmed = false;
+    }
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  if (cleanupKeepalive.isDestroyed() ||
+      BrowserWindow.getAllWindows().some(owner => owner !== cleanupKeepalive) ||
+      !securityDialogGuardsIntact()) destructionConfirmed = false;
+  check("security fixture cleanup confirms owner destruction before release", destructionConfirmed);
+  if (destructionConfirmed && results.every(result => result.ok)) {
+    registeredTempDirs.add(dir);
+    check("security fixtures release only after a passing run and confirmed owner destruction",
+      visualUtils.releaseTempDir(dir), dir);
+  } else {
+    registeredTempDirs.delete(dir);
+    console.log("RETAINED security fixtures outside shared sweeps (" +
+      (destructionConfirmed ? "earlier test failure" : "owner destruction unconfirmed") + "): " + dir);
+  }
+  const failed = results.filter((r) => !r.ok).length;
   console.log(
     `\n=== ${results.length - failed}/${results.length} passed ===` +
       (skipped.length ? `  (${skipped.length} skipped: ${skipped.join(", ")})` : ""),
   );
-  try {
-    require("./test-visual-utils").releaseTempDir(dir);
-  } catch (e) {
-    /* ignore */
-  }
   app.exit(failed === 0 ? 0 : 1);
 });
