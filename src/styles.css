@@ -1402,7 +1402,8 @@ body.splitter-dragging * {
    highlighting block at the end of this file, so that a scheme has a single
    place to move it. Repeating it here would be dead - that rule has the
    identical selector and comes later - and would read as the place to edit. */
-.markdown-body code {
+.markdown-body code,
+.inline-source-editor code {
   padding: 2px 6px;
   border-radius: 3px;
   font-family: 'Fira Code Local', 'Fira Code', 'Consolas', 'Courier New', monospace;
@@ -4403,7 +4404,8 @@ body.dark-mode .context-menu {
    so that a Prism-highlighted <code class="language-x"> inside a <pre>,
    which matches both this and code[class*="language-"] at equal
    specificity, is decided by the later rule. */
-.markdown-body code {
+.markdown-body code,
+.inline-source-editor code {
   background: var(--code-inline-bg);
   color: var(--code-inline-fg);
 }
@@ -4718,3 +4720,15 @@ pre[class*="language-"] {
 .table-cell-footer-copy p { margin: 0; font: inherit; }
 .table-cell-footer-copy p + p { margin-top: 2px; }
 .table-cell-footer-actions { display: flex; gap: 10px; flex-shrink: 0; margin-left: auto; }
+/* Inline source stays preformatted: blocks, pipes and pasted line endings are
+   source text, not a second Markdown preview. */
+.inline-source-editor {
+  font-variant-ligatures: none;
+  min-height: 9em;
+  max-height: 55vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.inline-source-editor code { white-space: pre-wrap; }
+.inline-source-error { min-height: 1.4em; color: var(--error-color, #e57373); }

@@ -10,6 +10,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   const scrollPoints = { editor: [], preview: [] };
   const measuredSizes = new WeakMap();
   const tableReceipts = new WeakMap();
+  const textReceipts = new WeakMap(), sourceTextReceipts = new WeakMap();
   let pendingSource = false, lastEditor = 0, lastPreview = 0;
   const stats = { builds: 0, scrolls: 0, writes: 0, callbacks: [] };
 
@@ -30,21 +31,26 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   }
 
   function sliceView(view, from, to = view.text.length) {
-    return { text: view.text.slice(from, to), at: offset => view.at(from + offset) };
+    return { text: view.text.slice(from, to), at: offset => view.at(from + offset),
+      exact: offset => Number.isInteger(offset) && offset >= 0 && offset <= to - from &&
+        view.exact(from + offset) };
   }
 
   function replaceView(view, regex, replacement) {
     const pieces = [];
     let cursor = 0, output = 0;
     const copy = end => {
-      if (end > cursor) pieces.push({ from: output, to: output + end - cursor, start: cursor, end });
+      if (end > cursor) pieces.push({ from: output, to: output + end - cursor,
+        start: cursor, end, linear: true });
       output += end - cursor;
       cursor = end;
     };
     const text = view.text.replace(regex, (...args) => {
       const start = args[args.length - 2], value = replacement(...args);
       copy(start);
-      if (value.length) pieces.push({ from: output, to: output + value.length, start, end: start + args[0].length });
+      if (value === args[0]) { copy(start + value.length); return value; }
+      if (value.length) pieces.push({ from: output, to: output + value.length,
+        start, end: start + args[0].length, linear: false });
       output += value.length;
       cursor = start + args[0].length;
       return value;
@@ -55,13 +61,20 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       const part = pieces[Math.max(0, Math.min(pieces.length - 1, upperBound(pieces, offset, 'from') - 1))];
       const fraction = part.to > part.from ? (offset - part.from) / (part.to - part.from) : 0;
       return view.at(Math.round(part.start + fraction * (part.end - part.start)));
+    }, exact(offset) {
+      if (!Number.isInteger(offset) || offset < 0 || offset > text.length) return false;
+      if (!pieces.length) return view.exact(view.text.length);
+      const part = pieces[Math.max(0, Math.min(pieces.length - 1, upperBound(pieces, offset, 'from') - 1))];
+      if (offset === part.from) return view.exact(part.start);
+      if (offset === part.to) return view.exact(part.end);
+      return part.linear && view.exact(part.start + offset - part.from);
     } };
   }
 
   // Marked owns tokenization. This only verifies the copied characters in its
   // dequoted/deindented child input, one physical source line at a time.
   function childView(view, text, kind, task = false) {
-    const sourceLines = view.text.split('\n'), childLines = text.split('\n'), rows = [];
+    const sourceLines = view.text.split('\n'), childLines = text.split('\n'), rows = [], omissions = [];
     if (childLines.length > sourceLines.length) return null;
     let sourceOffset = 0, childOffset = 0;
     for (let line = 0; line < childLines.length; line++) {
@@ -97,14 +110,27 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         at = find(retained);
       }
       if (at < 0) return null;
+      const prefixEnd = sourceOffset + columns[at];
+      if (prefixEnd > sourceOffset && view.exact(sourceOffset) && view.exact(prefixEnd)) {
+        omissions.push({ start: view.at(sourceOffset), end: view.at(prefixEnd) });
+      }
       rows.push({ from: childOffset, sourceOffset, columns, at, generated, length: child.length });
       sourceOffset += raw.length + 1;
       childOffset += child.length + 1;
     }
-    return { text, at(offset) {
+    return { text, omissions, at(offset) {
       const row = rows[Math.max(0, upperBound(rows, offset, 'from') - 1)];
       const column = Math.max(0, Math.min(row.length, offset - row.from) - row.generated);
       return view.at(row.sourceOffset + row.columns[row.at + column]);
+    }, exact(offset) {
+      if (!Number.isInteger(offset) || offset < 0 || offset > text.length) return false;
+      const row = rows[Math.max(0, upperBound(rows, offset, 'from') - 1)];
+      const column = offset - row.from;
+      if (column < row.generated || column > row.length) return false;
+      const expanded = row.at + column - row.generated, original = row.columns[expanded];
+      // Interior tab columns and Marked-generated spaces are not source boundaries.
+      if (original === undefined || (expanded > 0 && original === row.columns[expanded - 1])) return false;
+      return view.exact(row.sourceOffset + original);
     } };
   }
 
@@ -127,7 +153,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       this.original = text;
       this.source = text.replace(/\r\n?/g, '\n');
       this.text = text;
-      this.segments = [{ from: 0, to: text.length, start: 0, end: text.length }];
+      this.segments = [{ from: 0, to: text.length, start: 0, end: text.length,
+        linear: true, exactStart: true, exactEnd: true }];
       this.cr = [];
       for (let i = 0; i < text.length; i++) if (text[i] === '\r' && text[i + 1] === '\n') this.cr.push({ offset: i });
       this.nonce = crypto.randomUUID();
@@ -137,15 +164,25 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       this.editableTables = new Map();
       this.textSpecs = new WeakMap();
       this.textGroups = [];
+      this.editableText = [];
+      this.captureOwners = [];
+      this.captureGaps = [];
       this.warnings = new Set();
       this.specials = { mermaid: [], raw: [] };
       this.selection = identity();
     }
-    originalOffset(position) {
-      const i = Math.min(this.segments.length - 1, upperBound(this.segments, position, 'from') - 1);
-      const s = this.segments[Math.max(0, i)];
+    originalOffset(position, segments = this.segments) {
+      const i = Math.min(segments.length - 1, upperBound(segments, position, 'from') - 1);
+      const s = segments[Math.max(0, i)];
       const fraction = s.to > s.from ? (position - s.from) / (s.to - s.from) : 0;
       return Math.round(s.start + fraction * (s.end - s.start));
+    }
+    exactOriginalOffset(position, segments = this.segments) {
+      if (!Number.isInteger(position) || position < 0 || position > segments[segments.length - 1].to) return false;
+      const s = segments[Math.max(0, upperBound(segments, position, 'from') - 1)];
+      if (position === s.from) return s.exactStart;
+      if (position === s.to) return s.exactEnd;
+      return s.linear;
     }
     offset(position) {
       const original = this.originalOffset(position);
@@ -167,21 +204,25 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           while (index < this.segments.length - 1 && this.segments[index].to <= cursor) index++;
           const s = this.segments[index], stop = Math.min(end, s.to);
           segments.push({ from: output, to: output + stop - cursor,
-            start: this.originalOffset(cursor), end: this.originalOffset(stop) });
+            start: this.originalOffset(cursor), end: this.originalOffset(stop), linear: s.linear,
+            exactStart: this.exactOriginalOffset(cursor), exactEnd: this.exactOriginalOffset(stop) });
           output += stop - cursor;
           cursor = stop;
         }
       };
       for (const edit of edits) {
         copy(edit.from);
+        if (edit.text === this.text.slice(edit.from, edit.to)) { copy(edit.to); continue; }
         if (edit.text.length) segments.push({ from: output, to: output + edit.text.length,
-          start: this.originalOffset(edit.from), end: this.originalOffset(edit.to) });
+          start: this.originalOffset(edit.from), end: this.originalOffset(edit.to), linear: false,
+          exactStart: this.exactOriginalOffset(edit.from), exactEnd: this.exactOriginalOffset(edit.to) });
         output += edit.text.length;
         cursor = edit.to;
       }
       copy(this.text.length);
       this.text = next;
-      this.segments = segments.length ? segments : [{ from: 0, to: 0, start: 0, end: 0 }];
+      this.segments = segments.length ? segments : [{ from: 0, to: 0, start: 0, end: 0,
+        linear: false, exactStart: false, exactEnd: false }];
       return next;
     }
     prepare(parseEmoji) {
@@ -211,6 +252,23 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       // Marked normalizes newlines before lexing; the offset map must do so too.
       this.replace(/\r\n?/g, () => '\n');
       const spans = new WeakMap();
+      const segments = this.segments.map(segment => ({ ...segment })), cr = [...this.cr];
+      const rootView = { text: this.text, at: offset => {
+        const original = this.originalOffset(offset, segments);
+        return original - upperBound(cr, original - 1, 'offset');
+      }, exact: offset => this.exactOriginalOffset(offset, segments) };
+      const codeBody = (token, view) => {
+        const width = /^`+/.exec(token.raw)[0].length;
+        let body = replaceView(sliceView(view, width, token.raw.length - width), /\n/g, () => ' ');
+        if (/^ .* $/.test(body.text) && /[^ ]/.test(body.text)) body = sliceView(body, 1, body.text.length - 1);
+        return body;
+      };
+      const captureBody = (descriptor, view) => {
+        if (descriptor.view.exact(0) && descriptor.view.exact(descriptor.view.text.length) &&
+            view.exact(0) && view.exact(view.text.length)) {
+          descriptor.captureBody = { start: view.at(0), end: view.at(view.text.length) };
+        }
+      };
       const containsHtml = token => token.type === 'html' ||
         [...(token.tokens || []), ...(token.items || [])].some(containsHtml);
       const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null) => {
@@ -230,6 +288,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             continue;
           }
           const tokenView = sliceView(view, at, at + token.raw.length);
+          if (topLevel && at > cursor && /^\s*$/.test(view.text.slice(cursor, at)) &&
+              view.exact(cursor) && view.exact(at)) {
+            this.captureGaps.push({ start: view.at(cursor), end: view.at(at) });
+          }
+          if (['space', 'br'].includes(token.type) && tokenView.exact(0) &&
+              tokenView.exact(token.raw.length)) {
+            this.captureGaps.push({ start: tokenView.at(0), end: tokenView.at(token.raw.length) });
+          }
           const end = token.raw.trimEnd().length;
           const tokenOwner = topLevel ? {} : owner;
           const rows = token.type === 'table' ? [...token.raw.trimEnd().matchAll(/[^\n]+/g)].map(match => ({
@@ -248,6 +314,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
               }) : [],
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
+          if (token.type === 'codespan') captureBody(spans.get(token), codeBody(token, tokenView));
           cursor = at + token.raw.length;
           const opaqueChildren = opaque || (this.coarseHtml && topLevel && containsHtml(token));
           if (token.items) locate(token.items, tokenView, false, false, opaqueChildren, tokenOwner);
@@ -275,6 +342,12 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
               if (token.raw[close] === ']' && --depth === 0) break;
             }
             children = replaceView(sliceView(tokenView, 1, close), /\\([[\]])/g, (match, char) => char);
+          } else if (token.type === 'link' && token.raw.startsWith('<') && token.raw.endsWith('>')) {
+            children = sliceView(tokenView, 1, token.raw.length - 1);
+          }
+          if (children?.omissions) this.captureGaps.push(...children.omissions);
+          if (children && ['strong', 'em', 'del', 'link'].includes(token.type)) {
+            captureBody(spans.get(token), children);
           }
           if (children) locate(token.tokens, children, false,
             inline || !['list_item', 'blockquote'].includes(token.type), opaqueChildren, tokenOwner);
@@ -282,9 +355,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         }
       };
       const hooks = new marked.Hooks();
-      hooks.processAllTokens = tokens => { locate(tokens, { text: this.text, at: offset => this.offset(offset) }, true); return tokens; };
+      hooks.processAllTokens = tokens => {
+        this.captureGaps = [];
+        locate(tokens, rootView, true);
+        return tokens;
+      };
       const renderer = new marked.Renderer();
-      for (const name of ['heading', 'paragraph', 'code', 'list', 'listitem', 'blockquote', 'table', 'html', 'hr', 'image']) {
+      for (const name of ['heading', 'paragraph', 'code', 'list', 'listitem', 'blockquote',
+        'table', 'html', 'hr', 'image', 'strong', 'em', 'del', 'link']) {
         const render = renderer[name];
         renderer[name] = function (token) {
           let html = render.call(this, token);
@@ -310,11 +388,12 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           if (!descriptor || descriptor.opaque || token.tokens?.length || !html ||
               /(?:MERMAID_BLOCK_|RAWHTML_BLOCK_)[A-Za-z0-9_]+/.test(token.raw)) return html;
           let view = descriptor.view;
-          if (token.type === 'escape') view = sliceView(view, 1);
+          if (token.type === 'escape') view = replaceView(view, /^\\([\s\S])$/, (match, char) => char);
           if (name === 'codespan') {
-            const width = /^`+/.exec(token.raw)[0].length;
-            view = replaceView(sliceView(view, width, token.raw.length - width), /\n/g, () => ' ');
-            if (/^ .* $/.test(view.text) && /[^ ]/.test(view.text)) view = sliceView(view, 1, view.text.length - 1);
+            view = codeBody(token, view);
+            const body = source.mark(`<span>${html.slice(6, -7)}</span>`,
+              { ...descriptor, kind: 'text', view, temporary: true });
+            return source.mark(`<code>${body}</code>`, descriptor);
           }
           return source.mark(name === 'text' ? `<span>${html}</span>` : html,
             { ...descriptor, kind: 'text', view, temporary: name === 'text' });
@@ -520,16 +599,169 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             [...(adopted.tagName === tag ? [adopted] : []), ...adopted.querySelectorAll(tag)]);
           target = adoptedTags.get(tag)[ordinal];
         }
-        if (target) this.bindings.push({ ...descriptor, element: target, block: adopted });
+        if (target) {
+          if (descriptor.captureBody) this.captureOwners.push({ ...descriptor, element: target, block: adopted });
+          else this.bindings.push({ ...descriptor, element: target, block: adopted });
+        }
       }
       const specs = this.textSpecs.get(fresh);
-      if (specs) this.textGroups.push({ element: adopted, ...specs });
+      if (specs) {
+        this.textGroups.push({ element: adopted, ...specs });
+        const previous = textReceipts.get(adopted);
+        if (fresh === adopted || fresh.isEqualNode(adopted) ||
+            (fresh.tagName === adopted.tagName && previous?.canonical === fresh.outerHTML &&
+             previous.presented === adopted.innerHTML)) {
+          this.editableText.push({ element: adopted, canonical: fresh.outerHTML, ...specs });
+        }
+      }
     }
   }
 
   function usable() {
     return active() && !frozen() && !pendingSource && committed &&
       committed.selection === identity();
+  }
+  function sealTextSource(source) {
+    if (source !== committed || source.selection !== identity() || source.source !== editor.value) return false;
+    const groups = [];
+    for (const group of source.editableText) {
+      if (!group.element.isConnected || !preview.contains(group.element) ||
+          textNodes(group.element).text !== group.text) continue;
+      const receipt = Object.freeze({ ...group, tag: group.element.tagName,
+        presented: group.element.innerHTML,
+        runs: Object.freeze(group.runs.map(run => Object.freeze({ ...run }))),
+        owners: Object.freeze(source.captureOwners.filter(owner => owner.block === group.element).map(owner =>
+          Object.freeze({ start: owner.start, end: owner.end, body: Object.freeze({ ...owner.captureBody }),
+            element: owner.element }))) });
+      textReceipts.set(group.element, receipt);
+      groups.push(receipt);
+    }
+    sourceTextReceipts.set(source, Object.freeze({ groups: Object.freeze(groups),
+      gaps: Object.freeze(source.captureGaps.map(gap => Object.freeze({ ...gap }))) }));
+    return true;
+  }
+  function normalizedRangeBoundary(node, offset, end) {
+    while (node !== preview) {
+      const length = node.nodeType === Node.TEXT_NODE ? node.length :
+        node.nodeType === Node.ELEMENT_NODE ? node.childNodes.length : 0;
+      if (!length || (offset !== 0 && offset !== length)) break;
+      const parent = node.parentNode;
+      if (!parent || (parent !== preview && !preview.contains(parent))) break;
+      const after = offset === length && (offset !== 0 || end);
+      offset = [...parent.childNodes].indexOf(node) + (after ? 1 : 0);
+      node = parent;
+    }
+    return { node, offset };
+  }
+  function captureTextRange(range) {
+    if (!usable() || committed.source !== editor.value || !range || range.collapsed ||
+        !preview.isConnected || !preview.contains(range.startContainer) ||
+        !preview.contains(range.endContainer)) return null;
+    const sealed = sourceTextReceipts.get(committed);
+    if (!sealed) return null;
+    const selected = [], used = new Set(), coverage = [];
+    const groups = new Map(sealed.groups.map(group => [group.element, group])), content = new Map();
+    const root = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentNode : range.commonAncestorContainer;
+    for (const { node } of textNodes(root).nodes) {
+      if (range.comparePoint(node, node.length) < 0 || range.comparePoint(node, 0) > 0) continue;
+      const from = range.startContainer === node ? range.startOffset : 0;
+      const to = range.endContainer === node ? range.endOffset : node.length;
+      if (from >= to) continue;
+      let container = node.parentNode;
+      while (container !== preview && !groups.has(container)) container = container.parentNode;
+      const group = groups.get(container);
+      if (!group) {
+        if (/\S/.test(node.data.slice(from, to))) return null;
+        continue;
+      }
+      if (!used.has(group)) {
+        const found = textNodes(group.element);
+        content.set(group, { ...found, positions: new Map(found.nodes.map(entry => [entry.node, entry.start])) });
+        if (group.element.tagName !== group.tag || group.element.innerHTML !== group.presented ||
+            content.get(group).text !== group.text) return null;
+        used.add(group);
+      }
+      const offset = content.get(group).positions.get(node);
+      if (offset === undefined) return null;
+      let cursor = offset + from;
+      const stop = offset + to;
+      for (const run of group.runs) {
+        const start = Math.max(cursor, run.from), end = Math.min(stop, run.from + run.display.length);
+        if (start >= end) continue;
+        if (start > cursor && /\S/.test(group.text.slice(cursor, start))) return null;
+        if (!run.view.exact(start - run.from) || !run.view.exact(end - run.from)) return null;
+        const part = { start: run.view.at(start - run.from), end: run.view.at(end - run.from) };
+        if (part.end <= part.start || (selected.length && part.start < selected[selected.length - 1].end)) return null;
+        selected.push(part);
+        cursor = end;
+      }
+      if (cursor < stop && /\S/.test(group.text.slice(cursor, stop))) return null;
+    }
+    if (!selected.length) return null;
+    let start = selected[0].start, end = selected[selected.length - 1].end;
+    coverage.push(...selected, ...sealed.gaps);
+    const normalized = document.createRange();
+    const first = normalizedRangeBoundary(range.startContainer, range.startOffset, false);
+    const last = normalizedRangeBoundary(range.endContainer, range.endOffset, true);
+    normalized.setStart(first.node, first.offset); normalized.setEnd(last.node, last.offset);
+    const ownsNode = node => {
+      if (!node.isConnected || !preview.contains(node)) return false;
+      const other = document.createRange(); other.selectNode(node);
+      return normalized.compareBoundaryPoints(Range.START_TO_START, other) <= 0 &&
+        normalized.compareBoundaryPoints(Range.END_TO_END, other) >= 0;
+    };
+    const owners = [...used].flatMap(group => group.owners);
+    for (const group of used) for (const owner of group.owners) {
+      if (end <= owner.start || start >= owner.end) continue;
+      if (!group.element.contains(owner.element)) return null;
+      let matched = false;
+      for (const leaf of content.get(group).nodes) {
+        if (!owner.element.contains(leaf.node)) continue;
+        const from = leaf.start, to = from + leaf.node.length;
+        for (const run of group.runs) {
+          const first = Math.max(from, run.from), last = Math.min(to, run.from + run.display.length);
+          if (first >= last) continue;
+          if (run.view.at(first - run.from) < owner.body.start ||
+              run.view.at(last - run.from) > owner.body.end) return null;
+          matched = true;
+        }
+      }
+      if (!matched && owner.body.start !== owner.body.end) return null;
+    }
+    // Balance a completely selected edge owner, never a partial formatted body.
+    let expanded;
+    do {
+      expanded = false;
+      for (const owner of owners) {
+        if (start >= owner.body.start && end <= owner.body.end) continue;
+        if (!ownsNode(owner.element)) continue;
+        if (start === owner.body.start && start > owner.start && end >= owner.end) {
+          start = owner.start; expanded = true;
+        }
+        if (end === owner.body.end && end < owner.end && start <= owner.start) {
+          end = owner.end; expanded = true;
+        }
+      }
+    } while (expanded);
+    for (const owner of owners) {
+      if (end <= owner.start || start >= owner.end) continue;
+      if (start >= owner.body.start && end <= owner.body.end) continue;
+      if (start > owner.start || end < owner.end || !ownsNode(owner.element)) return null;
+      coverage.push({ start: owner.start, end: owner.body.start }, { start: owner.body.end, end: owner.end });
+    }
+    const splitScalar = offset => /[\uD800-\uDBFF]/.test(committed.source[offset - 1] || '') &&
+      /[\uDC00-\uDFFF]/.test(committed.source[offset] || '');
+    if (splitScalar(start) || splitScalar(end)) return null;
+    coverage.sort((a, b) => a.start - b.start || b.end - a.end);
+    let cursor = start;
+    for (const part of coverage) {
+      if (part.end <= cursor) continue;
+      if (part.start > cursor) break;
+      cursor = part.end;
+      if (cursor >= end) return Object.freeze({ start, end, source: committed.source });
+    }
+    return null;
   }
   function schedule() {
     if (!active() || frame) return;
@@ -908,13 +1140,15 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   return {
     source: text => new Source(text),
     start() { pendingSource = true; clearGeometry(); },
-    commit(source) {
+    commit(source, { textPending = false } = {}) {
       if (committed?.selection !== source.selection) owner = 'preview';
       committed = source;
       for (const [table, receipt] of source.editableTables) {
         tableReceipts.set(table, { ...receipt, presented: table.innerHTML });
       }
       pendingSource = false;
+      sourceTextReceipts.delete(source);
+      if (!textPending) sealTextSource(source);
       observe();
       invalidate();
     },
@@ -949,6 +1183,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     },
     previewNavigation() { claim('preview'); schedule(); },
     isCurrentSource(text) { return !!usable() && committed.source === text; },
+    captureTextRange,
+    sealTextSource,
     sourceLineAt,
     tableSource(table) {
       if (!usable() || committed.source !== editor.value || !table.isConnected ||

@@ -1053,6 +1053,20 @@ async function main() {
 
   // 2. Scripts and stylesheets loaded by the renderer document.
   const indexHtml = read("src/index.html");
+  const inlineScript = '<script src="inline-formatting.js"></script>';
+  const tableScript = '<script src="table-cell-editor.js"></script>';
+  const inlineSource = read("src/inline-formatting.js");
+  const inlineConsumers = read("src/renderer.js");
+  check("one shipped inline formatting engine loads before its table and Edit Text consumers",
+    isPackaged(files, "src/inline-formatting.js") &&
+      indexHtml.indexOf(inlineScript) >= 0 &&
+      indexHtml.indexOf(tableScript) > indexHtml.indexOf(inlineScript) &&
+      indexHtml.indexOf('<script src="renderer.js"></script>') > indexHtml.indexOf(tableScript) &&
+      indexHtml.indexOf(inlineScript, indexHtml.indexOf(inlineScript) + inlineScript.length) === -1 &&
+      read("src/table-cell-editor.js").includes("window.FoliaInlineFormatting") &&
+      (inlineConsumers.match(/FoliaInlineFormatting\.attachInlineEditor\(/g) || []).length === 2 &&
+      inlineSource.includes("function attachInlineEditor(") &&
+      !inlineConsumers.includes("function formatTableCellEmphasis"));
   const emojiMapScript = '<script src="emoji-map.js"></script>';
   const emojiParserScript = '<script src="emoji-parser.js"></script>';
   const utilsScript = '<script src="utils.js"></script>';
@@ -6822,16 +6836,17 @@ async function main() {
     // overlay key reachable ONLY through t() would otherwise be swept up as
     // dead and deleted. Any future indirection must be added here too.
     const cellModel = stripJsComments(read("src/table-cell-editor.js"));
+    const inlineModel = stripJsComments(inlineSource);
     const errorKeys = source => [...source.matchAll(/\bfail\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
       .map(match => match[1]);
-    const modelErrorKeys = new Set(errorKeys(cellModel));
+    const modelErrorKeys = new Set(errorKeys(cellModel + inlineModel));
     const rendererErrorKeys = source => [...stripJsComments(source)
-      .matchAll(/(?:throw\s+|showTableCellError\(\s*)new Error\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
+      .matchAll(/(?:throw\s+|(?:showTableCellError|reportError)\(\s*)new Error\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
       .map(match => match[1]);
-    const rendererErrors = rendererErrorKeys(rendererSrc);
+    const rendererErrors = rendererErrorKeys(rendererSrc + inlineSource);
     const dynamicConsumers = new Set([...modelErrorKeys, ...rendererErrors]);
     check("cell model error keys are shipped literal failures with guarded translated renderer consumers",
-      shippedScripts.includes("src/table-cell-editor.js") &&
+      shippedScripts.includes("src/table-cell-editor.js") && shippedScripts.includes("src/inline-formatting.js") &&
       /const fail = key => \{\s*throw new Error\(key\);\s*\}/.test(cellModel) &&
       ["select", "multiple", "unsupported", "mapping", "rows", "invalid", "cellType"]
         .every(key => modelErrorKeys.has("tableCells." + key)) &&
@@ -6845,18 +6860,18 @@ async function main() {
         new RegExp(`\\bt\\(\\s*['"\`]${q}['"\`]`).test(source) ||
         new RegExp(`data-i18n(?:-title|-placeholder)?="${q}"`).test(source);
     }
-    const withoutMapping = cellModel.replace(/\bfail\(\s*['"]tableCells\.mapping['"]\s*\)/g, "void 0");
+    const withoutRows = (cellModel + inlineModel).replace(/\bfail\(\s*['"]tableCells\.rows['"]\s*\)/g, "void 0");
     check("dynamic UI consumer oracle rejects invented keys and notices removal of a real model error",
-      hasConsumer("tableCells.mapping", allSrc, dynamicConsumers) &&
-      !hasConsumer("tableCells.mapping", allSrc, new Set([...errorKeys(withoutMapping), ...rendererErrors])) &&
+      hasConsumer("tableCells.rows", allSrc, dynamicConsumers) &&
+      !hasConsumer("tableCells.rows", allSrc, new Set([...errorKeys(withoutRows), ...rendererErrors])) &&
       !hasConsumer("tableCells.unusedFixture", "const keys = { 'tableCells.unusedFixture': 'unused' };", dynamicConsumers));
-    const withoutShortcut = rendererSrc.replace(
-      /showTableCellError\(\s*new Error\(\s*['"]tableCells\.formatShortcuts['"]\s*\)\s*\)/g, "void 0");
+    const withoutShortcut = inlineSource.replace(
+      /reportError\(\s*new Error\(\s*['"]tableCells\.formatShortcuts['"]\s*\)\s*\)/g, "void 0");
     check("direct table popup errors count only when delivered to the translated consumer",
-      withoutShortcut !== rendererSrc &&
+      withoutShortcut !== inlineSource &&
       hasConsumer("tableCells.formatShortcuts", allSrc, dynamicConsumers) &&
       !hasConsumer("tableCells.formatShortcuts", withoutShortcut,
-        new Set([...modelErrorKeys, ...rendererErrorKeys(withoutShortcut)])) &&
+        new Set([...modelErrorKeys, ...rendererErrorKeys(rendererSrc + withoutShortcut)])) &&
       rendererErrorKeys("new Error('tableCells.unusedFixture');").length === 0 &&
       rendererErrorKeys("other(new Error('tableCells.unusedFixture'));").length === 0 &&
       rendererErrorKeys("// showTableCellError(new Error('tableCells.unusedFixture'));").length === 0);

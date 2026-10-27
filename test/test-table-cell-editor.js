@@ -69,7 +69,7 @@ const expectedEdited = original.slice(0, editedOffset) + richCell +
   original.slice(editedOffset + oldCell.length);
 const image = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12">' +
   '<rect width="12" height="12" fill="green"/></svg>';
-const productFiles = [...new Set(["src/table-cell-editor.js",
+const productFiles = [...new Set(["src/inline-formatting.js", "src/table-cell-editor.js",
   ...require("../package.json").build.files.filter(file => /^src[\\/].+\.(?:js|css|html)$/.test(file))])];
 const sha = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const hashes = () => Object.fromEntries(productFiles.map(file => [file, sha(path.join(ROOT, file))]));
@@ -84,6 +84,7 @@ async function sourceTests() {
     partitioned.length === uiGroups.length && new Set(partitioned).size === uiGroups.length &&
     uiGroups.every(name => partitioned.includes(name)));
   const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "inline-formatting.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
   const cells = context.window.FoliaTableCells;
   check("cell source helper exports the production operations",
@@ -138,6 +139,84 @@ async function sourceTests() {
   parserContext.exports = parserContext.module.exports;
   vm.runInContext(fs.readFileSync(vendor, "utf8"), parserContext);
   const marked = parserContext.module.exports.marked || parserContext.module.exports;
+  const shared = context.window.FoliaInlineFormatting;
+  const caretSource = shared.attachInlineEditor.toString();
+  const nativeInputHandlers = caretSource.slice(caretSource.indexOf("listen(element, 'beforeinput'"),
+    caretSource.indexOf("listen(element, 'compositionstart'"));
+  check("shared caret metadata retains weak native-operation edges instead of full markup history keys",
+    caretSource.includes("historyCarets = new WeakMap()") &&
+      caretSource.includes("beforeNode: new WeakRef(beforeNode), beforeCaret,") &&
+      (caretSource.match(/historyCarets\.set\(/g) || []).length === 1 &&
+      caretSource.includes("historyCarets.set(afterNode, immutable({") &&
+      !/historyCarets\.(?:set|get)\((?:element\.innerHTML|before[,)]|after[,)])/.test(caretSource));
+  check("native input and history handlers do not serialize markup for caret lookup or overwrite ordinary native selection",
+    nativeInputHandlers.length > 0 && !nativeInputHandlers.includes(".innerHTML") &&
+      !nativeInputHandlers.includes("historyCarets.set(") &&
+      nativeInputHandlers.includes("operation.beforeNode.deref() === identity") &&
+      nativeInputHandlers.includes("operation.beforeNode.deref() === previous?.node"));
+  const definitionCount = 768;
+  const definitionLines = Array.from({ length: definitionCount }, (_, at) =>
+    `[ref-${at}]: https://example.invalid/${at} "😀 **hidden-${at}** \`hidden\`"\n`);
+  const referencePrefix = "😀 reference controls\n\n";
+  const referenceBody = "\n😀 **eligible** and *body* with `code`.\n";
+  const referenceSource = referencePrefix + definitionLines.join("") + referenceBody;
+  const observedLexInputs = [];
+  class ObservedLexer extends marked.Lexer {
+    lex(source) { observedLexInputs.push(source); return super.lex(source); }
+  }
+  vm.runInContext(`globalThis.__definitionPredicates = 0;
+    globalThis.__originalSome = Array.prototype.some;
+    Array.prototype.some = function (predicate, receiver) {
+      const definitions = this.length && Number.isInteger(this[0]?.start) &&
+        Number.isInteger(this[0]?.end) && Object.keys(this[0]).length === 2;
+      return __originalSome.call(this, definitions ? function (...args) {
+        __definitionPredicates++; return predicate.apply(receiver, args);
+      } : predicate, receiver);
+    };
+    [{start:0,end:1}].some(() => true);`, context);
+  check("definition-scan observer proves its predicate counter is live",
+    vm.runInContext("__definitionPredicates", context) === 1);
+  vm.runInContext("__definitionPredicates = 0", context);
+  let referenceFrames, definitionPredicates;
+  const referenceStart = performance.now();
+  try {
+    referenceFrames = shared.documentFrames(referenceSource, { ...marked, Lexer: ObservedLexer });
+    definitionPredicates = vm.runInContext("__definitionPredicates", context);
+  } finally {
+    vm.runInContext(`Array.prototype.some = __originalSome;
+      delete globalThis.__originalSome; delete globalThis.__definitionPredicates;`, context);
+  }
+  const referenceMs = performance.now() - referenceStart;
+  console.log("REFERENCE_MASK " + JSON.stringify({
+    sourceUnits: referenceSource.length, definitionCount, definitionPredicates, elapsedMsInformationalOnly: referenceMs,
+  }));
+  const expectedMasked = referencePrefix +
+    definitionLines.join("").replace(/[^\n]/g, " ") + referenceBody;
+  check("reference masking preserves every UTF16 unit and newline while definitions never gain formatting authority",
+    observedLexInputs.length === 2 && observedLexInputs[1] === expectedMasked &&
+      expectedMasked.length === referenceSource.length &&
+      JSON.stringify(referenceFrames.map(frame => referenceSource.slice(frame.start, frame.end))) ===
+        JSON.stringify(["**eligible**", "*body*", "`code`"]));
+  check("definition masking does not rescan all references for each UTF16 source unit",
+    definitionPredicates <= referenceSource.length + definitionCount,
+    { sourceUnits: referenceSource.length, definitionCount, definitionPredicates, elapsedMsInformationalOnly: referenceMs });
+  check("table source ownership operations delegate to the single shared inline core",
+    ["prepareCell", "serializeCell", "codeSources", "codeDelimiters", "typingSlice"].every(key => cells[key] === shared[key]) &&
+      typeof shared.attachInlineEditor === "function" && typeof shared.attachDialogContainment === "function" &&
+      typeof shared.rawMarkdownPolicy === "function");
+  check("shared full-document recognition sees supported inline frames but not fenced or HTML-owned stars",
+    JSON.stringify(shared.documentFrames("one **bold** *em* `code`\n\n```\n**fenced**\n```\n\n<span>**html**</span>", marked)
+      .map(frame => frame.type)) === JSON.stringify(["strong", "em", "codespan"]));
+  check("shared full-document recognition preserves UTF16 frame coordinates",
+    shared.documentFrames("😀 **bold**", marked).some(frame =>
+      frame.type === "strong" && frame.start === 3 && frame.end === 11 && frame.bodyStart === 5 && frame.bodyEnd === 9));
+  check("shared raw policy recognizes supported frames inside raw block syntax but never inside external CODE fences or HTML",
+    ["- **bold**", "- [ ] **bold**", "> **bold**", "# **bold**", "- one\n  - **bold**"]
+      .every(source => shared.documentFrames(source, marked).some(frame =>
+        frame.type === "strong" && source.slice(frame.start, frame.end) === "**bold**")) &&
+    [["`slot`", 1, 5], ["```\nslot\n```", 4, 8], ["<span>slot</span>", 6, 10]]
+      .every(([source, start, end]) =>
+        shared.rawMarkdownPolicy({ source, start, end, marked }).frames("**bold**").length === 0));
   const defaultTokenizer = marked.defaults.tokenizer;
   const protect = (source, mask) => source
     .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
@@ -2312,6 +2391,134 @@ require("./test-userdata-isolation");
   async function input() {
     const offset = secondOffset + table.indexOf("| plain |") + 2;
     const replacePlain = text => original.slice(0, offset) + text + original.slice(offset + "plain".length);
+    for (const continuation of ["undo", "redo"]) {
+      const historyFixture = await fresh("repeated-history-" + continuation, replacePlain("abcd"));
+      const historyBefore = await state(), historySaves = saves.length;
+      await openGrid();
+      await exec("window.__cellHistoryFirst=__cells.inputs()[8].firstChild;true");
+      const sample = () => exec(`(() => {
+        const input=__cells.inputs()[8],range=getSelection().getRangeAt(0),prefix=document.createRange();
+        prefix.selectNodeContents(input);prefix.setEnd(range.startContainer,range.startOffset);
+        return {source:tableCellSession.cells[8].engine.readSource(),html:input.innerHTML,
+          selected:range.toString(),start:prefix.toString().length,
+          end:prefix.toString().length+range.toString().length,firstSame:input.firstChild===window.__cellHistoryFirst};
+      })()`);
+      const initial = await sample(), changes = [];
+      for (const [at, text] of [[0, "X"], [0, "a"], [3, "Y"]]) {
+        await exec(`(() => {
+          const input=__cells.inputs()[8],walker=document.createTreeWalker(input,NodeFilter.SHOW_TEXT);
+          const node=walker.nextNode(),range=document.createRange();input.focus();
+          range.setStart(node,${at});range.setEnd(node,${at + 1});
+          getSelection().removeAllRanges();getSelection().addRange(range);return true;
+        })()`);
+        const before = await sample(), typed = await typeTrustedCell([text], 8, { preserveCaret: true });
+        changes.push({ before, after: await sample(), typed });
+      }
+      check("table repeated native history " + continuation + " fixture revisits identical owned DOM with conflicting selections",
+        changes[0].before.html === initial.html && changes[1].after.html === initial.html &&
+          changes[2].before.html === initial.html && changes[0].before.start === 0 &&
+          changes[2].before.start === 3 && changes.every((change, at) =>
+            change.after.source === ["Xbcd", "abcd", "abcY"][at] && change.typed.at(-1).events.some(event =>
+              event.event === "beforeinput" && event.trusted && event.data === ["X", "a", "Y"][at])),
+        { initial, changes });
+      const undone = [], redone = [], finalUndo = [];
+      for (let at = 0; at < 3; at++) { await key("Z", ["control"]); undone.push(await sample()); }
+      for (let at = 0; at < 3; at++) { await key("Y", ["control"]); redone.push(await sample()); }
+      if (continuation === "undo") {
+        for (let at = 0; at < 3; at++) { await key("Z", ["control"]); finalUndo.push(await sample()); }
+      }
+      check("table repeated native history " + continuation + " exposes three independent Undo and Redo entries",
+        JSON.stringify(undone.map(item => item.source)) === JSON.stringify(["abcd", "Xbcd", "abcd"]) &&
+          JSON.stringify(redone.map(item => item.source)) === JSON.stringify(["Xbcd", "abcd", "abcY"]),
+        { undone, redone, finalUndo });
+      const restored = await sample();
+      await typeTrustedCell(["z"], 8, { preserveCaret: true });
+      const continued = await sample(), expected = continuation === "undo" ? "zbcd" : "abcYz";
+      check("table repeated native history " + continuation + " continued typing uses the correct native occurrence selection",
+        continued.source === expected && JSON.stringify(await state()) === JSON.stringify(historyBefore) &&
+          saves.length === historySaves && fs.readFileSync(historyFixture.file, "utf8") === replacePlain("abcd"),
+        { initial, changes, undone, redone, finalUndo, restored, continued, expected });
+      await cancel();
+      await exec("delete window.__cellHistoryFirst;true");
+    }
+    {
+      const body = "**abcd** and *end*";
+      const fixture = await fresh("repeated-whole-surface-history", replacePlain(body));
+      const before = await state(), saveCount = saves.length;
+      await openGrid();
+      const sample = () => exec(`(() => {
+        const input=__cells.inputs()[8],range=getSelection().getRangeAt(0),prefix=document.createRange();
+        prefix.selectNodeContents(input);prefix.setEnd(range.startContainer,range.startOffset);
+        return {source:tableCellSession.cells[8].engine.readSource(),html:input.innerHTML,
+          selected:range.toString(),start:prefix.toString().length,end:prefix.toString().length+range.toString().length};
+      })()`);
+      const initial = await sample(), changes = [], undone = [];
+      for (const [selector, text] of [["strong", "X"], ["em", "Y"]]) {
+        await exec(`(() => {
+          const input=__cells.inputs()[8],range=document.createRange();input.focus();
+          range.setStartAfter(input.querySelector(${JSON.stringify(selector)}));range.collapse(true);
+          getSelection().removeAllRanges();getSelection().addRange(range);return true;
+        })()`);
+        const prior = await sample(), typed = await typeTrustedCell([text], 8, { preserveCaret: true });
+        changes.push({ before: prior, after: await sample(), typed });
+        await key("Z", ["control"]); undone.push(await sample());
+      }
+      check("table whole-surface history fixture revisits identical source and owned DOM at different semantic endpoints",
+        changes.every(change => change.before.html === initial.html) &&
+          changes[0].before.start === 4 && changes[1].before.start === 12 &&
+          changes[0].after.source === "**abcd**X and *end*" && changes[1].after.source === body + "Y" &&
+          changes.every((change, at) => change.typed.at(-1).events.some(event =>
+            event.event === "beforeinput" && event.trusted && event.data === ["X", "Y"][at] && event.prevented)),
+        { initial, changes });
+      await key("Y", ["control"]); const redone = await sample();
+      await key("Z", ["control"]); const restored = await sample();
+      await typeTrustedCell(["z"], 8, { preserveCaret: true }); const continued = await sample();
+      check("table whole-surface native Undo Redo and branching continuation retain the actual operation endpoint",
+        undone.every(item => item.source === body) && redone.source === body + "Y" &&
+          restored.source === body && restored.start === 12 && restored.end === 12 &&
+          continued.source === body + "z" && JSON.stringify(await state()) === JSON.stringify(before) &&
+          saves.length === saveCount && fs.readFileSync(fixture.file, "utf8") === replacePlain(body),
+        { undone, redone, restored, continued });
+      await cancel();
+    }
+    for (const [selector, marker, word, side] of [
+      ...["strong", "em", "code"].flatMap((selector, at) =>
+        ["before", "after"].map(side => [selector, ["**", "*", "`"][at], ["bold", "em", "code"][at], side])),
+      ["code", "`", "code", "adjacent"],
+    ]) {
+      const body = side === "adjacent" ? "`code`**bold** tail" : "one **bold** *em* `code` two";
+      const boundaryFixture = await fresh("boundary-" + selector + "-" + side, replacePlain(body));
+      const boundaryBefore = await state(), boundarySaves = saves.length;
+      await openGrid();
+      await exec(`(() => {
+        const input=__cells.inputs()[8],owner=input.querySelector(${JSON.stringify(selector)});
+        input.focus();const range=document.createRange();
+        range[${JSON.stringify(side === "before" ? "setStartBefore" : "setStartAfter")}](owner);
+        range.collapse(true);getSelection().removeAllRanges();getSelection().addRange(range);return true;
+      })()`);
+      const inserted = await typeTrustedCell(["x", "y"], 8, { preserveCaret: true });
+      const unit = marker + word + marker;
+      const expected = body.replace(unit, side === "before" ? "xy" + unit : unit + "xy");
+      const liveSource = await exec("tableCellSession.cells[8].engine.readSource()");
+      check("table " + selector + " " + side + " distinct trusted typing preserves semantic-side affinity",
+        liveSource === expected && inserted.at(-1).events.filter(event =>
+          event.event === "beforeinput" && event.trusted && ["x", "y"].includes(event.data)).length === 2 &&
+          JSON.stringify(await state()) === JSON.stringify(boundaryBefore) &&
+          fs.readFileSync(boundaryFixture.file, "utf8") === replacePlain(body), { liveSource, expected, inserted });
+      await key("Z", ["control"]);
+      const undoSource = await exec("tableCellSession.cells[8].engine.readSource()");
+      await key("Y", ["control"]);
+      check("table " + selector + " " + side + " native history restores exact source without document mutation",
+        undoSource !== liveSource && await exec("tableCellSession.cells[8].engine.readSource()") === liveSource &&
+          JSON.stringify(await state()) === JSON.stringify(boundaryBefore) && saves.length === boundarySaves,
+        { undoSource, liveSource });
+      await typeTrustedCell(["z"], 8, { preserveCaret: true });
+      const continued = await exec("tableCellSession.cells[8].engine.readSource()");
+      check("table " + selector + " " + side + " history-restored continuation preserves its semantic side",
+        continued === expected.replace("xy", "xyz") && JSON.stringify(await state()) === JSON.stringify(boundaryBefore),
+        { continued, expected });
+      await cancel();
+    }
     const fixture = await fresh("trusted-plain-cell");
     const before = await state(), beforeSaves = saves.length;
     const prepared = await exec(`(() => {
@@ -4290,12 +4497,19 @@ require("./test-userdata-isolation");
     await openGrid();
     await exec(`(() => {
       const input=__cells.inputs()[8];input.focus();const range=document.createRange();
+      window.__emphasisComposition = [];
+      for (const type of ['compositionstart','input','compositionend']) input.addEventListener(type, event => {
+        window.__emphasisComposition.push({ type, trusted:event.isTrusted, composing:!!event.isComposing });
+      });
       range.selectNodeContents(input);getSelection().removeAllRanges();getSelection().addRange(range);return true;
     })()`);
     await bounded("native emphasis composition", win.webContents.debugger.sendCommand("Input.imeSetComposition",
       { text: "**ime**", selectionStart: 7, selectionEnd: 7 }));
     check("actual active Chromium composition does not convert an unfinished emphasis transaction",
-      await exec("tableCellSession.cells[8].composing&&__cells.inputs()[8].querySelectorAll('strong,em').length===0"));
+      await exec(`__cells.inputs()[8].textContent==='**ime**' &&
+        __cells.inputs()[8].querySelectorAll('strong,em').length===0 &&
+        window.__emphasisComposition.some(event => event.type==='compositionstart' && event.trusted) &&
+        window.__emphasisComposition.some(event => event.type==='input' && event.trusted && event.composing)`));
     await bounded("native emphasis commit", win.webContents.debugger.sendCommand("Input.insertText", { text: "**ime**" }));
     await settle();
     const imeLive = await exec(`({html:__cells.inputs()[8].innerHTML,text:__cells.inputs()[8].textContent,
@@ -4317,6 +4531,87 @@ require("./test-userdata-isolation");
       fs.readFileSync(imeFixture.file, "utf8") === original, { imeCompletion, after: await state() });
   }
   async function keyboard() {
+    for (const button of ["tableCellUpdate", "tableCellCancel"]) {
+      const footerFixture = await fresh("footer-" + button), footerSaves = saves.length;
+      const footerWitness = " footer source history";
+      const typedFooter = await appendTrustedSource(footerWitness);
+      const nativeFooterSource = await exec(`(() => {
+        const undone=document.execCommand('undo'),valueAfterUndo=markdownEditor.value;
+        const redone=document.execCommand('redo');
+        return {undone,redone,valueAfterUndo,valueAfterRedo:markdownEditor.value};
+      })()`);
+      check("table footer " + button + " fixture proves trusted source typing and live native source Undo Redo",
+        typedFooter.events.some(event => event.trusted && event.type === "insertText") &&
+          nativeFooterSource.undone && nativeFooterSource.redone &&
+          nativeFooterSource.valueAfterUndo === lf(original) &&
+          nativeFooterSource.valueAfterRedo === lf(original) + footerWitness, nativeFooterSource);
+      await wait("footer source history settled", "editorScroll.isCurrentSource(markdownEditor.value)&&historyDebounceTimer===null");
+      const footerBefore = await state();
+      await openGrid();
+      await typeTrustedCell(["pending footer edit"], 8, { replace: true });
+      await exec("__cells.inputs().at(-1).focus();true");
+      await key("Tab");
+      if (button === "tableCellCancel") await key("Tab");
+      const focused = await exec("document.activeElement.id");
+      check("table footer " + button + " actual Tab reaches a noneditable button with pending cell changes",
+        focused === button && await exec("tableCellSession.cells[8].engine.readSource()==='pending footer edit'"), focused);
+      const footerControl = () => exec(`({
+        state:__cells.state(),current:tableCellSession?.selection.isCurrent(),
+        timers:[historyDebounceTimer,previewDebounceTimer],owner:currentDocumentActionOwner()?.id,
+        generation:renderGeneration,reload:window.getReloadRequestDiagnostics(),
+        saves:window.getPendingSaveStatus(),pending:tableCellSession?.selection.isCurrent() ?
+          tableCellSession.cells[8].engine.readSource() : null
+      })`);
+      const control = await footerControl(), keys = [];
+      for (const code of ["Z", "Y", "S", "R"]) {
+        await key(code, ["control"]);
+        const afterKey = await footerControl().catch(error => ({ error: error.message }));
+        keys.push({ code, afterKey });
+        if (JSON.stringify(afterKey) !== JSON.stringify(control)) break;
+      }
+      check("table footer " + button + " native Undo Redo Save Reload preserve source history timers owner disk and pending edit",
+        keys.length === 4 && keys.every(item => JSON.stringify(item.afterKey) === JSON.stringify(control)) &&
+          JSON.stringify(await state()) === JSON.stringify(footerBefore) && saves.length === footerSaves &&
+          fs.readFileSync(footerFixture.file, "utf8") === original, { focused, control, keys });
+      if (keys.length === 4 && control.current) {
+        await exec(`window.__cellFooterHistory = [];
+          window.__cellFooterObserver = event => {
+            if (!['historyUndo','historyRedo'].includes(event.inputType)) return;
+            const record={type:event.inputType,trusted:event.isTrusted,target:event.target.id,
+              active:document.activeElement.id,cancelable:event.cancelable};
+            Object.defineProperty(record,'event',{value:event});
+            window.__cellFooterHistory.push(record);
+          };
+          window.addEventListener('beforeinput',window.__cellFooterObserver,true);true`);
+        win.webContents.undo(); await settle();
+        const nativeUndo = await footerControl();
+        win.webContents.redo(); await settle();
+        const nativeRedo = await footerControl();
+        const routed = await exec(`window.removeEventListener('beforeinput',window.__cellFooterObserver,true);
+          window.__cellFooterHistory.map(record => ({...record,prevented:record.event.defaultPrevented}))`);
+        check("table footer " + button + " native history routing is observed and cancelled without source or cell mutation",
+          routed.some(event => event.trusted && event.prevented && event.type === "historyUndo") &&
+            JSON.stringify(nativeUndo) === JSON.stringify(control) && JSON.stringify(nativeRedo) === JSON.stringify(control),
+          { routed, nativeUndo, nativeRedo });
+      }
+      if (keys.length === 4 && button === "tableCellUpdate") {
+        const completion = await update();
+        const footerAfter = await state();
+        await exec("historyUndo();true");
+        await wait("protected footer Update document Undo",
+          "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+        const footerUndone = await state();
+        check("table footer protected pending changes still Update once without saving",
+          !completion.open && !completion.error && footerAfter.exact !== footerBefore.exact &&
+            footerAfter.exact.includes("pending footer edit") && footerUndone.exact === footerBefore.exact &&
+            saves.length === footerSaves && fs.readFileSync(footerFixture.file, "utf8") === original,
+          { completion, footerBefore, footerAfter, footerUndone });
+      } else {
+        await cancel();
+        check("table footer Cancel remains usable after native shortcut controls",
+          !await exec("tableCellDialog.open"), keys);
+      }
+    }
     const fixture = await fresh("keyboard");
     const beforeSaves = saves.length;
     await page(installKeyboardWitness);

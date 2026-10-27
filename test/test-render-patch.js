@@ -28,7 +28,7 @@
 // threshold would be flaky on shared hardware and would not say what broke;
 // "the paragraph I edited is the only block that was replaced" is exact.
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
@@ -170,7 +170,7 @@ const TOP_BLOCKS = `
 
 async function run(win) {
   const { admitTestDocument, startErrorSentinel, proveSentinelAlive, captureScreenshot, trapExternalOpens, readExternalOpens, clearExternalOpens, waitForExternalTrap } = require("./test-visual-utils");
-  const sentinel = startErrorSentinel(win, { label: "patch" });
+  let sentinel = startErrorSentinel(win, { label: "patch" });
   // Before ANY click: this suite dispatches real anchor clicks, and an http
   // anchor would otherwise launch the user's browser. See trapExternalOpens().
   await trapExternalOpens(win);
@@ -1326,7 +1326,7 @@ async function run(win) {
           savedSelection = ${JSON.stringify(selection)};
           savedSelectionOccurrence = 0;
           openEditTextDialog();
-          editTextArea.value = ${JSON.stringify(replacement)};
+          editTextArea.textContent = ${JSON.stringify(replacement)};
           editTextSaveBtn.click();
           return true;
         })()
@@ -1373,6 +1373,641 @@ async function run(win) {
     );
   }
 
+  // Edit-mode input qualification is separate from the legacy view-mode
+  // locator probes above: select rendered text, use the production menu, and
+  // let Chromium edit the focused control. Save already interprets Markdown;
+  // the new requirement is formatting INSIDE the dialog before Save.
+  {
+    const evidence = path.join(__dirname, "..", "tmp", "edit-text-0113", "patch-native");
+    fs.mkdirSync(evidence, { recursive: true });
+    const fixture = path.join(dir, "edit-text-native.md");
+    const source = "# Edit Text native input\n\nBefore edit-bold after.\n\nBefore edit-italic after.\n\nBefore edit-code after.\n\none **nest-owned** two.\n\nboundary **bold** *em* `code` tail.\n\nhistory-abcd\n\nraw-edit\n\npaste-edit\n\nUnselected **kept** and `owned`.\n";
+    const observations = [];
+    let expectedSource = source;
+    let tabId;
+    const nativeClick = async (selector, button = "left") => {
+      const point = await exec(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el || !el.getClientRects().length) throw new Error('Missing native click target');
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      })()`);
+      win.webContents.sendInputEvent({ type: "mouseDown", ...point, button, clickCount: 1 });
+      win.webContents.sendInputEvent({ type: "mouseUp", ...point, button, clickCount: 1 });
+      await sleep(50);
+    };
+    const dialogState = () => exec(`(() => {
+      const el = editTextArea, selection = getSelection();
+      const text = typeof el.value === 'string' ? el.value : el.textContent;
+      let caretEnd = false;
+      if (typeof el.selectionStart === 'number') {
+        caretEnd = el.selectionStart === text.length && el.selectionEnd === text.length;
+      } else if (selection?.rangeCount === 1 && selection.isCollapsed && el.contains(selection.anchorNode)) {
+        const before = document.createRange();
+        before.selectNodeContents(el);
+        before.setEnd(selection.anchorNode, selection.anchorOffset);
+        caretEnd = before.toString().length === text.length;
+      }
+      return {
+        open: editTextOverlay.classList.contains('visible'), active: document.activeElement === el,
+        tag: el.tagName, text, html: el.innerHTML, caretEnd, error: document.getElementById('editTextError')?.textContent,
+        label: document.getElementById(el.getAttribute('aria-labelledby'))?.textContent.trim() || '',
+        owners: [...el.querySelectorAll('strong,b,em,i,code')].map(n => ({ tag: n.tagName, text: n.textContent })),
+        document: markdownEditor.value, history: JSON.stringify(historySnapshot()),
+        events: window.__editTextNativeEvents.slice()
+      };
+    })()`);
+    const selectAndOpen = async (text) => {
+      await waitFor(exec, "current rendered source is sealed before native selection",
+        "editorScroll.isCurrentSource(markdownEditor.value) && !undoRedoRendering");
+      const selected = await exec(`(async () => {
+        const walker = document.createTreeWalker(viewer, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        for (let node; (node = walker.nextNode());) nodes.push(node);
+        const joined = nodes.map(node => node.data).join('');
+        const index = joined.indexOf(${JSON.stringify(text)});
+        const point = (offset, end = false) => {
+          for (const node of nodes) {
+            if (offset < node.length || end && offset === node.length) return { node, offset };
+            offset -= node.length;
+          }
+        };
+        if (index >= 0) {
+          const first = point(index), last = point(index + ${text.length}, true);
+          first.node.parentElement.scrollIntoView({ block: 'center', behavior: 'instant' });
+          const range = document.createRange();
+          range.setStart(first.node, first.offset); range.setEnd(last.node, last.offset);
+          const selection = getSelection();
+          selection.removeAllRanges(); selection.addRange(range);
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const rect = [...range.getClientRects()].find(rect => rect.width > 0 && rect.height > 0);
+          window.__editTextNativeEvents.length = 0;
+          return {
+            text: selection.toString(), inViewer: viewer.contains(range.commonAncestorContainer),
+            x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2),
+            width: rect.width, height: rect.height
+          };
+        }
+        throw new Error('Rendered Edit Text selection not found: ' + ${JSON.stringify(text)});
+      })()`);
+      check(`Edit Text native ${text}: a nonempty real viewer Range selects the target`,
+        selected.text === text && selected.inViewer && selected.width > 0 && selected.height > 0,
+        JSON.stringify(selected));
+      let target;
+      try {
+        target = await waitFor(exec, "selected viewer text is the actual native right-click target", `(() => {
+          const selection=getSelection();
+          if(selection.rangeCount!==1)return false;
+          const range=selection.getRangeAt(0);
+          if(!viewer.contains(range.commonAncestorContainer))return false;
+          const rect=[...range.getClientRects()].find(rect=>rect.width>0&&rect.height>0);
+          if(!rect)return false;
+          const pane=viewer.getBoundingClientRect();
+          if(rect.top<pane.top||rect.bottom>pane.bottom) {
+            // Document Undo can finish its pane-scroll restoration after the
+            // render seals. Re-expose the real Range, not stale coordinates.
+            const node=range.startContainer.nodeType===Node.ELEMENT_NODE?
+              range.startContainer:range.startContainer.parentElement;
+            node.scrollIntoView({block:'center',behavior:'instant'});return false;
+          }
+          const x=Math.round(rect.left+rect.width/2),y=Math.round(rect.top+rect.height/2);
+          return viewer.contains(document.elementFromPoint(x,y)) ? {x,y} : false;
+        })()`);
+      } catch (error) {
+        observations.push({ label: "selection-target-failure", selected, geometry: await exec(`({
+          hit:document.elementFromPoint(${selected.x},${selected.y})?.outerHTML,
+          active:document.activeElement.id,selection:getSelection().toString(),
+          viewer:viewer.getBoundingClientRect().toJSON(),
+          range:getSelection().rangeCount?getSelection().getRangeAt(0).getBoundingClientRect().toJSON():null,
+          width:innerWidth,height:innerHeight
+        })`) });
+        throw error;
+      }
+      win.webContents.sendInputEvent({ type: "mouseDown", x: target.x, y: target.y, button: "right", clickCount: 1 });
+      win.webContents.sendInputEvent({ type: "mouseUp", x: target.x, y: target.y, button: "right", clickCount: 1 });
+      await waitFor(exec, "Edit Text production selection menu",
+        `contextMenu.classList.contains('visible') && ctxEditText.offsetParent !== null`);
+      const menu = await exec(`({
+        selection: savedSelection, range: savedRange?.toString(),
+        mode: isEditMode, owner: !!currentDocumentActionOwner()
+      })`);
+      check(`Edit Text native ${text}: production context menu captures that exact Range in edit mode`,
+        menu.selection === text && menu.range === text && menu.mode && menu.owner, JSON.stringify(menu));
+      await nativeClick("#ctxEditText");
+      await waitFor(exec, "focused Edit Text dialog",
+        `editTextOverlay.classList.contains('visible') && document.activeElement === editTextArea`);
+      const opened = await dialogState();
+      check(`Edit Text native ${text}: trusted context-menu and menu-click events open the focused dialog`,
+        opened.events.some(e => e.type === "contextmenu" && e.trusted) &&
+          opened.events.some(e => e.type === "click" && e.trusted && e.target === "ctxEditText") &&
+          opened.text === text && opened.active && opened.label.length > 0,
+        JSON.stringify(opened));
+      return opened;
+    };
+    try {
+      win.focus();
+      await admitTestDocument(win, fixture, source);
+      tabId = await exec(`window.CustomTabs.getActiveTabId()`);
+      await nativeClick("#openEditorBtn");
+      await waitFor(exec, "the admitted document's actual split editor",
+        `isEditMode && markdownEditor.value === ${JSON.stringify(source)} &&
+          contentWrapper.classList.contains('split-view') && ${RENDER_SETTLED}`);
+      check("Edit Text native setup has an admitted clean document, exact disk bytes and rendered controls",
+        !!tabId && fs.readFileSync(fixture, "utf8") === source &&
+          await exec(`!hasUnsavedChanges && [...viewer.querySelectorAll('strong')].some(node => node.textContent === 'kept') &&
+            [...viewer.querySelectorAll('code')].some(node => node.textContent === 'owned')`), fixture);
+      await exec(`(() => {
+        window.__editTextNativeEvents = [];
+        window.__editTextNativeListener = event => {
+          if (editTextOverlay.contains(event.target) || event.type === 'contextmenu' && viewer.contains(event.target) ||
+              ctxEditText.contains(event.target)) {
+            window.__editTextNativeEvents.push({
+              type: event.type, trusted: event.isTrusted, inputType: event.inputType || null,
+              data: event.data ?? null, composing: !!event.isComposing,
+              target: ctxEditText.contains(event.target) ? 'ctxEditText' : event.target.id || event.target.nodeName
+            });
+          }
+        };
+        for (const type of ['contextmenu','click','beforeinput','input','compositionstart','compositionend']) {
+          document.addEventListener(type, window.__editTextNativeListener, true);
+        }
+        return true;
+      })()`);
+      for (const [label, marker, word, tags] of [
+        ["bold", "**", "bold", ["STRONG", "B"]],
+        ["italic", "*", "italic", ["EM", "I"]],
+        ["code", "`", "cmd", ["CODE"]],
+      ]) {
+        const token = "edit-" + label;
+        const opened = await selectAndOpen(token);
+        await win.webContents.insertText(marker + word);
+        const unclosed = await dialogState();
+        check(`Edit Text native ${label}: unclosed delimiters remain literal inside the editor`,
+          unclosed.text === marker + word && unclosed.owners.length === 0, JSON.stringify(unclosed));
+        await win.webContents.insertText(marker);
+        const closed = await dialogState();
+        const ownsWord = state => state.owners.some(n => tags.includes(n.tag) && n.text === word);
+        check(`Edit Text native ${label}: closing typed delimiters formats immediately inside the editor`,
+          ownsWord(closed), JSON.stringify(closed));
+        await win.webContents.insertText(" tail");
+        const continued = await dialogState();
+        check(`Edit Text native ${label}: continued typing stays after the formatted owner with its caret at the end`,
+          ownsWord(continued) && continued.owners.length === 1 &&
+            continued.text.endsWith(" tail") && continued.caretEnd, JSON.stringify(continued));
+        check(`Edit Text native ${label}: actual trusted input edits only the dialog before Save`,
+          continued.events.some(e => e.type === "beforeinput" && e.trusted && e.inputType === "insertText") &&
+            [marker + word, marker, " tail"].every(data =>
+              continued.events.some(e => e.type === "beforeinput" && e.trusted &&
+                e.inputType === "insertText" && e.data === data)) &&
+            continued.events.filter(e => e.type === "input" && e.trusted).length >= 3 &&
+            continued.document === expectedSource && continued.history === opened.history,
+          JSON.stringify(continued));
+        await exec(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
+        fs.writeFileSync(path.join(evidence, label + "-live.png"), (await win.webContents.capturePage()).toPNG());
+        if (label === "bold") {
+          // Call the native edit command directly: the current global Ctrl+Z
+          // handler targets DOCUMENT history, not this popup's native history.
+          win.webContents.undo();
+          await sleep(80);
+          const undone = await dialogState();
+          check("Edit Text native Undo changes the dialog, not the document or document history",
+            undone.text !== continued.text && undone.document === continued.document &&
+              undone.history === continued.history &&
+              undone.events.some(e => e.type === "input" && e.trusted && e.inputType === "historyUndo"),
+            JSON.stringify(undone));
+          win.webContents.redo();
+          await sleep(80);
+          const redone = await dialogState();
+          check("Edit Text native Redo restores the exact local state without changing document history",
+            redone.text === continued.text && redone.html === continued.html &&
+              redone.document === continued.document && redone.history === continued.history &&
+              redone.events.some(e => e.type === "input" && e.trusted && e.inputType === "historyRedo"),
+            JSON.stringify(redone));
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Z", modifiers: ["control"] });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Z", modifiers: ["control"] });
+          await sleep(60);
+          const shortcutUndo = await dialogState();
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Y", modifiers: ["control"] });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Y", modifiers: ["control"] });
+          await sleep(60);
+          const shortcutRedo = await dialogState();
+          check("Edit Text actual Ctrl+Z and Ctrl+Y stay in native popup history, never document history",
+            shortcutUndo.html !== redone.html && shortcutRedo.html === redone.html &&
+              shortcutUndo.document === continued.document && shortcutRedo.document === continued.document &&
+              shortcutUndo.history === continued.history && shortcutRedo.history === continued.history,
+            JSON.stringify({ shortcutUndo, shortcutRedo }));
+          observations.push({ label: "native-history", continued, undone, redone });
+        }
+        const generation = await exec(`renderGeneration`);
+        await nativeClick("#editTextSaveBtn");
+        await waitFor(exec, "Edit Text Save to finish its actual preview render",
+          `!editTextOverlay.classList.contains('visible') && renderGeneration > ${generation} && ${RENDER_SETTLED}`);
+        expectedSource = expectedSource.replace(token, marker + word + marker + " tail");
+        const saved = await exec(`({
+          source: markdownEditor.value, dialogOpen: editTextOverlay.classList.contains('visible'),
+          owners: [...viewer.querySelectorAll('strong,b,em,i,code')].map(n => ({ tag: n.tagName, text: n.textContent })),
+          text: viewer.textContent, dirty: hasUnsavedChanges
+        })`);
+        check(`Edit Text native ${label}: AFTER Save preserves exact Markdown and every untargeted byte`,
+          saved.source === expectedSource && !saved.dialogOpen && saved.dirty, JSON.stringify(saved));
+        check(`Edit Text native ${label}: AFTER Save the real preview has the semantic owner and continued text`,
+          ownsWord(saved) && saved.text.includes(word + " tail") &&
+            saved.owners.some(n => n.tag === "STRONG" && n.text === "kept") &&
+            saved.owners.some(n => n.tag === "CODE" && n.text === "owned"), JSON.stringify(saved));
+        check(`Edit Text native ${label}: dialog Save never implicitly saves the file`,
+          fs.readFileSync(fixture, "utf8") === source, fs.readFileSync(fixture, "utf8"));
+        observations.push({ label, opened, unclosed, closed, continued, saved });
+      }
+      for (const continuation of ["undo", "redo", "whole-surface"]) {
+        const opened = await selectAndOpen("abcd");
+        await exec("window.__editHistoryFirst=editTextArea.firstChild;null");
+        const sample = () => exec(`(() => {
+          const range=getSelection().getRangeAt(0),prefix=document.createRange();
+          prefix.selectNodeContents(editTextArea);prefix.setEnd(range.startContainer,range.startOffset);
+          return {source:editTextSession.engine.readSource(),html:editTextArea.innerHTML,
+            selected:range.toString(),start:prefix.toString().length,
+            end:prefix.toString().length+range.toString().length,firstSame:editTextArea.firstChild===window.__editHistoryFirst};
+        })()`);
+        const select = at => exec(`(() => {
+          const walker=document.createTreeWalker(editTextArea,NodeFilter.SHOW_TEXT),node=walker.nextNode();
+          const range=document.createRange();editTextArea.focus();
+          range.setStart(node,${at});range.setEnd(node,${at + 1});
+          getSelection().removeAllRanges();getSelection().addRange(range);return true;
+        })()`);
+        const nativeHistory = async redo => {
+          if (redo) win.webContents.redo(); else win.webContents.undo();
+          await sleep(70); return sample();
+        };
+        const initial = await sample(), changes = [], undone = [], redone = [], finalUndo = [];
+        if (continuation !== "whole-surface") win.webContents.debugger.attach("1.3");
+        try {
+          for (const [at, text] of continuation === "whole-surface" ? [[0, "X"], [3, "Y"]] : [[0, "X"], [0, "a"], [3, "Y"]]) {
+            await select(at);
+            const before = await sample();
+            if (continuation === "whole-surface") await win.webContents.insertText(text);
+            else {
+              await win.webContents.debugger.sendCommand("Input.imeSetComposition",
+                { text, selectionStart: 1, selectionEnd: 1 });
+              await win.webContents.debugger.sendCommand("Input.insertText", { text });
+            }
+            await sleep(60);
+            changes.push({ before, after: await sample() });
+            if (continuation === "whole-surface") undone.push(await nativeHistory(false));
+          }
+        } finally {
+          if (continuation !== "whole-surface") win.webContents.debugger.detach();
+        }
+        check(`Edit Text repeated native history ${continuation}: actual edits revisit identical owned DOM with conflicting selections`,
+          changes[0].before.html === initial.html && changes.at(-1).before.html === initial.html &&
+            changes[0].before.start === 0 && changes.at(-1).before.start === 3 &&
+            (continuation === "whole-surface"
+              ? changes[0].after.source === "Xbcd" && changes[1].after.source === "abcY"
+              : JSON.stringify(changes.map(item => item.after.source)) === JSON.stringify(["Xbcd", "abcd", "abcY"])),
+          JSON.stringify({ initial, changes }));
+        if (continuation === "whole-surface") {
+          redone.push(await nativeHistory(true)); finalUndo.push(await nativeHistory(false));
+        } else {
+          for (let at = 0; at < 3; at++) undone.push(await nativeHistory(false));
+          for (let at = 0; at < 3; at++) redone.push(await nativeHistory(true));
+          if (continuation === "undo") for (let at = 0; at < 3; at++) finalUndo.push(await nativeHistory(false));
+        }
+        check(`Edit Text repeated native history ${continuation}: native Undo and Redo restore the exact independent source states`,
+          JSON.stringify(undone.map(item => item.source)) === JSON.stringify(
+            continuation === "whole-surface" ? ["abcd", "abcd"] : ["abcd", "Xbcd", "abcd"]) &&
+            JSON.stringify(redone.map(item => item.source)) === JSON.stringify(
+              continuation === "whole-surface" ? ["abcY"] : ["Xbcd", "abcd", "abcY"]),
+          JSON.stringify({ undone, redone, finalUndo }));
+        const restored = await sample();
+        await win.webContents.insertText("z");
+        const continued = await sample(), state = await dialogState();
+        const expected = continuation === "redo" ? "abcYz" : continuation === "whole-surface" ? "abcz" : "zbcd";
+        check(`Edit Text repeated native history ${continuation}: continued typing uses the correct native occurrence selection`,
+          continued.source === expected && state.document === expectedSource && state.history === opened.history &&
+            state.events.some(event => event.trusted && event.type === "input" && event.inputType === "historyUndo") &&
+            state.events.some(event => event.trusted && event.type === "input" && event.inputType === "historyRedo") &&
+            (continuation === "whole-surface" || state.events.some(event => event.trusted && event.composing)) &&
+            fs.readFileSync(fixture, "utf8") === source,
+          JSON.stringify({ restored, continued, expected, state }));
+        observations.push({ label: "repeated-history-" + continuation, initial, changes, undone, redone, finalUndo, restored, continued, expected });
+        await nativeClick("#editTextCancelBtn");
+        await exec("delete window.__editHistoryFirst;null");
+      }
+      for (const [selector, marker, word] of [["strong", "**", "bold"], ["em", "*", "em"], ["code", "`", "code"]]) {
+        for (const side of ["before", "after"]) {
+          const opened = await selectAndOpen("boundary bold em code tail.");
+          await exec(`(() => {
+            const owner=editTextArea.querySelector(${JSON.stringify(selector)}),range=document.createRange();
+            range[${JSON.stringify(side === "before" ? "setStartBefore" : "setStartAfter")}](owner);range.collapse(true);
+            getSelection().removeAllRanges();getSelection().addRange(range);return true;
+          })()`);
+          await win.webContents.insertText("x");
+          await win.webContents.insertText("y");
+          const unit = marker + word + marker, body = "boundary **bold** *em* `code` tail.";
+          const expected = body.replace(unit, side === "before" ? "xy" + unit : unit + "xy");
+          const state = await dialogState(), serialized = await exec("editTextSession.engine.readSource()");
+          check(`Edit Text boundary ${selector} ${side}: distinct trusted insertions retain exact source and DOM-side affinity`,
+            serialized === expected && state.owners.some(owner => owner.text === word) &&
+              state.events.filter(event => event.type === "beforeinput" && event.trusted && ["x", "y"].includes(event.data)).length === 2 &&
+              state.document === expectedSource && state.history === opened.history,
+            JSON.stringify({ serialized, expected, state }));
+          win.webContents.undo(); await sleep(50);
+          const undone = await exec("editTextSession.engine.readSource()");
+          win.webContents.redo(); await sleep(50);
+          check(`Edit Text boundary ${selector} ${side}: local history restores exact owned source`,
+            undone !== serialized && await exec("editTextSession.engine.readSource()") === serialized &&
+              (await dialogState()).history === opened.history, JSON.stringify({ undone, serialized }));
+          await win.webContents.insertText("z");
+          const continued = await exec("editTextSession.engine.readSource()");
+          check(`Edit Text boundary ${selector} ${side}: history-restored continued typing stays on the same semantic side`,
+            continued === expected.replace("xy", "xyz"), JSON.stringify({ continued, expected }));
+          observations.push({ label: "boundary-" + selector + "-" + side, state, serialized, undone, continued });
+          await nativeClick("#editTextCancelBtn");
+        }
+      }
+      const partialBefore = expectedSource;
+      const partial = await selectAndOpen("ol");
+      await win.webContents.insertText("XX");
+      await nativeClick("#editTextSaveBtn");
+      expectedSource = expectedSource.replace("**bold**", "**bXXd**");
+      await waitFor(exec, "exact partial body transaction", `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+      check("Edit Text exact partial ol changes only those UTF16 source units, preserves external bold markers and creates one document Undo",
+        expectedSource !== partialBefore && await exec(`viewer.querySelector('strong').textContent === 'bXXd' &&
+          historySnapshot().undo.length === ${JSON.parse(partial.history).undo.length + 1}`) &&
+          fs.readFileSync(fixture, "utf8") === source, expectedSource);
+      await exec(`historyUndo(); null`);
+      await waitFor(exec, "one document Undo of Edit Text", `markdownEditor.value === ${JSON.stringify(partialBefore)} && ${RENDER_SETTLED}`);
+      check("Edit Text one document Undo restores the entire exact prior transaction",
+        await exec(`markdownEditor.value === ${JSON.stringify(partialBefore)}`));
+      await exec(`historyRedo(); null`);
+      await waitFor(exec, "document Redo of Edit Text", `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+
+      const nestedOpened = await selectAndOpen("one nest-owned two.");
+      check("Edit Text actual multi-node rendered selection recovers internal authored bold source without enlarging outside prose",
+        await exec(`editTextSession.engine.readSource() === 'one **nest-owned** two.'`), JSON.stringify(nestedOpened));
+      await win.webContents.insertText("**outer ");
+      await win.webContents.insertText("`owned");
+      await win.webContents.insertText("`");
+      await win.webContents.insertText(" tail**");
+      const nested = await dialogState();
+      check("Edit Text and table consumers share nested emphasis conversion retaining a complete CODE owner one-for-one",
+        nested.owners.filter(owner => owner.tag === "STRONG").length === 1 &&
+          nested.owners.filter(owner => owner.tag === "CODE" && owner.text === "owned").length === 1 &&
+          nested.text === "outer owned tail" && !nested.error, JSON.stringify(nested));
+      await nativeClick("#editTextSaveBtn");
+      expectedSource = expectedSource.replace("one **nest-owned** two.", "**outer `owned` tail**");
+      await waitFor(exec, "nested exact-source Save", `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+      observations.push({ label: "multi-node-source-and-nested-ownership", nestedOpened, nested, expectedSource });
+
+      await selectAndOpen("raw-edit");
+      const raw = "# Raw heading\n- item | [link](https://example.invalid/x)\n<span>**html**</span>\n<!-- kept -->\n\n```md\n**fenced**\n```\n\n";
+      await exec(`window.__rawNative = []; window.__rawExecCommand = document.execCommand;
+        document.execCommand = function (...args) {
+          const result = window.__rawExecCommand.apply(this, args);
+          if (args[0] === 'insertHTML') window.__rawNative.push({ expected: args[2], actual: editTextArea.innerHTML });
+          return result;
+        }; null`);
+      await win.webContents.insertText(raw);
+      await win.webContents.insertText("*live");
+      await win.webContents.insertText("*");
+      const rawState = await dialogState();
+      rawState.native = await exec(`document.execCommand = window.__rawExecCommand; window.__rawNative`);
+      check("Edit Text raw Markdown keeps headings lists links HTML pipes fences and newlines visible while only eligible typed emphasis formats",
+        rawState.text === raw + "live" && rawState.owners.length === 1 &&
+          rawState.owners[0].tag === "EM" && rawState.owners[0].text === "live" &&
+          !await exec(`!!editTextArea.querySelector('a,pre,h1,li')`), JSON.stringify(rawState));
+      await exec(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
+      fs.writeFileSync(path.join(evidence, "raw-markdown-live.png"), (await win.webContents.capturePage()).toPNG());
+      await nativeClick("#editTextSaveBtn");
+      expectedSource = expectedSource.replace("raw-edit", raw + "*live*");
+      await waitFor(exec, "raw Markdown exact Save", `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+      check("Edit Text raw source Save leaves all unsupported Markdown and untargeted bytes exact",
+        await exec(`markdownEditor.value === ${JSON.stringify(expectedSource)}`) &&
+          fs.readFileSync(fixture, "utf8") === source, expectedSource);
+      observations.push({ label: "exact-partial-and-raw", partial, partialBefore, rawState, expectedSource });
+
+      await selectAndOpen("paste-edit");
+      await win.webContents.insertText("`left");
+      await win.webContents.insertText("`");
+      await exec(`(() => {
+        const code = editTextArea.querySelector('code'), range = document.createRange();
+        range.selectNodeContents(code); range.collapse(false);
+        getSelection().removeAllRanges(); getSelection().addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', '\\nnext');
+        transfer.setData('text/html', '<b>FORBIDDEN HTML</b>');
+        const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer });
+        editTextArea.dispatchEvent(event);
+        window.__editTextPastePrevented = event.defaultPrevented;
+      })()`);
+      const pasted = await dialogState();
+      check("Edit Text plaintext multiline CODE paste retains newlines, rejects clipboard HTML and uses the shared native insertion",
+        pasted.owners.some(owner => owner.tag === "CODE" && owner.text === "left\nnext") &&
+          !pasted.text.includes("FORBIDDEN") && await exec(`window.__editTextPastePrevented === true`),
+        JSON.stringify(pasted));
+      await exec(`(() => {
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', '\\n\\nlast');
+        editTextArea.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer }));
+      })()`);
+      const demoted = await dialogState();
+      check("Edit Text blank-line paste that invalidates CODE recovers raw delimiters and every pasted newline without HTML fallback",
+        demoted.text === "\u0060left\nnext\n\nlast\u0060" && demoted.owners.length === 0 && demoted.caretEnd === false,
+        JSON.stringify(demoted));
+      await nativeClick("#editTextSaveBtn");
+      expectedSource = expectedSource.replace("paste-edit", "\u0060left\nnext\n\nlast\u0060");
+      await waitFor(exec, "multiline CODE raw-source Save", `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+      check("Edit Text multiline paste saves exact raw source without table newline folding or implicit disk Save",
+        fs.readFileSync(fixture, "utf8") === source &&
+          await exec(`markdownEditor.value === ${JSON.stringify(expectedSource)}`), expectedSource);
+      observations.push({ label: "multiline-plaintext-code-paste", pasted, demoted, expectedSource });
+
+      await selectAndOpen("tail");
+      win.webContents.debugger.attach("1.3");
+      let composing, composed;
+      try {
+        await win.webContents.debugger.sendCommand("Input.imeSetComposition",
+          { text: "`ime`", selectionStart: 5, selectionEnd: 5 });
+        composing = await dialogState();
+        await win.webContents.debugger.sendCommand("Input.insertText", { text: "`ime`" });
+        await sleep(70);
+        composed = await dialogState();
+      } finally {
+        win.webContents.debugger.detach();
+      }
+      check("Edit Text actual Chromium composition stays literal until commit, then uses shared CODE recognition without document mutation",
+        composing.owners.length === 0 &&
+          composing.events.some(event => event.type === "compositionstart" && event.trusted) &&
+          composing.events.some(event => event.type === "input" && event.trusted && event.composing) &&
+          // CDP's commit ends the real trusted IME input with an untrusted
+          // compositionend; keep that distinction explicit, like the cell actor.
+          composed.events.some(event => event.type === "compositionend" && event.data === "`ime`") &&
+          composed.owners.some(owner => owner.tag === "CODE" && owner.text === "ime") &&
+          composed.document === expectedSource && composing.history === composed.history,
+        JSON.stringify({ composing, composed }));
+      observations.push({ label: "native-composition", composing, composed });
+      await nativeClick("#editTextCancelBtn");
+      const beforeCancel = await selectAndOpen("italic");
+      await win.webContents.insertText("cancelled replacement");
+      const cancelInput = await dialogState();
+      check("Edit Text native Cancel setup really changes the focused dialog",
+        cancelInput.text === "cancelled replacement" && cancelInput.document === expectedSource,
+        JSON.stringify(cancelInput));
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" });
+      await waitFor(exec, "Edit Text Escape cancellation", `!editTextOverlay.classList.contains('visible')`);
+      const cancelled = await dialogState();
+      check("Edit Text native Escape cancels without changing source, history or disk",
+        cancelled.document === expectedSource && cancelled.history === beforeCancel.history &&
+          fs.readFileSync(fixture, "utf8") === source, JSON.stringify(cancelled));
+      observations.push({ label: "cancel", beforeCancel, cancelInput, cancelled });
+
+      const footerWitness = "\nNative footer source witness.";
+      const footerSource = expectedSource;
+      await exec(`markdownEditor.focus(); markdownEditor.setSelectionRange(markdownEditor.value.length, markdownEditor.value.length); null`);
+      await win.webContents.insertText(footerWitness);
+      expectedSource += footerWitness;
+      const nativeSourceHistory = await exec(`(() => {
+        const undone=document.execCommand('undo'), valueAfterUndo=markdownEditor.value;
+        const redone=document.execCommand('redo');
+        return {undone,redone,valueAfterUndo,valueAfterRedo:markdownEditor.value};
+      })()`);
+      check("Edit Text footer fixture proves live Chromium source Undo and Redo before testing modal containment",
+        nativeSourceHistory.undone && nativeSourceHistory.redone &&
+          nativeSourceHistory.valueAfterUndo === footerSource &&
+          nativeSourceHistory.valueAfterRedo === expectedSource, JSON.stringify(nativeSourceHistory));
+      await waitFor(exec, "footer source history settled", `${RENDER_SETTLED} && historyDebounceTimer === null`);
+      for (const button of ["editTextSaveBtn", "editTextCancelBtn"]) {
+        await selectAndOpen("kept");
+        await win.webContents.insertText("pending footer edit");
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+        await sleep(50);
+        if (button === "editTextCancelBtn") {
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+          await sleep(50);
+        }
+        const footerState = () => exec(`({
+          source:markdownEditor.value,history:JSON.stringify(historySnapshot()),
+          timers:[historyDebounceTimer,previewDebounceTimer],owner:currentDocumentActionOwner()?.id,
+          current:editTextSession?.isCurrent(),generation:renderGeneration,
+          reload:window.getReloadRequestDiagnostics(),saves:window.getPendingSaveStatus(),
+          pending:editTextSession?.isCurrent() ? editTextSession.engine.readSource() : null,focus:document.activeElement.id
+        })`);
+        const control = await footerState(), keys = [];
+        check(`Edit Text footer ${button}: actual Tab focuses the button while the pending popup edit is current`,
+          control.focus === button && control.current && control.pending === "pending footer edit", JSON.stringify(control));
+        for (const code of ["Z", "Y", "S", "R"]) {
+          win.webContents.sendInputEvent({ type: "keyDown", keyCode: code, modifiers: ["control"] });
+          win.webContents.sendInputEvent({ type: "keyUp", keyCode: code, modifiers: ["control"] });
+          await sleep(70);
+          const afterKey = await footerState().catch(error => ({ error: error.message }));
+          keys.push({ code, afterKey });
+          if (JSON.stringify(afterKey) !== JSON.stringify(control)) break;
+        }
+        check(`Edit Text footer ${button}: native Undo Redo Save Reload preserve source history timers owner disk and pending edit`,
+          keys.length === 4 && keys.every(item => JSON.stringify(item.afterKey) === JSON.stringify(control)) &&
+            fs.readFileSync(fixture, "utf8") === source, JSON.stringify({ control, keys }));
+        if (keys.length === 4 && control.current) {
+          await exec(`window.__editTextFooterHistory = [];
+            window.__editTextFooterObserver = event => {
+              if (!['historyUndo','historyRedo'].includes(event.inputType)) return;
+              const record = {type:event.inputType,trusted:event.isTrusted,target:event.target.id,
+                active:document.activeElement.id,cancelable:event.cancelable};
+              Object.defineProperty(record, 'event', {value:event});
+              window.__editTextFooterHistory.push(record);
+            };
+            window.addEventListener('beforeinput', window.__editTextFooterObserver, true); null`);
+          win.webContents.undo(); await sleep(70);
+          const nativeUndo = await footerState();
+          win.webContents.redo(); await sleep(70);
+          const nativeRedo = await footerState();
+          const routed = await exec(`window.removeEventListener('beforeinput',window.__editTextFooterObserver,true);
+            window.__editTextFooterHistory.map(record => ({...record,prevented:record.event.defaultPrevented}))`);
+          check(`Edit Text footer ${button}: routed native history is observed and cancelled without reaching source or popup`,
+            routed.some(event => event.trusted && event.prevented && event.type === "historyUndo") &&
+              JSON.stringify(nativeUndo) === JSON.stringify(control) && JSON.stringify(nativeRedo) === JSON.stringify(control),
+            JSON.stringify({ routed, nativeUndo, nativeRedo }));
+          observations.push({ label: "footer-native-routing-" + button, routed, nativeUndo, nativeRedo });
+          if (button === "editTextSaveBtn") {
+            await nativeClick("#editTextSaveBtn");
+            const committed = expectedSource.replace("**kept**", "**pending footer edit**");
+            await waitFor(exec, "protected footer Save", `markdownEditor.value === ${JSON.stringify(committed)} && ${RENDER_SETTLED}`);
+            check("Edit Text protected footer Save still commits one document Undo without disk Save",
+              await exec(`historySnapshot().undo.length === ${JSON.parse(control.history).undo.length + 1}`) &&
+                fs.readFileSync(fixture, "utf8") === source);
+            await exec("historyUndo(); null");
+            await waitFor(exec, "protected footer Save document Undo", `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+          } else await nativeClick("#editTextCancelBtn");
+        } else await nativeClick("#editTextCancelBtn");
+        // A red footer control can invoke document Undo. Recover through the
+        // real document Redo only after recording the failure and closing it.
+        if (await exec("markdownEditor.value") !== expectedSource) {
+          await exec("historyRedo(); null");
+          await waitFor(exec, "red footer probe document recovery",
+            `markdownEditor.value === ${JSON.stringify(expectedSource)} && ${RENDER_SETTLED}`);
+        }
+        check(`Edit Text footer ${button}: closing and any explicit document Undo leave no pending text applied`,
+          !await exec("editTextOverlay.classList.contains('visible')") &&
+            !await exec("markdownEditor.value.includes('pending footer edit')"));
+        observations.push({ label: "footer-" + button, control, keys });
+      }
+      await selectAndOpen("kept");
+      await win.webContents.insertText("STALE POPUP MUST NOT APPLY");
+      await exec(`markdownEditor.focus(); markdownEditor.setSelectionRange(markdownEditor.value.length, markdownEditor.value.length); null`);
+      await win.webContents.insertText("\nexternal-source-change");
+      expectedSource += "\nexternal-source-change";
+      await waitFor(exec, "actual external source typing to invalidate capture",
+        `markdownEditor.value === ${JSON.stringify(expectedSource)}`);
+      await nativeClick("#editTextSaveBtn");
+      const stale = await dialogState();
+      check("Edit Text stale source guard refuses captured popup text after actual trusted document typing, without overwriting newer bytes or disk",
+        stale.open && !!stale.error && stale.document === expectedSource &&
+          !stale.document.includes("STALE POPUP") && fs.readFileSync(fixture, "utf8") === source,
+        JSON.stringify(stale));
+      observations.push({ label: "stale-source", stale });
+      await nativeClick("#editTextCancelBtn");
+    } finally {
+      await exec(`(() => {
+        if (window.__rawExecCommand) {
+          document.execCommand = window.__rawExecCommand;
+          delete window.__rawExecCommand; delete window.__rawNative;
+        }
+        if (editTextOverlay.classList.contains('visible')) editTextCancelBtn.click();
+        for (const type of ['contextmenu','click','beforeinput','input','compositionstart','compositionend']) {
+          document.removeEventListener(type, window.__editTextNativeListener, true);
+        }
+        delete window.__editTextNativeListener; delete window.__editTextNativeEvents;
+        return true;
+      })()`);
+      if (await exec(`isEditMode`)) {
+        await nativeClick("#exitEditBtn");
+        if (await exec(`document.getElementById('appMessageDialog')?.open`)) {
+          await nativeClick('#appMessageDialog [data-dialog-choice="proceed"]');
+        }
+        await waitFor(exec, "disposable Edit Text editor cleanup",
+          `!isEditMode && !hasUnsavedChanges && ${RENDER_SETTLED}`);
+      }
+      if (tabId) await exec(`window.CustomTabs.closeTab(${JSON.stringify(tabId)})`);
+      check("Edit Text native cleanup discards the disposable editor and leaves disk bytes untouched",
+        fs.readFileSync(fixture, "utf8") === source &&
+          await exec(`!isEditMode && !editTextOverlay.classList.contains('visible') &&
+            !window.CustomTabs.getTabs().some(t => t.id === ${JSON.stringify(tabId)})`), fixture);
+      const alive = await proveSentinelAlive(win, sentinel);
+      check("Edit Text native error sentinel proves both console and DOM channels are live",
+        alive.console === true && alive.dom === true, JSON.stringify(alive));
+      const report = await sentinel.stop();
+      check("Edit Text native scenarios and cleanup introduce no renderer errors or sentinel stalls",
+        report.hits.length === 0 && report.stalls.length === 0, JSON.stringify(report));
+      observations.push({
+        label: "sentinel-and-cleanup", alive, report,
+        legacyIpcRenderer: await exec(`typeof ipcRenderer`),
+      });
+      fs.writeFileSync(path.join(evidence, "observations.json"), JSON.stringify(observations, null, 2) + "\n");
+      sentinel = startErrorSentinel(win, { label: "patch" });
+    }
+  }
+
   // ---------------------------------------------------------------------
   // View-mode editing: the context menu is gated, and notes persist.
   //
@@ -1402,7 +2037,7 @@ async function run(win) {
   }
 
   const openNoteFileForReal = async () => {
-    await exec(`ipcRenderer.send('open-file-path', ${JSON.stringify(notePath)}); null`);
+    await admitTestDocument(win, notePath, fs.readFileSync(notePath, "utf8"));
     await waitFor(
       exec,
       "the file to open for real",
@@ -1849,7 +2484,13 @@ async function run(win) {
       const p = path.join(dir, file);
       const heading = /^#\s+(.+)$/m.exec(body)[1];
       fs.writeFileSync(p, body, "utf8");
-      await exec(`ipcRenderer.send('open-file-path', ${JSON.stringify(p)}); null`);
+      await exec(`window.__patchOpenConsent = confirmUnsavedAction;
+        confirmUnsavedAction = async () => ({ approved: true, isCurrent: CustomTabs.captureDialogContext() }); null`);
+      try {
+        await admitTestDocument(win, p, body);
+      } finally {
+        await exec(`confirmUnsavedAction = window.__patchOpenConsent; delete window.__patchOpenConsent; null`);
+      }
       await waitFor(
         exec,
         `${file} to become the open AND RENDERED document`,
@@ -2067,19 +2708,21 @@ async function run(win) {
     // hang the harness forever.
     const failPath = await openFresh("note-failsave.md", "# Fail\n\nfail body\n");
     const failedOpen = holdSaveOpens(failPath, true);
-    await exec(`window.__patchRealAlert = window.alert; null`);
+    await exec(`window.__patchRealAlert = showMessageDialog; window.__patchFaultMessages = []; null`);
     await sentinel.mute("view-mode auto-save failure recovery: EISDIR is provoked on purpose");
     let failState;
     try {
       const started = await exec(`
         (() => {
-          window.alert = () => {};
+          showMessageDialog = (title, message) => { window.__patchFaultMessages.push(String(message)); };
           return commitViewModeNote(originalMarkdown + '\\nLOST NOTE\\n', 0);
         })()
       `);
       await waitFor(() => failedOpen.observed(), "the failed save to reach the disk open", "");
       failedOpen.releaseNext();
       await waitFor(exec, "the failed save result to settle", `!hasPendingSaveFor(${JSON.stringify(failPath)})`);
+      await waitFor(exec, "the expected failure message to reach its actual nonmodal seam",
+        `window.__patchFaultMessages.length > 0`);
       const afterFail = await exec(`({
         failed: saveFailedFor(currentFilePath),
         dirty: hasUnsavedChanges,
@@ -2095,7 +2738,7 @@ async function run(win) {
       };
     } finally {
       failedOpen.restore();
-      await exec(`window.alert = window.__patchRealAlert; delete window.__patchRealAlert; null`);
+      await exec(`showMessageDialog = window.__patchRealAlert; delete window.__patchRealAlert; null`);
     }
     // The mute is asserted to have caught the failure it was opened for: a
     // mute that suppresses nothing is a mute that has stopped describing the
@@ -2510,7 +3153,7 @@ async function run(win) {
     // note ended up unsaved AND unmarked.
     // Same deliberate-failure treatment as the cross-tab probe above.
     const heldLate = holdSaveOpens(tabAPath, true);
-    await exec(`window.__patchRealAlert = window.alert; window.alert = () => {}; null`);
+    await exec(`window.__patchRealAlert = showMessageDialog; showMessageDialog = () => {}; null`);
     await sentinel.mute("late save failure: the reply is injected on purpose");
     let lateFail;
     try {
@@ -2531,7 +3174,7 @@ async function run(win) {
       };
     } finally {
       heldLate.restore();
-      await exec(`window.alert = window.__patchRealAlert; delete window.__patchRealAlert; null`);
+      await exec(`showMessageDialog = window.__patchRealAlert; delete window.__patchRealAlert; null`);
     }
     const lateMute = sentinel.currentMute();
     await sentinel.unmute();
@@ -2575,8 +3218,9 @@ async function run(win) {
       rendererOnlyFailure = await exec(`
         (async () => {
           const expectedPath = ${JSON.stringify(rendererOnlyPath)};
-          const realSend = ipcRenderer.send;
-          const realAlert = window.alert;
+          const realPrepare = CustomTabs.prepareSaveRequest;
+          const realSettle = settleUndeliveredSave;
+          const realAlert = showMessageDialog;
           let attempts = 0;
           let requestPath = null;
           let requestId = null;
@@ -2584,19 +3228,16 @@ async function run(win) {
           const alertMessages = [];
           let report = null;
           try {
-            window.alert = (message) => { alertMessages.push(String(message)); };
-            ipcRenderer.send = function (channel, payload) {
-              if (
-                channel !== "save-markdown-file" ||
-                !payload ||
-                payload.filePath !== expectedPath
-              ) {
-                return realSend.apply(this, arguments);
-              }
+            showMessageDialog = (title, message) => { alertMessages.push(String(message)); };
+            CustomTabs.prepareSaveRequest = function () {
+              const request = realPrepare.apply(this, arguments);
+              return request && { ...request, identity: { ...request.identity, documentRef: "invalid" } };
+            };
+            settleUndeliveredSave = function (entry, error) {
               attempts += 1;
-              requestPath = payload.filePath;
-              requestId = payload.requestId;
-              throw new Error("SYNC_RENDERER_DELIVERY_FAILURE");
+              requestPath = entry.path;
+              requestId = entry.requestId;
+              return realSettle(entry, error);
             };
             saveResult = await saveMarkdownFile();
             const tab = CustomTabs.findTabByPath(expectedPath);
@@ -2615,7 +3256,7 @@ async function run(win) {
                 tab.filePath === expectedPath &&
                 !!identity &&
                 identity.pathKey === fileTrackingPathKey(
-                  fs.realpathSync.native(expectedPath),
+                  ${JSON.stringify(fs.realpathSync.native(rendererOnlyPath))},
                 ),
               customTabsClean:
                 !!tab &&
@@ -2628,11 +3269,12 @@ async function run(win) {
                 hasUnsavedChanges === false,
             };
           } finally {
-            ipcRenderer.send = realSend;
-            window.alert = realAlert;
+            CustomTabs.prepareSaveRequest = realPrepare;
+            settleUndeliveredSave = realSettle;
+            showMessageDialog = realAlert;
             if (report) {
-              report.sendIsOriginal = ipcRenderer.send === realSend;
-              report.alertIsOriginal = window.alert === realAlert;
+              report.sendIsOriginal = CustomTabs.prepareSaveRequest === realPrepare && settleUndeliveredSave === realSettle;
+              report.alertIsOriginal = showMessageDialog === realAlert;
             }
           }
           return report;
@@ -2651,7 +3293,7 @@ async function run(win) {
         rendererOnlyFailure.requestId > 0 &&
         rendererOnlyFailure.saveResult === false &&
         rendererOnlyFailure.alertMessages.length === 1 &&
-        rendererOnlyFailure.alertMessages[0].includes("SYNC_RENDERER_DELIVERY_FAILURE") &&
+        rendererOnlyFailure.alertMessages[0].includes("Invalid admitted document reference") &&
         rendererOnlyFailure.exactOwner === true &&
         rendererOnlyFailure.sendIsOriginal === true &&
         rendererOnlyFailure.alertIsOriginal === true,
@@ -2660,7 +3302,7 @@ async function run(win) {
     check(
       "the synchronous delivery fault really reached the console, so its mute is not vacuous",
       !!rendererOnlyMute && (rendererOnlyMute.suppressed || []).some((s) =>
-        String(s.detail || "").includes("SYNC_RENDERER_DELIVERY_FAILURE")),
+        String(s.detail || "").includes("Invalid admitted document reference")),
       JSON.stringify(rendererOnlyMute && rendererOnlyMute.suppressed),
     );
     check(
@@ -2946,7 +3588,7 @@ async function run(win) {
 
     const kbFile = path.join(dir, "shortcuts.md");
     fs.writeFileSync(kbFile, "# Shortcuts\n\nbody\n", "utf8");
-    await exec(`ipcRenderer.send('open-file-path', ${JSON.stringify(kbFile)}); null`);
+    await admitTestDocument(win, kbFile, fs.readFileSync(kbFile, "utf8"));
     await waitFor(
       exec,
       "the shortcut probe document to open",
@@ -3049,7 +3691,7 @@ async function run(win) {
     // The restoration used to sit at the END of the probe, so it ran only on
     // NORMAL COMPLETION: any throw inside the sweep - a renamed product global,
     // a KeyboardEvent the runtime rejects, an assertion added later that reads
-    // something absent - left `ipcRenderer.send` and `window.confirm` STUBBED,
+    // something absent - left navigation and confirmation functions STUBBED,
     // the navigation history seeded with two synthetic entries, and a stray
     // <textarea> on the body for every assertion that followed. The failure the
     // reader would then be handed is whatever broke next, not the probe. It is
@@ -3078,6 +3720,14 @@ async function run(win) {
     // stubbed this", which is not the same as "this is the object the probe
     // borrowed" - the restoration oracle is exact function identity, computed
     // page-side; see recordRestoration() in the probe.
+    const navigationListeners = ipcMain.listeners("open-file-path");
+    const navigationDispatches = [];
+    const holdNavigation = (event, payload) => {
+      if (event.sender === win.webContents) navigationDispatches.push(payload);
+    };
+    navigationListeners.forEach(listener => ipcMain.removeListener("open-file-path", listener));
+    ipcMain.on("open-file-path", holdNavigation);
+    try {
     await exec(`
       window.__navProbeSnap = () => ({
         histLen: navigationHistory.length,
@@ -3093,8 +3743,8 @@ async function run(win) {
         navResult: lastNavigationRequestResult,
         dirty: hasUnsavedChanges,
         edit: isEditMode,
-        sendStubbed: ipcRenderer.send.__navProbeStub === true,
-        confirmStubbed: window.confirm.__navProbeStub === true,
+        sendStubbed: requestHistoryNavigation.__navProbeStub === true,
+        confirmStubbed: confirmUnsavedAction.__navProbeStub === true,
         bodyTextareas: document.querySelectorAll('body > textarea').length,
       });
       window.__navProbeFault = false;
@@ -3103,9 +3753,10 @@ async function run(win) {
     `);
     const navProbeSource = `
       (async () => {
-        const fire = (key, target) => {
+        const fire = async (key, target) => {
           const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
           (target || document).dispatchEvent(ev);
+          await new Promise(resolve => setTimeout(resolve, 40));
           return ev.defaultPrevented;
         };
         const before = window.__navProbeSnap();
@@ -3120,8 +3771,8 @@ async function run(win) {
         const resultBefore = lastNavigationRequestResult;
         const dirtyBefore = hasUnsavedChanges;
         const editBefore = isEditMode;
-        const realSend = ipcRenderer.send;
-        const realConfirm = window.confirm;
+        const realSend = requestHistoryNavigation;
+        const realConfirm = confirmUnsavedAction;
         const sent = [];
         let ta = null;
         // EVERYTHING THE BODY BELOW IS ALLOWED TO MOVE, put back in one place.
@@ -3129,8 +3780,8 @@ async function run(win) {
         // that follow would otherwise leave them installed, which is the exact
         // leak this function exists to prevent.
         const restore = () => {
-          ipcRenderer.send = realSend;
-          window.confirm = realConfirm;
+          requestHistoryNavigation = realSend;
+          confirmUnsavedAction = realConfirm;
           if (ta) { ta.remove(); ta = null; }
           navigationHistory.length = 0;
           for (const h of histBefore) navigationHistory.push(h);
@@ -3168,21 +3819,25 @@ async function run(win) {
           if (!window.__navProbeEvidence) return;
           window.__navProbeEvidence.restored = {
             state: window.__navProbeSnap(),
-            sendIsOriginal: ipcRenderer.send === realSend,
-            confirmIsOriginal: window.confirm === realConfirm,
+            sendIsOriginal: requestHistoryNavigation === realSend,
+            confirmIsOriginal: confirmUnsavedAction === realConfirm,
           };
         };
         const out = {};
         try {
-          const sendStub = function (channel) {
-            if (channel === 'open-file-path') { sent.push(channel); return; }
-            return realSend.apply(ipcRenderer, arguments);
+          const sendStub = async function () {
+            const dispatched = await realSend.apply(this, arguments);
+            if (dispatched) sent.push(pendingNavigationRequest?.token);
+            return dispatched;
           };
           sendStub.__navProbeStub = true;
-          ipcRenderer.send = sendStub;
+          requestHistoryNavigation = sendStub;
           // Marked so the snapshot can tell a stub from the real thing by
           // identity rather than by guessing from behaviour.
-          const stubConfirm = (fn) => { fn.__navProbeStub = true; window.confirm = fn; return fn; };
+          const stubConfirm = (fn) => {
+            const stub = async () => ({ approved: fn(), isCurrent: () => true });
+            stub.__navProbeStub = true; confirmUnsavedAction = stub; return stub;
+          };
           const seed = (idx) => {
             navigationHistory.length = 0;
             navigationHistory.push({ filePath: currentFilePath, scrollPosition: 0 });
@@ -3194,25 +3849,25 @@ async function run(win) {
             sent.length = 0;
           };
           stubConfirm(() => true);
-          seed(1); out.backPossible = { prevented: fire('ArrowLeft'), sends: sent.length };
-          seed(0); out.backAtStart = { prevented: fire('ArrowLeft'), sends: sent.length };
-          seed(0); out.fwdPossible = { prevented: fire('ArrowRight'), sends: sent.length };
-          seed(1); out.fwdAtEnd = { prevented: fire('ArrowRight'), sends: sent.length };
+          seed(1); out.backPossible = { prevented: await fire('ArrowLeft'), sends: sent.length };
+          seed(0); out.backAtStart = { prevented: await fire('ArrowLeft'), sends: sent.length };
+          seed(0); out.fwdPossible = { prevented: await fire('ArrowRight'), sends: sent.length };
+          seed(1); out.fwdAtEnd = { prevented: await fire('ArrowRight'), sends: sent.length };
 
           let asked = 0;
           stubConfirm(() => { asked++; return false; });
           seed(1); isEditMode = true; hasUnsavedChanges = true;
-          out.dirtyDeclined = { prevented: fire('ArrowLeft'), sends: sent.length, asked: asked };
+          out.dirtyDeclined = { prevented: await fire('ArrowLeft'), sends: sent.length, asked: asked };
           asked = 0;
           stubConfirm(() => { asked++; return true; });
           seed(1); isEditMode = true; hasUnsavedChanges = true;
-          out.dirtyAccepted = { prevented: fire('ArrowLeft'), sends: sent.length, asked: asked };
+          out.dirtyAccepted = { prevented: await fire('ArrowLeft'), sends: sent.length, asked: asked };
 
           stubConfirm(() => true);
           seed(1);
           ta = document.createElement('textarea');
           document.body.appendChild(ta);
-          out.inTextarea = { prevented: fire('ArrowLeft', ta), sends: sent.length };
+          out.inTextarea = { prevented: await fire('ArrowLeft', ta), sends: sent.length };
 
           if (window.__navProbeFault) {
             // Recorded BEFORE the throw, because the whole point is that the
@@ -3224,8 +3879,8 @@ async function run(win) {
             // objects.
             window.__navProbeEvidence.dirty = {
               state: window.__navProbeSnap(),
-              sendIsOriginal: ipcRenderer.send === realSend,
-              confirmIsOriginal: window.confirm === realConfirm,
+              sendIsOriginal: requestHistoryNavigation === realSend,
+              confirmIsOriginal: confirmUnsavedAction === realConfirm,
             };
             throw new Error('navprobe fault injection');
           }
@@ -3237,6 +3892,10 @@ async function run(win) {
       })()
     `;
     const navProbe = await exec(navProbeSource);
+    check("navigation controls really deliver through the frozen approved-document bridge to Main",
+      navigationDispatches.length === 3 && navigationDispatches.every(payload =>
+        payload && typeof payload.filePath === "string" && Number.isSafeInteger(payload.openRequest?.token)),
+      JSON.stringify(navigationDispatches));
     // THE POSITIVE CONTROL for every "not prevented" reading below. Without it
     // a dispatch that never reaches the handler at all reports prevented=false
     // everywhere and the narrowing assertions pass for the worst possible
@@ -3261,7 +3920,7 @@ async function run(win) {
       "arrow-key navigation asks before discarding unsaved work, and declining stops it",
       navProbe.dirtyDeclined.asked === 1 &&
         navProbe.dirtyDeclined.sends === 0 &&
-        navProbe.dirtyDeclined.prevented === false,
+        navProbe.dirtyDeclined.prevented === true,
       JSON.stringify(navProbe.dirtyDeclined),
     );
     // The other half of the same guard: without this, "sends 0" above would be
@@ -3349,6 +4008,13 @@ async function run(win) {
         JSON.stringify(navFault.after) === JSON.stringify(navFault.evidence.before),
       JSON.stringify(navFault),
     );
+    } finally {
+      ipcMain.removeListener("open-file-path", holdNavigation);
+      navigationListeners.forEach(listener => ipcMain.on("open-file-path", listener));
+    }
+    check("navigation probe restores the exact Main listeners after its real and throwing legs",
+      ipcMain.listeners("open-file-path").length === navigationListeners.length &&
+        ipcMain.listeners("open-file-path").every((listener, index) => listener === navigationListeners[index]));
   }
 
   // --- 16. Replacing the document detaches the new blocks in BULK -------------

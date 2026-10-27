@@ -940,6 +940,10 @@ const UI_STRINGS = {
   'tableCells.invalid': 'These cells would change the table structure. Check the cell contents and try again.',
   'tableCells.cellType': 'This cell contains content that cannot be edited safely here. The document has not changed.',
   'tableCells.formatShortcuts': 'Bold, italic and underline shortcuts are not available in this popup. Existing formatting is unchanged.',
+  'editText.mapping': 'This exact rendered selection cannot be edited safely. Select a smaller text range.',
+  'editText.stale': 'The document changed while this popup was open. Close it and select the text again.',
+  'editText.unsupported': 'This text cannot be edited safely here. Your document has not changed.',
+  'editText.shortcuts': 'Formatting shortcuts are not available in this popup. Type Markdown bold, italic or code instead.',
   'tableCells.commitFailed': 'The table could not be updated. The document has not changed.',
   'tableCells.renderFailed': 'The document was updated, but the preview could not be refreshed. Close this editor and retry the preview; do not submit again.',
   'tableCells.close': 'Close',
@@ -7069,8 +7073,9 @@ async function renderMarkdownFull(content, generation) {
 
     // Empty or already-highlighted documents must not wait for idle work
     // that has nothing to do while the loading overlay still blocks input.
-    if (typeof Prism !== 'undefined' &&
-        document.querySelector('pre code:not(.prism-highlighted)')) {
+    const textPending = typeof Prism !== 'undefined' &&
+      !!document.querySelector('pre code:not(.prism-highlighted)');
+    if (textPending) {
       // Use requestIdleCallback for non-blocking syntax highlighting.
       // The timeout is load-bearing: a bare requestIdleCallback has no deadline
       // at all, so on a page that never goes idle the callback - and with it
@@ -7097,6 +7102,7 @@ async function renderMarkdownFull(content, generation) {
         if (notesPanel.classList.contains('visible')) updateNotesList();
         updateShowNotesToggleVisibility();
         applyNoteStyles();
+        editorScroll.sealTextSource(scrollSource);
       });
     } else {
       // Add copy buttons even without Prism
@@ -7107,7 +7113,7 @@ async function renderMarkdownFull(content, generation) {
       updateShowNotesToggleVisibility();
       applyNoteStyles();
     }
-    editorScroll.commit(scrollSource);
+    editorScroll.commit(scrollSource, { textPending });
   } catch (error) {
     console.error('Error rendering markdown:', error);
     // Replaces the whole tree without going through patchViewerDOM, so it needs
@@ -11035,25 +11041,94 @@ findNoteBtn.addEventListener('click', () => {
 // ============================================
 
 const editTextOverlay = document.getElementById('editTextOverlay');
-const editTextArea = document.getElementById('editTextArea');
+let editTextArea = document.getElementById('editTextArea');
 const editTextSaveBtn = document.getElementById('editTextSaveBtn');
 const editTextCancelBtn = document.getElementById('editTextCancelBtn');
 const editTextClose = document.getElementById('editTextClose');
 
 let editTextOriginal = null; // the original selected text
 let editTextOccurrence = 0;  // which occurrence
+let editTextSession = null;
+const editTextError = document.getElementById('editTextError');
+FoliaInlineFormatting.attachDialogContainment({
+  element: editTextOverlay, documentEditor: markdownEditor,
+  isCurrent: () => editTextOverlay.classList.contains('visible'),
+});
+
+function showEditTextError(error) {
+  const key = error instanceof Error ? error.message : 'tableCells.commitFailed';
+  editTextError.textContent = key === 'tableCells.stale' ? i18n('editText.stale')
+    : key === 'tableCells.mapping' ? i18n('editText.mapping')
+    : key === 'tableCells.formatShortcuts' ? i18n('editText.shortcuts') : i18n('editText.unsupported');
+  if (!Object.hasOwn(UI_STRINGS, key)) console.error('Edit Text failed:', error);
+}
 
 function openEditTextDialog() {
   if (!savedSelection) return;
+  editTextSession?.engine.dispose();
+  editTextSession = null;
+  editTextError.textContent = '';
+  // A new native editing host cannot inherit a prior popup's captured owners.
+  const fresh = editTextArea.cloneNode(false);
+  editTextArea.replaceWith(fresh);
+  editTextArea = fresh;
   editTextOriginal = savedSelection;
   editTextOccurrence = savedSelectionOccurrence;
-  editTextArea.value = savedSelection;
+  if (isEditMode) {
+    try {
+      const tab = currentDocumentActionOwner();
+      const capture = savedRange && editorScroll.captureTextRange(savedRange);
+      const exact = window.CustomTabs.snapshotExactEditorContent();
+      if (!tab || !capture || FoliaTableCells.normalise(exact) !== capture.source) throw new Error('tableCells.mapping');
+      const contextCurrent = window.CustomTabs.captureDialogContext(tab);
+      const mode = editorModeRevision, sequence = fileOpenSequence;
+      const session = { capture, exact, applied: false };
+      session.isCurrent = () => editTextSession === session && !session.applied &&
+        contextCurrent() && currentDocumentActionOwner() === tab && isEditMode &&
+        editorModeRevision === mode && fileOpenSequence === sequence &&
+        editorScroll.isCurrentSource(capture.source) &&
+        window.CustomTabs.snapshotExactEditorContent() === exact;
+      const source = capture.source.slice(capture.start, capture.end);
+      const policy = FoliaInlineFormatting.rawMarkdownPolicy({ ...capture, marked, protect: protectTableSource });
+      const ownership = FoliaInlineFormatting.prepareCell(editTextArea, source, source, marked, {},
+        value => value, sanitizeTableHtml, { policy });
+      editTextSession = session;
+      session.engine = FoliaInlineFormatting.attachInlineEditor({
+        element: editTextArea, ownership, marked, transform: value => value,
+        sanitize: sanitizeTableHtml, documentEditor: markdownEditor,
+        isCurrent: session.isCurrent, reportError: showEditTextError,
+        clearError: () => { editTextError.textContent = ''; },
+        sourcePolicy: {
+          keydown(event) {
+            if (event.key === 'Escape') {
+              event.preventDefault(); closeEditTextDialog();
+            } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault(); editTextSaveBtn.click();
+            } else if ((event.ctrlKey || event.metaKey) &&
+                !['a', 'c', 'x', 'v', 'z', 'y'].includes(event.key.toLowerCase())) {
+              event.preventDefault();
+            }
+          },
+        },
+      });
+    } catch (error) {
+      editTextSession?.engine?.dispose();
+      editTextSession = null;
+      showNotification(i18n('editText.mapping'), 5000);
+      return;
+    }
+  } else editTextArea.textContent = savedSelection;
   editTextOverlay.classList.add('visible');
   editTextArea.focus();
-  editTextArea.select();
+  const range = document.createRange();
+  range.selectNodeContents(editTextArea);
+  getSelection().removeAllRanges();
+  getSelection().addRange(range);
 }
 
 function closeEditTextDialog() {
+  editTextSession?.engine.dispose();
+  editTextSession = null;
   editTextOverlay.classList.remove('visible');
   editTextOriginal = null;
 }
@@ -11116,32 +11191,36 @@ function updateSourceSilently(oldText, newText, occurrence) {
   return true;
 }
 
-editTextSaveBtn.addEventListener('click', () => {
+editTextSaveBtn.addEventListener('click', async () => {
   if (!mayMutateRendererDocument('edit-text-dialog-commit')) return;
-  const newText = editTextArea.value;
+  if (isEditMode || editTextSession) {
+    const session = editTextSession;
+    try {
+      if (!session?.isCurrent()) throw new Error('tableCells.stale');
+      const newText = session.engine.readSource();
+      const candidate = FoliaTableCells.spliceInput(session.exact, session.capture.start, session.capture.end, newText);
+      if (candidate === session.exact) { closeEditTextDialog(); return; }
+      if (!session.isCurrent() || !window.CustomTabs.adoptExactEditorContent(candidate)) throw new Error('tableCells.stale');
+      cancelEditorDeferredWork();
+      historyPushExact(session.exact);
+      markdownEditor.value = candidate;
+      exactTypingSource = candidate;
+      setDocumentDirtyFromContent(candidate);
+      retainCurrentDocumentEditor();
+      session.applied = true;
+      closeEditTextDialog();
+      await renderMarkdown(candidate);
+      showNotification(i18n('notif.textEdited'), 1500);
+    } catch (error) { showEditTextError(error); }
+    return;
+  }
+  const newText = editTextArea.textContent;
   if (newText === editTextOriginal) {
     closeEditTextDialog();
     return;
   }
 
-  if (isEditMode) {
-    const editorVal = markdownEditor.value;
-    const textIndex = findNthOccurrence(editorVal, editTextOriginal, editTextOccurrence);
-    if (textIndex !== -1) {
-      replaceEditorSourceRange(textIndex, textIndex + editTextOriginal.length, newText);
-
-      setDocumentDirtyFromContent(markdownEditor.value);
-
-      clearTimeout(previewDebounceTimer);
-      previewDebounceTimer = setTimeout(() => {
-        renderMarkdown(markdownEditor.value);
-      }, 300);
-
-      showNotification(i18n('notif.textEdited'), 1500);
-    } else {
-      showNotification(i18n('notif.textNotFound'), 2000);
-    }
-  } else {
+  {
     // View mode — try partial render first, then fall back to full re-render
     const activeSource = getActiveMarkdown();
     const found = findPlainTextInSource(activeSource, editTextOriginal, editTextOccurrence);
@@ -11764,6 +11843,9 @@ const tableCellDialog = document.getElementById('tableCellDialog');
 const tableCellGrid = document.getElementById('tableCellGrid');
 const tableCellError = document.getElementById('tableCellError');
 const tableCellUpdate = document.getElementById('tableCellUpdate');
+FoliaInlineFormatting.attachDialogContainment({
+  element: tableCellDialog, documentEditor: markdownEditor, isCurrent: () => tableCellDialog.open,
+});
 document.getElementById('tableCellClose').setAttribute('aria-label', i18n('tableCells.close'));
 
 let tableMenuPointerSelection = null;
@@ -11833,6 +11915,7 @@ function protectTableSource(text, mask) {
 function closeTableCellEditor() {
   const session = tableCellSession;
   tableCellSession = null;
+  session?.cells.forEach(cell => cell.engine?.dispose());
   if (tableCellDialog.open) tableCellDialog.close();
   tableCellGrid.replaceChildren();
   if (session?.selection.isCurrent()) {
@@ -11848,62 +11931,8 @@ function showTableCellError(error) {
 
 function serializeSafeTableCell(input, provenance) {
   provenance ??= tableCellSession?.cells.find(cell => cell.input === input)?.provenance;
-  if (!(provenance?.fragments instanceof Map) || typeof provenance.transform !== 'function' ||
-      typeof provenance.attributes !== 'function' || typeof provenance.partAttribute !== 'string' ||
-      typeof provenance.codeAttribute !== 'string') throw new Error('tableCells.cellType');
-  const serialized = FoliaTableCells.serializeCell(input, provenance);
-  const checked = document.createElement('div');
-  checked.innerHTML = sanitizeTableHtml(input.innerHTML);
-  if (checked.innerHTML !== input.innerHTML) throw new Error('tableCells.cellType');
-  const canonical = root => {
-    const copy = root.cloneNode(true);
-    copy.querySelectorAll('[style]').forEach(node => node.setAttribute('style', node.style.cssText));
-    copy.querySelectorAll('[' + provenance.partAttribute + ']').forEach(node => {
-      const fragment = provenance.fragments.get(node.getAttribute(provenance.partAttribute));
-      if (['text', 'escape', 'emoji', 'comment'].includes(fragment?.kind)) node.replaceWith(...node.childNodes);
-      else node.removeAttribute(provenance.partAttribute);
-    });
-    copy.querySelectorAll('[' + provenance.codeAttribute + ']').forEach(node =>
-      node.removeAttribute(provenance.codeAttribute));
-    copy.normalize();
-    // Adjacent unstyled emphasis has the same meaning as one continuous span.
-    // Code, links and attributed elements retain their individual boundaries.
-    for (const parent of [copy, ...copy.querySelectorAll('*')].reverse()) {
-      for (const node of [...parent.children]) {
-        let next = node.nextSibling;
-        while (['STRONG', 'EM', 'DEL'].includes(node.tagName) && !node.attributes.length &&
-            next?.nodeType === Node.ELEMENT_NODE && next.tagName === node.tagName && !next.attributes.length) {
-          node.append(...next.childNodes);
-          next.remove();
-          next = node.nextSibling;
-        }
-      }
-    }
-    copy.normalize();
-    return FoliaTableCells.serializeCell(copy);
-  };
-  const expected = canonical(input);
-  const matches = source => {
-    const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-    lexer.tokens.links = provenance?.links || {};
-    const rendered = document.createElement('div');
-    rendered.innerHTML = marked.Parser.parseInline(lexer.inlineTokens(parseEmojis(source.replace(/\\\|/g, '|'))));
-    checked.innerHTML = sanitizeTableHtml(rendered.innerHTML);
-    const safe = canonical(checked);
-    return safe === canonical(rendered) && safe === expected;
-  };
-  if (!matches(serialized)) {
-    // Joining source can activate syntax across literal and semantic fragments.
-    // Keep literal repair and the two delimiter-family orientations independent.
-    const bounded = FoliaTableCells.serializeCell(input, provenance, true);
-    if (bounded !== serialized && matches(bounded)) return bounded;
-    for (const orientation of [0, 1]) {
-      const alternate = FoliaTableCells.serializeCell(input, provenance, true, orientation);
-      if (alternate !== serialized && alternate !== bounded && matches(alternate)) return alternate;
-    }
-    throw new Error('tableCells.cellType');
-  }
-  return serialized;
+  return FoliaInlineFormatting.serializeSurface(input, provenance,
+    { marked, transform: parseEmojis, sanitize: sanitizeTableHtml });
 }
 
 function openTableCellEditor(rowsOnly) {
@@ -11969,6 +11998,7 @@ function openTableCellEditor(rowsOnly) {
     tableCellUpdate.textContent = i18n('tableCells.update');
     tableCellUpdate.disabled = false;
     tableCellSession = session;
+    for (const cell of session.cells) cell.engine = attachTableCellInput(cell, session);
     tableCellDialog.showModal();
     session.cells[0].input.focus();
   } catch (error) {
@@ -11985,7 +12015,7 @@ async function updateTableCells() {
     if (!session.selection.isCurrent() || !mayMutateRendererDocument('table-cell-commit') ||
         window.CustomTabs.snapshotExactEditorContent() !== session.exact) throw new Error('tableCells.stale');
     const edits = session.cells.filter(cell => cell.input.innerHTML !== cell.initial).map(cell => ({
-      cell: cell.cell, text: serializeSafeTableCell(cell.input, cell.provenance),
+      cell: cell.cell, text: cell.engine.readSource(),
     }));
     if (!edits.length) {
       closeTableCellEditor();
@@ -12029,551 +12059,32 @@ tableCellDialog.addEventListener('cancel', event => {
   closeTableCellEditor();
 });
 
-function tableCellForInput(event) {
-  const session = tableCellSession;
-  const cell = session?.cells.find(item => item.input === event.target || item.input.contains(event.target));
-  if (!cell || cell.converting || !session.selection.isCurrent()) return null;
-  return cell;
-}
-
-function tableCellSelectionContext(event) {
-  const cell = tableCellForInput(event), session = tableCellSession;
-  if (!cell) return null;
-  const selection = getSelection();
-  if (selection.rangeCount !== 1) return null;
-  const range = selection.getRangeAt(0);
-  if (!cell.input.contains(range.commonAncestorContainer)) return null;
-  return { session, cell, selection, range };
-}
-
-function tableCellInputContext(event) {
-  const context = tableCellSelectionContext(event);
-  if (!context) return null;
-  const { range } = context;
-  const node = range.startContainer.nodeType === Node.ELEMENT_NODE
-    ? range.startContainer : range.startContainer.parentElement;
-  if (node.closest('code')) return null;
-  return context;
-}
-
-function placeTableCellCaretAfter(node) {
-  const caret = document.createRange(), selection = getSelection();
-  caret.setStartAfter(node);
-  caret.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(caret);
-}
-
-function tableCellTextPoint(input, offset) {
-  const walker = document.createTreeWalker(input, NodeFilter.SHOW_TEXT);
-  let last = null;
-  for (let node; (node = walker.nextNode());) {
-    if (offset < node.data.length) return { node, offset };
-    offset -= node.data.length;
-    last = node;
-  }
-  return last && offset === 0 ? { node: last, offset: last.data.length } : null;
-}
-
-function tableCellPrefix(cell, range) {
-  const prefix = document.createRange();
-  prefix.selectNodeContents(cell.input);
-  prefix.setEnd(range.startContainer, range.startOffset);
-  return prefix.toString();
-}
-
-function replaceCapturedTableCellText(context, data) {
-  const { cell, range, selection } = context;
-  if (range.collapsed) return false;
-  const boundary = (node, offset, end) => {
-    while (node !== cell.input) {
-      const length = node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length;
-      if (offset !== (end ? length : 0)) break;
-      const parent = node.parentNode;
-      offset = [...parent.childNodes].indexOf(node) + (end ? 1 : 0);
-      node = parent;
-    }
-    return { node, offset };
-  };
-  const start = boundary(range.startContainer, range.startOffset, false);
-  const end = boundary(range.endContainer, range.endOffset, true);
-  const owner = [...cell.input.querySelectorAll('[' + cell.provenance.partAttribute + ']')].find(node => {
-    const captured = cell.provenance.fragments.get(node.getAttribute(cell.provenance.partAttribute));
-    if (!captured || !['STRONG', 'B', 'EM', 'I', 'DEL', 'S'].includes(node.tagName)) return false;
-    const from = boundary(node, 0, false), to = boundary(node, node.childNodes.length, true);
-    return start.node === from.node && start.offset === from.offset && end.node === to.node && end.offset === to.offset;
-  });
-  if (!owner) return false;
-  const copy = owner.cloneNode(true);
-  const copiedNode = node => {
-    const path = [];
-    while (node !== owner) {
-      path.push([...node.parentNode.childNodes].indexOf(node));
-      node = node.parentNode;
-    }
-    return path.reverse().reduce((node, index) => node.childNodes[index], copy);
-  };
-  const from = owner.contains(range.startContainer)
-    ? { node: copiedNode(range.startContainer), offset: range.startOffset }
-    : tableCellTextPoint(copy, 0) || { node: copy, offset: 0 };
-  const to = owner.contains(range.endContainer)
-    ? { node: copiedNode(range.endContainer), offset: range.endOffset }
-    : tableCellTextPoint(copy, copy.textContent.length) || { node: copy, offset: copy.childNodes.length };
-  const changed = document.createRange();
-  changed.setStart(from.node, from.offset);
-  changed.setEnd(to.node, to.offset);
-  changed.deleteContents();
-  const inserted = document.createTextNode(data);
-  changed.insertNode(inserted);
-  const before = document.createRange();
-  before.selectNodeContents(copy);
-  before.setEnd(inserted, inserted.length);
-  const caretOffset = before.toString().length, part = owner.getAttribute(cell.provenance.partAttribute);
-  const replacement = document.createRange();
-  replacement.selectNode(owner);
-  selection.removeAllRanges();
-  selection.addRange(replacement);
-  cell.converting = true;
-  try {
-    // Native full-text replacement can discard source ownership with its styling
-    // wrapper. Keep that ownership inside the same native Undo transaction.
-    if (!document.execCommand('insertHTML', false, copy.outerHTML)) throw new Error('tableCells.cellType');
-    const owners = cell.input.querySelectorAll('[' + cell.provenance.partAttribute + '="' + part + '"]');
-    const current = owners[0];
-    if (owners.length !== 1 || current.outerHTML !== copy.outerHTML) throw new Error('tableCells.cellType');
-    const point = current && tableCellTextPoint(current, caretOffset);
-    if (!point) throw new Error('tableCells.cellType');
-    const caret = document.createRange();
-    caret.setStart(point.node, point.offset);
-    caret.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(caret);
-    tableCellError.textContent = '';
-  } finally {
-    cell.converting = false;
-  }
-  return true;
-}
-
-function rememberTableCellTyping(cell, range, data, collapsed, committed = false) {
-  const { text, runs } = FoliaTableCells.codeDelimiters(cell.input, cell.provenance, range, committed ? '' : data);
-  const prefix = data.length ? text.slice(0, -data.length) : text;
-  let active = collapsed && cell.activeCode?.expectedPrefix === prefix ? cell.activeCode : null;
-  if (active && prefix.length === active.start + active.length && /^`+$/.test(data)) {
-    const extended = runs.find(run => run.index === active.start && run.index + run.length === text.length);
-    active = extended ? { start: extended.index, length: extended.length } : null;
-  }
-  if (!active) {
-    const introduced = runs.find(run => run.index + run.length > prefix.length);
-    if (introduced) active = { start: introduced.index, length: introduced.length };
-  }
-  cell.activeCode = active ? { ...active, expectedPrefix: text } : null;
-}
-
-function tableCellCodeToken(cell, range, inserted) {
-  if (!range.collapsed) return null;
-  const { text, syntax, runs } = FoliaTableCells.codeDelimiters(cell.input, cell.provenance, range);
-  if (!(text + inserted).endsWith('`')) return null;
-  for (const match of runs) {
-    const point = tableCellTextPoint(cell.input, match.index);
-    const parent = point.node.parentElement;
-    if (parent.closest('code')) continue;
-    const candidate = document.createRange();
-    candidate.setStart(point.node, point.offset);
-    candidate.setEnd(range.startContainer, range.startOffset);
-    const fragment = candidate.cloneContents();
-    if ([...fragment.querySelectorAll('*')].some(node => {
-      const captured = cell.provenance.fragments.get(node.getAttribute(cell.provenance.partAttribute));
-      return node.tagName !== 'SPAN' || !['text', 'escape', 'emoji'].includes(captured?.kind);
-    })) continue;
-    const source = candidate.toString() + inserted;
-    const projected = syntax.slice(match.index) + inserted;
-    const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-    const tokens = lexer.inlineTokens(projected);
-    if (tokens.length === 1 && tokens[0].type === 'codespan' && tokens[0].raw === projected) {
-      const edge = match.length, inner = source.slice(edge, -edge);
-      const padding = inner.startsWith(' ') && inner.endsWith(' ') && /[^ ]/.test(inner) ? 1 : 0;
-      const from = edge + padding, to = source.length - edge - padding;
-      const existing = candidate.toString().length;
-      const start = tableCellTextPoint(cell.input, match.index + Math.min(from, existing));
-      const end = tableCellTextPoint(cell.input, match.index + Math.min(to, existing));
-      if (!start || !end) throw new Error('tableCells.cellType');
-      const bodyRange = document.createRange();
-      bodyRange.setStart(start.node, start.offset);
-      bodyRange.setEnd(end.node, end.offset);
-      const body = bodyRange.cloneContents();
-      if (to > Math.max(from, existing)) {
-        body.append(document.createTextNode(source.slice(Math.max(from, existing), to)));
-      }
-      return { body, range: candidate };
-    }
-    if (cell.activeCode?.expectedPrefix === text + inserted && cell.activeCode.start === match.index) return null;
-  }
-  return null;
-}
-
-function formatTableCellCode(context, code) {
-  const { cell } = context;
-  cell.activeCode = null;
-  const holder = document.createElement('div'), id = crypto.randomUUID();
-  const sources = FoliaTableCells.codeSources(code.body, cell.provenance);
-  if (sources.kind === 'unrepresentable') throw new Error('tableCells.cellType');
-  const capture = FoliaTableCells.prepareCell(holder, sources.source.replace(/\\\|/g, '|'), sources.source,
-    marked, cell.provenance.links, parseEmojis, sanitizeTableHtml, cell.provenance);
-  const node = holder.firstElementChild;
-  if (node?.tagName !== 'CODE' || holder.childNodes.length !== 1 || node.textContent !== sources.text) {
-    throw new Error('tableCells.cellType');
-  }
-  node.setAttribute(cell.provenance.codeAttribute, id);
-  const fragment = capture.fragments.get(node.getAttribute(cell.provenance.partAttribute));
-  fragment.generatedCode = true;
-  fragment.initial = node.outerHTML;
-  insertTableCellInline(context, node, code.range, capture.fragments);
-}
-
-function insertTableCellInline(context, node, range, fragments) {
-  const { cell } = context;
-  const id = node.getAttribute(cell.provenance.codeAttribute);
-  const proposed = proposedTableCellContents(cell, range, node);
-  replaceTableCellContents(context, proposed, fragments, () => {
-    const matches = cell.input.querySelectorAll('[' + cell.provenance.codeAttribute + '="' + id + '"]');
-    const inserted = matches[0];
-    if (matches.length !== 1 || inserted.tagName !== node.tagName) throw new Error('tableCells.cellType');
-    placeTableCellCaretAfter(inserted);
-  });
-}
-
-function proposedTableCellContents(cell, range, replacement) {
-  const proposed = cell.input.cloneNode(true);
-  const copied = original => {
-    const path = [];
-    for (let node = original; node !== cell.input; node = node.parentNode) {
-      path.push([...node.parentNode.childNodes].indexOf(node));
-    }
-    return path.reverse().reduce((node, index) => node.childNodes[index], proposed);
-  };
-  const candidate = document.createRange();
-  candidate.setStart(copied(range.startContainer), range.startOffset);
-  candidate.setEnd(copied(range.endContainer), range.endOffset);
-  candidate.deleteContents();
-  candidate.insertNode(replacement.cloneNode(true));
-  return proposed;
-}
-
-function replaceTableCellContents(context, proposed, fragments, restoreCaret) {
-  const { cell, selection } = context;
-  const operation = { ...cell.provenance, fragments: new Map([...cell.provenance.fragments, ...fragments]) };
-  // Validate the entire retained context before one native replacement. Keeping
-  // all enclosing owners prevents Chromium from stripping their source identity.
-  serializeSafeTableCell(proposed, operation);
-  for (const [part, fragment] of fragments) cell.provenance.fragments.set(part, fragment);
-  const range = document.createRange();
-  range.selectNodeContents(cell.input);
-  selection.removeAllRanges();
-  selection.addRange(range);
-  cell.converting = true;
-  try {
-    // One native editing command retains the cell's own Undo/Redo stack.
-    if (!document.execCommand('insertHTML', false, proposed.innerHTML)) throw new Error('tableCells.cellType');
-    if (cell.input.innerHTML !== proposed.innerHTML) throw new Error('tableCells.cellType');
-    restoreCaret();
-    tableCellError.textContent = '';
-  } finally {
-    const liveParts = new Set([...cell.input.querySelectorAll('[' + cell.provenance.partAttribute + ']')].map(node =>
-      node.getAttribute(cell.provenance.partAttribute)));
-    for (const part of fragments.keys()) {
-      if (!liveParts.has(part)) cell.provenance.fragments.delete(part);
-    }
-    cell.converting = false;
-  }
-}
-
-function formatTableCellEmphasis(context) {
-  const { cell, range } = context;
-  if (!range.collapsed) return;
-  let scope = range.startContainer.nodeType === Node.ELEMENT_NODE
-    ? range.startContainer : range.startContainer.parentElement;
-  while (scope !== cell.input) {
-    const owner = cell.provenance.fragments.get(scope.getAttribute(cell.provenance.partAttribute));
-    if (owner && !['text', 'escape', 'emoji'].includes(owner.kind)) break;
-    scope = scope.parentElement;
-  }
-  const prefix = FoliaTableCells.codeDelimiters(scope, cell.provenance, range, '', '*');
-  if (!prefix.text.endsWith('*')) return;
-  const end = document.createRange();
-  end.selectNodeContents(scope);
-  end.collapse(false);
-  const full = FoliaTableCells.codeDelimiters(scope, cell.provenance, end, '', '*');
-  const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-  lexer.tokens.links = cell.provenance.links;
-  let match = null;
-  const locate = (tokens, offset) => {
-    for (const token of tokens) {
-      if (['strong', 'em'].includes(token.type)) {
-        const edge = (token.raw.length - token.text.length) / 2;
-        const marker = token.raw.slice(0, edge);
-        // A partial closing run must not consume the inner half of ** or ***.
-        if (offset + token.raw.length === prefix.text.length && /^\*+$/.test(marker) &&
-            prefix.runs.some(run => run.index === offset)) {
-          match = { token, offset };
-          return;
+function attachTableCellInput(cell, session) {
+  return FoliaInlineFormatting.attachInlineEditor({
+    element: cell.input, ownership: cell.provenance, marked,
+    transform: parseEmojis, sanitize: sanitizeTableHtml, documentEditor: markdownEditor,
+    isCurrent: () => tableCellSession === session && session.selection.isCurrent(),
+    reportError: showTableCellError, clearError: () => { tableCellError.textContent = ''; },
+    sourcePolicy: {
+      keydown(event) {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault(); updateTableCells();
+        } else if (event.key === 'Enter') {
+          event.preventDefault();
+          const next = session.cells.find(item => item.column === cell.column &&
+            item.row === cell.row + (event.shiftKey ? -1 : 1));
+          next?.input.focus();
+        } else if ((event.ctrlKey || event.metaKey) &&
+            !['a', 'c', 'x', 'v', 'z', 'y', 'b', 'i', 'u'].includes(event.key.toLowerCase())) {
+          event.preventDefault();
         }
-        locate(token.tokens, offset + edge);
-        if (match) return;
-      }
-      offset += token.raw.length;
-    }
-  };
-  locate(lexer.inlineTokens(full.syntax), 0);
-  if (!match) return;
-  const operation = { ...cell.provenance, fragments: new Map(cell.provenance.fragments) };
-  const build = (token, offset) => {
-    const edge = (token.raw.length - token.text.length) / 2, marker = token.raw.slice(0, edge);
-    const holder = document.createElement('div'), source = marker + 'x' + marker;
-    const capture = FoliaTableCells.prepareCell(holder, source, source, marked,
-      operation.links, parseEmojis, sanitizeTableHtml, operation);
-    const node = holder.firstElementChild;
-    if (holder.childNodes.length !== 1 || node?.tagName !== (token.type === 'strong' ? 'STRONG' : 'EM')) {
-      throw new Error('tableCells.cellType');
-    }
-    for (const [part, fragment] of capture.fragments) operation.fragments.set(part, fragment);
-    node.replaceChildren();
-    let position = offset + edge, start = position;
-    const append = to => {
-      if (to === start) return true;
-      const slice = FoliaTableCells.typingSlice(scope, operation, start, to);
-      if (!slice) return false;
-      node.append(slice);
-      return true;
-    };
-    for (const child of token.tokens) {
-      if (['strong', 'em'].includes(child.type) && child.raw.startsWith('*')) {
-        if (!append(position)) return null;
-        const nested = build(child, position);
-        if (!nested) return null;
-        node.append(nested);
-        position += child.raw.length;
-        start = position;
-      } else position += child.raw.length;
-    }
-    return append(position) ? node : null;
-  };
-  const node = build(match.token, match.offset);
-  if (!node) return;
-  node.setAttribute(cell.provenance.codeAttribute, crypto.randomUUID());
-  const first = tableCellTextPoint(scope, match.offset);
-  if (!first) throw new Error('tableCells.cellType');
-  const replacement = range.cloneRange();
-  replacement.setStart(first.node, first.offset);
-  // Text offsets omit images and comments. Delimiter removal must not consume
-  // a retained owner that the independently built body did not keep.
-  const owners = root => {
-    const counts = new Map();
-    for (const element of root.querySelectorAll('[' + cell.provenance.partAttribute + ']')) {
-      const part = element.getAttribute(cell.provenance.partAttribute);
-      const fragment = cell.provenance.fragments.get(part);
-      if (fragment && !['text', 'escape', 'emoji'].includes(fragment.kind)) {
-        counts.set(part, (counts.get(part) || 0) + 1);
-      }
-    }
-    return counts;
-  };
-  const retained = owners(node), consumed = owners(replacement.cloneContents());
-  if (retained.size !== consumed.size ||
-      [...consumed].some(([part, count]) => retained.get(part) !== count)) return;
-  const fragments = new Map([...operation.fragments].filter(([part]) => !cell.provenance.fragments.has(part)));
-  cell.activeCode = null;
-  insertTableCellInline(context, node, replacement, fragments);
-}
-
-tableCellDialog.addEventListener('beforeinput', event => {
-  const historyCell = tableCellForInput(event);
-  if (historyCell && (event.inputType === 'historyUndo' || event.inputType === 'historyRedo')) {
-    historyCell.activeCode = null;
-    historyCell.redoCodes = event.inputType === 'historyRedo' ? new Set(
-      [...historyCell.input.querySelectorAll(':is(code,strong,em)[' + historyCell.provenance.codeAttribute + ']')].map(code =>
-        code.getAttribute(historyCell.provenance.codeAttribute))) : null;
-    return;
-  }
-  const context = tableCellInputContext(event);
-  if (historyCell && (!context || event.inputType !== 'insertText')) historyCell.activeCode = null;
-  if (!context || context.cell.composing || event.isComposing) return;
-  const { cell, range } = context;
-  if (event.inputType !== 'insertText' || typeof event.data !== 'string') return;
-  if (!event.cancelable) return;
-  rememberTableCellTyping(cell, range, event.data, range.collapsed);
-  if (!range.collapsed) {
-    try {
-      if (replaceCapturedTableCellText(context, event.data)) {
-        event.preventDefault();
-        const current = tableCellInputContext({ target: cell.input });
-        if (current) formatTypedTableCellInline(current, event.data);
-        return;
-      }
-    } catch (error) {
-      event.preventDefault();
-      showTableCellError(error);
-      return;
-    }
-  }
-  const previous = range.collapsed && range.startContainer.nodeType === Node.ELEMENT_NODE
-    ? range.startContainer.childNodes[range.startOffset - 1] : null;
-  if (previous?.nodeName === 'CODE' || previous?.matches?.(':is(strong,em)[' + cell.provenance.codeAttribute + ']')) {
-    // Keep continuation outside the completed inner frame without dropping
-    // any enclosing frame or inserting invisible caret characters.
-    event.preventDefault();
-    const replacement = document.createRange();
-    replacement.selectNode(previous);
-    const offset = tableCellPrefix(cell, range).length + event.data.length;
-    const content = document.createDocumentFragment();
-    content.append(previous.cloneNode(true), document.createTextNode(event.data));
-    try {
-      replaceTableCellContents(context, proposedTableCellContents(cell, replacement, content), new Map(), () => {
-        const point = tableCellTextPoint(cell.input, offset);
-        if (!point) throw new Error('tableCells.cellType');
-        const caret = document.createRange();
-        caret.setStart(point.node, point.offset);
-        caret.collapse(true);
-        context.selection.removeAllRanges();
-        context.selection.addRange(caret);
-      });
-    } catch (error) { showTableCellError(error); }
-    const current = tableCellInputContext({ target: cell.input });
-    if (current) formatTypedTableCellInline(current, event.data);
-    return;
-  }
-  const code = tableCellCodeToken(cell, range, event.data);
-  if (!code) return;
-  event.preventDefault();
-  try { formatTableCellCode(context, code); }
-  catch (error) { showTableCellError(error); }
-});
-
-function formatTypedTableCellInline(context, data) {
-  const { cell, range } = context;
-  const code = tableCellCodeToken(cell, range, '');
-  try {
-    if (code) formatTableCellCode(context, code);
-    else if (data?.endsWith('*')) formatTableCellEmphasis(context);
-  } catch (error) { showTableCellError(error); }
-}
-
-tableCellDialog.addEventListener('input', event => {
-  const cell = tableCellForInput(event);
-  if (!cell || cell.composing || event.isComposing) return;
-  if (event.inputType === 'historyRedo' && cell.redoCodes) {
-    const restored = [...cell.input.querySelectorAll(':is(code,strong,em)[' + cell.provenance.codeAttribute + ']')].filter(code =>
-      !cell.redoCodes.has(code.getAttribute(cell.provenance.codeAttribute)));
-    if (restored.length) placeTableCellCaretAfter(restored.at(-1));
-    cell.redoCodes = null;
-    return;
-  }
-  const context = tableCellInputContext(event);
-  if (context && event.inputType === 'insertText') formatTypedTableCellInline(context, event.data);
-});
-
-tableCellDialog.addEventListener('compositionstart', event => {
-  const context = tableCellInputContext(event);
-  if (!context) return;
-  context.cell.composing = true;
-  context.cell.activeCode = null;
-});
-tableCellDialog.addEventListener('compositionend', event => {
-  const session = tableCellSession, cell = session?.cells.find(item => item.input === event.target);
-  if (!cell) return;
-  cell.composing = false;
-  const revision = cell.compositionRevision = (cell.compositionRevision || 0) + 1;
-  queueMicrotask(() => {
-    if (tableCellSession !== session || cell.composing || cell.compositionRevision !== revision) return;
-    const context = tableCellInputContext({ target: cell.input });
-    if (!context) return;
-    if (typeof event.data !== 'string' || !event.data.length) return;
-    const prefix = tableCellPrefix(cell, context.range);
-    if (prefix.endsWith(event.data)) {
-      rememberTableCellTyping(cell, context.range, event.data, false, true);
-    }
-    formatTypedTableCellInline(context, event.data);
+      },
+    },
   });
-});
-tableCellDialog.addEventListener('focusout', event => {
-  const cell = tableCellForInput(event);
-  if (cell) cell.activeCode = null;
-});
-tableCellDialog.addEventListener('pointerdown', event => {
-  const cell = tableCellForInput(event);
-  if (cell) cell.activeCode = null;
-});
-tableCellDialog.addEventListener('keydown', event => {
-  if (!/^(?:Arrow|Home$|End$|Page|Tab$)/.test(event.key)) return;
-  const cell = tableCellForInput(event);
-  if (cell) cell.activeCode = null;
-});
-document.addEventListener('beforeinput', event => {
-  // Chromium can route cell Undo to the textarea's native history.
-  if (tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&
-      event.target === markdownEditor && event.isTrusted && event.cancelable &&
-      (event.inputType === 'historyUndo' || event.inputType === 'historyRedo')) {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-}, true);
-tableCellDialog.addEventListener('keydown', event => {
-  // Keep native rich-cell Undo/Copy/Paste, but never run document commands.
-  event.stopPropagation();
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && ['b', 'i', 'u'].includes(event.key.toLowerCase()) &&
-      tableCellSession?.cells.some(cell => cell.input === event.target || cell.input.contains(event.target))) {
-    event.preventDefault();
-    showTableCellError(new Error('tableCells.formatShortcuts'));
-    return;
-  }
-  if (event.isComposing) return;
-  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-    event.preventDefault();
-    updateTableCells();
-  } else if (event.key === 'Enter') {
-    const current = tableCellSession?.cells.find(cell => cell.input === event.target);
-    if (!current) return;
-    event.preventDefault();
-    const next = tableCellSession.cells.find(cell =>
-      cell.column === current.column && cell.row === current.row + (event.shiftKey ? -1 : 1));
-    next?.input.focus();
-  } else if ((event.ctrlKey || event.metaKey) &&
-      !['a', 'c', 'x', 'v', 'z', 'y', 'b', 'i', 'u'].includes(event.key.toLowerCase())) {
-    event.preventDefault();
-  }
-});
-tableCellDialog.addEventListener('paste', event => {
-  if (!event.target.isContentEditable) return;
-  event.preventDefault();
-  const context = tableCellSelectionContext(event);
-  if (!context) {
-    showTableCellError(new Error('tableCells.stale'));
-    return;
-  }
-  const { cell, range } = context;
-  const codeAt = node => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement).closest('code');
-  const code = codeAt(range.startContainer), end = codeAt(range.endContainer);
-  const part = code?.getAttribute(cell.provenance.partAttribute);
-  const owner = part && cell.provenance.fragments.get(part);
-  const markdownCode = code && code === end && cell.input.contains(code) &&
-    (owner?.kind === 'codespan' || owner?.generatedCode === true) &&
-    cell.input.querySelectorAll('[' + cell.provenance.partAttribute + '="' + part + '"]').length === 1;
-  const plain = event.clipboardData.getData('text/plain');
-  const html = markdownCode ? escapeHtml(plain.replace(/\r\n?|\n/g, ' ')) :
-    plain.split(/\r\n?|\n/).map(escapeHtml).join('<br>');
-  if (!document.execCommand('insertHTML', false, html)) showTableCellError(new Error('tableCells.cellType'));
-});
-tableCellDialog.addEventListener('drop', event => event.preventDefault());
-tableCellDialog.addEventListener('click', event => {
-  if (event.target.closest('a')) event.preventDefault();
-});
+}
+// Noneditable header cells still contain authored links.
+tableCellDialog.addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault(); });
 tableCellDialog.addEventListener('auxclick', event => event.preventDefault());
-tableCellDialog.addEventListener('wheel', event => {
-  if (event.ctrlKey || event.metaKey) {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-}, { passive: false });
 
 // Delete Mermaid — remove mermaid block from source
 ctxDeleteMermaid && ctxDeleteMermaid.addEventListener('click', () => {

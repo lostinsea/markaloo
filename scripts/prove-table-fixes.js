@@ -872,11 +872,9 @@ const REVERTS = [
   },
   {
     id: "R1139", what: "let modal cell history reach Chromium's source textarea history",
-    file: RENDERER,
-    from: "  // Chromium can route cell Undo to the textarea's native history.\n" +
-      "  if (tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&",
-    to: "  // Chromium can route cell Undo to the textarea's native history.\n" +
-      "  if (false && tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&",
+    file: path.join(SRC, "inline-formatting.js"),
+    from: "      if (current() && element.contains(document.activeElement) && event.target === documentEditor &&",
+    to: "      if (false && current() && element.contains(document.activeElement) && event.target === documentEditor &&",
     suite: "test:table-cells-keyboard",
     expect: [
       /^Ctrl Z in a fresh untouched cell cannot reach Chromium textarea Undo$/,
@@ -1029,8 +1027,14 @@ const REVERTS = [
   {
     id: "R1121", what: "record edited output rather than the exact pre-edit source for Undo",
     file: RENDERER,
-    from: "    historyPushExact(session.exact);",
-    to: "    historyPushExact(candidate);",
+    from: "    session.submitting = true;\n" +
+      "    // No await or event dispatch may split source adoption and its undo entry.\n" +
+      "    if (!window.CustomTabs.adoptExactEditorContent(candidate)) throw new Error('tableCells.commitFailed');\n" +
+      "    cancelEditorDeferredWork();\n    historyPushExact(session.exact);",
+    to: "    session.submitting = true;\n" +
+      "    // No await or event dispatch may split source adoption and its undo entry.\n" +
+      "    if (!window.CustomTabs.adoptExactEditorContent(candidate)) throw new Error('tableCells.commitFailed');\n" +
+      "    cancelEditorDeferredWork();\n    historyPushExact(candidate);",
     suite: "test:table-cells-transaction",
     expect: [
       /^one document Undo and Redo restore the independently expected exact source bytes$/,
@@ -1087,10 +1091,10 @@ const REVERTS = [
   },
   {
     id: "R1124", what: "leak cell Find into the document shortcut handlers",
-    file: RENDERER,
-    from: "  // Keep native rich-cell Undo/Copy/Paste, but never run document commands.\n  event.stopPropagation();",
-    to: "  // Keep native rich-cell Undo/Copy/Paste, but never run document commands.\n" +
-      "  if (!((event.ctrlKey || event.metaKey) && event.key === 'f')) event.stopPropagation();",
+    file: path.join(SRC, "inline-formatting.js"),
+    from: "    listen(element, 'keydown', event => {\n      event.stopPropagation();",
+    to: "    listen(element, 'keydown', event => {\n" +
+      "      if (!((event.ctrlKey || event.metaKey) && event.key === 'f')) event.stopPropagation();",
     suite: "test:table-cells-keyboard",
     expect: [/^cell keyboard commands and IME cannot reach document Undo Save search or arrows$/],
     mustPass: [
@@ -1104,7 +1108,7 @@ const REVERTS = [
   },
   {
     id: "R1125", what: "let edited cell text introduce a literal Markdown pipe",
-    file: path.join(SRC, "table-cell-editor.js"),
+    file: path.join(SRC, "inline-formatting.js"),
     from: "      char => '&#' + char.charCodeAt(0) + ';');",
     to: "      char => char === '|' ? '|' : '&#' + char.charCodeAt(0) + ';');",
     suite: "test:table-cells-inline",
@@ -11352,7 +11356,7 @@ const REVERTS = [
     what: "move the inline-code colour rule AFTER the syntax block, inverting the source-order tie",
     file: CSS,
     from:
-      ".markdown-body code {\n" +
+      ".markdown-body code,\n.inline-source-editor code {\n" +
       "  background: var(--code-inline-bg);\n" +
       "  color: var(--code-inline-fg);\n" +
       "}",
@@ -11361,7 +11365,7 @@ const REVERTS = [
       file: CSS,
       from: "/* Inline code */\n:not(pre) > code[class*=\"language-\"] {",
       to:
-        ".markdown-body code {\n" +
+        ".markdown-body code,\n.inline-source-editor code {\n" +
         "  background: var(--code-inline-bg);\n" +
         "  color: var(--code-inline-fg);\n" +
         "}\n\n" +
@@ -18462,6 +18466,7 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
@@ -18469,6 +18474,7 @@ const REVERTS = [
             '    <script src="emoji-parser.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="utils.js"></script>\n' +
@@ -18547,6 +18553,7 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
@@ -18555,6 +18562,7 @@ const REVERTS = [
             '    <script src="utils.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
@@ -18646,6 +18654,7 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
@@ -18655,6 +18664,7 @@ const REVERTS = [
             '    <script src="mermaid-config.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
@@ -18977,6 +18987,7 @@ const REVERTS = [
             '    <script src="file-helpers-core.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>',
@@ -18984,6 +18995,7 @@ const REVERTS = [
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="document-events.js"></script>\n' +
             '    <script src="app-dialogs.js"></script>\n' +
+            '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>\n' +
@@ -20915,8 +20927,8 @@ const REVERTS = [
           id: "R797",
           what: "load the browser document registry after both consumers",
           file: HTML,
-          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
-          to: '    <script src="app-dialogs.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
+          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="inline-formatting.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
+          to: '    <script src="app-dialogs.js"></script>\n    <script src="inline-formatting.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
           suite: "test:packaging",
           expect: [
             /^SEC-08 document-events\.js loads exactly once before both consumers$/,
@@ -23241,8 +23253,9 @@ const REVERTS = [
         {
           id: "R924", what: "defer empty syntax highlighting while the loading overlay blocks input",
           file: path.join(ROOT, "src", "renderer.js"),
-          from: "    if (typeof Prism !== 'undefined' &&\n        document.querySelector('pre code:not(.prism-highlighted)')) {",
-          to: "    if (typeof Prism !== 'undefined') {",
+          from: "    const textPending = typeof Prism !== 'undefined' &&\n" +
+            "      !!document.querySelector('pre code:not(.prism-highlighted)');",
+          to: "    const textPending = typeof Prism !== 'undefined';",
           suite: "test:sec08-browser-isolation-evidence",
           expect: [
             /^full render without pending code clears its overlay without idle work$/,
@@ -24378,8 +24391,8 @@ const REVERTS = [
         {
           id: "R1015", what: "spread an inline image's height across unrelated prose in its paragraph",
           file: EDITOR_SCROLL,
-          from: "'table', 'html', 'hr', 'image']",
-          to: "'table', 'html', 'hr']",
+          from: "'table', 'html', 'hr', 'image', 'strong', 'em', 'del', 'link']",
+          to: "'table', 'html', 'hr', 'strong', 'em', 'del', 'link']",
           suite: "test:editor-scroll-blocks",
           expect: [/^editor aligns a short inline image before its adjacent prose$/],
           mustPass: [/^(editor|preview) aligns an interior table row$/,

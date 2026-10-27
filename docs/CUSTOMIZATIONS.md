@@ -27,6 +27,72 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Shared source-owned inline editing and Edit Text
+
+`src/inline-formatting.js` owns the inline source atoms, parser-confirmed
+bold/italic/CODE conversion, semantic-owner accounting, native replacement,
+composition, caret continuation, paste and local Undo/Redo handling. Both the
+table grid and Edit Text attach this engine; changes to its conversion and
+history machinery apply to both consumers. `table-cell-editor.js` retains
+table indexing and source transactions, not a second formatting engine.
+
+Edit Text is a source editor with selective inline formatting, not a full
+WYSIWYG editor or a separate preview. Headings, lists, links, HTML, pipes,
+blocks and newlines remain visible raw Markdown. Recognition is checked in
+the full candidate document, including external CODE, fences and HTML.
+Its raw-source policy does not inherit table entity/pipe escaping or CODE
+paste newline folding. A blank line that invalidates a CODE span restores its
+literal delimiters and raw source within the same native insertion.
+
+In edit mode the popup captures the actual rendered Range through
+`editorScroll.captureTextRange()`. Its frozen `{start,end,source}` contains
+normalized UTF-16 boundaries and the full normalized source snapshot.
+The exact original byte string is retained separately for the splice.
+A partial body selection such as `ol` in `**bold**` owns only `ol`; hidden
+external markers remain outside the transaction. Certified complete edge
+owners can balance their hidden delimiters. Uncertified partial crossings,
+authored-HTML gaps and stale DOM/source identities refuse rather than guess.
+Deferred Prism renders seal capture authority only after their existing final
+transforms; lightweight renders seal at their normal commit.
+
+Save is one document Undo transaction and marks the document dirty, without
+writing the file. Cancel and stale tab/source/mode/reload/Save contexts cannot
+apply the captured transaction. Formatting shortcuts remain unavailable.
+Native-history ownership records are immutable and retained for the popup
+lifetime so Undo-restored DOM can recover its exact source spelling.
+Native replacements retain the actual DOM-side insertion endpoint: a caret
+before an existing bold/italic/CODE owner does not drift inside that owner on
+the next character. Caret-only metadata belongs to individual native
+whole-surface replacements, not HTML strings: repeated identical DOM can have
+different selections. Weak native-node keys and weak before-node references
+retain only structural ranges, not markup snapshots or detached history trees.
+Undo/Redo corrects the engine's select-all snapshot only when the actual
+reattached before/after nodes certify that native operation. Ordinary native
+edits keep Chromium's selection; no HTML-key ambiguity fallback, custom history
+stack, position counter or source authority is introduced. Source still comes
+from the immutable owned DOM records.
+Both popup scopes contain document shortcuts even when Tab puts focus on their
+footer buttons, and cancel native history routed to the underlying source or
+from a noneditable footer. Editing-host native history remains available.
+Full-document raw recognition masks sorted reference-definition intervals in
+one pass, preserving UTF-16 width and newlines without rescanning all definitions
+for every source unit. This is a bounded algorithm correction, not a claim that
+the full parser or popup has undergone performance qualification.
+Formal mutation/revert proofs for this unit are explicitly user-deferred;
+the ordinary targeted runtime suites are separate evidence.
+
+The ordinary patch actor retains its older paragraph/table-menu visibility
+assertion as an outstanding red: the current menu offers the generic table
+action on prose, whereas that assertion expects it hidden. This unit does not
+change that visibility rule or weaken the assertion. The original unchanged-
+product run stopped earlier at obsolete raw IPC access, so this later mismatch
+is not claimed to have a separately executed unchanged-product baseline.
+Fixture admissions and delivery/navigation fault controls now use the approved
+bridge and current nonmodal consent/message seams, not renderer Node privileges.
+Visual qualification also records a white native scrollbar corner in the narrow
+dark table grid. This cosmetic issue is deferred; the grid, scrollbars and
+Update/Cancel controls remain usable.
+
 ### Visual table-cell editing
 
 ```mermaid

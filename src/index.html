@@ -1596,16 +1596,23 @@
         </div>
         <div class="note-dialog-body">
           <label
+            id="editTextLabel"
             class="note-dialog-label"
             for="editTextArea"
             data-i18n="editTextLabel"
             >Edit the selected text:</label
           >
-          <textarea
+          <div
             id="editTextArea"
-            class="note-dialog-textarea"
-            rows="6"
-          ></textarea>
+            class="note-dialog-textarea inline-source-editor"
+            contenteditable="true"
+            role="textbox"
+            aria-labelledby="editTextLabel"
+            aria-describedby="editTextError"
+            aria-multiline="true"
+            spellcheck="false"
+          ></div>
+          <div id="editTextError" class="inline-source-error" role="status"></div>
         </div>
         <div class="note-dialog-footer">
           <button
@@ -1811,6 +1818,7 @@
     <script src="file-helpers-core.js"></script>
     <script src="document-events.js"></script>
     <script src="app-dialogs.js"></script>
+    <script src="inline-formatting.js"></script>
     <script src="table-cell-editor.js"></script>
     <script src="renderer.js"></script>
     <script src="custom-tabs.js"></script>

@@ -27,7 +27,7 @@ const receipt = { baseline, budgets: { callbackP95Ms: 4, openAndSplit: { relativ
   runtime: { node: process.version, electron: process.versions.electron, platform: process.platform,
     cpu: require("os").cpus()[0]?.model }, measurements: [], correspondence: [] };
 receipt.sources = Object.fromEntries(["main.js", "renderer.js", "editor-scroll.js", "index.html", "styles.css",
-  "custom-styles.css", "custom-tabs.js"].map(name =>
+  "custom-styles.css", "custom-tabs.js", "file-helpers.js", "inline-formatting.js", "table-cell-editor.js"].map(name =>
   [name, require("crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname, "..", "src", name))).digest("hex")]));
 receipt.suiteSha256 = require("crypto").createHash("sha256").update(fs.readFileSync(__filename)).digest("hex");
 const parts = ["# Scroll correspondence"];
@@ -1364,6 +1364,115 @@ async function run() {
         check(`${kind} placeholder restoration keeps literal dollar sequences (${value.unwrap ? "unwrapped" : "wrapped"})`,
           value[kind] === dollarBody + "\n", value);
       }
+      const captures = await exec(`(() => {
+        const text='\uFEFF'+[
+          '# Exact text capture',
+          'Same **same**.',
+          'one **bold** two',
+          'before **bold**',
+          '**bold** after',
+          'Entities &amp; &#x1F680; \\\\*literal\\\\* and :star:.',
+          'Literal \uD83D\uDE80.',
+          '> Quoted first\\n> Quoted **second**.',
+          'Paragraph one.',
+          'Paragraph two.',
+          'Before <span>HTML</span> after.'
+        ].join('\\n\\n').replace(/\\n/g,'\\r\\n');
+        const host=document.createElement('section'),input=document.createElement('textarea'),
+          root=document.createElement('div'),results=[];
+        host.style.cssText='position:fixed;left:-20000px;width:500px';
+        host.append(input,root);document.body.append(host);
+        let current=1,live=true;
+        const mapping=createEditorScroll({editor:input,preview:root,active:()=>live,
+          frozen:()=>false,identity:()=>current,scale:()=>1});
+        input.value=text;
+        const source=mapping.source(text);source.prepare(parseEmojis);
+        root.innerHTML=sanitizeHtml(source.parse(marked));
+        const bindings=source.detach(root,sanitizeHtml);
+        for(const child of root.children)source.adopt(child,child,bindings);
+        mapping.commit(source);
+        const normalized=text.replace(/\\r\\n/g,'\\n');
+        const paragraph=value=>[...root.querySelectorAll('p')].find(node=>node.textContent===value);
+        const range=(node,from=0,to=node.textContent.length)=>{
+          const value=document.createRange(),walker=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);
+          let offset=0,leaf,start=false;
+          while((leaf=walker.nextNode())){
+            if(!start&&from<=offset+leaf.length){value.setStart(leaf,from-offset);start=true;}
+            if(start&&to<=offset+leaf.length){value.setEnd(leaf,to-offset);return value;}
+            offset+=leaf.length;
+          }
+          throw new Error('Exact capture fixture endpoint is missing');
+        };
+        const record=(name,value,expected,start)=>{
+          const receipt=mapping.captureTextRange(value);
+          results.push({name,ok:expected===null?receipt===null:!!receipt&&
+            Object.isFrozen(receipt)&&receipt.source===normalized&&
+            receipt.source.slice(receipt.start,receipt.end)===expected&&
+            (start===undefined||receipt.start===start),receipt,expected});
+          return receipt;
+        };
+        try{
+          const same=root.querySelector('strong');
+          mapping.commit(source,{textPending:true});
+          record('pending presentation finalization cannot grant source authority',range(same),null);
+          if(!mapping.sealTextSource(source))throw new Error('Current capture source could not be sealed');
+          record('duplicate text keeps its actual source owner',range(same),'same',
+            normalized.indexOf('**same**')+2);
+          const bold=paragraph('one bold two').querySelector('strong');
+          record('partial bold selection keeps only its exact body interval',range(bold,1,3),'ol');
+          record('complete body selection retains external bold markers',range(bold),'bold');
+          record('an internal inline owner keeps its source delimiters',
+            range(paragraph('one bold two')),'one **bold** two');
+          record('a fully selected trailing owner balances only its own markers',
+            range(paragraph('before bold')),'before **bold**');
+          record('a fully selected leading owner balances only its own markers',
+            range(paragraph('bold after')),'**bold** after');
+          record('a partial owner crossing cannot widen the selected authority',
+            range(paragraph('bold after'),2),null);
+          const symbol=parseEmojis(':star:');
+          const entities=paragraph('Entities & \uD83D\uDE80 *literal* and '+symbol+'.');
+          const rocket=entities.textContent.indexOf('\uD83D\uDE80'),star=entities.textContent.indexOf(symbol);
+          record('a complete decoded entity owns its exact original spelling',range(entities,9,10),'&amp;');
+          record('a complete astral entity owns both rendered code units',
+            range(entities,rocket,rocket+2),'&#x1F680;');
+          record('an interior transformed-atom boundary is not editable',
+            range(entities,rocket,rocket+1),null);
+          record('a literal astral character keeps its exact source spelling',
+            range(paragraph('Literal \uD83D\uDE80.'),8,10),'\uD83D\uDE80');
+          record('a literal astral character cannot be split into half a surrogate pair',
+            range(paragraph('Literal \uD83D\uDE80.'),8,9),null);
+          const escaped=entities.textContent.indexOf('*literal*');
+          record('escaped punctuation keeps its original source atoms',
+            range(entities,escaped,escaped+9),'\\\\*literal\\\\*');
+          record('emoji expansion keeps its exact source alias',
+            range(entities,star,star+symbol.length),':star:');
+          record('verified quote-prefix gaps preserve their source spelling',
+            range(root.querySelector('blockquote')),'Quoted first\\n> Quoted **second**.');
+          const multi=range(paragraph('Paragraph one.'));
+          multi.setEndAfter(paragraph('Paragraph two.'));
+          record('paragraph-spanning capture keeps the certified source gap',
+            multi,'Paragraph one.\\n\\nParagraph two.');
+          record('unmapped authored markup cannot become hidden edit authority',
+            range(paragraph('Before HTML after.')),null);
+          const selected=range(bold,1,3);
+          input.value+=' changed';
+          record('changed source rejects a formerly valid range',selected,null);
+          input.value=normalized;current++;
+          record('changed document identity rejects a formerly valid range',selected,null);
+          current--;
+          bold.replaceWith(document.createTextNode('bold'));
+          record('same-text DOM changes do not retain source authority',
+            range(paragraph('one bold two'),5,7),null);
+          host.remove();
+          const detached=range(paragraph('Paragraph one.'));
+          record('detached preview selections have no edit authority',detached,null);
+          return {setup:symbol!==':star:'&&source.warnings.size===0&&normalized.includes('&#x1F680;')&&
+            !detached.collapsed&&!root.isConnected&&root.querySelectorAll('p').length>=8,results};
+        }finally{live=false;mapping.leave();host.remove();}
+      })()`);
+      check("exact capture setup contains verified rich, transformed and repeated source",
+        captures.setup, captures);
+      for (const value of captures.results) check("exact text capture: " + value.name, value.ok, value);
     }
     if (scenario("bounds")) {
       const url = "https://example.invalid/" + "a".repeat(4096);
