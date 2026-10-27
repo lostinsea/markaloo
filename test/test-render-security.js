@@ -9,8 +9,8 @@
 // images or @@@html blocks from rendering at all.
 //
 // Payloads set window.__pwned rather than spawning a process. The property that
-// matters is whether attacker-authored script runs in the Node-privileged
-// renderer at all; what it would then choose to do is not in question.
+// matters is whether document content executes in the isolated renderer;
+// no payload starts another process.
 const { app, BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
@@ -184,11 +184,13 @@ async function runMermaidConfigLoaderProbe() {
     "MERMAID_FONT_PX",
     "MERMAID_LIGHT_THEME",
     "MERMAID_SEQUENCE",
+    "applyMermaidDarkBoundaries",
     "getMermaidConfig",
   ];
   check(
     "SEC-08 mermaid-config preserves its CommonJS API",
     JSON.stringify(Object.keys(commonJsMermaidConfig).sort()) === JSON.stringify(expectedKeys) &&
+      typeof commonJsMermaidConfig.applyMermaidDarkBoundaries === "function" &&
       commonJsMermaidConfig.MERMAID_FONT_PX === 14 &&
       commonJsLight.theme === "default" &&
       commonJsDark.theme === "dark" &&
@@ -224,6 +226,7 @@ async function runMermaidConfigLoaderProbe() {
           moduleType: typeof window.module,
           processType: typeof window.process,
           apiType: typeof api,
+          darkBoundaryType: api && typeof api.applyMermaidDarkBoundaries,
           keys: api && Object.keys(api).sort(),
           fontPx: api && api.MERMAID_FONT_PX,
           light: light && {
@@ -261,6 +264,7 @@ async function runMermaidConfigLoaderProbe() {
     check(
       "SEC-08 classic mermaid-config script publishes representative FoliaMermaidConfig behavior",
       probe.apiType === "object" &&
+        probe.darkBoundaryType === "function" &&
         JSON.stringify(probe.keys) === JSON.stringify(expectedKeys) &&
         probe.fontPx === 14 &&
         probe.light &&
@@ -843,6 +847,10 @@ async function runFileHelpersLoaderProbe({
         `new Promise((resolve) => {
           const savedCore = window.FoliaFileHelpers;
           const savedMenu = window.FoliaContextMenu;
+          const savedEvents = window.FoliaDocumentEvents;
+          // Reach the target guard rather than failing an earlier prerequisite.
+          const prerequisiteEvents = Object.freeze({});
+          window.FoliaDocumentEvents = prerequisiteEvents;
           window.FoliaContextMenu = {
             positionContextMenu() {},
             hideContextMenu() {},
@@ -852,14 +860,19 @@ async function runFileHelpersLoaderProbe({
           script.src = "../../src/custom-tabs.js?sec08-missing-file-helpers=" + Date.now();
           const finish = (event) => {
             const coreWasAbsent = window.FoliaFileHelpers === undefined;
+            const precedingCorePresent = window.FoliaDocumentEvents === prerequisiteEvents;
             window.FoliaFileHelpers = savedCore;
             if (savedMenu === undefined) delete window.FoliaContextMenu;
             else window.FoliaContextMenu = savedMenu;
+            if (savedEvents === undefined) delete window.FoliaDocumentEvents;
+            else window.FoliaDocumentEvents = savedEvents;
             script.remove();
             resolve({
               event,
               coreWasAbsent,
               coreRestored: window.FoliaFileHelpers === savedCore,
+              precedingCorePresent,
+              precedingCoreRestored: window.FoliaDocumentEvents === savedEvents,
             });
           };
           script.addEventListener("load", () => finish("load"), { once: true });
@@ -884,7 +897,9 @@ async function runFileHelpersLoaderProbe({
       missingGlobalSetup &&
         missingGlobalSetup.event === "load" &&
         missingGlobalSetup.coreWasAbsent === true &&
-        missingGlobalSetup.coreRestored === true,
+        missingGlobalSetup.coreRestored === true &&
+        missingGlobalSetup.precedingCorePresent === true &&
+        missingGlobalSetup.precedingCoreRestored === true,
       JSON.stringify(missingGlobalSetup),
     );
     check(

@@ -108,17 +108,53 @@ section is kept here so the register has a visible edge.
     coordinator's resource order and fresh GUI transfer. No broad suite has
     automatically resumed from the focused release allocation.
 
-- `post-0.11.1-ordinary-tests` - **READY FOR COORDINATED RESUMPTION**.
+- `post-0.11.1-ordinary-tests` - **ACTIVE; C INITIAL PASS CONSUMED, GUI RELEASED**.
   - Verified 0.11.3 publication satisfies the release-first condition.
     Resume the existing A9/B7/C12 split on published `87863807`, tree `a6ec2d18`,
-    under the coordinator's resource order. Register-only closure is not a new
-    product/test snapshot. Do not reuse older results as current qualification.
+    under the coordinator's resource order. The coordinator explicitly allocated
+    C the first exclusive ordinary C12 runtime pass after release closure.
+    C released that allocation after its initial pass. The coordinator owns the
+    next transfer; C has no corrected-candidate runtime allocation.
+    Register-only closure is not a new product/test snapshot. Do not reuse older
+    results as current qualification.
     Retained C Node results used published 0.11.1 product/test bytes at
     `e24af07f`, tree `af160b79`, with only register changes at `6659ef45`.
   - C owns `test:packaging`, `test:profile`, `test:corpus`, `test:startup`,
     `test:document-session`, `test:updates` and all its children, `test:tabs`,
     `test:reload-dialog`, `test:owned-dialogs`, `test:dialogs`, `test:security`
     and `test:popups`.
+  - Current 0.11.3 Node results on docs-only closure `b830d507`: profile 72/72,
+    corpus 335/335 and update-state 42/42, all exit zero. Fresh source packaging
+    passed 436 checks, zero failures, two explicit pre-build ASAR skips.
+    The exact current tag's hosted strict built-ASAR receipt is 448/0/0;
+    retain it separately rather than relabeling these source-only skips.
+  - Current ordinary passes: startup has 11 assertions and two INFO records,
+    not 13 test assertions; document-session passed 89/89 across all seven phases;
+    reload-dialog passed 56/56; owned-dialogs passed 104 with zero failures;
+    application dialogs passed 53/53. Each ordinary command exited zero.
+    Reload and application dialogs used their supported evidence overrides and
+    fresh, pre-created private isolation roots; no source or assertion changed.
+  - Current updates passed its default Node 42/42 and About 143/143 across all
+    eleven phases. Separate ordinary UI and portable aliases passed 33/33 and
+    44/44. Every command exited zero; installer/external-launch stubs stayed in
+    place. No real installer or installed app was launched.
+  - Three groups failed early: tabs 48/49, popups 1/3 and render-security
+    115/124, each exit one. Tabs stopped on a stale preload-unit actor's
+    raw-IPC assumption. The popup test wrapper refused Electron's Windows
+    spelling of its initial delegated file URL; this is a harness mismatch,
+    not a confirmed product defect.
+    Render-security reported four module/global probe failures, four relative-
+    image feature failures and a renderer-script exception. Later scenarios and
+    tab companions did not run. These are failures, not waived or green routes.
+    Render-security coverage remains incomplete. Focused cause/repair work
+    does not turn the retained failures or unrun scenarios into passing results.
+  - The initial pass is nine passing groups and three early-failing groups,
+    not complete green C12 qualification. Published product/test, vendor/font
+    and pinned runtime bytes stayed unchanged throughout.
+    Raw commands, logs, actual exits and PID/birth observations are retained in
+    `c-postrelease-0113-b830`; the frozen packet is `initial-pass-summary.json`.
+    Representative update, reload, application-dialog and tab-failure captures
+    were opened and viewed; not every capture was viewed.
   - Retained 0.11.1 Node results: profile 72/72, corpus 335/335 and update-state
     42/42, all exit zero. Packaging reports 433 passed, zero failed and two
     built-ASAR skips; this Node run is not built-package proof.
@@ -131,11 +167,31 @@ section is kept here so the register has a visible edge.
   - Packaging prints intentional failure diagnostics from its in-memory
     negative lifecycle probes. Their named assertions pass; no real worker
     was launched. Keep these diagnostics distinct from suite failures.
-  - The updates group is incomplete: its ordinary Node launcher starts
-    Electron children. The undelivered B -> C slot allocation is withdrawn.
-    Broad Electron/UI/native-input runs still need the coordinator's fresh
-    exclusive transfer after prior cleanup; the release allocation is not that GO.
-    No C Electron run or installed-app/profile access has started.
+  - C explicitly released GUI/runtime at **2026-10-27 19:19:22 UTC**.
+    Fresh Electron, birth-matching observed lineage and ordinary-command
+    residuals were empty. No timeout or forced cleanup occurred. This is
+    observed teardown, not a complete-containment claim or a retrospective
+    popup cleanup pass: the popup actor could not confirm owner destruction,
+    and its retained fixtures were not swept.
+    The installed app and its profiles remain untouched.
+  - Popup actor candidate `14c08a36` changes only its test wrapper and controls.
+    Fresh independent Sol/Luna source reviews both found no significant issue.
+    Actual helper controls passed 22/22 for each simulated win32/Linux platform
+    in isolated Node VMs. These are not Electron runs or formal revert proofs.
+    The corrected ordinary popup route is **NOT RUN**; its original cleanup
+    failure remains open. No product, version, tag or publication changed.
+  - Tabs' eight pure preload-unit actors have an offline candidate against
+    the unchanged actual preload in a private VM: 23 checks passed.
+    This does not qualify Electron transport. Mixed document/filesystem/
+    lifecycle actors still need correction while keeping actual Main authority.
+    The separate frozen-bridge
+    popup-PDF consumer-fault seam is queued with B after video capture.
+    No C corrected-runtime allocation or automatic retry is authorized.
+  - The four render-security module/global failures trace to a stale exact
+    Mermaid export inventory and an absent earlier fixture prerequisite.
+    Their narrow test-only corrections have Node publication/guard checks,
+    not an ordinary Electron pass. Relative-image ownership and later raw-IPC
+    actors remain pending; do not add a product authority fallback.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
     findings go to their owner; C alone writes package/workflow/register files.

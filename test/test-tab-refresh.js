@@ -11055,12 +11055,46 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
   }
 }
 
-async function runAdoptionBridgeValidation(exec) {
-  const probe = await exec(`
+function runPreloadUnitProbe(source, { diagnostics = false } = {}) {
+  const vm = require("vm");
+  const transport = new (require("events").EventEmitter)();
+  for (const method of ["send", "sendSync", "invoke"]) {
+    transport[method] = channel => {
+      throw new Error(`Unexpected preload unit transport: ${method} ${channel}`);
+    };
+  }
+  let published;
+  const context = vm.createContext({
+    process: { isMainFrame: true, argv: diagnostics
+      ? ["--folia-newline-alignment-diagnostics"] : [] },
+    require(name) {
+      if (name !== "electron") throw new Error(`Unexpected preload unit import: ${name}`);
+      return {
+        contextBridge: { exposeInMainWorld(name, api) {
+          if (name !== "folia" || published || !Object.isFrozen(api)) {
+            throw new Error("Preload unit fixture requires one frozen folia API");
+          }
+          published = api;
+        } },
+        ipcRenderer: transport,
+      };
+    },
+    preloadTransport: transport,
+  });
+  const filename = path.join(__dirname, "..", "src", "main-preload.js");
+  vm.runInContext(fs.readFileSync(filename, "utf8"), context, { filename });
+  if (!published) throw new Error("Preload unit fixture did not expose folia");
+  context.preloadApi = published;
+  // Keep the actual preload and its probes in one realm: serializing inputs or
+  // borrowing page functions would lose special values and error identity.
+  return vm.runInContext(source, context);
+}
+
+async function runAdoptionBridgeValidation() {
+  const probe = await runPreloadUnitProbe(`
     (async () => {
-      const api = window.folia;
-      const ipc = window.ipcRenderer;
-      const originals = { invoke: ipc.invoke, sendSync: ipc.sendSync, send: ipc.send };
+      const api = preloadApi, transport = preloadTransport;
+      const originals = { invoke: transport.invoke, sendSync: transport.sendSync, send: transport.send };
       const owner = {
         pageSession: 'adoption-bridge-probe', rendererGeneration: 1,
         tabId: 2, documentGeneration: 3, pathKey: 'physical-key',
@@ -11110,17 +11144,17 @@ async function runAdoptionBridgeValidation(exec) {
         if (failure) throw new Error(failure);
         return replies[channel];
       };
-      ipc.invoke = function(channel, payload) {
+      transport.invoke = function(channel, payload) {
         return channel === 'prepare-document-disk-adoption'
           ? Promise.resolve().then(() => record(channel, payload))
           : originals.invoke.apply(this, arguments);
       };
-      ipc.sendSync = function(channel, payload) {
+      transport.sendSync = function(channel, payload) {
         return channel === 'commit-document-disk-adoption' ||
           channel === 'complete-document-disk-adoption'
           ? record(channel, payload) : originals.sendSync.apply(this, arguments);
       };
-      ipc.send = function(channel, payload) {
+      transport.send = function(channel, payload) {
         return channel === 'abandon-document-disk-adoption'
           ? record(channel, payload) : originals.send.apply(this, arguments);
       };
@@ -11249,7 +11283,7 @@ async function runAdoptionBridgeValidation(exec) {
           selectionlessComplete, selectionlessForwarding,
           historicalPrepare, historicalCommit, refusals, malformedReplies, failures,
         };
-      } finally { Object.assign(ipc, originals); }
+      } finally { Object.assign(transport, originals); }
     })()
   `);
   check(
@@ -11311,10 +11345,10 @@ async function runAdoptionBridgeValidation(exec) {
   );
 }
 
-async function runDocumentControlBridgeValidation(exec) {
-  const probe = await exec(`(() => {
-    const api = window.folia, ipc = window.ipcRenderer;
-    const originals = { send: ipc.send, sendSync: ipc.sendSync };
+async function runDocumentControlBridgeValidation() {
+  const probe = await runPreloadUnitProbe(`(() => {
+    const api = preloadApi, transport = preloadTransport;
+    const originals = { send: transport.send, sendSync: transport.sendSync };
     const owner = {
       pageSession: 'document-control-probe', rendererGeneration: 1, tabId: 2,
       documentGeneration: 3, pathKey: 'physical-owner', selectionGeneration: 4,
@@ -11335,7 +11369,7 @@ async function runDocumentControlBridgeValidation(exec) {
       queryDocumentDiskAdoptionState: { ...identity, ownerFilePath: 'other-spelling',
         modifiedTime: 123, diskVersion: version },
       reportAdoptionTrackingConflict: envelope,
-      retireDeletedDocumentOwner: { ...identity, acknowledgedDeletion: true,
+      retireDeletedDocumentOwner: { ...identity, acknowledgedDeletion: true, expectedDeletionRevision: 2,
         eventId: 999, watcherGeneration: 998, attempt: 997 },
     };
     const replies = {
@@ -11357,8 +11391,15 @@ async function runDocumentControlBridgeValidation(exec) {
       if (failure) throw new Error(failure);
       return replies[channel];
     };
-    ipc.send = record;
-    ipc.sendSync = record;
+    transport.send = function(channel, payload) {
+      return ['register-document-owner', 'set-active-file', 'pause-file-watching',
+        'resume-file-watching', 'stop-file-watching', 'report-adoption-tracking-conflict'].includes(channel)
+        ? record(channel, payload) : originals.send.apply(this, arguments);
+    };
+    transport.sendSync = function(channel, payload) {
+      return Object.hasOwn(replies, channel)
+        ? record(channel, payload) : originals.sendSync.apply(this, arguments);
+    };
     try {
       const malformed = [];
       for (const [method, input] of Object.entries(requests)) {
@@ -11381,7 +11422,11 @@ async function runDocumentControlBridgeValidation(exec) {
         if (method === 'queryDocumentDiskAdoptionState') cases.push(
           { ...input, ownerFilePath: '' }, { ...input, diskVersion: { ...version, size: Infinity } });
         if (method === 'retireDeletedDocumentOwner') cases.push(
-          { ...input, acknowledgedDeletion: 1 }, { ...input, eventId: 0 });
+          { ...input, acknowledgedDeletion: 1 }, { ...input, eventId: 0 },
+          { ...input, expectedDeletionRevision: undefined },
+          { ...input, expectedDeletionRevision: -1 },
+          { ...input, expectedDeletionRevision: 1.5 },
+          { ...input, expectedDeletionRevision: Infinity });
         for (const bad of cases) {
           try { api[method](bad); malformed.push(false); }
           catch (error) { malformed.push(error.message.includes('Invalid')); }
@@ -11460,11 +11505,11 @@ async function runDocumentControlBridgeValidation(exec) {
       return { malformed, malformedCalls, positive, synchronous, forwarding, ordering,
         adopted, adoptedPayload, backgrounds, newIdentity, newIdentityPayload,
         unknown, retirementRefusal, selectionRefusal, quarantineRefusal, badReplies, failures };
-    } finally { Object.assign(ipc, originals); }
+    } finally { Object.assign(transport, originals); }
   })()`);
   check(
     "SEC-08 document control bridge rejects malformed requests before IPC",
-    probe.malformed.length === 94 && probe.malformed.every(Boolean) && probe.malformedCalls === 0,
+    probe.malformed.length === 98 && probe.malformed.every(Boolean) && probe.malformedCalls === 0,
     JSON.stringify(probe),
   );
   check(
@@ -11474,6 +11519,7 @@ async function runDocumentControlBridgeValidation(exec) {
         (!call.payload.owner || !("ignored" in call.payload.owner))) &&
       probe.forwarding[1].payload.diskVersion === null &&
       probe.forwarding[1].payload.modifiedTime === null &&
+      probe.forwarding[10].payload.expectedDeletionRevision === 2 &&
       probe.forwarding[10].payload.eventId === 999 &&
       probe.forwarding[10].payload.attempt === 997 &&
       probe.ordering.join(",") === "set-active-file,resume-file-watching,pause-file-watching,set-active-file",
@@ -11517,10 +11563,10 @@ async function runDocumentControlBridgeValidation(exec) {
   );
 }
 
-async function runDocumentTransportValidation(exec) {
-  const probe = await exec(`(async () => {
-    const ipc = window.ipcRenderer, api = window.folia;
-    const originalSend = ipc.send, originalInvoke = ipc.invoke;
+async function runDocumentTransportValidation() {
+  const probe = await runPreloadUnitProbe(`(async () => {
+    const transport = preloadTransport, api = preloadApi;
+    const originalSend = transport.send, originalInvoke = transport.invoke;
     const calls = [];
     const identity = {
       pageSession: 'transport-probe', rendererGeneration: 1, tabId: 2,
@@ -11541,13 +11587,13 @@ async function runDocumentTransportValidation(exec) {
     const ack = { requestId: 6, saveRequestSession: identity.pageSession,
       path: save.filePath, saveRequest: identity, saveResultAttempt: 8 };
     let ackReply = false, failure = false, sendFailure = false;
-    ipc.send = function(channel, payload) {
+    transport.send = function(channel, payload) {
       if (channel !== 'save-markdown-file' && channel !== 'reload-file')
         return originalSend.apply(this, arguments);
       calls.push({ channel, payload });
       if (sendFailure) throw new Error('controlled document send failure');
     };
-    ipc.invoke = async function(channel, payload) {
+    transport.invoke = async function(channel, payload) {
       if (channel !== 'save-markdown-result-ack')
         return originalInvoke.apply(this, arguments);
       calls.push({ channel, payload });
@@ -11633,7 +11679,7 @@ async function runDocumentTransportValidation(exec) {
         optionalRefAbsent: !('documentRef' in validCalls[2].payload.saveRequest),
         ackAttempts: validCalls.slice(4).map(call => call.payload.saveResultAttempt),
       };
-    } finally { ipc.send = originalSend; ipc.invoke = originalInvoke; }
+    } finally { transport.send = originalSend; transport.invoke = originalInvoke; }
   })()`);
   check("SEC-08 Save and reload transport reject malformed requests before any IPC",
     probe.saveRejectionSynchronous && probe.reloadRejectionSynchronous &&
@@ -12263,57 +12309,63 @@ async function runEarlyNativeLargeTabGuard(win, sentinel, question, chooserOptio
   }
 }
 
-async function runLargeRenderTransportValidation(exec) {
-  const probe = await exec(`(() => {
-    const ipc = window.ipcRenderer, original = ipc.sendSync;
+async function runLargeRenderTransportValidation() {
+  const probe = await runPreloadUnitProbe(`(async () => {
+    const transport = preloadTransport, api = preloadApi, original = transport.invoke;
     const calls = []; let reply = true, fail = false;
-    ipc.sendSync = function(channel, payload) {
+    const transportError = new Error('controlled large render invoke failure');
+    transport.invoke = async function(channel, payload) {
       if (channel !== 'confirm-large-render') return original.apply(this, arguments);
-      if (fail) throw new Error('controlled large render send failure');
+      if (fail) throw transportError;
       calls.push({ channel, payload }); return reply;
     };
     try {
-      const approved = window.folia.confirmLargeRender({ name: '', seconds: 0, ignored: 1 });
+      const approval = api.confirmLargeRender({ name: '', seconds: 0, ignored: 1 });
+      const asynchronous = approval instanceof Promise;
+      const approved = await approval;
       reply = false;
-      const canceled = window.folia.confirmLargeRender({ name: 'guard', seconds: 12 });
+      const canceled = await api.confirmLargeRender({ name: 'guard', seconds: 12 });
       const count = calls.length;
-      const malformed = [null, [], 1, {}, { name: 1, seconds: 0 },
+      const malformed = [];
+      for (const request of [null, [], 1, {}, { name: 1, seconds: 0 },
         { name: 'guard', seconds: -1 }, { name: 'guard', seconds: Infinity },
-        { name: 'guard', seconds: '12' }].map(request => {
-          try { window.folia.confirmLargeRender(request); return false; }
-          catch (error) { return error instanceof TypeError; }
-        });
+        { name: 'guard', seconds: '12' }]) {
+        try { await api.confirmLargeRender(request); malformed.push(false); }
+        catch (error) { malformed.push(error instanceof TypeError); }
+      }
       const rejectedBeforeIpc = calls.length === count;
-      const badReplies = [null, undefined, 0, 'false'].map(value => {
+      const badReplies = [];
+      for (const value of [null, undefined, 0, 'false']) {
         reply = value;
-        try { window.folia.confirmLargeRender({ name: 'guard', seconds: 1 }); return false; }
-        catch (error) { return error.message.includes('Invalid large render confirmation response'); }
-      });
+        try { await api.confirmLargeRender({ name: 'guard', seconds: 1 }); badReplies.push(false); }
+        catch (error) { badReplies.push(error instanceof TypeError &&
+          error.message.includes('Invalid large render confirmation response')); }
+      }
       fail = true;
-      let sendFailure = false;
-      try { window.folia.confirmLargeRender({ name: 'guard', seconds: 1 }); }
-      catch (error) { sendFailure = error.message === 'controlled large render send failure'; }
-      return { approved, canceled, calls: calls.slice(0, count), malformed,
-        rejectedBeforeIpc, badReplies, sendFailure };
-    } finally { ipc.sendSync = original; }
+      let invokeFailure = false;
+      try { await api.confirmLargeRender({ name: 'guard', seconds: 1 }); }
+      catch (error) { invokeFailure = error === transportError; }
+      return { asynchronous, approved, canceled, calls: calls.slice(0, count), malformed,
+        rejectedBeforeIpc, badReplies, invokeFailure };
+    } finally { transport.invoke = original; }
   })()`);
-  check("SEC-08 fixed large-render confirmation validates and copies only scalar metadata synchronously",
-    probe.approved === true && probe.canceled === false && probe.calls.length === 2 &&
+  check("SEC-08 fixed large-render confirmation validates and copies only scalar metadata asynchronously",
+    probe.asynchronous && probe.approved === true && probe.canceled === false && probe.calls.length === 2 &&
       probe.calls.every(call => call.channel === "confirm-large-render" &&
         Object.keys(call.payload).sort().join(",") === "name,seconds") &&
       probe.calls[0].payload.name === "" && probe.calls[0].payload.seconds === 0 &&
       probe.malformed.length === 8 && probe.malformed.every(Boolean) && probe.rejectedBeforeIpc,
     JSON.stringify(probe));
-  check("SEC-08 large-render confirmation rejects nonboolean replies and surfaces same-stack send failure",
-    probe.badReplies.length === 4 && probe.badReplies.every(Boolean) && probe.sendFailure,
+  check("SEC-08 large-render confirmation rejects nonboolean replies and preserves invoke rejection identity",
+    probe.badReplies.length === 4 && probe.badReplies.every(Boolean) && probe.invokeFailure,
     JSON.stringify(probe));
 }
 
-async function runApprovedDocumentTransport(exec) {
-  const probe = await exec(`(() => {
-    const ipc = window.ipcRenderer, original = ipc.send;
+async function runApprovedDocumentTransport() {
+  const probe = await runPreloadUnitProbe(`(() => {
+    const transport = preloadTransport, api = preloadApi, original = transport.send;
     const calls = []; let fail = false;
-    ipc.send = function(channel, payload) {
+    transport.send = function(channel, payload) {
       if (!['open-file-path', 'open-folder-in-explorer'].includes(channel))
         return original.apply(this, arguments);
       if (fail) throw new Error('controlled approved document dispatch refusal');
@@ -12322,29 +12374,29 @@ async function runApprovedDocumentTransport(exec) {
     try {
       const path = '.\\\\relative-native.md';
       const navigation = { token: 7, path, targetIndex: 0, ignored: true };
-      window.folia.openApprovedDocument({ filePath: path, openRequest: navigation, ignored: true });
-      window.folia.openApprovedDocument({ filePath: path });
-      window.folia.revealApprovedDocument({ filePath: path, ignored: true, openRequest: navigation });
+      api.openApprovedDocument({ filePath: path, openRequest: navigation, ignored: true });
+      api.openApprovedDocument({ filePath: path });
+      api.revealApprovedDocument({ filePath: path, ignored: true, openRequest: navigation });
       const synchronous = calls.length === 3;
       const invalid = [null, [], 1, {}, { filePath: '' }, { filePath: 'bad\\u0000path' },
         { filePath: path, openRequest: [] }, { filePath: path, openRequest: { ...navigation, token: 0 } },
         { filePath: path, openRequest: { ...navigation, path: 1 } },
         { filePath: path, openRequest: { ...navigation, targetIndex: -1 } }].map(request => {
-          try { window.folia.openApprovedDocument(request); return false; }
+          try { api.openApprovedDocument(request); return false; }
           catch (error) { return error instanceof TypeError; }
         });
       const revealInvalid = [null, [], { filePath: 1 }].map(request => {
-        try { window.folia.revealApprovedDocument(request); return false; }
+        try { api.revealApprovedDocument(request); return false; }
         catch (error) { return error instanceof TypeError; }
       });
       const noInvalidIpc = calls.length === 3;
       fail = true;
       const failures = ['openApprovedDocument', 'revealApprovedDocument'].map(method => {
-        try { window.folia[method]({ filePath: path }); return false; }
+        try { api[method]({ filePath: path }); return false; }
         catch (error) { return error.message === 'controlled approved document dispatch refusal'; }
       });
       return { calls, synchronous, invalid, revealInvalid, noInvalidIpc, failures };
-    } finally { ipc.send = original; }
+    } finally { transport.send = original; }
   })()`);
   check("SEC-08 approved open and reveal ports dispatch synchronously with exact scalar fields and relative native spellings",
     probe.synchronous && probe.calls.map(call => call.channel).join(",") ===
@@ -13416,22 +13468,22 @@ async function runShutdownResponseCacheScenario(win, exec) {
   }
 }
 
-async function runControlTransportValidation(exec) {
-  const probe = await exec(`(async () => {
-    const ipc = window.ipcRenderer, api = window.folia;
-    const originalSend = ipc.send, originalInvoke = ipc.invoke;
+async function runControlTransportValidation() {
+  const probe = await runPreloadUnitProbe(`(async () => {
+    const transport = preloadTransport, api = preloadApi;
+    const originalSend = transport.send, originalInvoke = transport.invoke;
     const calls = [], invokes = [], channels = new Set([
       'quit-approval-ready', 'quit-approval-response', 'quit-approval-committed',
       'quit-approval-verified', 'quit-approval-retry', 'quit-approval-overflow',
       'file-deleted-ack', 'newline-alignment-witness',
     ]);
     let failSend = false, failInvoke = false, generation = 17, enabled = false;
-    ipc.send = function(channel, payload) {
+    transport.send = function(channel, payload) {
       if (!channels.has(channel)) return originalSend.apply(this, arguments);
       if (failSend) throw new Error('controlled control send failure');
       calls.push({ channel, payload });
     };
-    ipc.invoke = async function(channel) {
+    transport.invoke = async function(channel) {
       if (!['quit-approval-generation', 'newline-alignment-diagnostics-enabled'].includes(channel))
         return originalInvoke.apply(this, arguments);
       invokes.push(channel);
@@ -13503,8 +13555,8 @@ async function runControlTransportValidation(exec) {
       return { synchronous, refused, rejectedBeforeIpc, sendErrors, validCalls,
         goodGeneration, disabled, positiveDiagnostics, initialInvokes, invalidGenerations,
         invalidDiagnostics, invokeErrors };
-    } finally { ipc.send = originalSend; ipc.invoke = originalInvoke; }
-  })()`);
+    } finally { transport.send = originalSend; transport.invoke = originalInvoke; }
+  })()`, { diagnostics: true });
   const calls = probe.validCalls;
   check("SEC-08 fixed shutdown and diagnostic requests preserve synchronous channels and refusal correlations",
     probe.synchronous.length === 9 && probe.synchronous.every(Boolean) &&
@@ -13604,10 +13656,10 @@ async function runControlEventBoundary(win) {
   await exec("window.__controlOff.forEach(off => off()); window.__controlOtherOff(); null;");
 }
 
-async function runUiTransportValidation(exec) {
-  const probe = await exec(`(async () => {
-    const ipc = window.ipcRenderer, api = window.folia;
-    const originalSend = ipc.send, originalInvoke = ipc.invoke;
+async function runUiTransportValidation() {
+  const probe = await runPreloadUnitProbe(`(async () => {
+    const transport = preloadTransport, api = preloadApi;
+    const originalSend = transport.send, originalInvoke = transport.invoke;
     const calls = [], channels = new Set(['open-file-dialog', 'open-image-dialog',
       'export-pdf', 'pdf-export-ready', 'open-mermaid-popup', 'open-table-popup',
       'open-image-popup', 'download-update', 'install-update']);
@@ -13616,12 +13668,12 @@ async function runUiTransportValidation(exec) {
       headerFilter: 'input', headerFilterPlaceholder: 'Filter...' }],
       data: [{ original: text }], ignored: 'drop' };
     let sendFailure = false, invokeFailure = false, versionReply = 'verbatim-version';
-    ipc.send = function(channel, payload) {
+    transport.send = function(channel, payload) {
       if (!channels.has(channel)) return originalSend.apply(this, arguments);
       if (sendFailure) throw new Error('controlled UI send failure');
       calls.push({ channel, payload, argc: arguments.length });
     };
-    ipc.invoke = async function(channel) {
+    transport.invoke = async function(channel) {
       if (channel !== 'get-version') return originalInvoke.apply(this, arguments);
       if (invokeFailure) throw new Error('controlled UI invoke failure');
       return versionReply;
@@ -13700,7 +13752,7 @@ async function runUiTransportValidation(exec) {
           validCalls[10].payload.tableData.columns[0].title === '<raw>&' &&
           validCalls[10].payload.tableData.data[0].original === text,
       };
-    } finally { ipc.send = originalSend; ipc.invoke = originalInvoke; }
+    } finally { transport.send = originalSend; transport.invoke = originalInvoke; }
   })()`);
   check("SEC-08 fixed UI requests dispatch synchronously on exact channels with verbatim content and nullable filenames",
     probe.synchronous.length === 11 && probe.synchronous.every(Boolean) &&
@@ -13778,10 +13830,10 @@ async function runUiEventBoundary(win) {
   await exec("window.__uiOff.forEach(off => off()); null;");
 }
 
-async function runPdfOnceValidation(exec) {
-  const probe = await exec(`(() => {
-    const ipc = window.ipcRenderer, api = window.folia, channel = 'pdf-export-result';
-    const initial = new Set(ipc.listeners(channel));
+async function runPdfOnceValidation() {
+  const probe = await runPreloadUnitProbe(`(() => {
+    const transport = preloadTransport, api = preloadApi, channel = 'pdf-export-result';
+    const initial = new Set(transport.listeners(channel));
     const controlledError = new Error('controlled PDF receiver failure');
     let onceCalls = 0, permanentCalls = 0, removedBeforeReceiver = false;
     const errors = [];
@@ -13790,19 +13842,19 @@ async function runPdfOnceValidation(exec) {
       offPermanent = api.onPdfExportResult(() => { permanentCalls += 1; });
       offOnce = api.oncePdfExportResult(() => {
         onceCalls += 1;
-        removedBeforeReceiver = ipc.listeners(channel).length === initial.size + 1;
+        removedBeforeReceiver = transport.listeners(channel).length === initial.size + 1;
         throw controlledError;
       });
       for (let i = 0; i < 2; i++) {
-        try { ipc.emit(channel, {}, { success: true, path: 'controlled-once.pdf' }); }
+        try { transport.emit(channel, {}, { success: true, path: 'controlled-once.pdf' }); }
         catch (error) { errors.push(error === controlledError); }
       }
       offOnce(); offOnce();
       return { onceCalls, permanentCalls, removedBeforeReceiver, errors };
     } finally {
       offOnce?.(); offPermanent?.();
-      for (const listener of ipc.listeners(channel)) {
-        if (!initial.has(listener)) ipc.removeListener(channel, listener);
+      for (const listener of transport.listeners(channel)) {
+        if (!initial.has(listener)) transport.removeListener(channel, listener);
       }
     }
   })()`);
@@ -17567,14 +17619,14 @@ async function run(win) {
     await finishEarlyRefresh(changedRead.page.nodeUnavailable);
     return;
   }
-  await runAdoptionBridgeValidation(exec);
-  await runDocumentControlBridgeValidation(exec);
-  await runDocumentTransportValidation(exec);
-  await runUiTransportValidation(exec);
-  await runControlTransportValidation(exec);
-  await runLargeRenderTransportValidation(exec);
-  await runApprovedDocumentTransport(exec);
-  await runPdfOnceValidation(exec);
+  await runAdoptionBridgeValidation();
+  await runDocumentControlBridgeValidation();
+  await runDocumentTransportValidation();
+  await runUiTransportValidation();
+  await runControlTransportValidation();
+  await runLargeRenderTransportValidation();
+  await runApprovedDocumentTransport();
+  await runPdfOnceValidation();
   await runPopupPdfDispatchFailure(exec, sentinel);
   const bridgeValidation = await exec(`
     (async () => {
