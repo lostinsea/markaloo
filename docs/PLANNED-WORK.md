@@ -38,8 +38,24 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `post-0.11.1-ordinary-tests` - **PAUSED FOR 0.11.2; C NODE EVIDENCE RETAINED**.
-  - Resume the existing A9/B7/C12 split only after verified 0.11.2 publication.
+- `edit-text-typed-formatting-0.11.3` - **NEXT; REVIEWED SOURCE HANDOFF PENDING**.
+  - Apply the table-cell typing-formatting improvements to the actual Edit Text
+    popup. Keep typing-only scope: no underline, buttons or shortcut enablement.
+  - Start from published 0.11.2 source `003c4163`, tree `501ccde4`.
+    Do not revise or move its published tag.
+  - B owns source and focused qualification with Astra design, Sol implementation
+    and fresh independent Sol/Luna review. C remains the sole package/version,
+    lock, workflow, register, main/tag, build and publication writer.
+  - The user explicitly deferred separate formal proofs for 0.11.3 too.
+    Keep them **NOT RUN / USER-DEFERRED**; the unsafe helper stays held.
+    Functional checks, independent reviews and actual package integrity remain
+    required. Do not infer proof success from natural red/green tests.
+  - Release and verify 0.11.3 before resuming the earlier broad test fixes.
+    Local GUI work still needs the coordinator's explicit serialized transfer.
+    Do not install or inspect the user's app, profiles or documents.
+
+- `post-0.11.1-ordinary-tests` - **PAUSED FOR 0.11.3; C NODE EVIDENCE RETAINED**.
+  - Resume the existing A9/B7/C12 split only after verified 0.11.3 publication.
     Retained C Node results used published 0.11.1 product/test bytes at
     `e24af07f`, tree `af160b79`, with only register changes at `6659ef45`.
   - C owns `test:packaging`, `test:profile`, `test:corpus`, `test:startup`,
@@ -60,7 +76,7 @@ section is kept here so the register has a visible edge.
     was launched. Keep these diagnostics distinct from suite failures.
   - The updates group is incomplete: its ordinary Node launcher starts
     Electron children. The undelivered B -> C slot allocation is withdrawn.
-    Broad Electron/UI/native-input runs wait for verified 0.11.2 publication
+    Broad Electron/UI/native-input runs wait for verified 0.11.3 publication
     and the coordinator's fresh exclusive transfer after prior cleanup.
     No C Electron run or installed-app/profile access has started.
   - Significant owned failures get focused fixes and independent Sol/Luna
@@ -71,15 +87,15 @@ section is kept here so the register has a visible edge.
     Formal-proof/R1140 deferrals and failed/incomparable performance remain
     separate, not passing.
 
-- `table-cell-typed-emphasis-0.11.2` - **REVIEWED SOURCE; RELEASE PREPARATION**.
+- `table-cell-typed-emphasis-0.11.2` - **PUBLISHED; EDIT TEXT 0.11.3 NEXT**.
   - User-confirmed scope: typing `**bold**` and `*italic*` formats immediately
     and stays formatted after Update and reopening. Underline, buttons and shortcut
     enablement are out of scope. Keep the popup Ctrl/Command+B/I/U block.
   - Start from published `e24af07f`; `6659ef45` adds only its publication closure.
     Preserve the 0.11.1 CODE, paste, source-ownership and stale-target policies.
   - Retained Astra designed the source-owned typing path. B completed the focused
-    source, tests and related documentation. C owns the serialized release stage.
-    No new release exists yet.
+    source, tests and related documentation. C completed the serialized release
+    and actual published-artifact verification.
   - C verified source commit `45d7e53f`, tree `6027a454`, parent `6659ef45`,
     against the frozen handoff, committed patch and supplied file/product pins.
     Integration commit `c28eff3c` preserves C's existing register-only commits
@@ -89,12 +105,28 @@ section is kept here so the register has a visible edge.
     B's source stays frozen. The user confirmed typing-only scope and explicitly
     excluded underline. Do not claim an underline fix or enable popup shortcuts.
   - Package and lock versions are 0.11.2; dependencies and scripts are unchanged.
-    Require fresh independent Sol/Luna metadata review, focused Windows table
-    and editor-scroll checks, all platform builds, strict zero-skip built-ASAR
-    checks and exact source/version correspondence before tagging.
-    Use one normal main/tag publication path; never move an existing tag.
-    Verify actual published downloads, updater manifests and provenance.
-    Do not launch an installer or touch the user's installed app or profile.
+    Fresh independent Sol/Luna metadata reviews found no significant issue or
+    disagreement. Source packaging passed 433 checks with two pre-build skips.
+  - Build-only preparation run [40509968147](https://github.com/lostinsea/markaloo/actions/runs/40509968147)
+    passed on frozen `003c4163`, tree `501ccde4`: source 55/55, input 2124/2124,
+    remaining UI 522/522, editor-scroll 260/260 and strict packaging 445 passed,
+    zero failed, zero skipped. All three platform builds and artifact checks passed.
+  - C advanced main normally to that exact source and created annotated
+    `v0.11.2` without moving any existing tag. Automatic tag run
+    [40511602300](https://github.com/lostinsea/markaloo/actions/runs/40511602300)
+    passed at attempt 1 on the same source, including the same focused counts,
+    strict zero-skip checks, all platform builds, attestation and publication.
+  - [Published 0.11.2](https://github.com/lostinsea/markaloo/releases/tag/v0.11.2)
+    is the latest release, not a draft or prerelease. Its reviewed notes are
+    published. All nine actual downloads match API and tag-build SHA256 digests;
+    all three updater manifests match exact payload filenames, sizes and SHA512.
+    Cryptographic provenance for all five binaries binds to this exact tag,
+    source, workflow and run attempt. This is not OS code signing.
+  - The actual published Windows ASAR matches the qualified preparation.
+    Packaged source, assets, vendor/fonts, notices, license, production
+    dependencies and canonical feed match; package/executable versions are
+    0.11.2. Both actual tag-run emphasis captures were opened and viewed.
+    No packaged binary or installer was executed; the user's app is untouched.
   - Shipping-parser-confirmed typing creates captured emphasis owners. Retained
     source atoms and enclosing owners survive one validated native replacement.
     Context-aware delimiter repair keeps the intended nesting without HTML
@@ -136,7 +168,8 @@ section is kept here so the register has a visible edge.
     A merged-output pipeline subsequently ran the existing document-editor
     route 60/60 without dependency changes; the original failure cause is not
     established. Do not relabel the initial seven routes as passing.
-  - Broader A/B/C testing stays parked until verified 0.11.2 publication.
+  - Edit Text formatting and verified 0.11.3 publication now come next.
+    Broader A/B/C testing stays parked until that release is verified.
     Record and defer new minor findings; significant failures remain explicit.
 
 - `table-cell-markdown-0.11.1` - **PUBLISHED; BROAD TESTING PENDING**.
@@ -193,7 +226,7 @@ section is kept here so the register has a visible edge.
     assets, updater checksums, source and provenance before closing release work.
   - New minor findings are documented and deferred under the user's release
     direction. Significant content, build or publication failures stay explicit.
-    Broader ordinary testing resumes only after verified 0.11.1 publication.
+    Broader ordinary testing follows the current workset sequence above.
   - The unchanged 0.11.0 product reproduced both reports through trusted cell
     input: ordinary DOM text gained a generated source span, and typed
     backticks stayed literal. The official red run retained every prior check.
