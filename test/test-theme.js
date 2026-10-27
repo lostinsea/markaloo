@@ -269,7 +269,7 @@ const DARK_CODE_SELECTION = {
 // ancestor token chain.
 /* THE MEASURED SIZE OF THE DERIVED REQUIRED LIST. Pinned rather than floored -
    see the note printed beside the assertion that consumes it. */
-const REQUIRED_COUNTS = { light: 61, dark: 61 };
+const REQUIRED_COUNTS = { light: 62, dark: 62 };
 
 const DECIDED_AMENDMENTS = [
   "dark/entity.named-entity@.backgroundColor",
@@ -1851,7 +1851,7 @@ app.whenReady().then(async () => {
        stopped matching would drop the count to 0, and an assertion of ABSENCE
        ("none at :root") passes on an empty set - the fail-open shape this
        suite has been bitten by before. */
-    const VAR_SCOPE_COUNT = 59;
+    const VAR_SCOPE_COUNT = 65;
     check(
       "every custom property whose value contains var() is declared where <body> can reach it, never on :root",
       varScope.rootish.length === 0 && varScope.total === VAR_SCOPE_COUNT,
@@ -2755,6 +2755,46 @@ app.whenReady().then(async () => {
     // this suite exists to freeze. The bar that IS meetable, and is the one a
     // scheme author can actually violate, is RELATIVE: introduce no new
     // low-contrast cell, and make no existing one worse.
+    // Populate the real errors only after the frozen census; an empty node
+    // cannot enter the direct-text contrast scan.
+    const ERROR_SURFACES = [
+      {
+        selector: 'dialog#tableCellDialog.table-cell-dialog > p#tableCellError.table-cell-error[role="alert"]',
+        cell: "p#tableCellError.table-cell-error",
+        surface: "#tableCellDialog",
+        dialog: "#tableCellDialog",
+        native: true,
+      },
+      {
+        selector: '#editTextOverlay.note-dialog-overlay > .note-dialog > .note-dialog-body > div#editTextError.inline-source-error[role="status"]',
+        cell: "div#editTextError.inline-source-error",
+        surface: "#editTextOverlay",
+        dialog: "#editTextOverlay > .note-dialog",
+        native: false,
+      },
+    ];
+    const errorSetup = JSON.parse(await exec(`(() => {
+      window.__themeErrorSaved = [];
+      return JSON.stringify(${JSON.stringify(ERROR_SURFACES)}.map((spec) => {
+        const nodes = document.querySelectorAll(spec.selector);
+        const el = nodes[0];
+        if (nodes.length !== 1) return { correctSurface: false };
+        window.__themeErrorSaved.push({
+          element: el, nodes: [...el.childNodes], html: el.innerHTML,
+        });
+        el.textContent = 'Edit error sample.';
+        return {
+          correctSurface: true,
+          directText: el.childNodes.length === 1 && el.firstChild.nodeType === 3 &&
+            !!el.firstChild.textContent.trim(),
+        };
+      }));
+    })()`));
+    check(
+      "10d: both real edit-error surfaces have direct text under their actual dialogs",
+      errorSetup.length === 2 && errorSetup.every((s) => s.correctSurface && s.directText),
+      JSON.stringify(errorSetup),
+    );
     const CONTRAST_PROBE = `(() => {
       function parse(c) {
         const m = /^rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)$/.exec(c);
@@ -2771,90 +2811,150 @@ app.whenReady().then(async () => {
       const out = [];
       let painting = 0, invisible = 0;
       const seen = new Set();
-      for (const el of document.querySelectorAll('*')) {
-        /* Measure the element that actually PAINTS text - one with a DIRECT
-           non-empty text node - and resolve its background from the nearest
-           ancestor-or-self that is opaque. Both halves were arrived at by
-           measurement and each fixes a failure of a cruder rule: keying on
-           textContent reports containers at 1:1 (a div inherits a colour it
-           never paints with), and using the element's OWN background misses
-           every button whose label sits in a <span>, which is most of them. A
-           semi-transparent background is skipped rather than alpha-blended -
-           the blend is real, but the answer is only as good as the guess about
-           what is behind it. */
-        const paints = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-        if (!paints) continue;
-        /* CUMULATIVE OPACITY, AND IT IS NOT OPTIONAL. An element with
-           opacity < 1 is composited over its backdrop, so its RENDERED ink is
-           o*fg + (1-o)*bg - not cs.color. Measured, the un-composited reading
-           over-reports by a wide margin on real cells: .welcome-open-hint
-           (opacity .75) reports 5.19 under clarity and RENDERS 3.61.
-           o === 0 is a different case entirely and is EXCLUDED rather than
-           measured: the element paints nothing at all, so compositing it
-           yields fg === bg and a meaningless 1.00 ratio. Measured, 65 of the
-           157 cells per state are the welcome slider's inactive slides at
-           opacity 0; scoring them would bury every real cell under 65 false
-           ones. The count is returned so the exclusion cannot go silent. */
-        let o = 1;
-        for (let a = el; a; a = a.parentElement) {
-          const v = parseFloat(getComputedStyle(a).opacity);
-          o *= isNaN(v) ? 1 : v;
+      const errors = [], errorNodes = new Map();
+      for (const spec of ${JSON.stringify(ERROR_SURFACES)}) {
+        const nodes = document.querySelectorAll(spec.selector);
+        const surfaces = document.querySelectorAll(spec.surface);
+        const dialogs = document.querySelectorAll(spec.dialog);
+        if (nodes.length !== 1 || surfaces.length !== 1 || dialogs.length !== 1 ||
+            !dialogs[0].contains(nodes[0]) || !surfaces[0].contains(dialogs[0])) {
+          errors.push({ cell: spec.cell, visible: false });
+          continue;
         }
-        if (o === 0) { invisible++; continue; }
-        painting++;
-        let bg = null;
-        for (let a = el; a; a = a.parentElement) {
-          const c = parse(getComputedStyle(a).backgroundColor);
-          if (c && c.a >= 0.95) { bg = c; break; }
-        }
-        const cs = getComputedStyle(el);
-        const fg = parse(cs.color);
-        if (!bg || !fg) continue;
-        /* EVERY cell is emitted, not just the sub-4.5 ones. Filtering here was
-           a structural defect: it made the RELATIVE comparisons unfailable
-           whenever the absolute bar passed, because both drew their subjects
-           from a list that the absolute bar had already emptied. Worse, the
-           one case the relative bar was kept for - a cell degrading from 6.0
-           to 4.6 - could never enter the list at all. The assertions filter at
-           their own site now, and the ratios are carried UNROUNDED so a
-           comparison is not decided by two decimal places. */
-        const r = ratio(fg, bg);
-        const ink = o >= 0.999 ? fg : {
-          r: o * fg.r + (1 - o) * bg.r,
-          g: o * fg.g + (1 - o) * bg.g,
-          b: o * fg.b + (1 - o) * bg.b,
-        };
-        /* A colour-INDEPENDENT identity, so the same cell is recognisable
-           across two states that deliberately paint it differently. Keying on
-           the colours would make every scheme row look like a brand-new cell;
-           keying on the tag name collapses the dozens of elements that share
-           one - which is how the exit button's white-on-red hid inside the
-           defaults while surfacing as the schemes' only cell. */
-        let path = '', node = el;
-        while (node && node.nodeType === 1) {
-          const parent = node.parentElement;
-          const idx = parent ? [...parent.children].indexOf(node) + 1 : 1;
-          path = '>' + node.tagName.toLowerCase() + ':' + idx + path;
-          node = parent;
-        }
-        if (seen.has(path)) continue;
-        seen.add(path);
-        const sel = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
-          (el.className && typeof el.className === 'string' && el.className.trim()
-            ? '.' + el.className.trim().split(/\\s+/).join('.') : '');
-        out.push({
-          path, sel, o: o, r: r, rEff: ratio(ink, bg),
-          fg: 'rgb(' + fg.r + ',' + fg.g + ',' + fg.b + ')',
-          bg: 'rgb(' + bg.r + ',' + bg.g + ',' + bg.b + ')',
-        });
+        errorNodes.set(nodes[0], { spec, surface: surfaces[0], dialog: dialogs[0] });
       }
-      return JSON.stringify({ painting: painting, invisible: invisible, cells: out });
+      for (const el of document.querySelectorAll('*')) {
+        const fixture = errorNodes.get(el);
+        const wasOpen = fixture && fixture.surface.hasAttribute('open');
+        const wasVisible = fixture && fixture.surface.classList.contains('visible');
+        const savedStyle = fixture && fixture.dialog.getAttribute('style');
+        let probe = null;
+        try {
+          if (fixture) {
+            if (fixture.spec.native) fixture.surface.toggleAttribute('open', true);
+            else fixture.surface.classList.add('visible');
+            // Reveal only this error before the ordinary opacity filter runs;
+            // measure its settled palette, not the dialog's opening keyframe.
+            fixture.dialog.style.animation = 'none';
+          }
+          /* Measure the element that actually PAINTS text - one with a DIRECT
+             non-empty text node - and resolve its background from the nearest
+             ancestor-or-self that is opaque. Both halves were arrived at by
+             measurement and each fixes a failure of a cruder rule: keying on
+             textContent reports containers at 1:1 (a div inherits a colour it
+             never paints with), and using the element's OWN background misses
+             every button whose label sits in a <span>, which is most of them. A
+             semi-transparent background is skipped rather than alpha-blended -
+             the blend is real, but the answer is only as good as the guess about
+             what is behind it. */
+          const paints = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+          if (!paints) continue;
+          /* CUMULATIVE OPACITY, AND IT IS NOT OPTIONAL. An element with
+             opacity < 1 is composited over its backdrop, so its RENDERED ink is
+             o*fg + (1-o)*bg - not cs.color. Measured, the un-composited reading
+             over-reports by a wide margin on real cells: .welcome-open-hint
+             (opacity .75) reports 5.19 under clarity and RENDERS 3.61.
+             o === 0 is a different case entirely and is EXCLUDED rather than
+             measured: the element paints nothing at all, so compositing it
+             yields fg === bg and a meaningless 1.00 ratio. Measured, 65 of the
+             157 cells per state are the welcome slider's inactive slides at
+             opacity 0; scoring them would bury every real cell under 65 false
+             ones. The count is returned so the exclusion cannot go silent. */
+          let o = 1;
+          for (let a = el; a; a = a.parentElement) {
+            const v = parseFloat(getComputedStyle(a).opacity);
+            o *= isNaN(v) ? 1 : v;
+          }
+          if (o === 0) { invisible++; continue; }
+          painting++;
+          let bg = null;
+          for (let a = el; a; a = a.parentElement) {
+            const c = parse(getComputedStyle(a).backgroundColor);
+            if (c && c.a >= 0.95) { bg = c; break; }
+          }
+          const cs = getComputedStyle(el);
+          const fg = parse(cs.color);
+          if (!bg || !fg) continue;
+          /* EVERY cell is emitted, not just the sub-4.5 ones. Filtering here was
+             a structural defect: it made the RELATIVE comparisons unfailable
+             whenever the absolute bar passed, because both drew their subjects
+             from a list that the absolute bar had already emptied. Worse, the
+             one case the relative bar was kept for - a cell degrading from 6.0
+             to 4.6 - could never enter the list at all. The assertions filter at
+             their own site now, and the ratios are carried UNROUNDED so a
+             comparison is not decided by two decimal places. */
+          const r = ratio(fg, bg);
+          const ink = o >= 0.999 ? fg : {
+            r: o * fg.r + (1 - o) * bg.r,
+            g: o * fg.g + (1 - o) * bg.g,
+            b: o * fg.b + (1 - o) * bg.b,
+          };
+          /* A colour-INDEPENDENT identity, so the same cell is recognisable
+             across two states that deliberately paint it differently. Keying on
+             the colours would make every scheme row look like a brand-new cell;
+             keying on the tag name collapses the dozens of elements that share
+             one - which is how the exit button's white-on-red hid inside the
+             defaults while surfacing as the schemes' only cell. */
+          let path = '', node = el;
+          while (node && node.nodeType === 1) {
+            const parent = node.parentElement;
+            const idx = parent ? [...parent.children].indexOf(node) + 1 : 1;
+            path = '>' + node.tagName.toLowerCase() + ':' + idx + path;
+            node = parent;
+          }
+          if (seen.has(path)) continue;
+          seen.add(path);
+          const sel = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
+            (el.className && typeof el.className === 'string' && el.className.trim()
+              ? '.' + el.className.trim().split(/\\s+/).join('.') : '');
+          out.push({
+            path, sel, o: o, r: r, rEff: ratio(ink, bg),
+            fg: 'rgb(' + fg.r + ',' + fg.g + ',' + fg.b + ')',
+            bg: 'rgb(' + bg.r + ',' + bg.g + ',' + bg.b + ')',
+          });
+          if (fixture) {
+            probe = document.createElement('span');
+            probe.style.cssText = 'color: var(--edit-error-fg); background-color: var(--bg-secondary)';
+            fixture.dialog.appendChild(probe);
+            const expected = getComputedStyle(probe);
+            const rgb = (c) => c ? 'rgb(' + c.r + ',' + c.g + ',' + c.b + ')' : null;
+            const rect = el.getBoundingClientRect();
+            errors.push({
+              cell: fixture.spec.cell,
+              visible: el.checkVisibility({
+                opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true,
+              }) && rect.width > 0 && rect.height > 0,
+              fg: rgb(fg), bg: rgb(bg),
+              expectedFg: rgb(parse(expected.color)),
+              expectedBg: rgb(parse(expected.backgroundColor)),
+              dialogBg: rgb(parse(getComputedStyle(fixture.dialog).backgroundColor)),
+            });
+          }
+        } finally {
+          if (probe) probe.remove();
+          if (fixture) {
+            if (fixture.spec.native) fixture.surface.toggleAttribute('open', wasOpen);
+            else fixture.surface.classList.toggle('visible', wasVisible);
+            if (savedStyle === null) fixture.dialog.removeAttribute('style');
+            else fixture.dialog.setAttribute('style', savedStyle);
+          }
+        }
+      }
+      return JSON.stringify({
+        painting: painting, invisible: invisible, cells: out, errors: errors,
+        releasedErrorRatios: {
+          lightTable: ratio(parse('rgb(204,51,51)'), parse('rgb(255,255,255)')),
+          darkInline: ratio(parse('rgb(229,115,115)'), parse('rgb(36,36,36)')),
+        },
+      });
     })()`;
 
     const contrastBase = {};
+    const errorStates = [];
     for (const mode of ["light", "dark"]) {
       await applySettled(mode, null, mode + " default (contrast baseline)");
       contrastBase[mode] = JSON.parse(await exec(CONTRAST_PROBE));
+      errorStates.push([mode + " default", contrastBase[mode]]);
     }
     const buckets = (s) => ({
       painting: s.painting,
@@ -2894,6 +2994,7 @@ app.whenReady().then(async () => {
     for (const [mode, scheme] of SCHEME_STATES) {
       await applySettled(mode, scheme, scheme + " (contrast)");
       const cur = JSON.parse(await exec(CONTRAST_PROBE));
+      errorStates.push([scheme, cur]);
       const baseByPath = new Map(contrastBase[mode].cells.map((c) => [c.path, c]));
 
       /* THE SCAN ITSELF IS ASSERTED FIRST, and it is not a threshold - it is
@@ -3002,6 +3103,73 @@ app.whenReady().then(async () => {
           .join(" | "),
       );
     }
+    const errorFailures = errorStates.filter(([, sample]) => {
+      return sample.errors.length !== ERROR_SURFACES.length || ERROR_SURFACES.some((spec) => {
+        const cells = sample.cells.filter((c) => c.sel === spec.cell);
+        const surfaces = sample.errors.filter((s) => s.cell === spec.cell);
+        const surface = surfaces[0];
+        return cells.length !== 1 || surfaces.length !== 1 || !surface.visible ||
+          !surface.expectedFg || !surface.expectedBg ||
+          surface.fg !== surface.expectedFg || surface.bg !== surface.expectedBg ||
+          surface.dialogBg !== surface.expectedBg || cells[0].o !== 1 ||
+          cells[0].fg !== surface.fg || cells[0].bg !== surface.bg;
+      });
+    });
+    check(
+      "10d: all six contrast states include both visible edit errors on their edit-error ink and dialog backgrounds",
+      errorStates.length === 6 && errorFailures.length === 0,
+      JSON.stringify(errorFailures.map(([label, sample]) => ({
+        label, surfaces: sample.errors,
+        cells: sample.cells.filter((c) => ERROR_SURFACES.some((s) => s.cell === c.sel)),
+      }))),
+    );
+    for (const [label, sample] of errorStates) {
+      for (const spec of ERROR_SURFACES) {
+        const cells = sample.cells.filter((c) => c.sel === spec.cell);
+        check(
+          `10d: ${label}: ${spec.cell} meets WCAG AA (4.5:1)`,
+          cells.length === 1 && cells[0].o === 1 && cells[0].rEff >= 4.5,
+          cells.map(show).join(" | "),
+        );
+      }
+    }
+    // The current defaults cannot serve as historical baselines: lowering an
+    // ink would lower that baseline too. These two pairs are the released ones.
+    const releasedLightTable = contrastBase.light.cells.filter(
+      (c) => c.sel === "p#tableCellError.table-cell-error",
+    );
+    const releasedDarkInline = contrastBase.dark.cells.filter(
+      (c) => c.sel === "div#editTextError.inline-source-error",
+    );
+    const ERROR_RATIO_EPS = 0.000001;
+    check(
+      "10d: the light table error preserves released #c33 on #fff and its contrast",
+      releasedLightTable.length === 1 &&
+        releasedLightTable[0].fg === "rgb(204,51,51)" &&
+        releasedLightTable[0].bg === "rgb(255,255,255)" &&
+        Math.abs(releasedLightTable[0].rEff -
+          contrastBase.light.releasedErrorRatios.lightTable) <= ERROR_RATIO_EPS,
+      releasedLightTable.map(show).join(" | "),
+    );
+    check(
+      "10d: the dark Edit Text error preserves released #e57373 on #242424 and its contrast",
+      releasedDarkInline.length === 1 &&
+        releasedDarkInline[0].fg === "rgb(229,115,115)" &&
+        releasedDarkInline[0].bg === "rgb(36,36,36)" &&
+        Math.abs(releasedDarkInline[0].rEff -
+          contrastBase.dark.releasedErrorRatios.darkInline) <= ERROR_RATIO_EPS,
+      releasedDarkInline.map(show).join(" | "),
+    );
+    const errorsRestored = await exec(`(() => {
+      const saved = window.__themeErrorSaved;
+      if (!saved) return false;
+      for (const s of saved) s.element.replaceChildren(...s.nodes);
+      const restored = saved.length === 2 && saved.every((s) =>
+        s.element.isConnected && s.element.innerHTML === s.html);
+      delete window.__themeErrorSaved;
+      return restored;
+    })()`);
+    check("10d: both edit errors' original content is restored", errorsRestored);
     /* The welcome markup deliberately STAYS attached through 10f and 10g.
        Removing it here - which is where it used to happen - silently narrowed
        10g's subject set: .welcome-open-btn:hover and .welcome-readme-btn:hover
@@ -3801,12 +3969,13 @@ app.whenReady().then(async () => {
         `rules ${varFallbacks.rules} -> ${varFb.plantedRules} (delta ${varFb.plantedRules - varFallbacks.rules}, want ${PLANT_RULES}); ` +
         `fallbacks ${varFallbacks.fallbacks} -> ${varFb.plantedFallbacks} (delta ${varFb.plantedFallbacks - varFallbacks.fallbacks}, want ${PLANT_FALLBACKS})`,
     );
-    /* THE RECORDED INVENTORY. One entry, and it is a LENGTH rather than a
-       colour: the table-breakout budget legitimately falls back to 100% when
-       no budget has been published yet. Adding a var() fallback to this
-       codebase is rare enough, and consequential enough, that it should
-       require a line here. */
-    const VAR_FALLBACK_INVENTORY = [".markdown-body .table-container.table-breakout | --mv-breakout-budget -> 100%"];
+    /* Both fallbacks are layout, not palette: the breakout budget has a
+       percentage default and the scoped workspace inset has a drawer-width
+       default. New fallbacks still require an explicit inventory decision. */
+    const VAR_FALLBACK_INVENTORY = [
+      ".markdown-body .table-container.table-breakout | --mv-breakout-budget -> 100%",
+      "body > .container > .main-content > .content-wrapper:has(> #indexPanel.visible) | --workspace-toc-inset -> var(--toc-panel-width)",
+    ];
     const invActual = (varFallbacks.inventory || []).slice().sort();
     const invWanted = VAR_FALLBACK_INVENTORY.slice().sort();
     check(
@@ -3862,14 +4031,56 @@ app.whenReady().then(async () => {
         "--tok-operator",
       ],
     };
+    // These layout tokens belong to the workspace, not body. Read their
+    // actual consumers so missing scoped declarations cannot become excusals.
+    const SCOPED_VAR_CONSUMERS = {
+      "--toc-panel-width": {
+        host: "body > .container",
+        consumer: "body > .container > .main-content > .content-wrapper > #indexPanel",
+        property: "width",
+      },
+      "--workspace-toc-inset": {
+        host: "body > .container",
+        consumer: "body > .container > .search-anchor > #searchPanel",
+        property: "left",
+      },
+    };
     const VAR_PROBE = `(() => {
       const names = ${JSON.stringify(varFallbacks.consumed)};
+      const scoped = ${JSON.stringify(SCOPED_VAR_CONSUMERS)};
       const cs = getComputedStyle(document.body);
-      const empty = [];
+      const empty = [], consumers = [];
       for (const n of names) {
-        if (!cs.getPropertyValue(n).trim()) empty.push(n);
+        const spec = scoped[n];
+        if (!spec) {
+          if (!cs.getPropertyValue(n).trim()) empty.push(n);
+          continue;
+        }
+        const hosts = document.querySelectorAll(spec.host);
+        const nodes = document.querySelectorAll(spec.consumer);
+        const host = hosts[0], consumer = nodes[0];
+        const style = consumer ? getComputedStyle(consumer) : null;
+        const value = style ? style.getPropertyValue(n).trim() : '';
+        consumers.push({
+          name: n, hosts: hosts.length, nodes: nodes.length,
+          inScope: !!host && !!consumer && host.contains(consumer),
+          value: value,
+          pixels: style ? parseFloat(style.getPropertyValue(spec.property)) : null,
+        });
+        if (!value) empty.push(n);
       }
-      return JSON.stringify(empty);
+      const drawer = document.getElementById('indexPanel');
+      const search = document.getElementById('searchPanel');
+      const wrapper = drawer && drawer.parentElement;
+      const rect = drawer && drawer.getBoundingClientRect();
+      return JSON.stringify({
+        empty: empty, consumers: consumers,
+        visible: !!drawer && drawer.classList.contains('visible'),
+        drawerWidth: rect ? rect.width : null,
+        drawerRight: rect ? rect.right : null,
+        searchLeft: search ? search.getBoundingClientRect().left : null,
+        documentInset: wrapper ? parseFloat(getComputedStyle(wrapper).marginLeft) : null,
+      });
     })()`;
     const varMissing = [];
     const VAR_STATES = [
@@ -3877,9 +4088,42 @@ app.whenReady().then(async () => {
       ["dark", null, "default-dark"],
       ...SCHEME_STATES.map(([m, s]) => [m, s, s]),
     ];
+    const tocWasVisible = await exec("indexPanel.classList.contains('visible')");
     for (const [mode, scheme, label] of VAR_STATES) {
       await applySettled(mode, scheme, `10f3 ${label}`);
-      const empty = JSON.parse(await exec(VAR_PROBE)).sort();
+      const samples = [];
+      for (const visible of [false, true]) {
+        await exec(`if(indexPanel.classList.contains('visible')!==${visible})
+          document.getElementById('toggleTocBtn').click();true`);
+        let running = -1;
+        for (let i = 0; i < 60; i++) {
+          running = await settleTransitions();
+          if (running === 0) break;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        if (running !== 0) settleFailures.push(`10f3 ${label} TOC ${visible}: ${running} still running`);
+        samples.push(JSON.parse(await exec(VAR_PROBE)));
+      }
+      check(
+        `${label}: scoped TOC tokens resolve on their real consumers with closed and open drawer geometry`,
+        Object.keys(SCOPED_VAR_CONSUMERS).every((n) => varFallbacks.consumed.includes(n)) &&
+          samples.every((sample, index) => {
+            const width = sample.consumers.find((c) => c.name === "--toc-panel-width");
+            const inset = sample.consumers.find((c) => c.name === "--workspace-toc-inset");
+            const expectedInset = index ? sample.drawerWidth : 0;
+            return sample.visible === !!index && sample.drawerWidth > 0 &&
+              sample.consumers.length === 2 &&
+              sample.consumers.every((c) => c.hosts === 1 && c.nodes === 1 &&
+                c.inScope && !!c.value && Number.isFinite(c.pixels)) &&
+              !!width && Math.abs(width.pixels - sample.drawerWidth) < 1 &&
+              !!inset && Math.abs(inset.pixels - expectedInset) < 1 &&
+              (index || parseFloat(inset.value) === 0) &&
+              Math.abs(sample.documentInset - expectedInset) < 1 &&
+              (!index || Math.abs(sample.searchLeft - sample.drawerRight) < 1);
+          }),
+        JSON.stringify(samples),
+      );
+      const empty = [...new Set(samples.flatMap((s) => s.empty))].sort();
       const want = [
         ...UNRESOLVED_BY_DESIGN["*"],
         ...(UNRESOLVED_BY_DESIGN[label] || []),
@@ -3891,6 +4135,8 @@ app.whenReady().then(async () => {
           );
         }
       }
+      await exec(`if(indexPanel.classList.contains('visible')!==${tocWasVisible})
+        document.getElementById('toggleTocBtn').click();true`);
       for (const n of want) {
         if (!empty.includes(n)) {
           varMissing.push(
@@ -4864,8 +5110,12 @@ app.whenReady().then(async () => {
       ".notes-item",
       ".note-label",
       ".note-tooltip > .note-tooltip-close",
+      "dialog.table-cell-dialog[open] > .table-cell-grid > table > thead > tr > th[scope='row']",
+      "dialog.table-cell-dialog[open] > .table-cell-grid > table > thead > tr > th[scope='col'] > [contenteditable='true'][role='textbox'][aria-multiline='false']",
+      "dialog.table-cell-dialog[open] > .table-cell-grid > table > tbody > tr > th[scope='row']",
+      "dialog.table-cell-dialog[open] > .table-cell-grid > table > tbody > tr > td > [contenteditable='true'][role='textbox'][aria-multiline='false']",
     ];
-    const SCAFFOLD_NODES = 20;
+    const SCAFFOLD_NODES = 33;
     const SCAFFOLD = `(() => {
       const d = document.createElement('div');
       d.id = '__st_scaffold';
@@ -4882,7 +5132,15 @@ app.whenReady().then(async () => {
         '<button class="code-copy-btn copied">Copied</button>' +
         '<div class="notes-item"><span>A scaffolded note</span></div>' +
         '<span class="note-label">label</span>' +
-        '<div class="note-tooltip"><button class="note-tooltip-close">x</button></div>';
+        '<div class="note-tooltip"><button class="note-tooltip-close">x</button></div>' +
+        '<dialog class="table-cell-dialog" open><div class="table-cell-grid">' +
+        '<table><thead><tr><th scope="row">Header</th><th scope="col">' +
+        '<div contenteditable="true" role="textbox" aria-multiline="false" ' +
+        'aria-label="Header, column 1">Heading</div></th></tr></thead>' +
+        '<tbody><tr><th scope="row">Row 1</th><td>' +
+        '<div contenteditable="true" role="textbox" aria-multiline="false" ' +
+        'aria-label="Row 1, column 1">Cell text</div></td></tr></tbody>' +
+        '</table></div></dialog>';
       document.body.appendChild(d);
       const missing = [];
       for (const sel of ${JSON.stringify(SCAFFOLD_MANIFEST)}) {
@@ -9372,14 +9630,20 @@ app.whenReady().then(async () => {
     const unmatched = [];
     let sameSelSeen = 0;
     let deScopedSeen = 0;
+    const groupedDarkCodeCompared = [];
+    const GROUPED_BASELINE_SELECTORS = {
+      "styles.css|.markdown-body code": ".markdown-body code, .inline-source-editor code",
+      "custom-styles.css|.tools-menu-item.has-flyout": ".tools-menu-item.has-flyout, button.tools-menu-item",
+    };
     for (const o of oldDecls) {
       if (o.prop.startsWith("--")) continue;
       if (/\[data-theme/.test(o.sel)) continue;
       if (/var\(/.test(o.val)) continue;
       const mode = /\.dark-mode/.test(o.sel) ? "dark" : "light";
+      const groupedSelector = GROUPED_BASELINE_SELECTORS[`${o.file}|${o.sel}`];
       const survivor = newByKey.get(declKey(o)) ||
-        (o.file === "custom-styles.css" && o.sel === ".tools-menu-item.has-flyout"
-          ? newByKey.get(declKey({ ...o, sel: ".tools-menu-item.has-flyout, button.tools-menu-item" }))
+        (groupedSelector
+          ? newByKey.get(declKey({ ...o, sel: groupedSelector }))
           : undefined);
       if (survivor) {
         sameSelSeen++;
@@ -9393,12 +9657,20 @@ app.whenReady().then(async () => {
           sameSelDrift.push(`{${o.sel}} ${o.prop}: was ${o.val}, now ${survivor.val} => ${got}`);
         continue;
       }
-      const moved = newBySel.get(`${deScope(o.sel)}##${o.prop}`);
+      const groupedDarkCode = o.file === "styles.css" &&
+        o.sel === "body.dark-mode .markdown-body code"
+        ? newByKey.get(declKey({
+          ...o, sel: GROUPED_BASELINE_SELECTORS["styles.css|.markdown-body code"],
+        }))
+        : undefined;
+      const moved = newBySel.get(`${deScope(o.sel)}##${o.prop}`) || groupedDarkCode;
       if (moved && /var\(/.test(moved.val)) {
         deScopedSeen++;
         const got = subst(moved.val, mode);
         if (normCss(got) !== normCss(o.val))
           deScopedDrift.push(`{${o.sel}} ${o.prop}: was ${o.val}, now {${moved.sel}} ${moved.val} => ${got}`);
+        if (groupedDarkCode && moved === groupedDarkCode)
+          groupedDarkCodeCompared.push({ prop: o.prop, mode, was: o.val, got });
         continue;
       }
       unmatched.push(`${o.file} {${o.sel}} ${o.prop}: ${o.val}`);
@@ -9427,6 +9699,17 @@ app.whenReady().then(async () => {
       `${deScopedSeen} tokenised dark override(s) re-resolved, ${deScopedDrift.length} drifted${
         deScopedDrift.length ? ": " + deScopedDrift.join(" | ") : ""
       }`,
+    );
+    check(
+      "10m: both historical dark code paints reach the grouped token rule and retain their baseline values",
+      groupedDarkCodeCompared.length === 2 &&
+        [["background", "#2d2d2d"], ["color", "#ccc"]].every(([prop, value]) => {
+          const samples = groupedDarkCodeCompared.filter((c) => c.prop === prop);
+          return samples.length === 1 && samples[0].mode === "dark" &&
+            normCss(samples[0].was) === normCss(value) &&
+            normCss(samples[0].got) === normCss(value);
+        }),
+      JSON.stringify(groupedDarkCodeCompared),
     );
     /* THE POSITIVE CONTROL, because the two assertions above are absence
        checks over a DERIVED subject list and this project has been bitten four
@@ -10346,6 +10629,7 @@ app.whenReady().then(async () => {
       "styles.css|.notes-item.search-highlight|background": "translucent tint over a themed row, no ink of its own",
       "styles.css|.note-dialog-overlay|background": "modal scrim, paints no ink",
       "styles.css|.reload-document-dialog::backdrop|background": "modal scrim, paints no ink",
+      "styles.css|.table-cell-dialog::backdrop|background": "modal scrim, paints no ink",
       "styles.css|.note-label|color": "ink over the note's own author-chosen colour, which no scheme owns",
       "styles.css|.note-tooltip::-webkit-scrollbar-track|background": "translucent decoration on the tooltip's own dark surface",
       "styles.css|.note-tooltip::-webkit-scrollbar-thumb|background": "translucent decoration, see above",
@@ -10402,7 +10686,7 @@ app.whenReady().then(async () => {
     const staleLedger = ledgerKeys.filter((k) => !literalKeys.includes(k));
     check(
       "10p: every screen-scope literal paint declaration is a recorded self-consistent cell, not a stranded fill",
-      literalKeys.length >= 24 && unrecordedLiterals.length === 0 && staleLedger.length === 0,
+      literalKeys.length === ledgerKeys.length && unrecordedLiterals.length === 0 && staleLedger.length === 0,
       `${literalKeys.length} swept against ${ledgerKeys.length} recorded; unrecorded: ${JSON.stringify(
         unrecordedLiterals,
       )}; stale: ${JSON.stringify(staleLedger)}`,

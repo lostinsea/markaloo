@@ -1430,6 +1430,8 @@ async function runSearchLayoutCases(win) {
   // The complete ordinary fixture/viewport sequence above precedes every resize.
   const bounds = win.getBounds();
   const contentBounds = win.getContentBounds();
+  const viewport = await exec(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
+  const browserZoom = ownedContents.getZoomFactor();
   const minimum = win.getMinimumSize();
   const saved = await exec(`({
     toc: indexPanel.classList.contains('visible'), edit: isEditMode,
@@ -1857,6 +1859,9 @@ async function runSearchLayoutCases(win) {
       !loadingScreen.classList.contains('active')&&searchMatches.length===12&&pendingSearchTerm===null&&
       searchMatches.every(match=>match.isConnected&&viewer.contains(match))`,4000);
     const restoredBounds = win.getBounds();
+    const restoredContentBounds = win.getContentBounds();
+    const restoredViewport = await exec(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
+    const restoredBrowserZoom = ownedContents.getZoomFactor();
     const restoredOwner = await exec(`(() => {
       const dirty = hasUnsavedWork();
       const descriptor = window.CustomTabs.getDocumentDescriptor();
@@ -1868,6 +1873,7 @@ async function runSearchLayoutCases(win) {
       JSON.stringify(restoredBounds)===JSON.stringify(bounds)&&!restoredOwner.dirty&&
         restoredOwner.logicalPath===file&&restoredOwner.ref===saved.ref&&admissionCurrent,
       JSON.stringify({expectedBounds:bounds,restoredBounds,originalContentBounds:contentBounds,
+        restoredContentBounds,originalViewport:viewport,restoredViewport,browserZoom,restoredBrowserZoom,
         originalMinimumSize:minimum,expectedLogicalPath:file,expectedRef:saved.ref,
         restoredOwner,admissionCurrent}));
   }
@@ -1912,20 +1918,27 @@ async function runSearchNativePointerCases(win) {
     if(!ownedDelivery)throw new Error("native search delivery did not satisfy its owned-input contract");
     return delivered;
   };
-  const type = async term => {
-    const focused=await exec(`(() => {
+  const type = async (term, existingTerm) => {
+    // Selection is setup: test native insertion, not an unacknowledged select-all shortcut.
+    const setup=await exec(`(() => {
       if(document.activeElement!==searchInput)return false;
+      const existingValue=searchInput.value;
+      searchInput.setSelectionRange(0,existingValue.length);
+      const selection={focused:document.activeElement===searchInput,existingValue,value:searchInput.value,
+        length:existingValue.length,start:searchInput.selectionStart,end:searchInput.selectionEnd};
       window.__searchLayoutTyped=null;
       const record=event=>{window.__searchLayoutTyped={trusted:event.isTrusted,
         owned:event.target===searchInput,path:event.composedPath().includes(searchInput),value:searchInput.value};};
       searchInput.addEventListener('input',record,{once:true});
       window.__searchLayoutTextUnlisten=()=>searchInput.removeEventListener('input',record);
-      return true;
+      return selection;
     })()`);
-    if(!focused)throw new Error("native text insertion refused without established search input focus");
-    const modifier=process.platform==="darwin"?"meta":"control";
-    ownedContents.sendInputEvent({type:"keyDown",keyCode:"A",modifiers:[modifier]});
-    ownedContents.sendInputEvent({type:"keyUp",keyCode:"A",modifiers:[modifier]});
+    if(!setup)throw new Error("native text insertion refused without established search input focus");
+    const selected=setup.focused&&setup.existingValue===existingTerm&&setup.value===setup.existingValue&&
+      setup.length===existingTerm.length&&setup.length>0&&setup.start===0&&setup.end===setup.length;
+    check("native search text "+term+" selects the unchanged nonempty "+existingTerm+" input as setup",
+      selected,JSON.stringify(setup));
+    if(!selected)throw new Error("native text insertion refused without witnessed whole-input selection");
     await bounded(ownedContents.insertText(term),"native search text insertion",1500);
     const typed=await exec(`(() => {
       window.__searchLayoutTextUnlisten();return window.__searchLayoutTyped;
@@ -1944,11 +1957,11 @@ async function runSearchNativePointerCases(win) {
   const focused=await click("searchInput",true);
   check("native inward-left input click really transfers focus",focused.focus==="searchInput",JSON.stringify(focused));
   if(focused.focus!=="searchInput")throw new Error("native input focus transfer failed");
-  await type("With");
+  await type("With","needle");
   await waitFor(exec,"native typed unique heading search",`searchInput.value==='With'&&searchMatches.length===1&&
     document.querySelectorAll('#viewer .search-highlight').length===1&&pendingSearchTerm===null`,4000);
   check("native input text changes the actual rendered search result to one match",true);
-  await type("needle");
+  await type("needle","With");
   await waitFor(exec,"native typed repeated search",`searchInput.value==='needle'&&searchMatches.length===12&&
     currentMatchIndex===0&&pendingSearchTerm===null`,4000);
   await click("searchNext");
@@ -1956,7 +1969,7 @@ async function runSearchNativePointerCases(win) {
   await click("searchPrev");
   check("native previous click changes the actual current match",await exec(`currentMatchIndex===0`));
   await click("searchInput");
-  await type("With");
+  await type("With","needle");
   await click("searchClose",false,"With");
   await sleep(220);
   check("native close click cancels a genuinely pending term without late highlights",

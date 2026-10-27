@@ -958,10 +958,11 @@ if (!isElectron) {
     check(`${phase} restore preserves hidden drawer accessibility`, state.inertToc === (expected !== "toc") && state.inertNotes === (expected !== "notes"), state);
     check(`${phase} restore never focuses a drawer`, !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);
     check(`${phase} restart restores the actual admitted document`, await exec("viewer.querySelector('h1')?.textContent==='Other reading document'"));
-    if (["invalid", "missing", "unreadable"].includes(phase)) {
+    if (["closed", "invalid", "missing", "unreadable"].includes(phase)) {
       const initial = await exec("window.__panelInitialPreference");
       check(`${phase} before-render setup captures the exact original preference`,
-        initial?.captured === true && initial.value === (phase === "invalid" ? "invalid" : null), initial);
+        initial?.captured === true && initial.value ===
+          (phase === "closed" ? "closed" : phase === "invalid" ? "invalid" : null), initial);
     }
     if (phase === "freshClosed") {
       check("user closed preference survives a real quit and document restoration", state.saved === "closed", state);
@@ -976,7 +977,13 @@ if (!isElectron) {
         refusal.reads === 1 && refusal.warned && state.saved === null, { refusal, state });
     }
     if (phase === "toc") await exec("document.getElementById('toggleNotes').click();true");
-    if (phase === "notes") await exec("document.getElementById('closeNotes').click();true");
+    if (phase === "notes") {
+      await exec("document.getElementById('closeNotes').click();true");
+      const outgoing = await exec(panelState);
+      check("notes close persists the closed preference before quitting",
+        outgoing.saved === "closed" && !outgoing.toc && !outgoing.notes &&
+          outgoing.inertToc && outgoing.inertNotes, outgoing);
+    }
     if (phase === "closed") {
       await exec("localStorage.setItem('readingSidePanel','invalid');true");
       check("closed phase reads back its exact invalid renderer seed",
@@ -989,7 +996,7 @@ if (!isElectron) {
     }
   }
   app.whenReady().then(async () => {
-    if (["invalid", "missing", "unreadable"].includes(phase)) {
+    if (["closed", "invalid", "missing", "unreadable"].includes(phase)) {
       const { pathToFileURL } = require("url");
       const indexPath = path.join(root, "src", "index.html");
       const indexUrl = pathToFileURL(indexPath).href;

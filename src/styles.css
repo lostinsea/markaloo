@@ -109,6 +109,9 @@
   /* Alert text on an ordinary surface. Literal #e74c3c everywhere until now;
      a scheme with a warm light surface renders it at 2.96:1. */
   --danger-fg: #e74c3c;
+  /* Preserve the released light table and dark Edit Text error inks.
+     The general danger ink lowers their contrast; schemes use their own. */
+  --edit-error-fg: #c33;
   /* The danger SURFACE and the ink printed on it - the editor's Exit button.
      Kept as the byte-exact default pair, which MEASURES 3.82:1 and so is one
      of the sub-AA cells the frozen defaults carry and cannot shed. It is
@@ -213,6 +216,7 @@ body.dark-mode {
   --welcome-accent: #3bbfcc;
   --welcome-accent-tint: rgba(59, 191, 204, 0.12);
   --panel-accent: #3DBDC6;
+  --edit-error-fg: #e57373;
   /* The one accent glow the defaults genuinely vary by mode. Its sole consumer
      used to be a `body.dark-mode .app-update-btn.primary:hover` rule carrying
      rgba(61, 189, 198, 0.3); that rule existed only to swap this colour, so
@@ -589,6 +593,7 @@ body[data-theme="clarity"] {
   --on-accent-fg: #ffffff;
   --panel-accent: #58a6ff;
   --danger-fg: #cf222e;
+  --edit-error-fg: var(--danger-fg);
   /* White on the default #e74c3c is 3.82:1. GitHub's own danger red is
      5.36:1 under the same white ink - measured, not assumed. */
   --danger-bg: #cf222e;
@@ -686,6 +691,7 @@ body[data-theme="parchment"] {
   --on-accent-fg: #ffffff;
   --panel-accent: #d9a441;
   --danger-fg: #a4342a;
+  --edit-error-fg: var(--danger-fg);
   --danger-bg: #a33a2a;
   --danger-bg-hover: #872e20;
   --on-danger-fg: #ffffff;
@@ -770,6 +776,7 @@ body[data-theme="abyss"] {
   --on-accent-fg: #11151c;
   --panel-accent: #7aa2f7;
   --danger-fg: #f7768e;
+  --edit-error-fg: var(--danger-fg);
   /* NOT Nord's own #bf616a: measured at 4.09:1 against white, below the bar.
      Darkened until it clears it. */
   --danger-bg: #b04a55;
@@ -861,6 +868,7 @@ body[data-theme="ember"] {
   --on-accent-fg: #1c1b18;
   --panel-accent: #e0a458;
   --danger-fg: #f0776a;
+  --edit-error-fg: var(--danger-fg);
   --danger-bg: #c0392b;
   --danger-bg-hover: #a12e22;
   --on-danger-fg: #ffffff;
@@ -4712,7 +4720,7 @@ pre[class*="language-"] {
   text-decoration: none;
   pointer-events: none;
 }
-.table-cell-error { color: var(--error-color, #c33); min-height: 1.3em; }
+.table-cell-error { color: var(--edit-error-fg); min-height: 1.3em; }
 .table-cell-dialog .note-dialog-header,
 .table-cell-dialog .table-cell-error,
 .table-cell-dialog .note-dialog-footer { flex-shrink: 0; }
@@ -4731,4 +4739,4 @@ pre[class*="language-"] {
   overflow-wrap: anywhere;
 }
 .inline-source-editor code { white-space: pre-wrap; }
-.inline-source-error { min-height: 1.4em; color: var(--error-color, #e57373); }
+.inline-source-error { min-height: 1.4em; color: var(--edit-error-fg); }
