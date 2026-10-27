@@ -12,14 +12,16 @@ if (!emojiMap) {
 /**
  * Replace emoji shortcodes with actual emoji characters
  * @param {string} text - Text containing emoji shortcodes like :star:
+ * @param {function(string, string, number): void} [onReplace] Alias, emoji and original offset
  * @returns {string} Text with shortcodes replaced by emojis
  */
-function parseEmojis(text) {
+function parseEmojis(text, onReplace) {
   // Match :emoji_name: pattern
   // Must be word characters, numbers, underscores, hyphens, or plus signs
-  return text.replace(/:([a-zA-Z0-9_+-]+):/g, (match, emojiName) => {
+  return text.replace(/:([a-zA-Z0-9_+-]+):/g, (match, emojiName, offset) => {
     // Look up the emoji in the map
     const emoji = emojiMap[emojiName];
+    if (emoji && typeof onReplace === 'function') onReplace(match, emoji, offset);
 
     // Return the emoji if found, otherwise return the original match
     return emoji || match;

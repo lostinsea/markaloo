@@ -654,6 +654,35 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       return positions.get(offset);
     };
   }
+  function sourceLineAt(clientX, clientY) {
+    if (!usable() || committed.source !== editor.value || !Number.isFinite(clientX) ||
+        !Number.isFinite(clientY)) return null;
+    const rect = editor.getBoundingClientRect(), style = getComputedStyle(editor);
+    const scaleX = rect.width / editor.offsetWidth, scaleY = rect.height / editor.offsetHeight;
+    if (!(scaleX > 0) || !(scaleY > 0)) return null;
+    const x = (clientX - rect.left) / scaleX - editor.clientLeft;
+    const y = (clientY - rect.top) / scaleY - editor.clientTop;
+    const paddingTop = parseFloat(style.paddingTop), lineHeight = parseFloat(style.lineHeight);
+    if (x < parseFloat(style.paddingLeft) || x >= editor.clientWidth - parseFloat(style.paddingRight) ||
+        y < paddingTop || y >= editor.clientHeight - parseFloat(style.paddingBottom) ||
+        !Number.isFinite(lineHeight) || lineHeight <= 0) return null;
+    const sourceY = sourceGeometry(), starts = [0];
+    for (let i = 0; i < committed.source.length; i++) {
+      if (committed.source[i] === '\n') starts.push(i + 1);
+    }
+    const contentY = y + editor.scrollTop;
+    let low = 0, high = starts.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (sourceY(starts[middle]) <= contentY) low = middle + 1;
+      else high = middle;
+    }
+    if (!low || contentY >= sourceY(committed.source.length) + lineHeight) return null;
+    const index = low - 1, start = starts[index];
+    const end = index + 1 < starts.length ? starts[index + 1] - 1 : committed.source.length;
+    return { start, end };
+  }
+
   function rebuild() {
     const started = performance.now();
     dirty = false;
@@ -920,6 +949,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     },
     previewNavigation() { claim('preview'); schedule(); },
     isCurrentSource(text) { return !!usable() && committed.source === text; },
+    sourceLineAt,
     tableSource(table) {
       if (!usable() || committed.source !== editor.value || !table.isConnected ||
           !preview.contains(table)) return null;

@@ -931,6 +931,7 @@ const UI_STRINGS = {
   'tableCells.header': 'Header',
   'tableCells.cell': '${row}, column ${column}',
   'tableCells.select': 'Select a table or its rows first. The selection must contain exactly one table.',
+  'tableCells.click': 'Right-click inside a table to edit it.',
   'tableCells.multiple': 'More than one table is selected. Select just one table.',
   'tableCells.rows': 'Select at least one header or data row, not only the separator line.',
   'tableCells.unsupported': 'This table cannot be edited as cells. Use a regular Markdown table with the same number of cells in every row.',
@@ -938,6 +939,7 @@ const UI_STRINGS = {
   'tableCells.stale': 'The document changed while this editor was open. Cancel and select the table again. Nothing was updated.',
   'tableCells.invalid': 'These cells would change the table structure. Check the cell contents and try again.',
   'tableCells.cellType': 'This cell contains content that cannot be edited safely here. The document has not changed.',
+  'tableCells.formatShortcuts': 'Bold, italic and underline shortcuts are not available in this popup. Existing formatting is unchanged.',
   'tableCells.commitFailed': 'The table could not be updated. The document has not changed.',
   'tableCells.renderFailed': 'The document was updated, but the preview could not be refreshed. Close this editor and retry the preview; do not submit again.',
   'tableCells.close': 'Close',
@@ -9635,8 +9637,8 @@ let rightClickCaretInfo = null;
 let rightClickLabelPos = null; // {left, top} relative to viewer
 let savedCursorPosition = null;
 
-function showContextMenu(x, y) {
-  captureTableMenuSelection();
+function showContextMenu(x, y, event) {
+  captureTableMenuSelection(x, y, event);
   // Get and save selected text
   const selection = window.getSelection();
   const hasSelection = selection && selection.toString().trim().length > 0;
@@ -9833,6 +9835,25 @@ function hideContextMenu() {
 }
 
 // Show context menu on right-click in viewer area
+document.addEventListener('pointerdown', event => {
+  tableMenuPointerSelection = null;
+  const target = event.target;
+  if (!event.isTrusted || event.button !== 2 || !isEditMode ||
+      (target !== markdownEditor && !viewer.contains(target))) return;
+  const selection = getSelection();
+  tableMenuPointerSelection = {
+    tab: currentDocumentActionOwner(), source: markdownEditor.value,
+    mode: editorModeRevision, sequence: fileOpenSequence,
+    origin: target === markdownEditor ? 'markdown' : 'preview',
+    x: event.clientX, y: event.clientY,
+    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
+    direction: markdownEditor.selectionDirection,
+    range: selection?.rangeCount === 1 ? selection.getRangeAt(0).cloneRange() : null,
+    anchorNode: selection?.anchorNode, anchorOffset: selection?.anchorOffset,
+    focusNode: selection?.focusNode, focusOffset: selection?.focusOffset,
+  };
+}, true);
+
 viewer.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   rightClickTarget = e.target;
@@ -9862,7 +9883,7 @@ viewer.addEventListener('contextmenu', (e) => {
     }
   }
 
-  showContextMenu(e.clientX, e.clientY);
+  showContextMenu(e.clientX, e.clientY, e);
 });
 
 // Also allow context menu in editor
@@ -9871,7 +9892,7 @@ markdownEditor.addEventListener('contextmenu', (e) => {
   rightClickTarget = e.target;
   rightClickY = e.clientY;
   savedCursorPosition = markdownEditor.selectionStart;
-  showContextMenu(e.clientX, e.clientY);
+  showContextMenu(e.clientX, e.clientY, e);
 });
 
 // Hide context menu when clicking elsewhere
@@ -11745,7 +11766,13 @@ const tableCellError = document.getElementById('tableCellError');
 const tableCellUpdate = document.getElementById('tableCellUpdate');
 document.getElementById('tableCellClose').setAttribute('aria-label', i18n('tableCells.close'));
 
-function captureTableMenuSelection() {
+let tableMenuPointerSelection = null;
+document.addEventListener('pointercancel', () => { tableMenuPointerSelection = null; });
+window.addEventListener('blur', () => { tableMenuPointerSelection = null; });
+
+function captureTableMenuSelection(x, y, event) {
+  const pointer = tableMenuPointerSelection;
+  tableMenuPointerSelection = null;
   tableMenuSelection = null;
   if (!isEditMode || !currentDocumentActionOwner()) return;
   const tab = currentDocumentActionOwner(), source = markdownEditor.value;
@@ -11753,18 +11780,49 @@ function captureTableMenuSelection() {
   const interaction = editorInteractionRevision;
   const contextCurrent = window.CustomTabs.captureDialogContext(tab);
   const selection = window.getSelection();
+  const origin = rightClickTarget === markdownEditor ? 'markdown' : 'preview';
+  // The native right-button default can move the caret before contextmenu arrives.
+  const before = event?.isTrusted && event.button === 2 && pointer?.tab === tab &&
+    pointer.source === source && pointer.mode === mode && pointer.sequence === sequence &&
+    pointer.origin === origin && pointer.x === x && pointer.y === y ? pointer : null;
   tableMenuSelection = {
     tab, source, mode, sequence,
-    origin: rightClickTarget === markdownEditor ? 'markdown' : 'preview',
-    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
-    direction: markdownEditor.selectionDirection,
-    range: selection?.rangeCount === 1 ? selection.getRangeAt(0).cloneRange() : null,
+    origin,
+    tableNode: rightClickTarget === markdownEditor ? null : rightClickTarget?.closest?.('table'),
+    sourceLine: rightClickTarget === markdownEditor ? editorScroll.sourceLineAt(x, y) : null,
+    start: before ? before.start : markdownEditor.selectionStart,
+    end: before ? before.end : markdownEditor.selectionEnd,
+    direction: before ? before.direction : markdownEditor.selectionDirection,
+    range: before ? before.range : selection?.rangeCount === 1 ? selection.getRangeAt(0).cloneRange() : null,
+    anchorNode: before ? before.anchorNode : selection?.anchorNode,
+    anchorOffset: before ? before.anchorOffset : selection?.anchorOffset,
+    focusNode: before ? before.focusNode : selection?.focusNode,
+    focusOffset: before ? before.focusOffset : selection?.focusOffset,
     focus: document.activeElement,
     isCurrent: () => contextCurrent() && isEditMode &&
       currentDocumentActionOwner() === tab && editorModeRevision === mode &&
       fileOpenSequence === sequence && editorInteractionRevision === interaction &&
       markdownEditor.value === source,
   };
+  if (before) restoreTableMenuSelection(tableMenuSelection, false);
+}
+
+function restoreTableMenuSelection(selection, refocus) {
+  if (selection.origin === 'markdown') {
+    const top = markdownEditor.scrollTop, left = markdownEditor.scrollLeft;
+    if (refocus) markdownEditor.focus({ preventScroll: true });
+    markdownEditor.setSelectionRange(selection.start, selection.end, selection.direction);
+    markdownEditor.scrollTop = top;
+    markdownEditor.scrollLeft = left;
+  } else {
+    if (refocus) viewer.focus({ preventScroll: true });
+    const { range, anchorNode, anchorOffset, focusNode, focusOffset } = selection;
+    const current = getSelection();
+    current.removeAllRanges();
+    if (range && anchorNode?.isConnected && focusNode?.isConnected) {
+      current.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+    }
+  }
 }
 
 function protectTableSource(text, mask) {
@@ -11778,12 +11836,7 @@ function closeTableCellEditor() {
   if (tableCellDialog.open) tableCellDialog.close();
   tableCellGrid.replaceChildren();
   if (session?.selection.isCurrent()) {
-    if (session.selection.origin === 'markdown') {
-      markdownEditor.focus();
-      markdownEditor.setSelectionRange(session.selection.start, session.selection.end, session.selection.direction);
-    } else {
-      viewer.focus({ preventScroll: true });
-    }
+    restoreTableMenuSelection(session.selection, true);
   }
 }
 
@@ -11793,11 +11846,63 @@ function showTableCellError(error) {
   if (!Object.hasOwn(UI_STRINGS, key)) console.error('Table cell editor failed:', error);
 }
 
-function serializeSafeTableCell(input) {
-  const serialized = FoliaTableCells.serializeCell(input);
+function serializeSafeTableCell(input, provenance) {
+  provenance ??= tableCellSession?.cells.find(cell => cell.input === input)?.provenance;
+  if (!(provenance?.fragments instanceof Map) || typeof provenance.transform !== 'function' ||
+      typeof provenance.attributes !== 'function' || typeof provenance.partAttribute !== 'string' ||
+      typeof provenance.codeAttribute !== 'string') throw new Error('tableCells.cellType');
+  const serialized = FoliaTableCells.serializeCell(input, provenance);
   const checked = document.createElement('div');
-  checked.innerHTML = sanitizeTableHtml(serialized);
-  if (FoliaTableCells.serializeCell(checked.firstElementChild) !== serialized) throw new Error('tableCells.cellType');
+  checked.innerHTML = sanitizeTableHtml(input.innerHTML);
+  if (checked.innerHTML !== input.innerHTML) throw new Error('tableCells.cellType');
+  const canonical = root => {
+    const copy = root.cloneNode(true);
+    copy.querySelectorAll('[style]').forEach(node => node.setAttribute('style', node.style.cssText));
+    copy.querySelectorAll('[' + provenance.partAttribute + ']').forEach(node => {
+      const fragment = provenance.fragments.get(node.getAttribute(provenance.partAttribute));
+      if (['text', 'escape', 'emoji', 'comment'].includes(fragment?.kind)) node.replaceWith(...node.childNodes);
+      else node.removeAttribute(provenance.partAttribute);
+    });
+    copy.querySelectorAll('[' + provenance.codeAttribute + ']').forEach(node =>
+      node.removeAttribute(provenance.codeAttribute));
+    copy.normalize();
+    // Adjacent unstyled emphasis has the same meaning as one continuous span.
+    // Code, links and attributed elements retain their individual boundaries.
+    for (const parent of [copy, ...copy.querySelectorAll('*')].reverse()) {
+      for (const node of [...parent.children]) {
+        let next = node.nextSibling;
+        while (['STRONG', 'EM', 'DEL'].includes(node.tagName) && !node.attributes.length &&
+            next?.nodeType === Node.ELEMENT_NODE && next.tagName === node.tagName && !next.attributes.length) {
+          node.append(...next.childNodes);
+          next.remove();
+          next = node.nextSibling;
+        }
+      }
+    }
+    copy.normalize();
+    return FoliaTableCells.serializeCell(copy);
+  };
+  const expected = canonical(input);
+  const matches = source => {
+    const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
+    lexer.tokens.links = provenance?.links || {};
+    const rendered = document.createElement('div');
+    rendered.innerHTML = marked.Parser.parseInline(lexer.inlineTokens(parseEmojis(source.replace(/\\\|/g, '|'))));
+    checked.innerHTML = sanitizeTableHtml(rendered.innerHTML);
+    const safe = canonical(checked);
+    return safe === canonical(rendered) && safe === expected;
+  };
+  if (!matches(serialized)) {
+    // Joining source can activate syntax across literal and semantic fragments.
+    // Keep literal repair and the two sibling-marker orientations independent.
+    const bounded = FoliaTableCells.serializeCell(input, provenance, true);
+    if (bounded !== serialized && matches(bounded)) return bounded;
+    for (const orientation of [0, 1]) {
+      const alternate = FoliaTableCells.serializeCell(input, provenance, true, orientation);
+      if (alternate !== serialized && alternate !== bounded && matches(alternate)) return alternate;
+    }
+    throw new Error('tableCells.cellType');
+  }
   return serialized;
 }
 
@@ -11811,10 +11916,15 @@ function openTableCellEditor(rowsOnly) {
   try {
     const exact = window.CustomTabs.snapshotExactEditorContent();
     const model = FoliaTableCells.index(exact, marked, protectTableSource);
-    const target = selection.origin === 'markdown'
-      ? FoliaTableCells.resolveSource(model, selection.start, selection.end, rowsOnly)
-      : FoliaTableCells.resolvePreview(model, selection.range, viewer,
-          node => editorScroll.tableSource(node), rowsOnly);
+    const target = rowsOnly
+      ? selection.origin === 'markdown'
+        ? FoliaTableCells.resolveSource(model, selection.start, selection.end, true)
+        : FoliaTableCells.resolvePreview(model, selection.range, viewer,
+            node => editorScroll.tableSource(node), true)
+      : selection.origin === 'markdown'
+        ? FoliaTableCells.resolveSourceLine(model, selection.sourceLine)
+        : FoliaTableCells.resolvePreviewTable(model, selection.tableNode, viewer,
+            node => editorScroll.tableSource(node));
     const session = { selection, target, exact, cells: [], submitting: false, applied: false };
     const table = document.createElement('table'), head = table.createTHead(), body = table.createTBody();
     const header = target.table.rows[0];
@@ -11837,13 +11947,13 @@ function openTableCellEditor(rowsOnly) {
           input.setAttribute('aria-multiline', 'false');
         }
         input.setAttribute('aria-label', i18n('tableCells.cell', { row: label.textContent, column: c + 1 }));
-        const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-        lexer.tokens.links = model.links;
-        input.innerHTML = sanitizeTableHtml(marked.Parser.parseInline(lexer.inlineTokens(parseEmojis(cell.text))));
+        const raw = model.source.slice(model.view.offsets[cell.start], model.view.offsets[cell.end]);
+        const provenance = FoliaTableCells.prepareCell(input, cell.text, raw, marked, model.links,
+          parseEmojis, sanitizeTableHtml);
         // Validate before exposing a partially editable table.
         if (editable) {
-          serializeSafeTableCell(input);
-          session.cells.push({ cell, input, initial: input.innerHTML, row: rowIndex, column: c });
+          serializeSafeTableCell(input, provenance);
+          session.cells.push({ cell, input, provenance, initial: input.innerHTML, row: rowIndex, column: c });
         }
         container.appendChild(input);
         tr.appendChild(container);
@@ -11875,7 +11985,7 @@ async function updateTableCells() {
     if (!session.selection.isCurrent() || !mayMutateRendererDocument('table-cell-commit') ||
         window.CustomTabs.snapshotExactEditorContent() !== session.exact) throw new Error('tableCells.stale');
     const edits = session.cells.filter(cell => cell.input.innerHTML !== cell.initial).map(cell => ({
-      cell: cell.cell, text: serializeSafeTableCell(cell.input),
+      cell: cell.cell, text: serializeSafeTableCell(cell.input, cell.provenance),
     }));
     if (!edits.length) {
       closeTableCellEditor();
@@ -11918,6 +12028,349 @@ tableCellDialog.addEventListener('cancel', event => {
   event.preventDefault();
   closeTableCellEditor();
 });
+
+function tableCellForInput(event) {
+  const session = tableCellSession;
+  const cell = session?.cells.find(item => item.input === event.target || item.input.contains(event.target));
+  if (!cell || cell.converting || !session.selection.isCurrent()) return null;
+  return cell;
+}
+
+function tableCellSelectionContext(event) {
+  const cell = tableCellForInput(event), session = tableCellSession;
+  if (!cell) return null;
+  const selection = getSelection();
+  if (selection.rangeCount !== 1) return null;
+  const range = selection.getRangeAt(0);
+  if (!cell.input.contains(range.commonAncestorContainer)) return null;
+  return { session, cell, selection, range };
+}
+
+function tableCellInputContext(event) {
+  const context = tableCellSelectionContext(event);
+  if (!context) return null;
+  const { range } = context;
+  const node = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer : range.startContainer.parentElement;
+  if (node.closest('code')) return null;
+  return context;
+}
+
+function placeTableCellCaretAfter(node) {
+  const caret = document.createRange(), selection = getSelection();
+  caret.setStartAfter(node);
+  caret.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(caret);
+}
+
+function tableCellTextPoint(input, offset) {
+  const walker = document.createTreeWalker(input, NodeFilter.SHOW_TEXT);
+  let last = null;
+  for (let node; (node = walker.nextNode());) {
+    if (offset < node.data.length) return { node, offset };
+    offset -= node.data.length;
+    last = node;
+  }
+  return last && offset === 0 ? { node: last, offset: last.data.length } : null;
+}
+
+function tableCellPrefix(cell, range) {
+  const prefix = document.createRange();
+  prefix.selectNodeContents(cell.input);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  return prefix.toString();
+}
+
+function replaceCapturedTableCellText(context, data) {
+  const { cell, range, selection } = context;
+  if (range.collapsed) return false;
+  const boundary = (node, offset, end) => {
+    while (node !== cell.input) {
+      const length = node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length;
+      if (offset !== (end ? length : 0)) break;
+      const parent = node.parentNode;
+      offset = [...parent.childNodes].indexOf(node) + (end ? 1 : 0);
+      node = parent;
+    }
+    return { node, offset };
+  };
+  const start = boundary(range.startContainer, range.startOffset, false);
+  const end = boundary(range.endContainer, range.endOffset, true);
+  const owner = [...cell.input.querySelectorAll('[' + cell.provenance.partAttribute + ']')].find(node => {
+    const captured = cell.provenance.fragments.get(node.getAttribute(cell.provenance.partAttribute));
+    if (!captured || !['STRONG', 'B', 'EM', 'I', 'DEL', 'S'].includes(node.tagName)) return false;
+    const from = boundary(node, 0, false), to = boundary(node, node.childNodes.length, true);
+    return start.node === from.node && start.offset === from.offset && end.node === to.node && end.offset === to.offset;
+  });
+  if (!owner) return false;
+  const copy = owner.cloneNode(true);
+  const copiedNode = node => {
+    const path = [];
+    while (node !== owner) {
+      path.push([...node.parentNode.childNodes].indexOf(node));
+      node = node.parentNode;
+    }
+    return path.reverse().reduce((node, index) => node.childNodes[index], copy);
+  };
+  const from = owner.contains(range.startContainer)
+    ? { node: copiedNode(range.startContainer), offset: range.startOffset }
+    : tableCellTextPoint(copy, 0) || { node: copy, offset: 0 };
+  const to = owner.contains(range.endContainer)
+    ? { node: copiedNode(range.endContainer), offset: range.endOffset }
+    : tableCellTextPoint(copy, copy.textContent.length) || { node: copy, offset: copy.childNodes.length };
+  const changed = document.createRange();
+  changed.setStart(from.node, from.offset);
+  changed.setEnd(to.node, to.offset);
+  changed.deleteContents();
+  const inserted = document.createTextNode(data);
+  changed.insertNode(inserted);
+  const before = document.createRange();
+  before.selectNodeContents(copy);
+  before.setEnd(inserted, inserted.length);
+  const caretOffset = before.toString().length, part = owner.getAttribute(cell.provenance.partAttribute);
+  const replacement = document.createRange();
+  replacement.selectNode(owner);
+  selection.removeAllRanges();
+  selection.addRange(replacement);
+  cell.converting = true;
+  try {
+    // Native full-text replacement can discard source ownership with its styling
+    // wrapper. Keep that ownership inside the same native Undo transaction.
+    if (!document.execCommand('insertHTML', false, copy.outerHTML)) throw new Error('tableCells.cellType');
+    const owners = cell.input.querySelectorAll('[' + cell.provenance.partAttribute + '="' + part + '"]');
+    const current = owners[0];
+    if (owners.length !== 1 || current.outerHTML !== copy.outerHTML) throw new Error('tableCells.cellType');
+    const point = current && tableCellTextPoint(current, caretOffset);
+    if (!point) throw new Error('tableCells.cellType');
+    const caret = document.createRange();
+    caret.setStart(point.node, point.offset);
+    caret.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+    tableCellError.textContent = '';
+  } finally {
+    cell.converting = false;
+  }
+  return true;
+}
+
+function rememberTableCellTyping(cell, range, data, collapsed, committed = false) {
+  const { text, runs } = FoliaTableCells.codeDelimiters(cell.input, cell.provenance, range, committed ? '' : data);
+  const prefix = data.length ? text.slice(0, -data.length) : text;
+  let active = collapsed && cell.activeCode?.expectedPrefix === prefix ? cell.activeCode : null;
+  if (active && prefix.length === active.start + active.length && /^`+$/.test(data)) {
+    const extended = runs.find(run => run.index === active.start && run.index + run.length === text.length);
+    active = extended ? { start: extended.index, length: extended.length } : null;
+  }
+  if (!active) {
+    const introduced = runs.find(run => run.index + run.length > prefix.length);
+    if (introduced) active = { start: introduced.index, length: introduced.length };
+  }
+  cell.activeCode = active ? { ...active, expectedPrefix: text } : null;
+}
+
+function tableCellCodeToken(cell, range, inserted) {
+  if (!range.collapsed) return null;
+  const { text, syntax, runs } = FoliaTableCells.codeDelimiters(cell.input, cell.provenance, range);
+  if (!(text + inserted).endsWith('`')) return null;
+  for (const match of runs) {
+    const point = tableCellTextPoint(cell.input, match.index);
+    const parent = point.node.parentElement;
+    if (parent.closest('code')) continue;
+    const candidate = document.createRange();
+    candidate.setStart(point.node, point.offset);
+    candidate.setEnd(range.startContainer, range.startOffset);
+    const fragment = candidate.cloneContents();
+    if ([...fragment.querySelectorAll('*')].some(node => {
+      const captured = cell.provenance.fragments.get(node.getAttribute(cell.provenance.partAttribute));
+      return node.tagName !== 'SPAN' || !['text', 'escape', 'emoji'].includes(captured?.kind);
+    })) continue;
+    const source = candidate.toString() + inserted;
+    const projected = syntax.slice(match.index) + inserted;
+    const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
+    const tokens = lexer.inlineTokens(projected);
+    if (tokens.length === 1 && tokens[0].type === 'codespan' && tokens[0].raw === projected) {
+      const edge = match.length, inner = source.slice(edge, -edge);
+      const padding = inner.startsWith(' ') && inner.endsWith(' ') && /[^ ]/.test(inner) ? 1 : 0;
+      const from = edge + padding, to = source.length - edge - padding;
+      const existing = candidate.toString().length;
+      const start = tableCellTextPoint(cell.input, match.index + Math.min(from, existing));
+      const end = tableCellTextPoint(cell.input, match.index + Math.min(to, existing));
+      if (!start || !end) throw new Error('tableCells.cellType');
+      const bodyRange = document.createRange();
+      bodyRange.setStart(start.node, start.offset);
+      bodyRange.setEnd(end.node, end.offset);
+      const body = bodyRange.cloneContents();
+      if (to > Math.max(from, existing)) {
+        body.append(document.createTextNode(source.slice(Math.max(from, existing), to)));
+      }
+      return { body, range: candidate };
+    }
+    if (cell.activeCode?.expectedPrefix === text + inserted && cell.activeCode.start === match.index) return null;
+  }
+  return null;
+}
+
+function formatTableCellCode(context, code) {
+  const { cell, selection } = context;
+  cell.activeCode = null;
+  const holder = document.createElement('div'), id = crypto.randomUUID();
+  const sources = FoliaTableCells.codeSources(code.body, cell.provenance);
+  if (sources.kind === 'unrepresentable') throw new Error('tableCells.cellType');
+  const capture = FoliaTableCells.prepareCell(holder, sources.source.replace(/\\\|/g, '|'), sources.source,
+    marked, cell.provenance.links, parseEmojis, sanitizeTableHtml, cell.provenance);
+  const node = holder.firstElementChild;
+  if (node?.tagName !== 'CODE' || holder.childNodes.length !== 1 || node.textContent !== sources.text) {
+    throw new Error('tableCells.cellType');
+  }
+  node.setAttribute(cell.provenance.codeAttribute, id);
+  const fragment = capture.fragments.get(node.getAttribute(cell.provenance.partAttribute));
+  fragment.generatedCode = true;
+  fragment.initial = node.outerHTML;
+  for (const [part, fragment] of capture.fragments) cell.provenance.fragments.set(part, fragment);
+  selection.removeAllRanges();
+  selection.addRange(code.range);
+  cell.converting = true;
+  try {
+    // One native editing command retains the cell's own Undo/Redo stack.
+    if (!document.execCommand('insertHTML', false, node.outerHTML)) throw new Error('tableCells.cellType');
+    const inserted = cell.input.querySelector('code[' + cell.provenance.codeAttribute + '="' + id + '"]');
+    if (!inserted) throw new Error('tableCells.cellType');
+    placeTableCellCaretAfter(inserted);
+    tableCellError.textContent = '';
+  } finally {
+    const liveParts = new Set([...cell.input.querySelectorAll('[' + cell.provenance.partAttribute + ']')].map(node =>
+      node.getAttribute(cell.provenance.partAttribute)));
+    for (const part of capture.fragments.keys()) {
+      if (!liveParts.has(part)) cell.provenance.fragments.delete(part);
+    }
+    cell.converting = false;
+  }
+}
+
+tableCellDialog.addEventListener('beforeinput', event => {
+  const historyCell = tableCellForInput(event);
+  if (historyCell && (event.inputType === 'historyUndo' || event.inputType === 'historyRedo')) {
+    historyCell.activeCode = null;
+    historyCell.redoCodes = event.inputType === 'historyRedo' ? new Set(
+      [...historyCell.input.querySelectorAll('code[' + historyCell.provenance.codeAttribute + ']')].map(code =>
+        code.getAttribute(historyCell.provenance.codeAttribute))) : null;
+    return;
+  }
+  const context = tableCellInputContext(event);
+  if (historyCell && (!context || event.inputType !== 'insertText')) historyCell.activeCode = null;
+  if (!context || context.cell.composing || event.isComposing) return;
+  const { cell, range } = context;
+  if (event.inputType !== 'insertText' || typeof event.data !== 'string') return;
+  if (!event.cancelable) return;
+  rememberTableCellTyping(cell, range, event.data, range.collapsed);
+  if (!range.collapsed) {
+    try {
+      if (replaceCapturedTableCellText(context, event.data)) {
+        event.preventDefault();
+        const current = tableCellInputContext({ target: cell.input });
+        if (current) formatTypedTableCellCode(current);
+        return;
+      }
+    } catch (error) {
+      event.preventDefault();
+      showTableCellError(error);
+      return;
+    }
+  }
+  const previous = range.collapsed && range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer.childNodes[range.startOffset - 1] : null;
+  if (previous?.nodeName === 'CODE') {
+    // Chromium otherwise inherits CODE's typing style at this DOM boundary.
+    // Replacing the code plus new text keeps the native edit outside it,
+    // without inserting invisible caret characters into content or clipboard.
+    event.preventDefault();
+    const replacement = document.createRange();
+    replacement.selectNode(previous);
+    context.selection.removeAllRanges();
+    context.selection.addRange(replacement);
+    cell.converting = true;
+    try {
+      if (!document.execCommand('insertHTML', false, previous.outerHTML + escapeHtml(event.data))) {
+        throw new Error('tableCells.cellType');
+      }
+    } catch (error) { showTableCellError(error); }
+    finally { cell.converting = false; }
+    const current = tableCellInputContext({ target: cell.input });
+    if (current) formatTypedTableCellCode(current);
+    return;
+  }
+  const code = tableCellCodeToken(cell, range, event.data);
+  if (!code) return;
+  event.preventDefault();
+  try { formatTableCellCode(context, code); }
+  catch (error) { showTableCellError(error); }
+});
+
+function formatTypedTableCellCode(context) {
+  const { cell, range } = context;
+  const code = tableCellCodeToken(cell, range, '');
+  if (code) {
+    try { formatTableCellCode(context, code); }
+    catch (error) { showTableCellError(error); }
+  }
+}
+
+tableCellDialog.addEventListener('input', event => {
+  const cell = tableCellForInput(event);
+  if (!cell || cell.composing || event.isComposing) return;
+  if (event.inputType === 'historyRedo' && cell.redoCodes) {
+    const restored = [...cell.input.querySelectorAll('code[' + cell.provenance.codeAttribute + ']')].filter(code =>
+      !cell.redoCodes.has(code.getAttribute(cell.provenance.codeAttribute)));
+    if (restored.length) placeTableCellCaretAfter(restored.at(-1));
+    cell.redoCodes = null;
+    return;
+  }
+  const context = tableCellInputContext(event);
+  if (context && event.inputType === 'insertText') formatTypedTableCellCode(context);
+});
+
+tableCellDialog.addEventListener('compositionstart', event => {
+  const context = tableCellInputContext(event);
+  if (!context) return;
+  context.cell.composing = true;
+  context.cell.activeCode = null;
+});
+tableCellDialog.addEventListener('compositionend', event => {
+  const session = tableCellSession, cell = session?.cells.find(item => item.input === event.target);
+  if (!cell) return;
+  cell.composing = false;
+  const revision = cell.compositionRevision = (cell.compositionRevision || 0) + 1;
+  queueMicrotask(() => {
+    if (tableCellSession !== session || cell.composing || cell.compositionRevision !== revision) return;
+    const context = tableCellInputContext({ target: cell.input });
+    if (!context) return;
+    if (typeof event.data !== 'string' || !event.data.length) return;
+    const prefix = tableCellPrefix(cell, context.range);
+    if (prefix.endsWith(event.data)) {
+      rememberTableCellTyping(cell, context.range, event.data, false, true);
+    }
+    const code = tableCellCodeToken(cell, context.range, '');
+    if (code) {
+      try { formatTableCellCode(context, code); }
+      catch (error) { showTableCellError(error); }
+    }
+  });
+});
+tableCellDialog.addEventListener('focusout', event => {
+  const cell = tableCellForInput(event);
+  if (cell) cell.activeCode = null;
+});
+tableCellDialog.addEventListener('pointerdown', event => {
+  const cell = tableCellForInput(event);
+  if (cell) cell.activeCode = null;
+});
+tableCellDialog.addEventListener('keydown', event => {
+  if (!/^(?:Arrow|Home$|End$|Page|Tab$)/.test(event.key)) return;
+  const cell = tableCellForInput(event);
+  if (cell) cell.activeCode = null;
+});
 document.addEventListener('beforeinput', event => {
   // Chromium can route cell Undo to the textarea's native history.
   if (tableCellSession && tableCellDialog.open && tableCellDialog.contains(document.activeElement) &&
@@ -11930,6 +12383,12 @@ document.addEventListener('beforeinput', event => {
 tableCellDialog.addEventListener('keydown', event => {
   // Keep native rich-cell Undo/Copy/Paste, but never run document commands.
   event.stopPropagation();
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && ['b', 'i', 'u'].includes(event.key.toLowerCase()) &&
+      tableCellSession?.cells.some(cell => cell.input === event.target || cell.input.contains(event.target))) {
+    event.preventDefault();
+    showTableCellError(new Error('tableCells.formatShortcuts'));
+    return;
+  }
   if (event.isComposing) return;
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
     event.preventDefault();
@@ -11949,8 +12408,23 @@ tableCellDialog.addEventListener('keydown', event => {
 tableCellDialog.addEventListener('paste', event => {
   if (!event.target.isContentEditable) return;
   event.preventDefault();
-  const lines = event.clipboardData.getData('text/plain').split(/\r\n?|\n/);
-  document.execCommand('insertHTML', false, lines.map(escapeHtml).join('<br>'));
+  const context = tableCellSelectionContext(event);
+  if (!context) {
+    showTableCellError(new Error('tableCells.stale'));
+    return;
+  }
+  const { cell, range } = context;
+  const codeAt = node => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement).closest('code');
+  const code = codeAt(range.startContainer), end = codeAt(range.endContainer);
+  const part = code?.getAttribute(cell.provenance.partAttribute);
+  const owner = part && cell.provenance.fragments.get(part);
+  const markdownCode = code && code === end && cell.input.contains(code) &&
+    (owner?.kind === 'codespan' || owner?.generatedCode === true) &&
+    cell.input.querySelectorAll('[' + cell.provenance.partAttribute + '="' + part + '"]').length === 1;
+  const plain = event.clipboardData.getData('text/plain');
+  const html = markdownCode ? escapeHtml(plain.replace(/\r\n?|\n/g, ' ')) :
+    plain.split(/\r\n?|\n/).map(escapeHtml).join('<br>');
+  if (!document.execCommand('insertHTML', false, html)) showTableCellError(new Error('tableCells.cellType'));
 });
 tableCellDialog.addEventListener('drop', event => event.preventDefault());
 tableCellDialog.addEventListener('click', event => {

@@ -31,24 +31,105 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ```mermaid
 flowchart LR
-    A["Select in either pane"] --> B["Verify one source table"]
-    B --> C["Edit table or selected rows"]
-    C --> D["Rendered cell grid"]
+    A["Right-click a table in either pane"] --> B["Edit table"]
+    S["Select rows in either pane"] --> R["Edit selected rows"]
+    B --> V["Verify current source and owner"]
+    R --> V
+    V --> D["Rendered cell grid"]
     D --> E["Update once; retain Undo"]
     E --> F["Normal preview render"]
 ```
 
 - In edit mode, both pane menus offer Edit table and Edit selected rows.
-- A partial row selection edits that row. Edit table loads its whole table.
-- Markdown selections may include prose before or after the table. Only changed
-  cells are replaced; surrounding text and unselected rows stay unchanged.
+- Edit table uses the right-click location, not a selection. Edit selected rows
+  requires selected text, not an empty row/table or an image-only range.
+  Markdown pipe syntax alone is not cell text. A partial cell selection edits
+  that row.
+- Markdown row selections may include prose before or after one table. Only
+  changed cells are replaced; surrounding text and unselected rows stay unchanged.
+- Right-click and Cancel preserve the original selection, including its direction.
 - The popup shows rendered cells, never a Markdown textarea or source toggle.
-  Existing inline formatting remains visible. Changed cells use safe inline HTML
-  internally; unchanged cells keep their original source spelling. Existing
-  note IDs, titles, contents and colors survive edits within their cell.
+  Closing backticks format code immediately, with the same appearance as loaded
+  code. Caret placement, composition and Undo stay inside the cell editor.
+- Unchanged source fragments keep authored spans, notes, escapes, entities and
+  emoji shortcodes. Editor-owned markers never enter Markdown; authored spans
+  are not stripped. New code uses Markdown code spans where they round-trip.
+- Capture and native-history markers use names absent from the cell's authored
+  source. Live code shares that context. Authored attributes with the old marker
+  names remain intact; they are not treated as editor metadata.
+- Paste wholly inside Markdown-owned inline code replaces each line break with
+  one space immediately, before one native insertion. Blank lines keep their
+  extra spaces. For example, `LEFT` and `RIGHT` on separate lines become
+  `LEFT RIGHT` in the popup and Markdown, with one cell Undo step.
+  Ordinary-cell multiline paste and authored/current-source HTML CODE keep
+  their line breaks. Selections crossing code boundaries do not use this policy.
+- Inside changed text, keep unchanged source spelling without splitting an
+  escape, emoji or Unicode character. Escape boundary punctuation only when
+  joining the text would otherwise change its meaning.
+- A newly typed multi-backtick span waits for its own closing delimiter.
+  An old unmatched delimiter does not block a later valid code span.
+  Both opener checks use retained source spelling, not displayed backslashes.
+  A literal backslash from an entity or escaped pair does not escape a new
+  code opener; a genuinely escaped or encoded backtick stays literal.
+  Build delimiter runs from source-eligible ticks, so a literal tick cannot
+  hide an adjacent opener. Retained literal body ticks use an aligned parser
+  view only for recognition; original DOM text still supplies code and source.
+  CODE source output requires captured ownership and an explicit Markdown or
+  approved-exception result. Unsupported structures cannot fall through to
+  generic HTML. Sourceless DOM comparison does not grant source authority.
+  Check CODE ownership before any source fast path: a captured Markdown code
+  span, captured HTML CODE, or code generated in that popup. Another captured
+  tag or valid whole-cell provenance cannot supply missing CODE ownership.
+  New CODE keeps generated ownership within its popup. After Update, an
+  approved HTML exception is existing source HTML; reopening preserves that
+  exact source like identical authored HTML, without hidden source markers.
+- Joining edited text does not unexpectedly turn it into a link or emoji.
+  Check whole-cell source ownership, including entity deletions, cell edges and
+  joins inside and beside existing formatting. Keep nested literal ranges and
+  individual escaped label brackets; protected source atoms are not split.
+  Bracket escapes have their own private identity, even beside the same glyph.
+- Edited Markdown emphasis and links stay Markdown. Ambiguous adjacent reference
+  links become self-contained links, not generated HTML. Unrelated source and
+  authored tags keep their original spelling and attributes.
+- Full-text replacement inside captured formatting keeps its source ownership
+  in one native cell edit. Markdown stays Markdown; authored HTML keeps its tags.
+  Native Select All, nested formatting and repeated replacements retain cell Undo.
+- A label edit may leave a plain bracket unmatched. Encode only that orphaned
+  bracket; keep balanced brackets and captured escapes unchanged.
+- Spaces at Markdown bold, emphasis and strike edges use exact numeric entities
+  where delimiters require them. Preserve NBSP as `&#160;`, not ordinary space.
+  If an edited neighbor makes single-level underscore delimiters invalid, use
+  asterisks for that formatting only. Keep valid original underscore spelling.
+  If punctuation still prevents a delimiter from opening or closing, encode only the affected
+  neighboring literal character. Use the parser's Unicode rules and retain whole
+  code points, including supplementary letters. Follow touching owned ancestor
+  and child delimiters; shared marker runs and mixed families stay distinct.
+  Protected atoms, authored tags and code keep their boundaries.
+- Fully wrapped formatting nests keep delimiter families and lengths, preserving
+  their nesting order. Repair an invalid underscore join by encoding only the
+  adjacent ordinary literal character, not by rewriting nested marker families.
+- Adjacent unstyled bold, emphasis or strike content may become one continuous
+  span when the separating text is deleted. Code, links and attributed elements
+  keep their individual boundaries. Check new joins after normalization too.
+- An edit joining different Markdown formatting owners may need opposite
+  asterisk/underscore families. Plan the touching sibling group after merging;
+  retained nests constrain the plan without changing their spelling or order.
+  Strike markers stay fixed. Try only two fixed orientations, each with mapped
+  literal repair and full-cell validation, not a combination search.
+- Live code keeps retained source atoms before parsing. For example, wrapping
+  `literal &#58;star:` keeps the literal `:star:` display, not an emoji.
+  Normal code stays backtick Markdown. Only literal emoji-name and
+  backslash-before-pipe limits may use a content-preserving `<code>` tag.
+  Leaving the cell or moving its caret abandons an unfinished typed delimiter.
+- Loading, live code and Update use the same emoji, Markdown and sanitization
+  pipeline. New literal text stays literal rather than becoming a link or emoji.
 - Tab moves between cells. Enter and Shift+Enter move down and up a column.
   Ctrl+Enter updates; Escape cancels. Cell Undo is separate from document Undo.
   Native cell Undo/Redo cannot consume the Markdown editor's history.
+- Bold, italic and underline shortcuts are blocked inside editable popup cells,
+  with a clear message before any browser formatting. This is an intentional
+  0.11.1 limitation, not an app-wide shortcut change. Existing rich content,
+  backtick code, typing, paste and Undo/Redo remain available.
 - Scope and keyboard help sit beside the footer buttons in smaller readable
   text. Drag the popup's bottom-right corner to resize it; the grid uses the
   available space while the header and actions stay reachable.

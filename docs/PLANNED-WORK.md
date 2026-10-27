@@ -38,39 +38,408 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `direct-0.11.0-test-candidate` - **RELEASE PREPARATION; NOT PUBLISHED**.
-  - The user chose to release the current product as 0.11.0, then repair the
-    tests and ship any resulting product fixes in 0.11.1. This replaces the
-    per-suite activation plan, not the actual recorded test outcomes.
-  - The source checkpoint is `23dcfb34`. Package and lock already say 0.11.0.
-    Release preparation must not change product bytes, dependencies, mirror
-    retention or the 400 ms preview delay.
-  - The full table run on `d704ddc2` passed 47 source and 245 UI checks; all
-    eight captures were viewed. The parent accepted narrow carry to unchanged
-    product bytes after the test/helper-only integrations. This is not a new
-    run on `23dcfb34` or a full-suite pass.
-  - The document-editor host controls passed 63 PowerShell and 14 VM checks.
-    These are not the ordinary document-editor suite or its npm/Electron route.
-    Private per-suite activation work is stopped.
-  - Full ordinary failures and unrun groups remain deferred, not passing.
-    The 31 syntax source checks do not qualify the composed Electron suite.
-    Older packaging results do not qualify changed source scans or a built ASAR.
-  - Combined-candidate performance and the feature-free comparison remain
-    unmeasured. No general performance pass or smoother-typing claim is made.
-  - Focused feature/performance decisions and artifact checks still need to
-    be settled before main, tags or release publication are authorized.
-  - B is the sole integration/docs owner. C owns the minimal reviewed release
-    workflow gates for table editing, editor scrolling and retained artifacts.
-    Integrate that reviewed commit with these docs before the build-only run.
-    A dedicated preparation branch may be pushed to `lostinsea/markaloo`;
-    canonical main must remain an ancestor. No history overwrite is allowed.
-  - C will dispatch the existing workflow on that branch for focused checks,
-    builds and strict archive verification, then own isolated packaged checks.
-    A branch dispatch does not publish. No local Node, Electron, test, build,
-    installer or broad CI redesign is authorized by this docs step.
-    Old evidence and private artifacts stay intact.
-  - Older detailed entries retain their original source bindings and outcomes;
-    they do not override this release decision or become current passing results.
+- `table-cell-markdown-0.11.1` - **SOURCE REVIEW COMPLETE; HANDOFF**.
+  - Start from `8741c7a7`; keep `v0.11.0` unchanged.
+  - Real cell typing must not add browser/editor HTML wrappers to Markdown.
+    Backtick inline code must format immediately inside the cell while typing,
+    then remain valid Markdown after Update and reopening.
+  - Live formatting must preserve caret placement, composition and native cell
+    Undo. Update-only interpretation is not the accepted behavior.
+  - Edit table uses the actual right-click location in either pane, without
+    requiring or manufacturing a selection. Selected rows still require a real
+    nonempty selection. Both commands retain owner and stale-target guards.
+  - Edit selected rows needs the same leading-icon treatment as adjacent menu
+    entries. Preserve unrelated selections when opening and cancelling.
+  - Preserve authored formatting, escapes, non-target bytes, guarded Update,
+    Cancel and document Undo. Do not strip tags indiscriminately.
+  - Astra owns the input/rendering/serialization investigation; Sol owns the
+    fix, real-input regressions and focused qualification. Fresh Sol/Luna
+    reviews must cover the complete correction and any material revisions.
+  - B owns integration and this register. C coordinates package/lock and release
+    changes separately. Published `v0.11.0` is immutable.
+  - The unchanged 0.11.0 product reproduced both reports through trusted cell
+    input: ordinary DOM text gained a generated source span, and typed
+    backticks stayed literal. The official red run retained every prior check.
+  - An earlier official table run passed 54 source and 967 UI checks
+    (`tmp\table-input-0111-official-r9`). It covers real typing, live code,
+    native Undo/Redo, composition, source fidelity and native click identity.
+    The directly related document-editor suite passed 60 checks.
+  - Two unchanged editor-scroll runs reached 259/260: native wheel chaining
+    at the nested bottom did not move either pane. The committed 8741 baseline
+    reproduced the identical failure and pane positions. This existing local
+    result is not a passing scroll result or a waived failure.
+  - Early independent Sol/Luna findings were corrected. Both identified source
+    fidelity concerns; Sol also found loaded-opener, URL, comment and click-edge
+    cases. The next fresh pair found nested bracket offsets, changed emoji
+    atoms, unmatched loaded delimiters and ordinary punctuation spelling.
+    Those findings reproduced through real input and are corrected.
+    The next Sol review found cross-boundary URL/emoji activation and reset
+    listeners nested inside composition-end; Luna found no new blocker.
+    Both new cases reproduced through native input and are corrected in the
+    current official run. The following Sol review found entity-deletion joins
+    across captured fragments and retained literal entities changed during live
+    code conversion; Luna found no new blocker. Native input reproduced both
+    classes (398/411, exit 1). Adjacent literal runs now share source-atom and
+    edit-boundary metadata; live code keeps those atoms before parsing.
+    Native input passed 469 checks, including entity-gap joins, mixed alias
+    provenance, native cell Undo/Redo, reopening and authored HTML boundaries.
+    One added backtick-padding fixture was corrected to use valid delimiters;
+    its earlier failure is not evidence of a product defect.
+    The next complete Sol review found a bracket-link activation after deleting
+    a space; Luna found no new blocker. Native input reproduced the link class
+    (487/493, exit 1), then a wider inline-token/semantic-neighbor matrix
+    (553/571, exit 1). Whole-cell source ownership replaces per-text-run repair;
+    affected reference links now normalize to self-contained Markdown, not
+    generated HTML. Native input passed 681 checks. Edited Markdown emphasis
+    stays Markdown; adjacent unstyled same-format spans normalize without
+    changing their content or formatting. The official pair and related suite
+    passed on these product bytes. Fresh Luna found no significant issue; fresh
+    Sol found lost nested edit seams inside emphasis and an overlarge atomic
+    link-label fragment that loses an untouched bracket escape. Native input
+    reproduced both classes (736/747, exit 1). One added adjacency expectation
+    was too strict: its original Markdown already preserved the intended
+    formatting and needed no merge. It is now an exact-source control, with a
+    separate real merge-created activation case.
+    Nested ownership now retains literal child ranges through Markdown wrappers;
+    escaped label brackets remain individual source atoms. Normalization checks
+    complete adjacent formatting groups before examining their new joins in the
+    actual parser context. Native input passed 765/765 on these corrected bytes.
+    The next official pair passed 54 source and 1051 UI checks, and the related
+    suite passed 60. An exact-width native restoration check first failed twice
+    on a one-pixel fractional-DPI round trip. Only restoration now permits that
+    bounded rounding; measured viewport widths and emulated references remain
+    exact. The failed attempts are retained, not treated as passing.
+    Fresh Luna found no blocker; fresh Sol found two further valid-edit gaps:
+    whitespace at Markdown formatting edges, and ambiguous repeated label
+    brackets with different escape ownership. Native input reproduced these
+    classes (895/927, exit 1), including nested and native Undo/Redo controls.
+    Captured bracket escapes now have distinct private atom identity. The writer
+    encodes character-exact formatting-edge whitespace and orphaned literal
+    label brackets without changing protected escapes or authored attributes.
+    Native input passed 1011/1011. Additional cross-atom replacement controls
+    passed except one overstrict expected spelling; the actual clean Markdown
+    was already valid and retained the ordinary surviving bracket. That expected
+    spelling is corrected.
+    Both round-8 reviewers confirmed browser-created semantic aliases leaking
+    into Markdown after full-text replacement. Sol also found invalid underscore
+    joins; Luna found empty-text preview ranges opening selected-row editing.
+    Real input reproduced the alias/underscore cases (1128/1138), including lost
+    ownership on unattributed authored tags. The actual captured menu reproduced
+    empty-text table/row acceptance (54/56). These are functional reds, not
+    individual mutation proofs.
+    A bounded native replacement now retains the actual pre-edit formatting
+    owner's source identity, rather than guessing whether a later B/I/STRIKE was
+    authored. Original authored tags and Markdown stay distinct. Invalid edited
+    underscore joins normalize to asterisks; valid original spelling stays exact.
+    Selected rows require meaningful selected text, including parent-boundary
+    table/row ranges. The expanded native matrix passed 1319 checks, including
+    exact cell Undo/Redo, nested formatting, native Select All and element-boundary
+    selections. The final official run passed 54 source and 1639 UI checks,
+    including repeated replacements. The directly related suite passed 60 on
+    these product bytes, without changing its test. Product/suite/package pins
+    match, owned table processes are gone, and all actual captures were viewed.
+    Fresh complete round-9 reviews found three remaining cases. Sol found
+    punctuation-edge delimiter joins and whitespace-only Markdown selections;
+    Luna found native Ctrl+B/I emitting generated HTML. Actual trusted input
+    reproduced all six input cases (1375/1381), and the actual menu reproduced
+    whitespace-only selected rows (60/61). These are functional reds, not
+    individual mutation proofs. The previous official pass remains bound to
+    its recorded source; it does not close these findings.
+    The bounded correction uses the shipping parser's Unicode punctuation
+    rule and encodes only the neighboring ordinary literal code point after
+    delimiter normalization. Actual input now passes all punctuation cases,
+    including supplementary-letter neighbors. The source meaningful-selection
+    guard passes the actual menu matrix (61/61). The input run is still red
+    (1405/1407): real Ctrl+B/I still produces generated HTML. It is not a
+    candidate pass.
+    Retained Astra traced the shared rule: exact retained source intervals and
+    authored scopes own source reuse, not a surviving or duplicated DOM ID.
+    Native arbitrary formatting still lacks equivalent operation-to-source
+    reconciliation across authored boundaries and coalesced Undo groups.
+    Partial/collapsed formatting, IME and cross-boundary paste would need that
+    wider native-format ownership path. It is not part of this release.
+  - **User-approved 0.11.1 limitation:** block Ctrl+B/I/U and Command+B/I/U in
+    editable table-popup cells before Chromium changes their DOM. Show a clear
+    popup message. Keep loaded/authored rich content, immediate backtick code,
+    normal typing/paste and cell Undo/Redo. Do not change document-editor or
+    app-wide shortcuts, classify unowned tags as Markdown, or build the larger
+    native-format reconciliation stage. C must include this limitation in the
+    release notes.
+    The user-approved shortcut block now passes 1457 actual native input
+    checks, including Control and Command variants, loaded/authored formatting,
+    selection/caret cases, ordinary typing and one-step cell Undo/Redo.
+    The preceding attempt reached 1447/1457 because its keyboard observer read
+    defaultPrevented before ancestor dispatch finished; DOM mutation was already
+    blocked. Its receipt remains failed, not a product red or qualification pass.
+    Final exact-source official-r14 passed 54 source and 1753 UI checks; the
+    unchanged directly related document-editor suite passed 60. All product,
+    suite and package pins match. Owned test processes are gone, teardown has no
+    errors, and every actual capture was opened and viewed.
+    Complete round-10 Sol found nested delimiter-run boundaries that the
+    per-frame lookup missed. Actual input reproduced six same/mixed nesting
+    cases (1481/1487); the nested strike control passed. Retained Astra traced
+    owned boundary clusters, keeping different delimiter families separate.
+    B is correcting this shared edge discovery and adding native history,
+    Unicode, protected-atom and authored/CODE barrier controls.
+    Luna's initial shortcut-isolation finding was withdrawn after verifying
+    that the identical popup isolation exists in the immutable 8741 baseline.
+    No app-wide shortcut behavior was changed. The historical qualification
+    remains bound to r10 bytes; it does not close the new nested cases.
+    Owned boundary clusters now expose the affected external literal without
+    crossing source atoms or semantic barriers. Fully wrapped nests retain
+    delimiter families and lengths so normalization cannot reverse EM/STRONG
+    ownership. Shipping Unicode rules select bounded punctuation/intraword
+    repair sites; the shipping parser still validates the full result.
+    The expanded actual native matrix passed 1709 checks, including both
+    nesting orders, same/mixed families, Unicode, protected atoms, authored/CODE
+    barriers, partial-body controls, exact native Undo/Redo and reopening.
+    The preceding 1619/1620 run remains failed: its mixed opening case exposed
+    the nesting-order change and led to this shared preservation rule.
+    Final exact-source official-r15 passed 54 source and 2005 UI checks; the
+    unchanged directly related document-editor suite passed 60. All product,
+    suite and package pins match; owned test processes are gone and teardown
+    has no errors. Every actual capture was opened and viewed. Fresh complete
+    Sol/Luna reviews completed on these corrected bytes. Luna found no new
+    issue; Sol found a representable Markdown sibling join that Update refused:
+    deleting the separator in `*x!* **y**` or `**x!** *y*`. Actual native input
+    reproduced both (1721/1723); exact native Undo/Redo still passed.
+    Retained Astra traced a bounded family-choice plan for touching sibling
+    owners after existing merges. Fixed nests keep their actual emitted marker
+    runs; strike markers and authored/protected barriers stay fixed. The writer
+    tries two independent orientations with mapped repair and full validation,
+    not a per-cell combination search. This is not a universal representation
+    claim. Final qualification and fresh complete reviews must follow.
+    The first expanded run reached 1936/1937: one new mixed-nest control
+    expected a rewrite even though its original spelling already retained the
+    exact semantic structure. That expectation is corrected; the failed
+    receipt is retained, not a product red or a passing run.
+    The corrected standalone input run passed 1937 checks. Official-r16 then
+    passed 54 source checks but stopped at 2134/2136 UI checks: accumulated
+    fixture owners reached Main's intentional 256-owner safety limit.
+    That run is failed/incomplete, not a product baseline failure or a pass.
+    Keep the cap and owner fences unchanged. The existing UI dispatcher now
+    runs input and remaining scenarios in separate fresh Electron processes.
+    Each process retains bootstrap, safety and teardown checks; receipts name
+    expected/executed groups and record fixture count and maximum live tabs.
+    Source checks require complete, disjoint partition coverage. Runtime
+    checks require every assigned group; both process exits must succeed.
+    Parent temporarily assigned B only the two table test-script entries.
+    The normal entry runs source checks first, then both UI processes with
+    failure propagation. C retains all other package/lock/version/release work.
+    Complete round-12 reviews found two distinct cases. Sol found retained
+    entity/escaped backslashes being mistaken for source escapes before a live
+    code opener. Luna found a selected empty Markdown row admitted from its
+    pipe syntax without any selected cell text. Native input reproduced the
+    opener cases (1989/2005); the focused click run reproduced the row case
+    (63/64). These are actual failed runs, not qualification passes.
+    Both live-opener checks now use the same intact source pieces and source
+    backslash parity. Virtual typing preserves DOM caret boundaries; protected
+    atoms are not sliced. Encoded or genuinely escaped ticks stay literal.
+    Selected rows require nonblank selected text inside an actual cell span.
+    The official source-plus-partition path and fresh complete Sol/Luna reviews
+    must qualify the combined product, tests and two package-script entries.
+    Official-r18 passed 55 source, 2030 input and 311 remaining UI checks in
+    separate evidence directories. The related document-editor suite passed 60.
+    Source/suite/package pins and exact complete/disjoint group receipts match;
+    owned UI processes are gone and teardown is clean. All 16 actual UI/related
+    captures were opened and viewed. Maximum observed tabs after fixture
+    admission were 240 and 46; the production owner cap is unchanged.
+    Packaging initially reached 432 passed/one failed because its exact feature
+    route still expected the old single-process command. The coupled oracle now
+    follows source and UI subroutes, pins both partition commands, and rejects
+    omitted or duplicated routes. Packaging source then passed 433 checks.
+    Its two built-ASAR checks remain skipped; this is not package verification.
+    Complete round-13 Sol found that a displayed literal tick could hide its
+    adjacent valid opener when runs were grouped before source eligibility.
+    Native input reproduced both encoded/escaped-prefix cases (2040/2048).
+    Luna independently found the packaging-route mismatch described above.
+    Retained Astra confirmed one shared eligible-run view for typing and token
+    detection. It reads intact source units once, carries source backslash
+    parity across transparent pieces and keeps semantic/protected barriers.
+    A position-aligned parser-only view masks retained literalized body ticks,
+    never ordinary/new ticks. Explicit ownership records identify each mask.
+    Original DOM/body text, not the parser projection, supplies CODE and source.
+    Official-r19 passed 55 source, 2111 input and 311 remaining UI checks.
+    The unchanged related document-editor suite passed 60; packaging source
+    passed 433 with two built-ASAR checks skipped, not passing.
+    Exact product/suite/package pins match; separate partition receipts cover
+    every assigned group once. Owned test processes are gone and teardown is
+    clean. All 16 actual UI/related captures were opened and viewed.
+    Maximum observed tabs after fixture admission were 247 and 46; the
+    production cap and owner fences remain unchanged.
+    The complete ten-file candidate, including both package-script entries,
+    dispatcher coverage receipts and packaging-route oracle, is with fresh
+    independent Sol/Luna reviewers. The r18 results remain historical;
+    review closure and the combined source commit are still pending.
+    Both complete round-14 reviewers independently found the same CODE path:
+    pasted line breaks can add BR children to Markdown-owned CODE, making
+    codeSources refuse that structure before generic HTML emits a new CODE
+    wrapper. This is outside the two approved CODE exceptions.
+    Retained Astra confirmed the serializer must close this dispatch path,
+    including unexpected attributes. The actual popup paste handler reproduced
+    the defect (41/42): from source `ab`, paste LEFT/newline/RIGHT at a|b.
+    A ClipboardEvent reaches the real handler and produces trusted native input;
+    CODE then contains `aLEFT`, BR and `RIGHTb`. Update adopts a generated CODE
+    wrapper. This does not claim an OS-clipboard operation or mutation proof.
+    Both reviewers agree; neither reported a separate significant issue.
+    Parent has the explicit policy choice: normalize line endings to spaces
+    immediately inside Markdown-owned CODE, or accept separate code spans around
+    a cell BR. Do not silently flatten text at Update or expand the HTML exception.
+    Ordinary-cell multiline paste and authored CODE must remain unchanged.
+    The source dispatcher must distinguish authored CODE and the two explicit
+    exceptions from unsupported CODE structures; sourceless canonical comparison
+    is not permission to emit source. A null Markdown result alone is not an
+    exception, including an empty CODE body.
+    Sol implemented the closed source-authority CODE branch and explicit
+    representation reasons. Source commands require captured provenance;
+    sourceless comparison can still describe authored CODE with BR.
+    Live-generated exceptions retain generated ownership within that popup.
+    After Update, approved HTML is part of the actual document source; reopening
+    captures its exact source HTML, not unrecoverable historical metadata.
+    Safety qualification passed 55 source and 2111 input checks. The first
+    remaining-partition attempt stopped on a wrapped-row context-menu timeout
+    (131/132); retain it as failed/incomplete, not a passing combined run.
+    An independent fresh remaining partition passed 337 checks.
+    The focused keyboard path passed 64 checks, including explicit refusal
+    reasons, missing source authority, generated-exception ownership, ordinary
+    single-line code paste, authored multiline/empty-line paste, native content
+    deletion, exact Undo/Redo and Update/reopen. The related editor passed 60;
+    packaging source passed 433 with two built-ASAR checks still skipped.
+    The test matrix expanded between attempts, so these results are separate
+    functional receipts, not one exact-source final combined qualification.
+    Both retained reviewers found no significant issue in the bounded safety
+    correction. Luna initially queried ownership after Update/reopen, then
+    withdrew it: already-committed HTML is current source authority, and
+    guessing its history would conflict with preserving identical authored HTML.
+    A real create/Update/reopen/edit control now covers that boundary.
+    Its first expanded input run reached 2116/2117: the new setup assertion read
+    a nonexistent combined raw field on an HTML capture, which instead owns
+    separate opening/closing source. Actual paste, exact native Undo/Redo and
+    Update checks passed. The assertion now checks those real fields and exact
+    serialized source. Retain the failed attempt; it is not a product red.
+    The corrected official safety run passed 55 source, 2117 input and 339
+    remaining checks on one test revision (`code-authority-r17`).
+    Exact product/suite/package pins match; separate processes cover every
+    group once, teardown is clean and owned test processes are gone.
+    Maximum observed tabs after fixture admission were 247 and 49; the cap is
+    unchanged. All 12 actual captures were opened and viewed.
+    The prior related-editor 60-check receipt still matches current product
+    pins; it was not rerun or spliced into this official command.
+    A fresh complete pair must follow the supported-paste policy implementation.
+    This refusal does not finish that behavior; the user's choice is pending.
+    The r19 qualification remains bound to its source, not review closure.
+    The user has now chosen immediate line-break-to-space normalization for
+    paste wholly inside Markdown-owned CODE. Replace each CRLF, CR or LF with
+    one space before a single native insertion; do not trim blank-line spaces
+    or flatten later at Update. Ordinary-cell paste and captured/current-source
+    HTML CODE retain line breaks. Popup-generated CODE keeps its Markdown
+    ownership until Update, including the two approved representation exceptions.
+    The pending user-choice blocker is resolved.
+    Fresh complete round-18 Sol found no new issue. Luna found authored
+    data-folia-cell-part colliding with the fixed capture attribute. The actual
+    input route reproduced refusal (2100/2102, then controlled termination);
+    this is functional evidence, not mutation proof.
+    Retained Astra traced a capture-context repair across source markers,
+    generated CODE and native history. Private attribute names now avoid authored
+    source and are shared when live CODE joins that capture. Authored attributes
+    are not overwritten or reclassified as private metadata.
+    The user-directed paste policy and this correction are in focused
+    qualification. Fresh complete independent reviews must follow these bytes.
+    Targeted native keyboard/paste checks passed 130. The first expanded
+    official attempt reached 55 source and 2123/2124 input checks: one new
+    assertion incorrectly required every duplicated metadata ID to refuse.
+    Repeating an intact captured fragment can preserve its exact source and
+    meaning; private ID duplication alone is not source authority.
+    That control now requires exact duplicated source, while unknown IDs
+    still refuse. Retain the failed attempt; it is not a product red.
+    Final combined r21 passed 55 source, 2124 input and 427 remaining checks;
+    the related editor passed 60 and packaging source passed 433 with two
+    built-ASAR checks skipped, not passing. All commands exited successfully.
+    Product/suite/package pins match; separate processes cover every group once.
+    Owned test processes are gone, teardown is clean and all 16 actual UI and
+    related captures were opened and viewed. Maximum observed tabs after fixture
+    admission were 247 and 58; the production cap is unchanged.
+    These exact product and test bytes now go to fresh complete independent
+    Sol/Luna review, including the scripts, dispatcher and packaging oracle.
+    Sol found no significant issue in the complete candidate. Luna found that
+    valid whole-cell provenance still allowed an uncaptured CODE node to gain
+    Markdown authority from its tag. This is a static finding; a focused
+    source-boundary control now checks that exact missing-owner case.
+    Controlled runtime probes reproduced the missing owner (154/155), then
+    wrong-kind Markdown and HTML carriers (154/156). These are direct
+    production source-boundary probes, not claimed native-user ingress or
+    individual mutation proofs. Retained Astra confirmed the shared fix:
+    check CODE ownership before every raw/semantic source fast path, allowing
+    captured Markdown codespans, captured HTML CODE and popup-generated CODE.
+    The correction does not change sourceless comparison or supported owners.
+    The r21 pass remains tied to its source, not final review closure.
+    The corrected combined r24 passed 55 source, 2124 input and 429 remaining
+    checks, including both new refusal controls. The related editor passed 60;
+    packaging source passed 433 with two built-ASAR checks skipped, not passing.
+    All 16 actual captures were opened and viewed. These corrected bytes now
+    return to fresh complete independent Sol/Luna review.
+    Both fresh complete r24 reviews found no significant issue. No remaining
+    reviewer disagreement or new actionable finding was reported.
+    Source review is complete; C owns the next version/build/package/publication
+    steps. The two built-ASAR skips are not package-readiness approval.
+    The user now directs new minor or low-impact modeled edge cases to be
+    documented and deferred, not another fix/review loop. Significant content
+    loss, core feature failure and release/build failures still need reporting.
+    Resume the broader test plan only after verified 0.11.1 publication.
+    Approved paste/CODE/shortcut policies and the formal-proof deferral remain.
+    C still owns version/lock/build/release after the combined source handoff.
+    Packaging source checks first reached 431 passed and one failed because
+    the UI consumer oracle recognized thrown errors but missed direct
+    translated popup-error delivery. The bounded oracle correction also
+    rejects bare, unrelated and commented error constructors, and detects
+    removal of the real shortcut-message consumer. The rerun passed 433 source
+    checks. Both built-ASAR checks remain skipped, not passing; C still owns
+    package/build readiness. No product bytes changed for this oracle repair.
+    The preceding official attempt stopped on a fixture's
+    STRONG-only lookup after native B generation; it is incomplete, not passing.
+    The preceding related run reached 59/60 on tab scroll retention; keep that
+    failed receipt separately from both the final pass and established wheel
+    baseline. Do not relabel it as a reproduced baseline failure.
+  - **User-approved narrow CODE exception:** ordinary text and normal code stay
+    clean Markdown. Only literal emoji-name and backslash-before-pipe cases
+    that cannot preserve their displayed text with the current renderer may use
+    a semantic `<code>` tag. No generic span wrappers or general semantic HTML
+    fallback are allowed. Strong/em/del and links stay Markdown; authored HTML
+    stays exact. The user chose this bounded exception after the representation
+    limits and wider shared-parser risks were explained. Do not introduce the
+    materially wider code-aware emoji/source-collector stage for 0.11.1.
+  - The existing performance route failed its baseline source-preservation
+    oracle before producing comparable samples. Preserve it as failed and
+    incomparable; the parent explicitly deferred further performance work.
+    No performance pass or speedup is claimed.
+  - The broad ordinary-test repair project is paused. Only directly related
+    checks are in scope; R1140 remains deferred. A reviewed 0.11.1 candidate
+    and release-readiness handoff are pending, not passing. The unsafe shared
+    mutation runner has not been used; the original-product and review-case
+    red runs are retained. The read-only anchor check resolves without changing
+    the tree; it is not a mutation proof.
+  - **User-approved 0.11.1 deferral:** new formal revert records and individual
+    mutation proofs are deferred for this release only. The user chose this
+    after the repository rule, unsafe helper risk and natural red/green limits
+    were explained. Do not repair or run the unsafe shared mutation helper.
+    Natural source-pinned red/green receipts remain functional evidence, not
+    individual mutation proof. No skip or read-only anchor result closes that
+    proof gate. Focused exact-source qualification, fresh complete Sol/Luna
+    reviews and normal build readiness remain required.
+
+- `direct-0.11.0-test-candidate` - **PUBLISHED AND VERIFIED**.
+  - Release: https://github.com/lostinsea/markaloo/releases/tag/v0.11.0
+  - Immutable source: `8741c7a714c5eedd43afd0c1f60089594fee9e97`;
+    tree `ef312ca2292368b8d59cf528026350de88c30aa5`.
+  - Tag run `40372408529`, attempt 1, passed all platform builds, attestation
+    and publication. C verified all published assets and updater metadata,
+    cryptographic binary provenance and the tested/installed ASAR match.
+  - Focused hosted checks passed: 47 table-source, 261 table-UI and 260
+    editor-scroll checks; strict Windows ASAR checks passed without skips.
+  - Full ordinary tests and R1140 remain deferred, not passing. Combined
+    performance is unmeasured; no general speedup claim is made.
+  - Broad test repair is paused for the user-reported 0.11.1 cell defects.
+    Older evidence retains its original source binding; do not overwrite it.
 
 - `visual-table-cell-editing` - **FOCUSED RUN ACCEPTED; RELEASE PREPARATION**.
   - Isolated branch: `users/vinma-microsoft/visual-table-editing`, based on

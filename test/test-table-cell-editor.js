@@ -12,7 +12,16 @@ const baseline = process.argv.includes("--baseline");
 const dirtyOpenProbe = process.argv.includes("--probe-dirty-open");
 const proof = process.env.FOLIA_CELL_PROOF;
 const groups = ["selection", "rows", "splice", "inline", "menus", "provenance",
-  "noop", "transaction", "adoption", "stale", "keyboard", "many"];
+  "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "many"];
+const uiGroups = groups.slice(4);
+const uiPartitions = { input: ["input"], remaining: uiGroups.filter(name => name !== "input") };
+const partitionArgs = process.argv.filter(arg => arg === "--partition" || arg.startsWith("--partition="));
+const partition = partitionArgs[0]?.slice("--partition=".length);
+if (partitionArgs.length > 1 || partition !== undefined &&
+    (!Object.hasOwn(uiPartitions, partition) || sourceOnly || perfOnly || baseline || dirtyOpenProbe || proof)) {
+  throw new Error("Use one UI partition without source, performance, probe or proof modes");
+}
+const expectedUiGroups = partition ? uiPartitions[partition] : proof ? uiGroups.filter(name => name === proof) : uiGroups;
 if (proof && !groups.includes(proof)) throw new Error("Unknown FOLIA_CELL_PROOF: " + proof);
 if (baseline && !perfOnly) throw new Error("--baseline requires --perf");
 if (dirtyOpenProbe && (sourceOnly || perfOnly || proof || process.argv.some(arg => arg.startsWith("--app-root=")))) {
@@ -23,6 +32,7 @@ const transcript = [];
 const executed = new Set();
 const selected = name => {
   if (proof && proof !== name) return false;
+  if (partition && uiGroups.includes(name) && !expectedUiGroups.includes(name)) return false;
   executed.add(name);
   return true;
 };
@@ -53,7 +63,7 @@ const suffix = "\n\nAfter prose\rTail 😀 without an ending";
 const original = prefix + table + between + table + suffix;
 const secondOffset = prefix.length + table.length + between.length;
 const oldCell = "emoji 😀 and escaped \\| pipe";
-const richCell = "<span><strong>changed &#38; safe</strong><em> rich</em></span>";
+const richCell = "<strong>changed &#38; safe</strong><em> rich</em>";
 const editedOffset = secondOffset + table.indexOf(oldCell);
 const expectedEdited = original.slice(0, editedOffset) + richCell +
   original.slice(editedOffset + oldCell.length);
@@ -69,6 +79,10 @@ const hashes = () => Object.fromEntries(productFiles.map(file => [file, sha(path
 async function sourceTests() {
   dialogGuardSourceTests();
   dialogCleanupSourceTests();
+  const partitioned = Object.values(uiPartitions).flat();
+  check("cell UI partitions cover every declared scenario exactly once",
+    partitioned.length === uiGroups.length && new Set(partitioned).size === uiGroups.length &&
+    uiGroups.every(name => partitioned.includes(name)));
   const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
   const cells = context.window.FoliaTableCells;
@@ -83,11 +97,13 @@ async function sourceTests() {
       element("a", [text("link")], [{ name: "href", value: "https://example.invalid/a?q=1&n=2" }]),
       element("img", [], [{ name: "src", value: "cell.svg" }, { name: "alt", value: "dot" }])]);
     check("cell serializer keeps formatting while encoding Markdown structure and attributes",
-      cells.serializeCell(input) === '<span><strong>safe &#124; &#42;x&#42; &#91;y&#93; &#96;z&#96; &#38; &#60; &#62;&#13;&#10;😀</strong>' +
-      '<a href="https://example.invalid/a?q=1&#38;n=2">link</a><img src="cell.svg" alt="dot"></span>');
+      cells.serializeCell(input) === '<strong>safe &#124; &#42;x&#42; &#91;y&#93; &#96;z&#96; &#38; &#60; &#62;&#13;&#10;😀</strong>' +
+      '<a href="https://example.invalid/a?q=1&#38;n=2">link</a><img src="cell.svg" alt="dot">');
     check("edited literal block starts stay inline instead of becoming Markdown block syntax",
-      ["# heading", "- item", "> quote", "1. list", "    indented", "---", "!!!"].every(value =>
-        cells.serializeCell(element("div", [text(value)])) === "<span>" + value.replace(">", "&#62;") + "</span>"));
+      [["# heading", "&#35; heading"], ["- item", "&#45; item"], ["> quote", "&#62; quote"],
+        ["1. list", "&#49;. list"], ["    indented", "&#32;&#32;&#32;&#32;indented"],
+        ["---", "&#45;--"], ["!!!", "&#33;!!"]].every(([value, expected]) =>
+        cells.serializeCell(element("div", [text(value)])) === expected));
     let rejected;
     try { cells.serializeCell(element("div", [element("table", [])])); }
     catch (error) { rejected = error.message; }
@@ -104,10 +120,16 @@ async function sourceTests() {
     ]);
     check("cell serializer preserves note identity title content and color beside changed text",
       cells.serializeCell(element("div", [note, text(" new neighbor")])) ===
-      '<span><span class="noted-text" data-note-id="73" data-note-title="Title &#38; value" ' +
-      'data-note-content="first&#10;second" data-note-color="#c0ffee">annotated</span> new neighbor</span>');
+      '<span class="noted-text" data-note-id="73" data-note-title="Title &#38; value" ' +
+      'data-note-content="first&#10;second" data-note-color="#c0ffee">annotated</span> new neighbor');
   }
   if (proof === "inline") return;
+  const { parseEmojis } = require("../src/emoji-parser");
+  const observedEmojis = [], emojiSource = "😀 :star: :unknown-folia-emoji:";
+  const observedOutput = parseEmojis(emojiSource, (alias, glyph, offset) => observedEmojis.push({ alias, glyph, offset }));
+  check("emoji observation preserves existing rendering and reports original UTF16 replacement offsets only",
+    observedOutput === parseEmojis(emojiSource) && observedOutput === "😀 ⭐ :unknown-folia-emoji:" &&
+    JSON.stringify(observedEmojis) === JSON.stringify([{ alias: ":star:", glyph: "⭐", offset: 3 }]), observedEmojis);
   const vendor = path.join(ROOT, "libs", "vendor", "marked.min.js");
   if (!fs.existsSync(vendor)) {
     throw new Error("Missing shipping parser: libs\\vendor\\marked.min.js; restore dependencies and run npm run vendor in an authorized resource slot.");
@@ -133,6 +155,28 @@ async function sourceTests() {
     catch (error) { return error.message; }
   }
   if (selected("selection")) {
+    const clickedBody = "\uFEFF| A | B |\r\n| - | - |\n| 😀 | last |   \r\n\r\nAfter.";
+    const clickedModel = cells.index(clickedBody, marked, protect);
+    const physicalLine = (text, start) => {
+      const newline = text.indexOf("\n", start);
+      return { start, end: newline < 0 ? text.length : newline };
+    };
+    for (const [label, start] of [["BOM header", 0], ["trailing-space row", clickedModel.view.text.indexOf("| 😀")]]) {
+      const target = cells.resolveSourceLine(clickedModel, physicalLine(clickedModel.view.text, start));
+      check("click resolver accepts a real physical " + label + " without changing source offsets",
+        target.table === clickedModel.tables[0] && target.rows.length === 2);
+    }
+    for (const [label, line] of [
+      ["blank line", physicalLine(clickedModel.view.text, clickedModel.view.text.indexOf("\n\n") + 1)],
+      ["following prose", physicalLine(clickedModel.view.text, clickedModel.view.text.indexOf("After."))],
+      ["partial line", { start: 2, end: clickedModel.view.text.indexOf("\n") }],
+      ["multiple lines", { start: 0, end: clickedModel.view.text.lastIndexOf("\n") }],
+    ]) {
+      let error;
+      try { cells.resolveSourceLine(clickedModel, line); }
+      catch (caught) { error = caught.message; }
+      check("click resolver refuses " + label + " instead of borrowing a table", error === "tableCells.click", error);
+    }
     check("collapsed caret inside a real table is not an explicit table selection",
       failure(start + 3, start + 3, false) === "tableCells.select");
     check("source resolver refuses none and multiple actual tables",
@@ -609,7 +653,8 @@ function startElectron() {
 require("./test-userdata-isolation");
   const { captureScreenshot, proveSentinelAlive, startErrorSentinel } = require("./test-visual-utils");
   const directory = path.join(ROOT, "screenshots", "table-cell-editor");
-  const evidence = path.resolve(ROOT, process.env.FOLIA_CELL_EVIDENCE || path.join("screenshots", "table-cell-editor"));
+  const evidenceBase = path.resolve(ROOT, process.env.FOLIA_CELL_EVIDENCE || path.join("screenshots", "table-cell-editor"));
+  const evidence = partition ? path.join(evidenceBase, partition) : evidenceBase;
   if (evidence !== ROOT && !evidence.startsWith(ROOT + path.sep)) {
     throw new Error("FOLIA_CELL_EVIDENCE must stay inside this worktree; preserve it as a session artifact after the run");
   }
@@ -618,7 +663,7 @@ require("./test-userdata-isolation");
   const product = hashes();
   const shellCalls = [], network = [], saves = [], screenshots = [], unexpectedDialogs = [], teardownErrors = [];
   let chooser, win, sentinel, fileSequence = 0, actorCleanup = null, finishing = false, shellControl = null;
-  let admissionFixture = null, observedCellDialog = null;
+  let admissionFixture = null, observedCellDialog = null, maximumLiveTabs = 0;
   const performanceSources = new Map();
   const fixtures = [];
   const rawFile = path.join(evidence, "raw-ui" + (proof ? "-" + proof : "") + ".log");
@@ -636,7 +681,10 @@ require("./test-userdata-isolation");
     try { ownedPids = [...new Set([process.pid, ...app.getAppMetrics().map(metric => metric.pid)])]; }
     catch { /* Main has not reached readiness. */ }
     fs.writeFileSync(path.join(evidence, "last-run.json"), JSON.stringify({
-      stage, detail, proof: proof || null, perfOnly, dirtyOpenProbe, fixtureChooser: chooser || null,
+      stage, detail, proof: proof || null, partition: partition || null, perfOnly, dirtyOpenProbe,
+      uiGroups: { declared: uiGroups, expected: expectedUiGroups, executed: uiGroups.filter(name => executed.has(name)) },
+      fixtureCount: fileSequence, maximumLiveTabs, tabCountSampling: "after fixture admission",
+      fixtureChooser: chooser || null,
       product, suiteSha256: sha(__filename),
       packageSha256: sha(path.join(ROOT, "package.json")), ownedPids,
       bootstrapStages: earlyElectron.stages, teardownErrors,
@@ -1058,6 +1106,57 @@ require("./test-userdata-isolation");
       })()`));
     }
   }
+
+  async function typeTrustedCell(parts, cellIndex,
+    { replace = false, preserveCaret = false, eraseSelection = false, formatKey = null,
+      formatModifiers = ["control"] } = {}) {
+    await exec(`(() => {
+      const input=tableCellSession.cells[${JSON.stringify(cellIndex)}].input;
+      input.focus();
+      if(!${JSON.stringify(preserveCaret)}) {
+        const range=document.createRange();range.selectNodeContents(input);
+        if(!${JSON.stringify(replace)})range.collapse(false);
+        const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+      }
+      window.__cellTypedInputEvents=[];
+      window.__cellTypedInput=e=>{
+        const record={event:e.type,trusted:e.isTrusted,type:e.inputType,data:e.data,composing:e.isComposing,
+          key:e.key,control:e.ctrlKey,meta:e.metaKey,alt:e.altKey,get prevented(){return e.defaultPrevented}};
+        window.__cellTypedInputEvents.push(record);
+      };
+      input.addEventListener('keydown',window.__cellTypedInput);
+      input.addEventListener('beforeinput',window.__cellTypedInput);
+      input.addEventListener('input',window.__cellTypedInput);
+      return true;
+    })()`);
+    const snapshots = [];
+    try {
+      for (const part of parts) {
+        if (formatKey) await key(formatKey, formatModifiers);
+        else if (eraseSelection) await key("Backspace");
+        else await bounded("trusted cell typing", win.webContents.insertText(part));
+        snapshots.push(await exec(`(() => {
+          const input=tableCellSession.cells[${JSON.stringify(cellIndex)}].input;
+          const selection=getSelection(),node=selection.anchorNode;
+          return {html:input.innerHTML,text:input.textContent,
+            error:tableCellError.textContent,
+            codes:[...input.querySelectorAll('code')].map(code=>code.textContent),
+            focused:document.activeElement===input,collapsed:selection.isCollapsed,caretInCell:input.contains(node),
+            caretInCode:!!(node&&(node.nodeType===Node.ELEMENT_NODE?node:node.parentElement)?.closest('code')),
+            events:window.__cellTypedInputEvents.slice()};
+        })()`));
+      }
+      return snapshots;
+    } finally {
+      await bounded("trusted cell typing listener cleanup", exec(`(() => {
+        const input=tableCellSession?.cells[${JSON.stringify(cellIndex)}]?.input;
+        input?.removeEventListener('keydown',window.__cellTypedInput);
+        input?.removeEventListener('beforeinput',window.__cellTypedInput);
+        input?.removeEventListener('input',window.__cellTypedInput);
+        delete window.__cellTypedInput;delete window.__cellTypedInputEvents;return true;
+      })()`));
+    }
+  }
   async function observeSourceAction(action) {
     await exec(`(() => {
       window.__cellSourceEvents=[];
@@ -1211,18 +1310,46 @@ require("./test-userdata-isolation");
   }
   function installHelpers() {
     window.__cells = {
-      rightClick(node) {
+      rightClick(node, point) {
         const rect = node.getBoundingClientRect();
         node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true,
-          clientX: Math.round(rect.left + Math.min(8, rect.width / 2)),
-          clientY: Math.round(rect.top + Math.min(8, rect.height / 2)) }));
+          clientX: point?.x ?? Math.round(rect.left + Math.min(8, rect.width / 2)),
+          clientY: point?.y ?? Math.round(rect.top + Math.min(8, rect.height / 2)) }));
         return contextMenu.classList.contains("visible");
       },
-      source(from, to) {
+      sourcePoint(offset, visualLine = 0) {
+        const style=getComputedStyle(markdownEditor),rect=markdownEditor.getBoundingClientRect();
+        const line=offset?markdownEditor.value.lastIndexOf('\n',offset-1)+1:0;
+        const clone=markdownEditor.cloneNode(false);
+        clone.removeAttribute('id');clone.setAttribute('aria-hidden','true');clone.inert=true;
+        for(const key of ['fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing',
+          'paddingTop','paddingBottom','paddingLeft','paddingRight','whiteSpace','overflowWrap','wordBreak','tabSize']) {
+          clone.style[key]=style[key];
+        }
+        Object.assign(clone.style,{position:'fixed',left:'-100000px',top:'0',height:'0',minHeight:'0',
+          maxHeight:'none',width:markdownEditor.clientWidth+'px',boxSizing:'border-box',border:'0',
+          visibility:'hidden',pointerEvents:'none',overflow:'hidden'});
+        clone.value=markdownEditor.value.slice(0,line);
+        document.body.append(clone);
+        let top;
+        try {top=clone.scrollHeight-parseFloat(style.paddingBottom)-parseFloat(style.lineHeight);}
+        finally {clone.remove();}
+        const height=parseFloat(style.lineHeight),scaleX=rect.width/markdownEditor.offsetWidth;
+        top+=visualLine*height;
+        const scaleY=rect.height/markdownEditor.offsetHeight;
+        if(top-markdownEditor.scrollTop<parseFloat(style.paddingTop)||
+            top+height-markdownEditor.scrollTop>markdownEditor.clientHeight-parseFloat(style.paddingBottom)) {
+          markdownEditor.scrollTop=Math.max(0,top-markdownEditor.clientHeight/2);
+        }
+        markdownEditor.scrollLeft=0;
+        return {x:Math.round(rect.left+(markdownEditor.clientLeft+parseFloat(style.paddingLeft)+4)*scaleX),
+          y:Math.round(rect.top+(markdownEditor.clientTop+top-markdownEditor.scrollTop+height/2)*scaleY)};
+      },
+      source(from, to, clickAt = from) {
         getSelection().removeAllRanges();
         markdownEditor.focus();
         markdownEditor.setSelectionRange(from, to, "backward");
-        return this.rightClick(markdownEditor);
+        return this.rightClick(markdownEditor,this.sourcePoint(clickAt));
       },
       preview(index, first, last) {
         const table = viewer.querySelectorAll("table")[index];
@@ -1269,7 +1396,7 @@ require("./test-userdata-isolation");
     };
     return true;
   }
-  async function fresh(label, body = original) {
+  async function fresh(label, body = original, heading = lf(body).replace(/^\uFEFF?# /, "").split("\n")[0]) {
     let retained = null;
     const before = await exec(`({
       dirty:hasUnsavedWork(),owner:window.CustomTabs.getActiveTabId(),path:currentFilePath,
@@ -1318,7 +1445,7 @@ require("./test-userdata-isolation");
     await exec("document.getElementById('openFile').click();true");
     try {
       await wait(label + " DOM paint", `currentFilePath===${JSON.stringify(file)}&&
-        viewer.querySelector('h1')?.textContent===${JSON.stringify(lf(body).replace(/^\uFEFF?# /, "").split("\n")[0])}&&
+        viewer.querySelector('h1')?.textContent===${JSON.stringify(heading)}&&
         !loadingScreen.classList.contains('active')`);
     } catch (error) {
       const actual = await exec(`({path:currentFilePath,owner:window.CustomTabs.getActiveTabId(),
@@ -1358,7 +1485,9 @@ require("./test-userdata-isolation");
       check("fixture " + label + " preserves the parked dirty owner's exact source history state and disk", preserved, parkedOwner);
       if (!preserved) throw new Error("Fixture admission changed the parked dirty owner");
     }
-    const fixture = { file, id: await exec("window.CustomTabs.getActiveTabId()"), body };
+    const admitted = await exec("({id:window.CustomTabs.getActiveTabId(),liveTabs:window.CustomTabs.getTabs().length})");
+    maximumLiveTabs = Math.max(maximumLiveTabs, admitted.liveTabs);
+    const fixture = { file, id: admitted.id, body };
     if (perfOnly) {
       const observed = await commonState();
       if (observed.owner !== fixture.id || observed.path !== file ||
@@ -1409,11 +1538,25 @@ require("./test-userdata-isolation");
       : await page((index, first, last) => __cells.preview(index, first, last), index, first, last);
     const opened = await page(rows => __cells.action(rows), rowsOnly);
     check("cell dialog setup has a real selected table and visible menu action", menu && opened.visible && opened.opened, opened);
+    if (!menu || !opened.visible || !opened.opened) throw new Error("Cell grid setup failed: " + JSON.stringify(opened));
     return opened;
   }
   async function cancel() {
     if (!win || win.isDestroyed()) return;
     await page(closeObservedCellDialog, observedCellDialog, baseline && perfOnly && observedCellDialog === false);
+  }
+  async function pasteCode(text) {
+    return page(text => {
+      const input=__cells.inputs()[8],events=[];
+      const listener=event=>events.push({type:event.inputType,trusted:event.isTrusted});
+      input.addEventListener('input',listener);
+      const transfer=new DataTransfer();transfer.setData('text/plain',text);
+      const paste=new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:transfer});
+      input.dispatchEvent(paste);
+      input.removeEventListener('input',listener);
+      return {html:input.innerHTML,text:input.textContent,codeBreaks:input.querySelectorAll('code br').length,
+        prevented:paste.defaultPrevented,events};
+    }, text);
   }
   async function cleanupActors() {
     if (!win || win.isDestroyed()) return;
@@ -1639,8 +1782,11 @@ require("./test-userdata-isolation");
     const command = (name, args) => bounded("cell viewport " + name, debuggerAPI.sendCommand(name, args));
     // Width drives help wrapping; native height can round at fractional OS scale.
     const heightRounding = emulated ? 0 : 2;
-    const viewportMatches = (targetWidth, targetHeight) =>
-      `innerWidth===${targetWidth}&&Math.abs(innerHeight-${targetHeight})<=${heightRounding}`;
+    const viewportMatches = (targetWidth, targetHeight, widthRounding = 0) =>
+      `Math.abs(innerWidth-${targetWidth})<=${widthRounding}&&Math.abs(innerHeight-${targetHeight})<=${heightRounding}`;
+    // Restoring native bounds can round one CSS pixel at fractional desktop scale.
+    // The measured scenario above still requires its exact requested width.
+    const restoreWidthRounding = !emulated && !Number.isInteger(before.viewport.dpr) ? 1 : 0;
     let overrideAttempted = false;
     const errors = [];
     try {
@@ -1684,13 +1830,15 @@ require("./test-userdata-isolation");
       await settle();
       await observe("after restoration request");
       await wait(label + " restores the original content viewport",
-        viewportMatches(before.viewport.width, before.viewport.height));
+        viewportMatches(before.viewport.width, before.viewport.height, restoreWidthRounding));
       await settle();
       const restored = await observe("restored");
       check("cell " + label + " restores the native Main viewport and debugger",
         restored.viewport.dpr === before.viewport.dpr && restored.zoom === before.zoom &&
-        restored.maximized === before.maximized && debuggerAPI.isAttached(),
-        { before, restored, heightRounding, observations });
+        restored.maximized === before.maximized && debuggerAPI.isAttached() &&
+        Math.abs(restored.viewport.width - before.viewport.width) <= restoreWidthRounding &&
+        Math.abs(restored.viewport.height - before.viewport.height) <= heightRounding,
+        { before, restored, heightRounding, restoreWidthRounding, observations });
     } catch (error) {
       errors.push({ phase: "restoration", error: error.stack });
     }
@@ -1817,8 +1965,12 @@ require("./test-userdata-isolation");
         focus:document.activeElement===inputs[0],native:tableCellDialog.matches(':modal'),
         safe:inputs.every(input=>{
           const serial=serializeSafeTableCell(input),copy=document.createElement('div');
-          copy.innerHTML=serial;
-          return serializeSafeTableCell(copy.firstElementChild)===serial&&serializeSafeTableCell(input)===serial;
+          const lexer=new marked.Lexer({...marked.defaults,tokenizer:null});
+          lexer.tokens.links=tableCellSession.target.model.links;
+          copy.innerHTML=sanitizeTableHtml(marked.Parser.parseInline(lexer.inlineTokens(serial.replaceAll(String.fromCharCode(92)+'|','|'))));
+          return serializeSafeTableCell(input)===serial&&copy.textContent===input.textContent&&
+            copy.querySelectorAll('code').length===input.querySelectorAll('code').length&&
+            !serial.includes('data-folia-cell-');
         })};
     })()`);
     check("cell dialog is a native focused formatted grid with links code images and no raw-source editor",
@@ -1884,12 +2036,12 @@ require("./test-userdata-isolation");
     const invalid = await page((from, to) => {
       const out = [];
       for (const range of [[from + 4, from + 4], [0, 3], [0, to]]) {
-        __cells.source(...range); const opened = __cells.action(false);
+        __cells.source(...range); const opened = __cells.action(true);
         out.push(opened); if (opened.opened) tableCellCancel.click();
       }
       return out;
     }, lf(prefix).length, lf(original.slice(0, secondOffset + table.length)).length);
-    check("both-pane actions never fall back from a collapsed absent or multiple-table source selection",
+    check("selected-row actions never fall back from a collapsed absent or multiple-table source selection",
       invalid.every((item, i) => !item.opened && item.error === (i === 2
         ? "More than one table is selected. Select just one table."
         : "Select a table or its rows first. The selection must contain exactly one table.")), invalid);
@@ -1903,13 +2055,13 @@ require("./test-userdata-isolation");
       const tables=viewer.querySelectorAll('table'),range=document.createRange(),selection=getSelection(),out=[];
       range.selectNodeContents(tables[0].rows[2].cells[0]);range.collapse(true);
       selection.removeAllRanges();selection.addRange(range);
-      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(false));
+      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(true));
       range.setStartBefore(tables[0]);range.setEndAfter(tables[1]);
       selection.removeAllRanges();selection.addRange(range);
-      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(false));
+      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(true));
       return out;
     })()`);
-    check("preview caret and multi-table ranges refuse rather than falling back to the clicked duplicate",
+    check("preview selected-row caret and multi-table ranges refuse rather than falling back to the clicked duplicate",
       previewInvalid.every((item, i) => !item.opened && item.error === (i
         ? "More than one table is selected. Select just one table."
         : "Select a table or its rows first. The selection must contain exactly one table.")), previewInvalid);
@@ -1950,11 +2102,11 @@ require("./test-userdata-isolation");
       const setup=range.intersectsNode(table)&&range.intersectsNode(rule)&&
         !!range.cloneContents().querySelector('hr');
       __cells.rightClick(table.rows[1].cells[0]);
-      return {setup,tableCount:viewer.querySelectorAll('table').length,action:__cells.action(false)};
+      return {setup,tableCount:viewer.querySelectorAll('table').length,action:__cells.action(true)};
     })()`);
     check("mixed preview fixture selects an actual table and nontext horizontal-rule sibling",
       selected.setup && selected.tableCount === 1 && selected.action.visible, selected);
-    check("preview table plus horizontal rule refuses instead of silently dropping the nontext selection",
+    check("preview selected rows plus horizontal rule refuses instead of silently dropping the nontext selection",
       !selected.action.opened &&
       selected.action.error === "Select a table or its rows first. The selection must contain exactly one table." &&
       JSON.stringify(await state()) === JSON.stringify(before) && fs.readFileSync(fixture.file, "utf8") === body, selected);
@@ -1975,17 +2127,17 @@ require("./test-userdata-isolation");
     check("nested-source fixture has an actual unselected nested table target and following regular table",
       setup.count === 3 && setup.nested && setup.following === "Following" &&
       setup.target?.start === lf(leading).length, setup);
-    await page((from, to) => __cells.source(from, to),
+    await page((from, to, at) => __cells.source(from, to, at),
       lf(leading.slice(0, leading.indexOf("Leading prose"))).length,
-      lf(leading + table + trailing).length);
+      lf(leading + table + trailing).length, lf(leading).length);
     const opened = await page(() => __cells.action(false));
-    check("source prose selection excludes the nested and following tables and opens its exact owner",
+    check("source click selects the exact regular table independently of the preserved prose selection",
       opened.opened && opened.count === 12, opened);
     if (!opened.opened) return;
     await exec("__cells.inputs()[7].textContent='nested owner update';true");
     await update();
     const offset = leading.length + table.indexOf(oldCell);
-    const expected = body.slice(0, offset) + "<span>nested owner update</span>" + body.slice(offset + oldCell.length);
+    const expected = body.slice(0, offset) + "nested owner update" + body.slice(offset + oldCell.length);
     const after = await state();
     check("nested-context source Update preserves both other tables prose mixed bytes and owning cache",
       after.exact === expected && after.cache === expected && after.value === lf(expected) &&
@@ -2008,7 +2160,7 @@ require("./test-userdata-isolation");
       setup.count === 2 && setup.first && setup.second === "Name" && setup.split, setup);
     const action = await page((from, to) => {
       __cells.source(from, to);
-      return __cells.action(false);
+      return __cells.action(true);
     }, opening.length, opening.length + rows.length + lf(table).length);
     check("source selection inside a split raw table through a Markdown table cannot silently admit only the latter",
       action.visible && !action.opened &&
@@ -2025,7 +2177,12 @@ require("./test-userdata-isolation");
     const fixture = await fresh("note-metadata", body), beforeSaves = saves.length;
     await openGrid(0);
     const change = await exec(`(() => {
-      const input=__cells.inputs()[3],note=input.querySelector('.noted-text'),neighbor=input.lastChild;
+      const input=__cells.inputs()[3],note=input.querySelector('.noted-text');
+      const walker=document.createTreeWalker(input,NodeFilter.SHOW_TEXT);
+      let neighbor;
+      while(walker.nextNode()) {
+        if(walker.currentNode.data===' old neighbor')neighbor=walker.currentNode;
+      }
       const metadata=note&&Object.fromEntries(['data-note-id','data-note-title','data-note-content','data-note-color']
         .map(key=>[key,note.getAttribute(key)]));
       const setup=neighbor?.nodeType===Node.TEXT_NODE&&neighbor.data===' old neighbor';
@@ -2037,7 +2194,7 @@ require("./test-userdata-isolation");
     check("note-cell fixture exposes all authored metadata and a distinct neighboring text node",
       change.setup && JSON.stringify(change.metadata) === JSON.stringify(expectedMetadata), change);
     await update();
-    const expected = body.replace(note + " old neighbor", "<span>" + note + " new neighbor</span>");
+    const expected = body.replace(note + " old neighbor", note + " new neighbor");
     const observed = await exec(`(() => {
       const note=viewer.querySelector('.noted-text');
       return note&&Object.fromEntries(['data-note-id','data-note-title','data-note-content','data-note-color']
@@ -2152,11 +2309,1336 @@ require("./test-userdata-isolation");
       await exec("!tableCellDialog.open&&document.activeElement===viewer") &&
       JSON.stringify(await state()) === JSON.stringify(after));
   }
+  async function input() {
+    const offset = secondOffset + table.indexOf("| plain |") + 2;
+    const replacePlain = text => original.slice(0, offset) + text + original.slice(offset + "plain".length);
+    const fixture = await fresh("trusted-plain-cell");
+    const before = await state(), beforeSaves = saves.length;
+    const prepared = await exec(`(() => {
+      const model=FoliaTableCells.index(window.CustomTabs.snapshotExactEditorContent(),marked,protectTableSource);
+      return model.tables[1].rows.flatMap(row=>row.cells).map(cell=>{
+        const input=document.createElement('div');
+        try {
+          const raw=model.source.slice(model.view.offsets[cell.start],model.view.offsets[cell.end]);
+          const provenance=FoliaTableCells.prepareCell(input,cell.text,raw,marked,model.links,parseEmojis,sanitizeTableHtml);
+          return {text:cell.text,serialized:serializeSafeTableCell(input,provenance)};
+        } catch(error) {
+          return {text:cell.text,html:input.innerHTML,error:error.stack};
+        }
+      });
+    })()`);
+    check("rich cell capture round-trips every original inline cell safely",
+      prepared.every(cell => !cell.error), prepared);
+    if (prepared.some(cell => cell.error)) throw new Error("Original cell serialization failed: " + JSON.stringify(prepared));
+    await openGrid();
+    const plain = (await typeTrustedCell(["changed"], 8, { replace: true })).at(-1);
+    check("plain cell regression reaches trusted native insertion before document Update",
+      plain.events.some(event => event.event === "beforeinput" && event.trusted && event.type === "insertText") &&
+      plain.events.some(event => event.event === "input" && event.trusted && event.type === "insertText") &&
+      plain.text === "changed" && plain.focused && plain.caretInCell &&
+      JSON.stringify(await state()) === JSON.stringify(before), plain);
+    const completion = await update(), after = await state(), expected = replacePlain("changed");
+    check("trusted plain cell Update adds no generated wrapper and preserves every other source byte",
+      !completion.open && !completion.error && after.exact === expected && after.cache === expected &&
+      after.value === lf(expected) && after.undo === before.undo + 1 && after.redo === 0 && after.dirty &&
+      saves.length === beforeSaves && fs.readFileSync(fixture.file, "utf8") === original,
+      { plain, completion, after, expected });
+    await exec("historyUndo();true");
+    await wait("trusted plain cell document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+    check("trusted plain cell Update remains one exact document Undo without saving",
+      (await state()).exact === original && saves.length === beforeSaves &&
+      fs.readFileSync(fixture.file, "utf8") === original);
+
+    const codeFixture = await fresh("trusted-inline-code"), codeBefore = await state();
+    const codeSaves = saves.length;
+    await openGrid();
+    const typed = await typeTrustedCell(["`", "x", "`"], 8, { replace: true });
+    const live = typed.at(-1);
+    check("backtick regression reaches each real opening body and closing insertion",
+      typed.length === 3 && typed.every(snapshot => snapshot.events.some(event =>
+        event.event === "beforeinput" && event.trusted && event.type === "insertText")) &&
+      typed[0].text === "`" && typed[1].text === "`x", typed);
+    check("typed backticks become formatted code immediately inside the still-open cell",
+      await exec("tableCellDialog.open") && live.codes.length === 1 && live.codes[0] === "x" &&
+      live.text === "x" && live.focused && live.collapsed && live.caretInCell && !live.caretInCode &&
+      JSON.stringify(await state()) === JSON.stringify(codeBefore) && saves.length === codeSaves, live);
+    const parity = await exec(`(() => {
+      const existing=__cells.inputs()[4].querySelector('code'),created=__cells.inputs()[8].querySelector('code');
+      const fields=['fontFamily','fontSize','fontStyle','fontWeight','color','backgroundColor'];
+      return {existing:!!existing,created:!!created,same:!!existing&&!!created&&
+        fields.every(field=>getComputedStyle(existing)[field]===getComputedStyle(created)[field])};
+    })()`);
+    check("newly typed inline code has the same in-cell formatting as loaded backtick code",
+      parity.existing && parity.created && parity.same, parity);
+    await key("Z", ["control"]);
+    const undone = await exec("({html:__cells.inputs()[8].innerHTML,text:__cells.inputs()[8].textContent,codes:__cells.inputs()[8].querySelectorAll('code').length})");
+    check("native cell Undo reverses live formatting without changing document authority or history",
+      live.codes.length === 1 && live.codes[0] === "x" &&
+      undone.codes === 0 && ["`x", "`x`"].includes(undone.text) &&
+      JSON.stringify(await state()) === JSON.stringify(codeBefore) && saves.length === codeSaves, undone);
+    await key("Y", ["control"]);
+    const redone = await exec("__cells.inputs()[8].innerHTML");
+    check("native cell Redo restores the live code edit without a document transaction",
+      live.codes.length === 1 && live.codes[0] === "x" &&
+      redone === live.html && JSON.stringify(await state()) === JSON.stringify(codeBefore), { redone, live });
+    await screenshot("live-inline-code");
+    const continued = (await typeTrustedCell([" next"], 8, { preserveCaret: true })).at(-1);
+    check("typing after a closing backtick stays outside code at the preserved live caret",
+      continued.codes.length === 1 && continued.codes[0] === "x" && continued.text === "x next" &&
+      continued.focused && continued.collapsed && continued.caretInCell && !continued.caretInCode, continued);
+    const codeCompletion = await update(), codeAfter = await state(), codeExpected = replacePlain("`x` next");
+    check("live inline code commits valid Markdown without generated wrappers as one guarded Update",
+      !codeCompletion.open && !codeCompletion.error && codeAfter.exact === codeExpected &&
+      codeAfter.cache === codeExpected && codeAfter.value === lf(codeExpected) &&
+      codeAfter.undo === codeBefore.undo + 1 && codeAfter.redo === 0 &&
+      saves.length === codeSaves && fs.readFileSync(codeFixture.file, "utf8") === original,
+      { codeCompletion, codeAfter, codeExpected });
+    await openGrid();
+    const reopened = await exec(`({html:__cells.inputs()[8].innerHTML,text:__cells.inputs()[8].textContent,
+      codes:[...__cells.inputs()[8].querySelectorAll('code')].map(code=>code.textContent)})`);
+    check("committed typed backtick code reopens as the same formatted cell content",
+      reopened.text === "x next" && reopened.codes.length === 1 && reopened.codes[0] === "x", reopened);
+    await cancel();
+    check("Cancel after reopening live code leaves the exact committed document unchanged",
+      JSON.stringify(await state()) === JSON.stringify(codeAfter) && saves.length === codeSaves);
+    await exec("historyUndo();true");
+    await wait("live code document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+    check("one document Undo restores the exact pre-code CRLF duplicate-table source",
+      (await state()).exact === original && fs.readFileSync(codeFixture.file, "utf8") === original &&
+      saves.length === codeSaves);
+    for (const scenario of [
+      { name: "multiple-delimiters", parts: ["`", "`", "a", "`", "b", "`", "`"], code: "a`b", source: "``a`b``" },
+      { name: "code-pipe", parts: ["`", "a|b", "`"], code: "a|b", source: "`a\\|b`" },
+      { name: "code-slash-pipe", parts: ["`", "a\\|b", "`"], code: "a\\|b", source: "<code>a&#92;&#124;b</code>" },
+      { name: "code-html", parts: ["`", "<b>&", "`"], code: "<b>&", source: "`<b>&`" },
+      { name: "code-backslash-before-close", parts: ["`", "\\", "`"], code: "\\", source: "`\\`" },
+      { name: "code-boundary-spaces", parts: ["`", "  x  ", "`"], code: " x ", source: "`  x  `" },
+      { name: "code-all-space", parts: ["`", " ", "`"], code: " ", source: "` `" },
+      { name: "code-shortcode", parts: ["`", ":star:", "`"], code: "⭐", source: "`:star:`" },
+      { name: "literal-url", parts: ["https://example.invalid/path"], code: null, text: "https://example.invalid/path",
+        source: "https&#58;//example.invalid/path" },
+      { name: "literal-email", parts: ["user@example.invalid"], code: null, text: "user@example.invalid",
+        source: "user&#64;example.invalid" },
+      { name: "literal-www", parts: ["www.example.invalid"], code: null, text: "www.example.invalid",
+        source: "www&#46;example.invalid" },
+      { name: "escaped-opener", parts: ["\\", "`", "x", "`"], code: null, text: "\\`x`", source: "&#92;&#96;x&#96;" },
+      { name: "unmatched-opener", parts: ["`", "unclosed"], code: null, text: "`unclosed", source: "&#96;unclosed" },
+    ]) {
+      const fixture = await fresh(scenario.name), before = await state(), savesBefore = saves.length;
+      await openGrid();
+      const snapshots = await typeTrustedCell(scenario.parts, 8, { replace: true }), last = snapshots.at(-1);
+      check(scenario.name + " uses trusted input and preserves incomplete delimiter runs until their actual close",
+        snapshots.every(snapshot => snapshot.events.some(event => event.trusted && event.type === "insertText")) &&
+        (scenario.code === null || snapshots.slice(0, -1).every(snapshot => snapshot.codes.length === 0)), snapshots);
+      check(scenario.name + " has the expected live code or literal content before Update",
+        last.text === (scenario.code ?? scenario.text) &&
+        JSON.stringify(last.codes) === JSON.stringify(scenario.code === null ? [] : [scenario.code]) &&
+        JSON.stringify(await state()) === JSON.stringify(before), last);
+      const completion = await update(), after = await state(), expected = replacePlain(scenario.source);
+      check(scenario.name + " preserves exact code meaning and non-target bytes in valid table Markdown",
+        !completion.open && !completion.error && after.exact === expected && after.cache === expected &&
+        after.undo === before.undo + 1 && saves.length === savesBefore &&
+        fs.readFileSync(fixture.file, "utf8") === original, { completion, after, expected });
+      await openGrid();
+      const reopened = await exec("({text:__cells.inputs()[8].textContent,codes:[...__cells.inputs()[8].querySelectorAll('code')].map(code=>code.textContent)})");
+      check(scenario.name + " reopens with the same visible content and code formatting",
+        reopened.text === last.text && JSON.stringify(reopened.codes) === JSON.stringify(last.codes), reopened);
+      if (scenario.name === "code-slash-pipe") {
+        const authority = await exec(`(() => {
+          const input=__cells.inputs()[8],code=input.querySelector('code');
+          const provenance=tableCellSession.cells.find(cell=>cell.input===input).provenance;
+          const fragment=provenance.fragments.get(code.getAttribute('data-folia-cell-part'));
+          input.focus();
+          const range=document.createRange(),walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT);
+          range.setStart(walker.nextNode(),1);range.collapse(true);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+          return {kind:fragment.kind,generated:!!fragment.generatedCode,
+            opening:fragment.opening,closing:fragment.closing,
+            source:FoliaTableCells.serializeCell(input,provenance),html:input.innerHTML};
+        })()`);
+        check("reopened approved CODE exception takes authority from its existing HTML source, not historical metadata",
+          authority.kind === "html" && !authority.generated && authority.opening === "<code>" &&
+          authority.closing === "</code>" && authority.source === scenario.source, authority);
+        const pasted = await pasteCode("\ntail");
+        check("editing reopened approved HTML keeps its source-owned CODE and actual paste line break",
+          pasted.prevented && pasted.events.some(event => event.trusted) && pasted.codeBreaks === 1 &&
+          pasted.text === scenario.code.slice(0, 1) + "tail" + scenario.code.slice(1) &&
+          JSON.stringify(await state()) === JSON.stringify(after), pasted);
+        await key("Z", ["control"]);
+        check("reopened approved HTML paste Undo restores its exact captured DOM",
+          await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(authority.html)) &&
+          JSON.stringify(await state()) === JSON.stringify(after));
+        await key("Y", ["control"]);
+        check("reopened approved HTML paste Redo restores the exact source-owned CODE",
+          await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(pasted.html)) &&
+          JSON.stringify(await state()) === JSON.stringify(after));
+        const completion = await update(), edited = await state();
+        const expected = replacePlain(scenario.source.replace("<code>a", "<code>a<br>tail"));
+        check("editing reopened approved HTML retains its original CODE wrapper and every non-target source byte",
+          !completion.open && !completion.error && edited.exact === expected && edited.cache === expected &&
+          edited.undo === after.undo + 1 && saves.length === savesBefore &&
+          fs.readFileSync(fixture.file, "utf8") === original, { completion, edited, expected });
+        await openGrid();
+      }
+      await cancel();
+    }
+    for (const scenario of [
+      { name: "authored-shortcodes", source: ":star: ⭐ :star: end", text: "⭐ ⭐ ⭐ end" },
+      { name: "escaped-shortcode", source: "\\:star: end", text: "\\⭐ end" },
+      { name: "nested-shortcodes", source: "**:star: ⭐** [a\\[ :star:](cell.svg) `:star:` end", text: "⭐ ⭐ a[ ⭐ ⭐ end" },
+      { name: "shortcode-attributes",
+        source: '<span title=":star:">:star:</span> ![:star:](cell.svg ":star:") end', text: "⭐  end" },
+      { name: "inline-comment", source: "visible <!-- retained annotation --> end", text: "visible  end" },
+    ]) {
+      const body = replacePlain(scenario.source), fixture = await fresh(scenario.name, body);
+      const before = await state(), beforeSaves = saves.length;
+      await openGrid();
+      const typed = (await typeTrustedCell([" tail"], 8)).at(-1);
+      check(scenario.name + " preserves its actual loaded rendering during trusted neighbor input",
+        typed.text === scenario.text + " tail" &&
+        typed.events.some(event => event.trusted && event.type === "insertText") &&
+        JSON.stringify(await state()) === JSON.stringify(before), typed);
+      const completion = await update(), after = await state(), expected = replacePlain(scenario.source + " tail");
+      check(scenario.name + " retains exact authored source atoms without extra wrappers",
+        !completion.open && !completion.error && after.exact === expected &&
+        after.undo === before.undo + 1 && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after, expected });
+    }
+    for (const scenario of [
+      { name: "loaded-unmatched", source: "`x", code: "x", expected: "`x`" },
+      { name: "loaded-escaped", source: "\\`x", code: null, expected: "\\`x&#96;", masked: [0] },
+      { name: "loaded-entity", source: "&#96;x", code: null, expected: "&#96;x&#96;", masked: [0] },
+      { name: "loaded-entity-slash-opener", source: "&#92;`x", code: "x", expected: "&#92;`x`" },
+      { name: "loaded-escaped-slash-opener", source: "\\\\`x", code: "x", expected: "\\\\`x`" },
+      { name: "loaded-two-entity-slashes", source: "&#92;&#92;`x", code: "x", expected: "&#92;&#92;`x`" },
+      { name: "loaded-entity-before-escaped-opener", source: "&#92;\\`x", code: null, expected: "&#92;\\`x&#96;", masked: [1] },
+      { name: "loaded-pair-before-escaped-opener", source: "\\\\\\`x", code: null, expected: "\\\\\\`x&#96;", masked: [1] },
+      { name: "typed-after-entity-slash", source: "&#92;", parts: ["`", "x", "`"], code: "x", expected: "&#92;`x`" },
+      { name: "typed-after-escaped-slash", source: "\\\\", parts: ["`", "x", "`"], code: "x", expected: "\\\\`x`" },
+      { name: "typed-escape-after-entity-slash", source: "&#92;", parts: ["\\", "`", "x", "`"],
+        code: null, expected: "&#92;&#92;&#96;x&#96;" },
+      { name: "loaded-multiple-after-entity-slash", source: "&#92;``x", parts: ["`", "`"],
+        code: "x", expected: "&#92;`x`" },
+      { name: "typed-multiple-after-entity-slash", source: "&#92;", parts: ["`", "`", "x", "`", "`"],
+        code: "x", expected: "&#92;`x`" },
+      { name: "loaded-entity-tick-before-opener", source: "&#96;`x", code: "x", expected: "&#96;`x`", masked: [0] },
+      { name: "loaded-escaped-tick-before-opener", source: "\\``x", code: "x", expected: "\\``x`", masked: [0] },
+      { name: "loaded-entity-tick-before-multiple", source: "&#96;``x", parts: ["`", "`"],
+        code: "x", expected: "&#96;`x`", masked: [0] },
+      { name: "loaded-escaped-tick-before-multiple", source: "\\```x", parts: ["`", "`"],
+        code: "x", expected: "\\``x`", masked: [0] },
+      { name: "loaded-opener-before-literal-tick", source: "`&#96;x", code: "`x", expected: "`` `x ``", masked: [1] },
+      { name: "loaded-protected-ticks-at-both-edges", source: "`&#96;x&#96;",
+        code: "`x`", expected: "`` `x` ``", masked: [1, 3] },
+    ]) {
+      const body = replacePlain(scenario.source), fixture = await fresh(scenario.name, body);
+      const before = await state(), beforeSaves = saves.length;
+      await openGrid();
+      const projection = await exec(`(() => {
+        const cell=tableCellSession.cells.find(cell=>cell.input===__cells.inputs()[8]),range=document.createRange();
+        range.selectNodeContents(cell.input);range.collapse(false);
+        return FoliaTableCells.codeDelimiters(cell.input,cell.provenance,range);
+      })()`);
+      const masked = projection.literalTicks.map(tick => tick.index);
+      check(scenario.name + " projects only owned literal ticks at unchanged UTF16 positions",
+        JSON.stringify(masked) === JSON.stringify(scenario.masked || []) &&
+        projection.syntax.length === projection.text.length &&
+        [...Array(projection.text.length).keys()].every(index => masked.includes(index)
+          ? projection.text[index] === "`" && projection.syntax[index] === "x"
+          : projection.text[index] === projection.syntax[index]) &&
+        projection.literalTicks.every(tick => tick.origin !== undefined &&
+          Number.isInteger(tick.from) && Number.isInteger(tick.to) && tick.from < tick.to), projection);
+      const initialText = await exec("__cells.inputs()[8].textContent"), parts = scenario.parts || ["`"];
+      const typed = (await typeTrustedCell(parts, 8)).at(-1);
+      check(scenario.name + " completes only an actual unescaped source opener while the cell remains open",
+        JSON.stringify(typed.codes) === JSON.stringify(scenario.code ? [scenario.code] : []) &&
+        typed.events.some(event => event.trusted && event.type === "insertText") &&
+        JSON.stringify(await state()) === JSON.stringify(before), typed);
+      if (scenario.code) {
+        await key("Z", ["control"]);
+        const undone = await exec("({text:__cells.inputs()[8].textContent,codes:__cells.inputs()[8].querySelectorAll('code').length})");
+        const prefix = initialText + parts.slice(0, -1).join("");
+        check(scenario.name + " preserves native code Undo without changing document authority",
+          typed.codes.length === 1 && undone.codes === 0 && [prefix, prefix + "`"].includes(undone.text) &&
+          JSON.stringify(await state()) === JSON.stringify(before), undone);
+        await key("Y", ["control"]);
+        check(scenario.name + " restores exact live code DOM through native Redo",
+          typed.codes.length === 1 && await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(typed.html)) &&
+          JSON.stringify(await state()) === JSON.stringify(before));
+      }
+      const completion = await update(), after = await state();
+      check(scenario.name + " keeps literal escape provenance and exact outside bytes after Update",
+        !completion.open && !completion.error && after.exact === replacePlain(scenario.expected) &&
+        after.undo === before.undo + 1 && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after });
+      await openGrid();
+      const reopened = await exec("({text:__cells.inputs()[8].textContent,codes:[...__cells.inputs()[8].querySelectorAll('code')].map(code=>code.textContent)})");
+      check(scenario.name + " reopens with the same literal text and live code ownership",
+        reopened.text === typed.text && JSON.stringify(reopened.codes) === JSON.stringify(typed.codes), reopened);
+      await cancel();
+    }
+    for (const scenario of [
+      { name: "punctuation-tail", source: "a * b", typed: " tail", expected: "a * b tail" },
+      { name: "punctuation-middle", source: "a * b", at: 1, typed: "x", expected: "ax * b" },
+      { name: "punctuation-boundary", source: "a * b* c", at: 3, typed: "x", expected: "a &#42;x b* c" },
+      { name: "emoji-inside", source: ":star: end", atom: "emoji", typed: "x", expected: ":star:x end" },
+      { name: "emoji-replaced", source: ":star: end", atom: "emoji", replaceAtom: true, typed: "x", expected: "x end" },
+      { name: "code-emoji-inside", source: "`:star:` end", atom: "emoji", typed: "x", expected: "`:star:x` end" },
+      { name: "code-emoji-replaced", source: "`:star:` end", atom: "emoji", replaceAtom: true, typed: "x", expected: "`x` end" },
+      { name: "entity-inside", source: "&NotEqualTilde; end", atom: "escape", typed: "x", expected: "&NotEqualTilde;x end" },
+      { name: "scheme-completion", source: "https", typed: "://example.invalid/path", expected: "https&#58;//example.invalid/path" },
+      { name: "scheme-prepend", source: "example.invalid/path", at: 0, typed: "https://", expected: "https&#58;//example.invalid/path" },
+      { name: "www-completion", source: "www", typed: ".example.invalid", expected: "www&#46;example.invalid" },
+      { name: "www-prepend", source: ".example.invalid", at: 0, typed: "www", expected: "www&#46;example.invalid" },
+      { name: "email-prepend", source: "@example.invalid", at: 0, typed: "name", expected: "name&#64;example.invalid" },
+      { name: "alias-completion", source: ":st", typed: "ar:", expected: "&#58;star:" },
+      { name: "alias-prepend", source: "ar:", at: 0, typed: ":st", expected: "&#58;star:" },
+      { name: "alias-delete", source: ":st ar:", at: 3, to: 4, erase: true, expected: "&#58;star:" },
+      { name: "scheme-delete", source: "https ://example.invalid", at: 5, to: 6, erase: true, expected: "https&#58;//example.invalid" },
+      { name: "email-delete", source: "name @example.invalid", at: 4, to: 5, erase: true, expected: "name&#64;example.invalid" },
+      { name: "encoded-alias-prefix", source: "&#58;st", typed: "ar:", expected: "&#58;star:" },
+      { name: "encoded-alias-suffix", source: "ar&#58;", at: 0, typed: ":st", expected: ":star&#58;" },
+      { name: "authored-span-completion", source: '<span style="color: red">https</span> end', atom: "text",
+        typed: "://example.invalid", expected: '<span style="color: red">https&#58;//example.invalid</span> end' },
+      { name: "scheme-entity-join", source: "https&#32;://example.invalid", at: 5, to: 6, erase: true,
+        expected: "https&#58;//example.invalid" },
+      { name: "alias-entity-join", source: ":st&#32;ar:", at: 3, to: 4, erase: true, expected: "&#58;star:" },
+      { name: "www-entity-join", source: "www&#32;.example.invalid", at: 3, to: 4, erase: true,
+        expected: "www&#46;example.invalid" },
+      { name: "email-entity-join", source: "name&#32;@example.invalid", at: 4, to: 5, erase: true,
+        expected: "name&#64;example.invalid" },
+      { name: "emoji-neighbor-entity-join", source: ":star: :st&#32;ar:", at: 5, to: 6, erase: true,
+        expected: ":star: &#58;star:" },
+      { name: "authored-entity-join", source: '<span style="color: red">https&#32;://example.invalid</span> end',
+        at: 5, to: 6, erase: true, expected: '<span style="color: red">https&#58;//example.invalid</span> end' },
+      { name: "inert-entity-join", source: ":st&#32;ar&#58;", at: 3, to: 4, erase: true, expected: ":star&#58;" },
+      { name: "authored-barrier-join", source: "https&#32;<span>://example.invalid</span>", at: 5, to: 6, erase: true,
+        expected: "https<span>://example.invalid</span>" },
+      { name: "inline-link-destination-join", source: "[label](foo bar)", at: 11, to: 12, erase: true,
+        expected: "&#91;label](foobar)" },
+      { name: "inline-image-destination-join", source: "![label](foo bar)", at: 12, to: 13, erase: true,
+        expected: "!&#91;label](foobar)" },
+      { name: "reference-label-join", source: "[label][cell ref]", remove: " ", erase: true,
+        definitions: "[cellref]: cell.svg", expected: "&#91;label]&#91;cellref]" },
+      { name: "shortcut-label-join", source: "[cell ref]", remove: " ", erase: true,
+        definitions: "[cellref]: cell.svg", expected: "&#91;cellref]" },
+      { name: "reference-image-label-join", source: "![label][cell ref]", remove: " ", erase: true,
+        definitions: "[cellref]: cell.svg", expected: "!&#91;label]&#91;cellref]" },
+      { name: "entity-link-destination-join", source: "[label](foo &#32;bar)", remove: "  ", erase: true,
+        expected: "&#91;label](foobar)" },
+      { name: "collapsed-reference-join", source: "[cell ref][]", remove: " ", erase: true,
+        definitions: "[cellref]: cell.svg", expected: "&#91;cellref]&#91;]" },
+      { name: "nested-link-label-join", source: "[la[bel]](foo bar)", remove: " ", erase: true,
+        expected: "&#91;la&#91;bel]](foobar)" },
+      { name: "escaped-link-label-control", source: "[la\\[bel]](foo bar)", remove: " ", erase: true,
+        expected: "[la\\[bel]](foobar)" },
+      { name: "strong-delimiter-join", source: "** a**", remove: " ", erase: true,
+        expected: "&#42;&#42;a**" },
+      { name: "emphasis-delimiter-join", source: "* a*", remove: " ", erase: true,
+        expected: "&#42;a*" },
+      { name: "strike-delimiter-join", source: "~~ a~~", remove: " ", erase: true,
+        expected: "&#126;&#126;a~~" },
+      { name: "code-delimiter-tail-delete", source: "``a```", at: 5, to: 6, erase: true,
+        expected: "``a&#96;&#96;" },
+      { name: "escape-delimiter-join", source: "\\x*", remove: "x", erase: true,
+        expected: "&#92;*" },
+      { name: "angle-url-join", source: "<https ://example.invalid>", remove: " ", erase: true,
+        expected: "&#60;https&#58;//example.invalid>" },
+      { name: "angle-email-join", source: "<name @example.invalid>", remove: " ", erase: true,
+        expected: "&#60;name&#64;example.invalid>" },
+      { name: "incomplete-html-completion", source: "<sp an", typed: ">", expected: "<sp an&#62;" },
+      { name: "authored-break-neighbor", source: "a<br>b * c", typed: " tail", expected: "a<br>b * c tail" },
+      { name: "markdown-strong-edit", source: "**first**", atom: "text", typed: "x", expected: "**firstx**" },
+      { name: "markdown-emphasis-edit", source: "*first*", atom: "text", typed: "x", expected: "*firstx*" },
+      { name: "markdown-strike-edit", source: "~~first~~", atom: "text", typed: "x", expected: "~~firstx~~" },
+      { name: "underscore-emphasis-leading-join", source: "a _hello_", remove: " ", erase: true,
+        expected: "a*hello*" },
+      { name: "underscore-strong-leading-join", source: "a __hello__", remove: " ", erase: true,
+        expected: "a**hello**" },
+      { name: "underscore-emphasis-trailing-join", source: "_hello_ a", remove: " ", erase: true,
+        expected: "*hello*a" },
+      { name: "underscore-strong-trailing-join", source: "__hello__ a", remove: " ", erase: true,
+        expected: "**hello**a" },
+      { name: "underscore-delimiter-spelling-control", source: "a __hello__ b", at: 0, to: 1, typed: "c",
+        expected: "c __hello__ b" },
+      { name: "emphasis-opening-punctuation-join", source: "a _!hello_ b", at: 1, to: 2, erase: true,
+        expected: "&#97;*!hello* b" },
+      { name: "strong-closing-punctuation-join", source: "a **hello!** b", at: 8, to: 9, erase: true,
+        expected: "a **hello!**&#98;" },
+      { name: "emphasis-closing-punctuation-join", source: "a *hello!* b", at: 8, to: 9, erase: true,
+        expected: "a *hello!*&#98;" },
+      { name: "strike-closing-punctuation-join", source: "a ~~hello!~~ b", at: 8, to: 9, erase: true,
+        expected: "a ~~hello!~~&#98;" },
+      { name: "emphasis-opening-unicode-punctuation-join", source: "a _\u00A9hello_ b", at: 1, to: 2, erase: true,
+        expected: "&#97;*\u00A9hello* b" },
+      { name: "emphasis-opening-supplementary-letter-join", source: "\uD801\uDC00 _!hello_ b", at: 2, to: 3, erase: true,
+        expected: "&#66560;*!hello* b" },
+      { name: "strong-closing-supplementary-letter-join", source: "a **hello!** \uD801\uDC00", at: 8, to: 9, erase: true,
+        expected: "a **hello!**&#66560;" },
+      { name: "nested-shared-delimiter-closing-join", source: "a ***x!*** b", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a ***x!***&#98;" },
+      { name: "nested-shared-delimiter-opening-join", source: "a ***!x*** b", at: 1, to: 2, erase: true, nativeHistory: true,
+        expected: "&#97;***!x*** b" },
+      { name: "nested-mixed-delimiter-closing-join", source: "a **_x!_** b", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a **_x!_**&#98;" },
+      { name: "nested-mixed-delimiter-opening-join", source: "a **_!x_** b", at: 1, to: 2, erase: true, nativeHistory: true,
+        expected: "&#97;**_!x_** b" },
+      { name: "nested-mixed-delimiter-letter-control", source: "a *__x__* b", at: 3, to: 4, erase: true, nativeHistory: true,
+        expected: "a *__x__*&#98;" },
+      { name: "nested-normalized-underscore-closing-join", source: "a _**x!**_ b", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a _**x!**_&#98;" },
+      { name: "nested-strong-underscore-closing-join", source: "a __*x!*__ b", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a __*x!*__&#98;" },
+      { name: "nested-strong-underscore-opening-join", source: "a __*!x*__ b", at: 1, to: 2, erase: true, nativeHistory: true,
+        expected: "&#97;__*!x*__ b" },
+      { name: "nested-all-underscore-closing-join", source: "a ___hello___ b", at: 7, to: 8, erase: true, nativeHistory: true,
+        expected: "a ___hello___&#98;" },
+      { name: "nested-all-underscore-opening-join", source: "a ___hello___ b", at: 1, to: 2, erase: true, nativeHistory: true,
+        expected: "&#97;___hello___ b" },
+      { name: "nested-underscore-supplementary-letter-join", source: "a ___hello___ \uD801\uDC00",
+        at: 7, to: 8, erase: true, nativeHistory: true, expected: "a ___hello___&#66560;" },
+      { name: "nested-underscore-unicode-letter-join", source: "\u03B1 ___hello___ b",
+        at: 1, to: 2, erase: true, nativeHistory: true, expected: "&#945;___hello___ b" },
+      { name: "nested-partial-body-underscore-control", source: "**_hello_ a**", at: 5, to: 6, erase: true, nativeHistory: true,
+        expected: "***hello*a**", expectedStructure: [["STRONG", null, "helloa"], ["EM", null, "hello"]] },
+      { name: "nested-strike-delimiter-letter-control", source: "a ***~~x!~~*** b", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a ***~~x!~~***b" },
+      { name: "nested-strike-outer-closing-join", source: "a ~~*x!*~~ b", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a ~~*x!*~~&#98;" },
+      { name: "nested-strike-outer-opening-join", source: "a ~~*!x*~~ b", at: 1, to: 2, erase: true, nativeHistory: true,
+        expected: "&#97;~~*!x*~~ b" },
+      { name: "nested-supplementary-letter-join", source: "a ***x!*** \uD801\uDC00", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a ***x!***&#66560;" },
+      { name: "nested-unicode-symbol-join", source: "a ***\u00A9x*** b", at: 1, to: 2, erase: true, nativeHistory: true,
+        expected: "&#97;***\u00A9x*** b" },
+      { name: "nested-protected-entity-control", source: "a ***x!*** &#98;", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a ***x!***&#98;" },
+      { name: "nested-authored-barrier-control", source: 'a ***x!*** <span title="keep">b</span>', at: 4, to: 5,
+        erase: true, nativeHistory: true, expected: 'a ***x!***<span title="keep">b</span>' },
+      { name: "nested-code-barrier-control", source: "a ***x!*** `b`", at: 4, to: 5, erase: true, nativeHistory: true,
+        expected: "a ***x!***`b`" },
+      { name: "sibling-emphasis-strong-punctuation-join", source: "*x!* **y**", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x!*__y__" },
+      { name: "sibling-strong-emphasis-punctuation-join", source: "**x!** *y*", remove: " ", erase: true,
+        nativeHistory: true, expected: "**x!**_y_" },
+      { name: "sibling-emphasis-strong-opening-control", source: "*x* **!y**", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x***!y**" },
+      { name: "sibling-strong-emphasis-opening-control", source: "**x** *!y*", remove: " ", erase: true,
+        nativeHistory: true, expected: "**x***!y*" },
+      { name: "sibling-unicode-punctuation-join", source: "*x\u00A9* **y**", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x\u00A9*__y__" },
+      { name: "sibling-three-owner-join", source: "*x!* **y***z*", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x!*__y__*z*" },
+      { name: "sibling-owned-label-join", source: "[*x!* **y**](one.md)", remove: " ", erase: true,
+        nativeHistory: true, expected: "[*x!*__y__](<one.md>)" },
+      { name: "sibling-emphasis-strike-join", source: "*x!* ~~y~~", remove: " ", erase: true,
+        nativeHistory: true, expected: "_x!_~~y~~" },
+      { name: "sibling-strong-strike-join", source: "**x!** ~~y~~", remove: " ", erase: true,
+        nativeHistory: true, expected: "__x!__~~y~~" },
+      { name: "sibling-strike-emphasis-opening-control", source: "~~x~~ *!y*", remove: " ", erase: true,
+        nativeHistory: true, expected: "~~x~~*!y*" },
+      { name: "sibling-strike-strong-opening-control", source: "~~x~~ **!y**", remove: " ", erase: true,
+        nativeHistory: true, expected: "~~x~~**!y**" },
+      { name: "sibling-fixed-nest-opening-join", source: "**x!** ***y***", remove: " ", erase: true,
+        nativeHistory: true, expected: "__x!__***y***" },
+      { name: "sibling-fixed-nest-closing-join", source: "***x!*** **y**", remove: " ", erase: true,
+        nativeHistory: true, expected: "***x!***__y__" },
+      { name: "sibling-fixed-mixed-nest-opening-control", source: "*x!* **_y_**", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x!***_y_**" },
+      { name: "sibling-fixed-mixed-nest-closing-join", source: "**_x!_** *y*", remove: " ", erase: true,
+        nativeHistory: true, expected: "**_x!_**_y_" },
+      { name: "sibling-authored-barrier-control", source: '*x!* <span title="keep">y</span>', remove: " ", erase: true,
+        nativeHistory: true, expected: '*x!*<span title="keep">y</span>' },
+      { name: "sibling-code-barrier-control", source: "*x!* `y`", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x!*`y`" },
+      { name: "sibling-link-barrier-control", source: "*x!* [**y**](one.md)", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x!*[**y**](one.md)" },
+      { name: "sibling-protected-entity-barrier-control", source: "*x!* &#121;**z**", remove: " ", erase: true,
+        nativeHistory: true, expected: "*x!*&#121;**z**" },
+      { name: "native-bold-command", source: "hello", at: 0, to: 5, nativeFormat: "B" },
+      { name: "native-italic-command", source: "hello", at: 0, to: 5, nativeFormat: "I" },
+      { name: "native-underline-command", source: "hello", at: 0, to: 5, nativeFormat: "U" },
+      { name: "native-meta-bold-command", source: "hello", at: 0, to: 5, nativeFormat: "B", formatModifiers: ["meta"] },
+      { name: "native-meta-italic-command", source: "hello", at: 0, to: 5, nativeFormat: "I", formatModifiers: ["meta"] },
+      { name: "native-meta-underline-command", source: "hello", at: 0, to: 5, nativeFormat: "U", formatModifiers: ["meta"] },
+      { name: "native-bold-collapsed-command", source: "hello", at: 2, nativeFormat: "B" },
+      { name: "native-bold-markdown-command", source: "**hello**", at: 1, to: 4, nativeFormat: "B" },
+      { name: "native-italic-authored-command", source: '<em title="keep">hello</em>', at: 1, to: 4, nativeFormat: "I" },
+      { name: "native-underline-authored-command", source: '<span title="keep">hello</span>', at: 0, to: 5, nativeFormat: "U" },
+      { name: "markdown-link-edit", source: "[first](one.md)", atom: "text", at: 2, typed: "x",
+        expected: "[fixrst](<one.md>)" },
+      { name: "semantic-strong-adjacency", source: "**first** **last**", remove: " ", erase: true,
+        expected: "**firstlast**" },
+      { name: "semantic-emphasis-adjacency", source: "*first* *last*", remove: " ", erase: true,
+        expected: "*firstlast*" },
+      { name: "semantic-strike-adjacency", source: "~~first~~ ~~last~~", remove: " ", erase: true,
+        expected: "~~firstlast~~" },
+      { name: "nested-strong-scheme-join", source: "**https ://example.invalid**", remove: " ", erase: true,
+        expected: "**https&#58;//example.invalid**" },
+      { name: "nested-emphasis-entity-join", source: "*:st&#32;ar:*", remove: " ", erase: true,
+        expected: "*&#58;star:*" },
+      { name: "nested-strike-bracket-join", source: "~~[label](foo bar)~~", remove: " ", erase: true,
+        expected: "~~&#91;label](foobar)~~" },
+      { name: "deep-emphasis-scheme-join", source: "***https ://example.invalid***", remove: " ", erase: true,
+        expected: "***https&#58;//example.invalid***" },
+      { name: "nested-protected-entity-control", source: "**:st&#32;ar&#58;**", remove: " ", erase: true,
+        expected: "**:star&#58;**" },
+      { name: "nested-authored-neighbor", source: '**https ://example.invalid** <span title="&#58;star:">keep</span> `hold`',
+        remove: " ", erase: true, expected: '**https&#58;//example.invalid** <span title="&#58;star:">keep</span> `hold`' },
+      { name: "nested-link-context-control", source: "[https ://example.invalid](one.md)", remove: " ", erase: true,
+        expected: "[https://example.invalid](<one.md>)" },
+      { name: "link-escaped-open-atom", source: "[a\\[b](one.md)", at: 0, to: 1, typed: "c",
+        expected: "[c\\[b](<one.md>)" },
+      { name: "link-escaped-close-atom", source: "[a\\]b](one.md)", at: 0, to: 1, typed: "c",
+        expected: "[c\\]b](<one.md>)" },
+      { name: "link-escaped-utf16-atom", source: "[😀a\\[b](one.md)", at: 2, to: 3, typed: "c",
+        expected: "[😀c\\[b](<one.md>)" },
+      { name: "nested-link-escaped-atom", source: "**[a\\[b](one.md)**", at: 0, to: 1, typed: "c",
+        expected: "**[c\\[b](<one.md>)**" },
+      ...[["strong", "**", "STRONG"], ["emphasis", "*", "EM"], ["strike", "~~", "DEL"]].flatMap(
+        ([name, marker, formattingTag]) => ["start", "end"].flatMap(edge =>
+          [" ", "\u00a0"].map((typed, index) => ({
+            name: name + "-" + edge + "-whitespace-" + index, source: marker + "hello" + marker,
+            atom: "text", at: edge === "start" ? 0 : 5, typed, formattingTag,
+            whitespaceEdge: edge,
+            expected: marker + (edge === "start" ? "&#WS;hello" : "hello&#WS;") + marker,
+          })))),
+      ...[["strong", "**", "STRONG"], ["emphasis", "*", "EM"], ["strike", "~~", "DEL"]].map(
+        ([name, marker, formattingTag]) => ({
+          name: name + "-all-whitespace", source: marker + "hello" + marker,
+          atom: "text", at: 0, to: 5, typed: "\u00a0", formattingTag, whitespaceEdge: "only",
+          expected: marker + "&#WS;" + marker,
+        })),
+      ...[["strong", "**", "STRONG"], ["emphasis", "*", "EM"], ["strike", "~~", "DEL"]].map(
+        ([name, marker, formattingTag]) => ({
+          name: name + "-both-whitespace-runs", source: marker + "hello" + marker,
+          atom: "text", at: 0, to: 5, typed: "  hello  ", formattingTag, whitespaceEdge: "both",
+          expected: marker + "&#START;hello&#END;" + marker,
+        })),
+      { name: "nested-format-whitespace", source: "***hello***", atom: "text", at: 0, typed: " ",
+        formattingTag: "EM", whitespaceEdge: "start", expected: "***&#WS;hello***" },
+      { name: "authored-strong-replacement", source: '<strong title="keep">hello</strong>', at: 0, to: 5, typed: "changed",
+        expected: '<strong title="keep">changed</strong>' },
+      { name: "authored-emphasis-replacement", source: '<em title="keep">hello</em>', at: 0, to: 5, typed: "changed",
+        expected: '<em title="keep">changed</em>' },
+      { name: "authored-strike-replacement", source: '<del title="keep">hello</del>', at: 0, to: 5, typed: "changed",
+        expected: '<del title="keep">changed</del>' },
+      { name: "authored-bold-alias-replacement", source: '<b title="keep">hello</b>', at: 0, to: 5, typed: "changed",
+        expected: '<b title="keep">changed</b>' },
+      { name: "authored-plain-strong-replacement", source: "<strong>hello</strong>", at: 0, to: 5, typed: "  hello  ",
+        expected: "<strong>  hello  </strong>" },
+      { name: "authored-plain-emphasis-replacement", source: "<em>hello</em>", at: 0, to: 5, typed: "  hello  ",
+        expected: "<em>  hello  </em>" },
+      { name: "authored-plain-strike-replacement", source: "<del>hello</del>", at: 0, to: 5, typed: "  hello  ",
+        expected: "<del>  hello  </del>" },
+      { name: "authored-plain-bold-alias-replacement", source: "<b>hello</b>", at: 0, to: 5, typed: "  hello  ",
+        expected: "<b>  hello  </b>" },
+      { name: "nested-markdown-full-replacement", source: "***hello***", at: 0, to: 5, typed: "  hello  ",
+        expected: "***&#32;&#32;hello&#32;&#32;***" },
+      { name: "nested-authored-full-replacement", source: "<strong>*hello*</strong>", at: 0, to: 5, typed: "  hello  ",
+        expected: "<strong>*&#32;&#32;hello&#32;&#32;*</strong>" },
+      { name: "native-select-all-strong", source: "**hello**", nativeSelectAll: true, typed: "  hello  ",
+        expected: "**&#32;&#32;hello&#32;&#32;**" },
+      { name: "native-select-all-authored", source: "<strong>hello</strong>", nativeSelectAll: true, typed: "  hello  ",
+        expected: "<strong>  hello  </strong>" },
+      { name: "native-select-all-nested", source: "***hello***", nativeSelectAll: true, typed: "  hello  ",
+        expected: "***&#32;&#32;hello&#32;&#32;***" },
+      { name: "element-boundary-strong", source: "**hello**", elementSelection: true, typed: "  hello  ",
+        expected: "**&#32;&#32;hello&#32;&#32;**" },
+      { name: "element-boundary-authored", source: "<strong>hello</strong>", elementSelection: true, typed: "  hello  ",
+        expected: "<strong>  hello  </strong>" },
+      { name: "element-boundary-nested", source: "***hello***", elementSelection: true, typed: "  hello  ",
+        expected: "***&#32;&#32;hello&#32;&#32;***" },
+      { name: "repeated-markdown-replacement", source: "**hello**", elementSelection: true,
+        typed: "first", repeatReplacement: "second", expected: "**second**" },
+      { name: "repeated-authored-replacement", source: "<strong>hello</strong>", elementSelection: true,
+        typed: "first", repeatReplacement: "second", expected: "<strong>second</strong>" },
+      { name: "retained-space-atom", source: "**&#32;hello**", at: 6, typed: " tail",
+        expected: "**&#32;hello tail**" },
+      { name: "retained-nbsp-atom", source: "**&#160;hello**", at: 6, typed: " tail",
+        expected: "**&#160;hello tail**" },
+      { name: "merged-boundary-atoms", source: "**&#32;first** **last&#32;**", at: 6, to: 7, erase: true,
+        expected: "**&#32;firstlast&#32;**" },
+      { name: "link-delete-escaped-repeat", source: "[a\\[[b]c](one.md)", at: 1, to: 2, erase: true, atomHistory: "\\[",
+        expected: "[a[b]c](<one.md>)" },
+      { name: "link-retain-escaped-repeat", source: "[a\\[[b]c](one.md)", at: 2, to: 3, erase: true, atomHistory: "\\[",
+        expected: "[a\\[b&#93;c](<one.md>)" },
+      { name: "nested-delete-escaped-repeat", source: "**[a\\[[b]c](one.md)**", at: 1, to: 2, erase: true, atomHistory: "\\[",
+        expected: "**[a[b]c](<one.md>)**" },
+      { name: "nested-retain-escaped-repeat", source: "**[a\\[[b]c](one.md)**", at: 2, to: 3, erase: true, atomHistory: "\\[",
+        expected: "**[a\\[b&#93;c](<one.md>)**" },
+      { name: "utf16-delete-escaped-repeat", source: "[😀a\\[[b]c](one.md)", at: 3, to: 4, erase: true, atomHistory: "\\[",
+        expected: "[😀a[b]c](<one.md>)" },
+      { name: "link-delete-escaped-close-repeat", source: "[a[b]\\]c](one.md)", at: 4, to: 5, erase: true, atomHistory: "\\]",
+        expected: "[a[b]c](<one.md>)" },
+      { name: "link-retain-escaped-close-repeat", source: "[a[b]\\]c](one.md)", at: 3, to: 4, erase: true, atomHistory: "\\]",
+        expected: "[a&#91;b\\]c](<one.md>)" },
+      { name: "link-replace-escaped-boundary", source: "[a\\[[b]c](one.md)", at: 1, to: 3, typed: "x", atomHistory: "\\[",
+        expected: "[axb&#93;c](<one.md>)" },
+      { name: "link-replace-identical-opener", source: "[a\\[[b]c](one.md)", at: 1, to: 3, typed: "[", atomHistory: "\\[",
+        expected: "[a&#91;b&#93;c](<one.md>)" },
+      { name: "link-replace-identical-closer", source: "[a[b]\\]c](one.md)", at: 3, to: 5, typed: "]", atomHistory: "\\]",
+        expected: "[a[b]c](<one.md>)" },
+      { name: "adjacent-strong-scheme-control", source: "**https** **://example.invalid**", remove: " ", erase: true,
+        expected: "**https****://example.invalid**" },
+      { name: "merged-strong-scheme-join", source: "**http** **s://example.invalid**", remove: " ", erase: true,
+        expected: "**https&#58;//example.invalid**" },
+      { name: "merged-strong-reference-join", source: "**[** **label]**", remove: " ", erase: true,
+        definitions: "[label]: cell.svg", expected: "**&#91;label]**" },
+      { name: "semantic-link-attachment", source: "[first](foo bar)", remove: " ", erase: true,
+        definitions: "[first]: first.md", expected: "[first]&#40;foobar)" },
+      { name: "semantic-link-adjacency", source: "[first] [last]", remove: " ", erase: true,
+        definitions: "[first]: first.md\r\n[last]: last.md",
+        expected: '[first](<first.md>)[last](<last.md>)',
+        targets: [["A", "first", "first.md", null], ["A", "last", "last.md", null]] },
+      { name: "semantic-full-reference-control", source: "[**f\\[irst**][one] [last][two]", remove: " ", erase: true,
+        definitions: '[one]: <first(1).md> "one &quot;title&quot;"\r\n[two]: <last(2).md> "two title"',
+        expected: '[**f\\[irst**][one][last][two]',
+        targets: [["A", "f[irst", "first(1).md", 'one "title"'], ["A", "last", "last(2).md", "two title"]] },
+      { name: "semantic-link-titles", source: "[**first**] [last]", remove: " ", erase: true,
+        definitions: '[**first**]: <first(1).md> "one &quot;title&quot;"\r\n[last]: <last(2).md> "two title"',
+        expected: '[**first**](<first(1).md> "one &#34;title&#34;")[last](<last(2).md> "two title")',
+        targets: [["A", "first", "first(1).md", 'one "title"'], ["A", "last", "last(2).md", "two title"]] },
+      { name: "semantic-link-literal-attributes", source: "[first] [last]", remove: " ", erase: true,
+        definitions: '[first]: <docs/first&#58;star:.md> "literal &#58;star:"\r\n[last]: <last?x=1&amp;y=2> "last"',
+        expected: '[first](<docs/first&#58;star&#58;.md> "literal &#58;star&#58;")[last](<last?x=1&#38;y=2> "last")',
+        targets: [["A", "first", "docs/first:star:.md", "literal :star:"], ["A", "last", "last?x=1&y=2", "last"]] },
+      { name: "semantic-image-adjacency", source: "![first] [last]", remove: " ", erase: true,
+        definitions: '[first]: cell.svg "image"\r\n[last]: last.md',
+        expected: '![first](<cell.svg> "image")[last](<last.md>)',
+        targets: [["IMG", "first", "cell.svg", "image"], ["A", "last", "last.md", null]] },
+      { name: "semantic-link-delimiter-neighbor", source: "** a[first]**", remove: " ", erase: true,
+        definitions: "[first]: first.md", expected: "&#42;&#42;a[first]**" },
+      { name: "authored-style-delimiter-neighbor", source: '** a** <span style="color: red">keep</span> [first]',
+        remove: " ", erase: true, definitions: "[first]: first.md",
+        expected: '&#42;&#42;a** <span style="color: red">keep</span> [first]' },
+    ]) {
+      const replaceScenario = value => {
+        const body = replacePlain(value);
+        return scenario.definitions ? body.replace("\r\n\r\nBefore prose",
+          "\r\n" + scenario.definitions + "\r\n\r\nBefore prose") : body;
+      };
+      const body = replaceScenario(scenario.source), fixture = await fresh(scenario.name, body);
+      const before = await state(), beforeSaves = saves.length;
+      await openGrid();
+      const targets = () => exec(`([...__cells.inputs()[8].querySelectorAll('a,img')].map(node=>[
+        node.tagName,node.tagName==='IMG'?node.getAttribute('alt'):node.textContent,
+        node.tagName==='IMG'?(node.getAttribute('data-original-src')||node.getAttribute('src')):
+          node.getAttribute('href'),node.getAttribute('title')]))`);
+      const formattingStructure = () => exec(`([...__cells.inputs()[8].querySelectorAll('strong,em,del,code,span[title]')]
+        .map(node=>[node.tagName,node.getAttribute('title'),node.textContent]))`);
+      const initialStructure = scenario.nativeHistory ? await formattingStructure() : null;
+      if (initialStructure) check(scenario.name + " starts with actual nested formatting before native input",
+        initialStructure.length >= 2 && initialStructure.some(node => ["EM", "STRONG", "DEL"].includes(node[0])),
+        initialStructure);
+      if (scenario.targets) check(scenario.name + " starts with the actual intended formatted links and attributes",
+        JSON.stringify(await targets()) === JSON.stringify(scenario.targets), await targets());
+      if (scenario.targets?.some(target => target[0] === "IMG")) {
+        const resolved = await exec("__cells.inputs()[8].querySelector('img').getAttribute('src')");
+        check(scenario.name + " resolves the actual image against its real source document",
+          resolved === require("url").pathToFileURL(path.join(path.dirname(fixture.file), "cell.svg")).href, resolved);
+      }
+      if (scenario.atom || scenario.at !== undefined || scenario.remove) {
+        const setup = await page(scenario => {
+          const cell=tableCellSession.cells[8],input=cell.input;
+          const captured=[...input.querySelectorAll('[data-folia-cell-part]')].find(node=>
+            cell.provenance.fragments.get(node.getAttribute('data-folia-cell-part'))?.kind===scenario.atom);
+          const node=scenario.atom?captured?.firstChild:document.createTreeWalker(input,NodeFilter.SHOW_TEXT).nextNode();
+          if(!node||node.nodeType!==Node.TEXT_NODE)throw new Error('No actual captured text node for caret setup');
+          input.focus();const range=document.createRange();
+          if(scenario.atom) {
+            range.setStart(node,scenario.replaceAtom?0:scenario.at??node.data.length);
+            range.setEnd(node,scenario.replaceAtom?node.data.length:scenario.to??scenario.at??node.data.length);
+          } else {
+            const point=offset=>{
+              const walker=document.createTreeWalker(input,NodeFilter.SHOW_TEXT);
+              for(let text;(text=walker.nextNode());) {
+                if(offset<=text.data.length)return {node:text,offset};
+                offset-=text.data.length;
+              }
+              throw new Error('Caret fixture offset lies outside actual displayed text');
+            };
+            const at=scenario.remove?input.textContent.indexOf(scenario.remove):scenario.at;
+            if(at<0)throw new Error('Native deletion fixture does not contain its declared text');
+            const from=point(at),to=point(scenario.remove?at+scenario.remove.length:scenario.to??at);
+            range.setStart(from.node,from.offset);range.setEnd(to.node,to.offset);
+          }
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+          return {text:node.data,selected:selection.toString(),inside:input.contains(selection.anchorNode)};
+        }, scenario);
+        check(scenario.name + " places a real caret or selection inside the captured source text without replacing DOM",
+          setup.inside && (scenario.remove ? setup.selected === scenario.remove :
+            scenario.replaceAtom || scenario.erase || scenario.to > (scenario.at ?? 0)
+              ? setup.selected.length > 0 : setup.selected === ""), setup);
+      }
+      const atomSnapshot = () => page(raw => {
+        const cell=tableCellSession.cells[8],input=cell.input;
+        return {text:input.textContent,atoms:[...input.querySelectorAll('[data-folia-cell-part]')].flatMap(node=>{
+          const id=node.getAttribute('data-folia-cell-part'),fragment=cell.provenance.fragments.get(id);
+          return fragment?.kind==='escape'&&fragment.raw===raw?
+            [{id,text:node.textContent,retained:node.textContent===fragment.initialText}]:[];
+        }),links:[...input.querySelectorAll('a')].map(node=>({text:node.textContent,href:node.getAttribute('href')}))};
+      }, scenario.atomHistory);
+      const initialAtoms = scenario.atomHistory ? await atomSnapshot() : null;
+      if (initialAtoms) check(scenario.name + " starts with distinct escaped-atom ownership in one actual link",
+        initialAtoms.atoms.length === 1 && initialAtoms.atoms[0].text === scenario.atomHistory[1] &&
+        initialAtoms.links.length === 1 && initialAtoms.links[0].href === "one.md" &&
+        initialAtoms.links[0].text === initialAtoms.text, initialAtoms);
+      if (scenario.nativeSelectAll) {
+        await exec("__cells.inputs()[8].focus();true");
+        await key("A", ["control"]);
+        const selected = await exec(`({
+          text:getSelection().toString(),inside:__cells.inputs()[8].contains(getSelection().getRangeAt(0).commonAncestorContainer),
+          start:getSelection().getRangeAt(0).startContainer.nodeName,end:getSelection().getRangeAt(0).endContainer.nodeName
+        })`);
+        check(scenario.name + " uses actual native Select All inside the cell before replacement",
+          selected.text === "hello" && selected.inside, selected);
+      }
+      if (scenario.elementSelection) {
+        const selected = await exec(`(() => {
+          const input=__cells.inputs()[8],range=document.createRange();
+          input.focus();range.selectNodeContents(input);
+          getSelection().removeAllRanges();getSelection().addRange(range);
+          return {text:range.toString(),start:range.startContainer===input,end:range.endContainer===input};
+        })()`);
+        check(scenario.name + " starts from an actual element-boundary text selection without replacing DOM",
+          selected.text === "hello" && selected.start && selected.end, selected);
+      }
+      const replacementHistory = scenario.nativeHistory || scenario.nativeSelectAll || scenario.elementSelection || !scenario.erase &&
+        (scenario.replaceAtom || scenario.to > (scenario.at ?? 0));
+      const originalCellHtml = replacementHistory || scenario.nativeFormat ? await exec("__cells.inputs()[8].innerHTML") : null;
+      let typed = (await typeTrustedCell([scenario.typed ?? ""], 8,
+        { preserveCaret: !!scenario.atom || scenario.at !== undefined || !!scenario.remove ||
+            !!scenario.nativeSelectAll || !!scenario.elementSelection,
+          eraseSelection: !!scenario.erase, formatKey: scenario.nativeFormat,
+          formatModifiers: scenario.formatModifiers })).at(-1);
+      if (scenario.nativeFormat) {
+        check(scenario.name + " blocks the actual platform-equivalent shortcut before a rich DOM mutation",
+          typed.html === originalCellHtml && typed.events.some(event =>
+            event.event === "keydown" && event.trusted && event.prevented &&
+            event.key.toUpperCase() === scenario.nativeFormat &&
+            (scenario.formatModifiers?.includes("meta") ? event.meta : event.control)) &&
+          !typed.events.some(event => /^format(?:Bold|Italic|Underline)$/.test(event.type)) &&
+          typed.error === "Bold, italic and underline shortcuts are not available in this popup. Existing formatting is unchanged." &&
+          JSON.stringify(await state()) === JSON.stringify(before), typed);
+        const edited = (await typeTrustedCell(["x"], 8, { preserveCaret: true })).at(-1);
+        check(scenario.name + " still accepts actual native text input after the blocked shortcut",
+          edited.events.some(event => event.event === "beforeinput" && event.trusted && event.type === "insertText") &&
+          edited.html !== originalCellHtml && edited.focused && edited.caretInCell, edited);
+        await key("Z", ["control"]);
+        const undone = await exec("__cells.inputs()[8].innerHTML");
+        check(scenario.name + " preserves one-step native cell Undo and leaves document history untouched",
+          undone === originalCellHtml && JSON.stringify(await state()) === JSON.stringify(before), { originalCellHtml, undone });
+        await key("Y", ["control"]);
+        const redone = await exec("__cells.inputs()[8].innerHTML");
+        check(scenario.name + " preserves native Redo without creating source wrappers",
+          redone === edited.html, { edited, redone });
+        await key("Z", ["control"]);
+        const completed = await update();
+        check(scenario.name + " closes an unchanged Update without a document edit or implicit Save",
+          !completed.open && JSON.stringify(await state()) === JSON.stringify(before) &&
+          saves.length === beforeSaves && fs.readFileSync(fixture.file, "utf8") === body, { completed, before });
+        continue;
+      }
+      check(scenario.name + " reaches trusted native input before guarded Update",
+        typed.events.some(event => event.trusted && event.type === (scenario.erase ? "deleteContentBackward" : "insertText")) &&
+        JSON.stringify(await state()) === JSON.stringify(before), typed);
+      let expected = scenario.expected;
+      const formattingSelector = { STRONG: "strong,b", EM: "em,i", DEL: "del,s,strike" }[scenario.formattingTag];
+      if (scenario.whitespaceEdge) {
+        const character = scenario.whitespaceEdge === "start" ? typed.text[0] : typed.text.at(-1);
+        const formatted = await exec(`__cells.inputs()[8].querySelector(${JSON.stringify(formattingSelector)})?.textContent`);
+        const leading = /^[ \u00a0]+/.exec(typed.text)?.[0] || "";
+        const trailing = /[ \u00a0]+$/.exec(typed.text)?.[0] || "";
+        check(scenario.name + " really places the native whitespace inside its existing formatting",
+          [" ", "\u00a0"].includes(character) && formatted === typed.text &&
+          (scenario.whitespaceEdge === "both" ? leading.length === 2 && trailing.length === 2 &&
+            formatted === leading + "hello" + trailing :
+          formatted === (scenario.whitespaceEdge === "only" ? character :
+            scenario.whitespaceEdge === "start" ? character + "hello" : "hello" + character)),
+          { character, formatted, typed });
+        expected = expected.replace("&#WS;", "&#" + character.charCodeAt(0) + ";");
+        const entities = value => [...value].map(char => "&#" + char.charCodeAt(0) + ";").join("");
+        expected = expected.replace("&#START;", entities(leading)).replace("&#END;", entities(trailing));
+      }
+      if (initialAtoms) {
+        const edited = await atomSnapshot(), deleted =
+          scenario.name.includes("delete-escaped") || scenario.name.includes("replace-");
+        check(scenario.name + " preserves the actual surviving atom identity, not just repeated display text",
+          edited.atoms.filter(atom => atom.text && atom.retained).length === (deleted ? 0 : 1) &&
+          edited.atoms.every(atom => !atom.text || !atom.retained || initialAtoms.atoms.some(before =>
+            atom.id === before.id && atom.text === before.text)), { initialAtoms, edited });
+        await key("Z", ["control"]);
+        const undone = await atomSnapshot();
+        check(scenario.name + " native Undo restores the original escaped atom without a document edit",
+          JSON.stringify(undone) === JSON.stringify(initialAtoms) &&
+          JSON.stringify(await state()) === JSON.stringify(before), { initialAtoms, undone });
+        await key("Y", ["control"]);
+        const redone = await atomSnapshot();
+        check(scenario.name + " native Redo restores the edited source ownership without a document edit",
+          JSON.stringify(redone) === JSON.stringify(edited) &&
+          JSON.stringify(await state()) === JSON.stringify(before), { edited, redone });
+      }
+      if (replacementHistory) {
+        await key("Z", ["control"]);
+        const undone = await exec("__cells.inputs()[8].innerHTML");
+        check(scenario.name + " one native Undo restores exact source ownership and cell content",
+          undone === originalCellHtml && JSON.stringify(await state()) === JSON.stringify(before),
+          { originalCellHtml, undone });
+        await key("Y", ["control"]);
+        const redone = await exec(`({
+          html:__cells.inputs()[8].innerHTML,inside:__cells.inputs()[8].contains(getSelection().anchorNode)
+        })`);
+        check(scenario.name + " one native Redo restores exact edited ownership and an in-cell caret",
+          redone.html === typed.html && redone.inside && JSON.stringify(await state()) === JSON.stringify(before),
+          { typed, redone });
+      }
+      if (scenario.repeatReplacement) {
+        const first = typed;
+        typed = (await typeTrustedCell([scenario.repeatReplacement], 8, { replace: true })).at(-1);
+        check(scenario.name + " reaches a second trusted replacement in the same owned cell",
+          typed.text === scenario.repeatReplacement && typed.events.some(event =>
+            event.trusted && event.type === "insertText") &&
+          JSON.stringify(await state()) === JSON.stringify(before), typed);
+        await key("Z", ["control"]);
+        const undone = await exec("__cells.inputs()[8].innerHTML");
+        check(scenario.name + " one native Undo restores only the first replacement",
+          undone === first.html && JSON.stringify(await state()) === JSON.stringify(before), { first, undone });
+        await key("Y", ["control"]);
+        const redone = await exec("__cells.inputs()[8].innerHTML");
+        check(scenario.name + " one native Redo restores the second replacement without losing ownership",
+          redone === typed.html && JSON.stringify(await state()) === JSON.stringify(before), { typed, redone });
+      }
+      const completion = await update(), after = await state();
+      check(scenario.name + " keeps unchanged spelling and source atoms without an editor wrapper",
+        !completion.open && !completion.error && after.exact === replaceScenario(expected) &&
+        after.undo === before.undo + 1 && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after, scenario });
+      if (completion.open) await cancel();
+      else if (scenario.targets || scenario.formattingTag || initialAtoms || replacementHistory) {
+        await openGrid();
+        if (replacementHistory) check(scenario.name + " reopens with the exact replacement text",
+          await exec("__cells.inputs()[8].textContent===" + JSON.stringify(typed.text)), typed);
+        if (initialStructure) check(scenario.name + " reopens with the same actual nested formatting and protected barriers",
+          JSON.stringify(await formattingStructure()) === JSON.stringify(scenario.expectedStructure || initialStructure),
+          await formattingStructure());
+        if (scenario.targets) check(scenario.name + " reopens as the same actual semantic nodes after clean Markdown normalization",
+          JSON.stringify(await targets()) === JSON.stringify(scenario.targets), await targets());
+        if (scenario.formattingTag) {
+          const formatted = await exec(`__cells.inputs()[8].querySelector(${JSON.stringify(formattingSelector)})?.textContent`);
+          check(scenario.name + " reopens with the exact native whitespace and formatting",
+            formatted === typed.text, { formatted, typed });
+        }
+        if (initialAtoms) {
+          const reopened = await atomSnapshot();
+          check(scenario.name + " reopens as the intended actual link and destination",
+            reopened.links.length === 1 && reopened.links[0].href === "one.md" &&
+            reopened.links[0].text === typed.text && reopened.text === typed.text, reopened);
+        }
+        await cancel();
+      }
+    }
+    const unmatchedBody = replacePlain("`` prefix"), unmatchedFixture = await fresh("loaded-outer-run", unmatchedBody);
+    const unmatchedBefore = await state(), unmatchedSaves = saves.length;
+    await openGrid();
+    const laterCode = (await typeTrustedCell([" ", "`", "x", "`"], 8)).at(-1);
+    check("loaded unmatched delimiter does not veto a later valid code span during real typing",
+      laterCode.codes.length === 1 && laterCode.codes[0] === "x" &&
+      laterCode.text === "`` prefix x" &&
+      JSON.stringify(await state()) === JSON.stringify(unmatchedBefore), laterCode);
+    const unmatchedCompletion = await update(), unmatchedAfter = await state();
+    check("later live code preserves the loaded unmatched source prefix exactly after Update",
+      !unmatchedCompletion.open && !unmatchedCompletion.error &&
+      unmatchedAfter.exact === replacePlain("`` prefix `x`") &&
+      unmatchedAfter.undo === unmatchedBefore.undo + 1 && saves.length === unmatchedSaves &&
+      fs.readFileSync(unmatchedFixture.file, "utf8") === unmatchedBody, { unmatchedCompletion, unmatchedAfter });
+    if (unmatchedCompletion.open) await cancel();
+    for (const navigation of ["focus", "pointer", "arrow"]) {
+      const body = replacePlain(""), fixture = await fresh("abandoned-opener-" + navigation, body);
+      const sourceSlot = body.lastIndexOf("|  |") + 3;
+      const before = await state(), beforeSaves = saves.length;
+      await openGrid();
+      const started = (await typeTrustedCell(["`", "`", " prefix "], 8)).at(-1);
+      check(navigation + " starts a real typed unmatched outer delimiter before any composition",
+        sourceSlot >= 3 && body.slice(sourceSlot - 3, sourceSlot + 1) === "|  |" &&
+        started.text === "`` prefix " && started.codes.length === 0 &&
+        started.events.some(event => event.trusted && event.type === "insertText"), started);
+      if (navigation === "focus") {
+        await key("Tab");
+        check("native Tab actually leaves the cell with the abandoned opener",
+          await exec("document.activeElement===tableCellSession.cells[9].input"));
+      } else if (navigation === "arrow") {
+        await key("Left");
+        await key("Right");
+      } else {
+        const point = await exec(`(() => {
+          const input=tableCellSession.cells[8].input,rect=input.getBoundingClientRect();
+          const point={x:Math.round(rect.left+6),y:Math.round(rect.top+rect.height/2)};
+          return {...point,hit:input.contains(document.elementFromPoint(point.x,point.y))};
+        })()`);
+        check("native pointer reset actually targets the same cell", point.hit, point);
+        win.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
+        win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, x: point.x, y: point.y });
+        win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: point.x, y: point.y });
+        await settle();
+      }
+      const later = (await typeTrustedCell(["`", "x", "`"], 8)).at(-1);
+      check(navigation + " navigation abandons the old opener and formats later code immediately",
+        JSON.stringify(later.codes) === '["x"]' && later.text === "`` prefix x" &&
+        JSON.stringify(await state()) === JSON.stringify(before), later);
+      const completion = await update(), after = await state();
+      check(navigation + " navigation keeps new code and literal abandoned ticks in one document Update",
+        !completion.open && !completion.error &&
+        after.exact === body.slice(0, sourceSlot) + "&#96;&#96; prefix `x`" + body.slice(sourceSlot) &&
+        after.undo === before.undo + 1 && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after });
+      if (completion.open) await cancel();
+    }
+    for (const scenario of [
+      { name: "strong-bracket", source: "**a\\[b** end", text: "a[b end" },
+      { name: "emphasis-bracket", source: "*a\\[b* end", text: "a[b end" },
+      { name: "strike-bracket", source: "~~a\\[b~~ end", text: "a[b end" },
+    ]) {
+      const body = replacePlain(scenario.source), fixture = await fresh(scenario.name, body);
+      const before = await state(), beforeSaves = saves.length;
+      check(scenario.name + " is an ordinary rendered table with the expected authored formatting",
+        await exec("viewer.querySelectorAll('table')[1].rows[2].cells[2].textContent===" + JSON.stringify(scenario.text)));
+      await openGrid();
+      const typed = (await typeTrustedCell([" tail"], 8)).at(-1);
+      check(scenario.name + " remains editable through actual native neighbor typing",
+        typed.text === scenario.text + " tail" &&
+        typed.events.some(event => event.trusted && event.type === "insertText"), typed);
+      const completion = await update(), after = await state();
+      check(scenario.name + " retains its exact nested bracket escapes and all non-target bytes",
+        !completion.open && !completion.error &&
+        after.exact === replacePlain(scenario.source + " tail") &&
+        after.undo === before.undo + 1 && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after });
+    }
+    for (const scenario of [
+      { name: "retained-decimal-alias", source: "literal &#58;star:", text: "literal :star:",
+        expected: "<code>literal &#58;star:</code>" },
+      { name: "retained-hex-alias", source: "literal &#x3a;star:", text: "literal :star:",
+        expected: "<code>literal &#x3a;star:</code>" },
+      { name: "retained-emoji-alias", source: "literal :star:", text: "literal ⭐",
+        expected: "`literal :star:`" },
+      { name: "retained-markdown-escapes", source: "literal \\*star\\*", text: "literal *star*",
+        expected: "`literal *star*`" },
+      { name: "retained-entity-backticks", source: "literal &#96;tick&#96;", text: "literal `tick`",
+        delimiter: "``", padding: true, expected: "`` literal `tick` ``" },
+      { name: "retained-inner-alias-entity", source: ":st&#97;r:", text: ":star:",
+        expected: "<code>:st&#97;r:</code>" },
+      { name: "mixed-code-provenance", source: "&#58;star: :star: ⭐", text: ":star: ⭐ ⭐",
+        expected: "<code>&#58;star: :star: ⭐</code>" },
+    ]) {
+      const body = replacePlain(scenario.source), fixture = await fresh(scenario.name, body);
+      const before = await state(), beforeSaves = saves.length;
+      await openGrid();
+      const initial = await page(() => {
+        const cell=tableCellSession.cells[8],input=cell.input;
+        input.focus();const range=document.createRange();range.selectNodeContents(input);range.collapse(true);
+        const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        return {text:input.textContent,codes:input.querySelectorAll('code').length,
+          atoms:[...cell.provenance.fragments.values()].filter(part=>['escape','emoji'].includes(part.kind)).map(part=>part.raw)};
+      });
+      check(scenario.name + " starts with real retained source atoms and a native insertion caret",
+        initial.text === scenario.text && initial.codes === 0 && initial.atoms.length > 0, initial);
+      await typeTrustedCell([(scenario.delimiter || "`") + (scenario.padding ? " " : "")],
+        8, { preserveCaret: true });
+      const closed = (await typeTrustedCell([(scenario.padding ? " " : "") + (scenario.delimiter || "`")], 8)).at(-1);
+      check(scenario.name + " formats immediately without changing retained literal content",
+        JSON.stringify(closed.codes) === JSON.stringify([scenario.text]) &&
+        closed.text === scenario.text && closed.focused && closed.caretInCell && !closed.caretInCode &&
+        closed.events.some(event => event.trusted && event.type === "insertText") &&
+        JSON.stringify(await state()) === JSON.stringify(before), closed);
+      await key("Z", ["control"]);
+      const undone = await exec("({codes:tableCellSession.cells[8].input.querySelectorAll('code').length,text:tableCellSession.cells[8].input.textContent})");
+      check(scenario.name + " retains native cell Undo without altering the document",
+        undone.codes === 0 && undone.text.includes(scenario.text) &&
+        JSON.stringify(await state()) === JSON.stringify(before), undone);
+      await key("Y", ["control"]);
+      const redone = await exec("({codes:[...tableCellSession.cells[8].input.querySelectorAll('code')].map(node=>node.textContent),text:tableCellSession.cells[8].input.textContent})");
+      check(scenario.name + " restores the faithful live code through native Redo",
+        JSON.stringify(redone.codes) === JSON.stringify([scenario.text]) && redone.text === scenario.text, redone);
+      const completion = await update(), after = await state();
+      check(scenario.name + " uses faithful code source in one guarded document Update",
+        !completion.open && !completion.error && after.exact === replacePlain(scenario.expected) &&
+        after.undo === before.undo + 1 && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after });
+      if (completion.open) await cancel();
+      else {
+        await openGrid();
+        const reopened = await exec("({codes:[...tableCellSession.cells[8].input.querySelectorAll('code')].map(node=>node.textContent),text:tableCellSession.cells[8].input.textContent})");
+        check(scenario.name + " reopens with the same immediate code display and source meaning",
+          JSON.stringify(reopened.codes) === JSON.stringify([scenario.text]) && reopened.text === scenario.text, reopened);
+        await cancel();
+      }
+    }
+    await fresh("new-typed-code-alias");
+    const freshCodeBefore = await state();
+    await openGrid();
+    const freshCode = (await typeTrustedCell(["`", ":star:", "`"], 8, { replace: true })).at(-1);
+    check("newly typed code keeps the existing emoji pipeline rather than a new literal-code policy",
+      JSON.stringify(freshCode.codes) === '["⭐"]' && freshCode.text === "⭐" &&
+      JSON.stringify(await state()) === JSON.stringify(freshCodeBefore), freshCode);
+    await cancel();
+    const authored = '<span data-folia-cell-part="author">authored</span> ' +
+      '<span DATA-FOLIA-CELL-PART=\'upper\'>case</span> ' +
+      '<strong data-folia-cell-part="replacement">bold</strong> ' +
+      '<span style="color: red" data-folia-cell-code="history-author">styled</span> ' +
+      '\\`literal\\` <span class="noted-text" data-note-id="73" data-note-title="Title &amp; value" ' +
+      'data-note-content="keep" data-note-color="#c0ffee">noted</span> ' +
+      '<code data-folia-cell-part="code-author" data-folia-cell-code="source-code">loaded</code> end';
+    const authoredBody = replacePlain(authored), authoredFixture = await fresh("authored-inline", authoredBody);
+    const authoredBefore = await state(), authoredSaves = saves.length;
+    const authoredCapture = await exec(`(() => {
+      const model=FoliaTableCells.index(window.CustomTabs.snapshotExactEditorContent(),marked,protectTableSource);
+      const cell=model.tables[1].rows[2].cells[2],input=document.createElement('div');
+      try {
+        const provenance=FoliaTableCells.prepareCell(input,cell.text,${JSON.stringify(authored)},marked,model.links,parseEmojis,sanitizeTableHtml);
+        const refused=operation=>{
+          try {operation();return false;}
+          catch(error){if(error.message!=='tableCells.cellType')throw error;return true;}
+        };
+        const unknown=input.cloneNode(true),duplicate=input.cloneNode(true);
+        unknown.querySelector('['+provenance.partAttribute+']').setAttribute(provenance.partAttribute,'unknown');
+        duplicate.append(duplicate.querySelector('['+provenance.partAttribute+']').cloneNode(true));
+        const duplicateSource=serializeSafeTableCell(duplicate,provenance);
+        duplicate.lastElementChild.textContent='again';
+        return {html:input.innerHTML,serialized:serializeSafeTableCell(input,provenance),
+          privatePart:provenance.partAttribute,privateCode:provenance.codeAttribute,
+          authored:input.querySelector('[data-folia-cell-part="author"]')?.textContent,
+          upper:input.querySelector('[data-folia-cell-part="upper"]')?.textContent,
+          unknownRefused:refused(()=>serializeSafeTableCell(unknown,provenance)),
+          duplicateSource,editedRepeat:serializeSafeTableCell(duplicate,provenance)};
+      } catch(error) {return {html:input.innerHTML,error:error.stack};}
+    })()`);
+    check("authored spans and literal escapes pass the same safe source capture as ordinary cells",
+      !authoredCapture.error, authoredCapture);
+    if (authoredCapture.error) throw new Error("Authored cell capture failed: " + JSON.stringify(authoredCapture));
+    check("authored marker-like attributes and repeated intact source remain exact while unknown capture IDs refuse",
+      authoredCapture.serialized === authored && authoredCapture.authored === "authored" &&
+      authoredCapture.upper === "case" && authoredCapture.privatePart !== "data-folia-cell-part" &&
+      authoredCapture.privateCode !== "data-folia-cell-code" &&
+      authoredCapture.unknownRefused &&
+      authoredCapture.duplicateSource === authored + '<span data-folia-cell-part="author">authored</span>' &&
+      authoredCapture.editedRepeat === authored + '<span data-folia-cell-part="author">again</span>', authoredCapture);
+    await openGrid();
+    const neighbor = (await typeTrustedCell([" tail"], 8)).at(-1);
+    check("real neighbor typing leaves authored spans notes and escaped literal backticks intact",
+      neighbor.text.includes("`literal`") && neighbor.codes.length === 1 && neighbor.codes[0] === "loaded" &&
+      neighbor.events.some(event => event.trusted && event.type === "insertText") &&
+      JSON.stringify(await state()) === JSON.stringify(authoredBefore), neighbor);
+    await screenshot("authored-inline-cell");
+    const authoredCompletion = await update(), authoredAfter = await state();
+    check("authored bare styled and note spans retain exact spelling without an additional editor wrapper",
+      !authoredCompletion.open && !authoredCompletion.error &&
+      authoredAfter.exact === replacePlain(authored + " tail") &&
+      authoredAfter.undo === authoredBefore.undo + 1 && saves.length === authoredSaves &&
+      fs.readFileSync(authoredFixture.file, "utf8") === authoredBody, { authoredCompletion, authoredAfter });
+    await openGrid();
+    await exec(`(() => {
+      const input=__cells.inputs()[8];input.focus();
+      const range=document.createRange();range.selectNodeContents(input.querySelector('strong'));
+      const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+      return true;
+    })()`);
+    const replaced = (await typeTrustedCell(["new"], 8, { preserveCaret: true })).at(-1);
+    check("native replacement retains the actual authored owner despite colliding source attribute names",
+      replaced.text.includes("case new styled") && replaced.events.some(event=>event.trusted) &&
+      JSON.stringify(await state()) === JSON.stringify(authoredAfter), replaced);
+    const liveOwned = (await typeTrustedCell([" `", "z", "`"], 8)).at(-1);
+    check("live code in a collision-bearing cell shares its capture context without claiming authored code markers",
+      JSON.stringify(liveOwned.codes) === '["loaded","z"]' && !liveOwned.caretInCode, liveOwned);
+    await key("Z", ["control"]);
+    check("collision-bearing live code Undo preserves the authored source CODE",
+      await exec("JSON.stringify([...__cells.inputs()[8].querySelectorAll('code')].map(code=>code.textContent))==='[\"loaded\"]'") &&
+      JSON.stringify(await state()) === JSON.stringify(authoredAfter));
+    await key("Y", ["control"]);
+    check("collision-bearing live code Redo restores exact DOM and the generated caret, not an authored history marker",
+      await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(liveOwned.html)) &&
+      await exec("!getSelection().anchorNode.parentElement.closest('code')") &&
+      JSON.stringify(await state()) === JSON.stringify(authoredAfter));
+    const ownedCompletion = await update(), ownedAfter = await state();
+    const ownedExpected = replacePlain(authored.replace(">bold</strong>", ">new</strong>") + " tail `z`");
+    check("replacement and live code preserve exact authored attributes and exclude actual private metadata from Markdown",
+      !ownedCompletion.open && !ownedCompletion.error && ownedAfter.exact === ownedExpected &&
+      ownedAfter.cache === ownedExpected && ownedAfter.undo === authoredAfter.undo + 1 &&
+      saves.length === authoredSaves && fs.readFileSync(authoredFixture.file, "utf8") === authoredBody,
+      { ownedCompletion, ownedAfter, ownedExpected });
+
+    const imeFixture = await fresh("native-composition"), imeBefore = await state(), imeSaves = saves.length;
+    await openGrid();
+    await typeTrustedCell([], 8, { replace: true });
+    await exec(`(() => {
+      const input=__cells.inputs()[8];window.__cellComposition=[];
+      window.__cellCompositionListener=e=>window.__cellComposition.push({
+        type:e.type,inputType:e.inputType,data:e.data,trusted:e.isTrusted,composing:e.isComposing});
+      for(const type of ['compositionstart','compositionupdate','compositionend','beforeinput','input'])
+        input.addEventListener(type,window.__cellCompositionListener);
+      return true;
+    })()`);
+    try {
+      await bounded("native Chromium composition update", win.webContents.debugger.sendCommand("Input.imeSetComposition",
+        { text: "`ime`", selectionStart: 5, selectionEnd: 5 }));
+      const composing = await exec(`({text:__cells.inputs()[8].textContent,codes:__cells.inputs()[8].querySelectorAll('code').length,
+        events:window.__cellComposition.slice()})`);
+      check("actual Chromium composition remains unmodified while the IME range is active",
+        composing.text === "`ime`" && composing.codes === 0 &&
+        composing.events.some(event => event.type === "compositionstart" && event.trusted) &&
+        composing.events.some(event => event.type === "input" && event.trusted && event.composing) &&
+        JSON.stringify(await state()) === JSON.stringify(imeBefore), composing);
+      await bounded("native Chromium composition commit", win.webContents.debugger.sendCommand("Input.insertText", { text: "`ime`" }));
+      const committed = await exec(`({html:__cells.inputs()[8].innerHTML,text:__cells.inputs()[8].textContent,
+        codes:[...__cells.inputs()[8].querySelectorAll('code')].map(code=>code.textContent),
+        events:window.__cellComposition.slice()})`);
+      // CDP ends the trusted Chromium composition with an untrusted compositionend.
+      check("committed Chromium composition formats code once before blur or document Update",
+        committed.text === "ime" && JSON.stringify(committed.codes) === '["ime"]' &&
+        committed.events.some(event => event.type === "compositionend" && event.data === "`ime`") &&
+        JSON.stringify(await state()) === JSON.stringify(imeBefore), committed);
+      await key("Z", ["control"]);
+      const imeUndone = await exec("({text:__cells.inputs()[8].textContent,codes:__cells.inputs()[8].querySelectorAll('code').length})");
+      check("native Undo reverses composition formatting without restarting conversion or changing the document",
+        committed.codes.length === 1 && imeUndone.text === "`ime`" && imeUndone.codes === 0 &&
+        JSON.stringify(await state()) === JSON.stringify(imeBefore), imeUndone);
+      await key("Y", ["control"]);
+      check("native Redo restores the committed composition code without a source edit",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(committed.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(imeBefore));
+      const imeContinued = (await typeTrustedCell([" tail"], 8, { preserveCaret: true })).at(-1);
+      check("typing after committed composition stays outside the restored code node",
+        JSON.stringify(imeContinued.codes) === '["ime"]' && imeContinued.text === "ime tail" &&
+        !imeContinued.caretInCode, imeContinued);
+    } finally {
+      await exec(`(() => {
+        const input=__cells.inputs()[8];
+        for(const type of ['compositionstart','compositionupdate','compositionend','beforeinput','input'])
+          input.removeEventListener(type,window.__cellCompositionListener);
+        delete window.__cellCompositionListener;delete window.__cellComposition;return true;
+      })()`);
+    }
+    const imeCompletion = await update(), imeAfter = await state();
+    check("native composition code updates Markdown once without saving or changing other source bytes",
+      !imeCompletion.open && !imeCompletion.error && imeAfter.exact === replacePlain("`ime` tail") &&
+      imeAfter.undo === imeBefore.undo + 1 && saves.length === imeSaves &&
+      fs.readFileSync(imeFixture.file, "utf8") === original, { imeCompletion, imeAfter });
+  }
+  async function click() {
+    const nativeClick = async point => {
+      win.webContents.sendInputEvent({ type: "mouseMove", ...point });
+      win.webContents.sendInputEvent({ type: "mouseDown", button: "right", clickCount: 1, ...point });
+      win.webContents.sendInputEvent({ type: "mouseUp", button: "right", clickCount: 1, ...point });
+      await wait("trusted table context menu", "contextMenu.classList.contains('visible')");
+    };
+    await fresh("empty-text-row-selection", "# Empty selection\n\n| | |\n| - | - |\n| | |");
+    const emptyBefore = await state(), emptySaves = saves.length;
+    for (const scope of ["table", "row"]) {
+      const selected = await page(scope => {
+        const table=viewer.querySelector('table'),range=document.createRange();
+        range.selectNode(scope==='table'?table:table.rows[1]);
+        getSelection().removeAllRanges();getSelection().addRange(range);
+        __cells.rightClick(table.rows[1].cells[0]);
+        return {collapsed:range.collapsed,text:range.toString(),action:__cells.action(true)};
+      }, scope);
+      check(scope + " empty-text selected-rows setup has a real noncollapsed range without selected text",
+        !selected.collapsed && !selected.text.trim(), selected);
+      check(scope + " empty-text selection cannot open Edit selected rows",
+        !selected.action.opened && selected.action.error ===
+          "Select a table or its rows first. The selection must contain exactly one table.", selected);
+      if (selected.action.opened) await cancel();
+    }
+    check("empty-text row selection leaves source history and saves unchanged",
+      JSON.stringify(await state()) === JSON.stringify(emptyBefore) && saves.length === emptySaves);
+    const sourceWhitespace = await page(() => {
+      const start=markdownEditor.value.lastIndexOf('| | |')+1;
+      __cells.source(start,start+1);
+      return {text:markdownEditor.value.slice(start,start+1),action:__cells.action(true)};
+    });
+    check("Markdown whitespace selection really selects a nonempty blank inside the table row",
+      sourceWhitespace.text === " ", sourceWhitespace);
+    check("Markdown whitespace-only selection cannot open Edit selected rows",
+      !sourceWhitespace.action.opened && sourceWhitespace.action.error ===
+        "Select a table or its rows first. The selection must contain exactly one table.", sourceWhitespace);
+    if (sourceWhitespace.action.opened) await cancel();
+    const sourceSyntax = await page(() => {
+      const start=markdownEditor.value.lastIndexOf('| | |'),end=start+'| | |'.length;
+      __cells.source(start,end);
+      return {text:markdownEditor.value.slice(start,end),action:__cells.action(true)};
+    });
+    check("Markdown syntax-only row selection really contains pipes without any cell text",
+      sourceSyntax.text === "| | |" && sourceSyntax.text.trim().length > 0, sourceSyntax);
+    check("Markdown syntax-only row selection cannot open Edit selected rows",
+      !sourceSyntax.action.opened && sourceSyntax.action.error ===
+        "Select a table or its rows first. The selection must contain exactly one table.", sourceSyntax);
+    if (sourceSyntax.action.opened) await cancel();
+    await fresh("image-only-row-selection", '# Image selection\n\n| <img alt="header"> |\n| - |\n| <img alt="body"> |');
+    const imageBefore = await state(), imageSaves = saves.length;
+    const imageSelection = await page(() => {
+      const table=viewer.querySelector('table'),range=document.createRange();
+      range.selectNode(table.rows[1].cells[0].querySelector('img'));
+      getSelection().removeAllRanges();getSelection().addRange(range);
+      __cells.rightClick(table.rows[1].cells[0]);
+      return {collapsed:range.collapsed,text:range.toString(),images:range.cloneContents().querySelectorAll('img').length,
+        action:__cells.action(true)};
+    });
+    check("image-only selected-rows setup selects a real image without text",
+      !imageSelection.collapsed && !imageSelection.text.trim() && imageSelection.images === 1, imageSelection);
+    check("image-only selection does not substitute for the required selected text",
+      !imageSelection.action.opened && imageSelection.action.error ===
+        "Select a table or its rows first. The selection must contain exactly one table.", imageSelection);
+    if (imageSelection.action.opened) await cancel();
+    check("image-only row selection leaves source history and saves unchanged",
+      JSON.stringify(await state()) === JSON.stringify(imageBefore) && saves.length === imageSaves);
+    const body = "# Click\n\n| A | B |\n| - | - |\n| one | two |\n\n| C | D |\n| - | - |\n| three | four |";
+    await fresh("clicked-table", body);
+    const before = await state(), beforeSaves = saves.length, second = body.indexOf("| C |");
+    for (const origin of ["preview", "markdown"]) {
+      for (const selectionKind of ["empty", "unrelated", "multiple"]) {
+        const setup = await page((origin, kind, second) => {
+          hideContextMenu();
+          const tables=viewer.querySelectorAll('table'),selection=getSelection();
+          selection.removeAllRanges();
+          if(origin==='markdown') {
+            markdownEditor.focus();
+            markdownEditor.setSelectionRange(0,kind==='empty'?0:kind==='multiple'?markdownEditor.value.length:3,'backward');
+          } else if(kind!=='empty') {
+            const range=document.createRange();
+            range.setStartBefore(tables[0]);
+            range.setEndAfter(tables[kind==='multiple'?1:0]);
+            if(kind==='unrelated')selection.setBaseAndExtent(range.endContainer,range.endOffset,range.startContainer,range.startOffset);
+            else selection.addRange(range);
+          }
+          window.__cellClickRange=selection.rangeCount?selection.getRangeAt(0).cloneRange():null;
+          window.__cellClickDirection={anchorNode:selection.anchorNode,anchorOffset:selection.anchorOffset,
+            focusNode:selection.focusNode,focusOffset:selection.focusOffset};
+          const source=[markdownEditor.selectionStart,markdownEditor.selectionEnd,markdownEditor.selectionDirection];
+          const target=tables[1].rows[1].cells[0],rect=target.getBoundingClientRect();
+          const point=origin==='markdown'?__cells.sourcePoint(second):{
+            x:Math.round(rect.left+8),y:Math.round(rect.top+rect.height/2)};
+          const hit=document.elementFromPoint(point.x,point.y);
+          return {point,source,hit:origin==='markdown'?hit===markdownEditor:!!tables[1].contains(hit),
+            mapped:origin==='markdown'?editorScroll.sourceLineAt(point.x,point.y):null};
+        }, origin, selectionKind, second);
+        check(origin + " " + selectionKind + " click actor reaches the independently located second table",
+          setup.hit && (origin !== "markdown" || setup.mapped?.start === second), setup);
+        await nativeClick(setup.point);
+        const opened = await page(() => __cells.action(false));
+        check(origin + " " + selectionKind + " Edit table uses the actual clicked table without manufacturing a selection",
+          opened.opened && opened.count === 4 &&
+          await exec("__cells.inputs()[0].textContent==='C'&&__cells.inputs()[1].textContent==='D'") &&
+          JSON.stringify(await state()) === JSON.stringify(before), opened);
+        await cancel();
+        const restored = await page((origin, source) => {
+          if(origin==='markdown') return JSON.stringify([markdownEditor.selectionStart,markdownEditor.selectionEnd,
+            markdownEditor.selectionDirection])===JSON.stringify(source);
+          const selection=getSelection(),saved=window.__cellClickRange,direction=window.__cellClickDirection;
+          return saved?selection.rangeCount===1&&selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START,saved)===0&&
+            selection.getRangeAt(0).compareBoundaryPoints(Range.END_TO_END,saved)===0&&
+            selection.anchorNode===direction.anchorNode&&selection.anchorOffset===direction.anchorOffset&&
+            selection.focusNode===direction.focusNode&&selection.focusOffset===direction.focusOffset:selection.rangeCount===0;
+        }, origin, setup.source);
+        check(origin + " " + selectionKind + " right-click and Cancel preserve the user's original selection", restored, setup);
+      }
+      const outside = await page(origin => {
+        const table=viewer.querySelector('table'),selection=getSelection();
+        selection.removeAllRanges();
+        if(origin==='markdown')__cells.source(0,markdownEditor.value.length,0);
+        else {const range=document.createRange();range.selectNode(table);selection.addRange(range);
+          __cells.rightClick(viewer.querySelector('h1'));}
+        return __cells.action(false);
+      }, origin);
+      check(origin + " outside-table click never falls back to an unrelated table selection",
+        !outside.opened && outside.error === "Right-click inside a table to edit it.", outside);
+      const missingPoint = await page(origin => {
+        hideContextMenu();
+        getSelection().removeAllRanges();
+        if(origin==='markdown'){
+          markdownEditor.focus();markdownEditor.setSelectionRange(0,0);
+          return __cells.sourcePoint(markdownEditor.value.indexOf('| C |'));
+        }
+        const rect=viewer.querySelectorAll('table')[1].rows[1].cells[0].getBoundingClientRect();
+        return {x:Math.round(rect.left+8),y:Math.round(rect.top+rect.height/2)};
+      }, origin);
+      await nativeClick(missingPoint);
+      const missingRows = await page(() => __cells.action(true));
+      check(origin + " Edit selected rows still requires a real nonempty text selection",
+        !missingRows.opened && missingRows.error === "Select a table or its rows first. The selection must contain exactly one table.",
+        missingRows);
+    }
+    const icon = await exec(`(() => {
+      const button=document.getElementById('ctxEditSelectedRows'),icon=button.querySelector('svg'),label=button.querySelector('[data-i18n]');
+      return {leading:!!icon&&icon.nextElementSibling===label,hidden:icon?.getAttribute('aria-hidden'),
+        size:icon&&[icon.getAttribute('width'),icon.getAttribute('height')],label:label?.textContent};
+    })()`);
+    check("Edit selected rows has a decorative leading icon consistent with the context menu",
+      icon.leading && icon.hidden === "true" && JSON.stringify(icon.size) === '["16","16"]' &&
+      icon.label === "Edit selected rows", icon);
+    check("click-target cases leave document history source and saves unchanged",
+      JSON.stringify(await state()) === JSON.stringify(before) && saves.length === beforeSaves);
+    await exec("delete window.__cellClickRange;delete window.__cellClickDirection;true");
+    const expectedNotice = "Select a table or its rows first. The selection must contain exactly one table.";
+    await wait("qualified empty-row-selection notice expires normally", `(() => {
+      const toast=document.getElementById('notificationToast');
+      if(document.getElementById('notificationMessage').textContent!==${JSON.stringify(expectedNotice)})
+        throw new Error('Unexpected notification replaced the empty-row-selection rejection');
+      return !toast.classList.contains('show')&&getComputedStyle(toast).opacity==='0'&&
+        toast.getAnimations().every(animation=>!animation.pending&&animation.playState==='finished');
+    })()`, 8300);
+    for (const scenario of [
+      { name: "BOM first header", body: "\uFEFF| A | B |\n| - | - |\n| one | two |\n\n# BOM click", heading: "BOM click", at: 0 },
+      { name: "terminal trailing spaces", body: "# Trailing click\n\n| A | B |\n| - | - |\n| one | two |   ",
+        heading: "Trailing click", marker: "| one |" },
+      { name: "wrapped scrolled row", body: "# Wrapped click\n\n" + "Leading prose.\n".repeat(24) +
+        "\n| A | B |\n| - | - |\n| " + "wide ".repeat(200) + "| two |",
+        heading: "Wrapped click", marker: "| wide", visualLine: 3 },
+      { name: "scaled wrapped row", body: "# Scaled click\n\n| A | B |\n| - | - |\n| " + "wide ".repeat(200) + "| two |",
+        heading: "Scaled click", marker: "| wide", visualLine: 3, scale: true },
+    ]) {
+      const fixture = await fresh("point-" + scenario.heading, scenario.body, scenario.heading);
+      const before = await state(), beforeSaves = saves.length;
+      const at = scenario.at ?? lf(scenario.body).indexOf(scenario.marker);
+      const setup = await page((at, visualLine, scale) => {
+        const oldStyle=markdownEditor.getAttribute('style');
+        if(scale){markdownEditor.style.transform='scale(.85)';markdownEditor.style.transformOrigin='top left';}
+        markdownEditor.focus();markdownEditor.setSelectionRange(0,0);
+        const point=__cells.sourcePoint(at,visualLine||0),style=getComputedStyle(markdownEditor);
+        return {point,oldStyle,hit:document.elementFromPoint(point.x,point.y)===markdownEditor,
+          mapped:editorScroll.sourceLineAt(point.x,point.y),scroll:markdownEditor.scrollTop,
+          wrapped:markdownEditor.scrollHeight-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom)>
+            (markdownEditor.value.split('\n').length+3)*parseFloat(style.lineHeight)};
+      }, at, scenario.visualLine, scenario.scale);
+      check(scenario.name + " uses an independent native-textarea point with the required actual layout",
+        setup.hit && setup.mapped?.start === at && (!scenario.visualLine || setup.wrapped) &&
+        (scenario.name !== "wrapped scrolled row" || setup.scroll > 0), setup);
+      try {
+        await nativeClick(setup.point);
+        const opened = await page(() => __cells.action(false));
+        check(scenario.name + " opens its exact table by native right click without a selection",
+          opened.opened && opened.count === 4 && await exec("__cells.inputs()[0].textContent==='A'") &&
+          JSON.stringify(await state()) === JSON.stringify(before), opened);
+        await cancel();
+      } finally {
+        await page(style => {if(style===null)markdownEditor.removeAttribute('style');else markdownEditor.setAttribute('style',style);},
+          setup.oldStyle);
+      }
+      const boundaries = await exec(`(() => {
+        const rect=markdownEditor.getBoundingClientRect(),style=getComputedStyle(markdownEditor);
+        return {left:editorScroll.sourceLineAt(rect.left+1,rect.top+50),
+          right:editorScroll.sourceLineAt(rect.right-1,rect.top+50),
+          top:editorScroll.sourceLineAt(rect.left+50,rect.top+1)};
+      })()`);
+      check(scenario.name + " excludes padding and scrollbar targets and preserves the exact document",
+        Object.values(boundaries).every(value => value === null) &&
+        JSON.stringify(await state()) === JSON.stringify(before) && saves.length === beforeSaves &&
+        fs.readFileSync(fixture.file, "utf8") === scenario.body, boundaries);
+    }
+  }
   async function transaction() {
     const fixture = await fresh("transaction");
     const before = await state(), beforeSaves = saves.length;
     const sourceStart = lf(original.slice(0, secondOffset - between.length + 2)).length;
-    await page((from, to) => __cells.source(from, to), sourceStart, lf(original).length);
+    await page((from, to, at) => __cells.source(from, to, at), sourceStart, lf(original).length, lf(original.slice(0, secondOffset)).length);
     const opened = await page(() => __cells.action(false));
     check("cell transaction setup resolves prose plus just the second duplicate through the textarea menu",
       opened.opened && opened.count === 12 && before.exact === original && before.value === lf(original), opened);
@@ -2219,7 +3701,7 @@ require("./test-userdata-isolation");
     await openGrid(1, true, 2, 2);
     await exec("__cells.inputs()[1].textContent='only | row';true");
     await update();
-    const subsetExpected = original.slice(0, editedOffset) + "<span>only &#124; row</span>" +
+    const subsetExpected = original.slice(0, editedOffset) + "only &#124; row" +
       original.slice(editedOffset + oldCell.length);
     check("selected-row Update changes only the intersected row of the correct duplicate",
       (await state()).exact === subsetExpected && fs.readFileSync(subset.file, "utf8") === original);
@@ -2338,7 +3820,7 @@ require("./test-userdata-isolation");
     await openGrid();
     await exec("__cells.inputs()[7].textContent='history table';true");
     await update();
-    const edited = original.slice(0, editedOffset) + "<span>history table</span>" +
+    const edited = original.slice(0, editedOffset) + "history table" +
       original.slice(editedOffset + oldCell.length);
     check("typing-" + label + " setup commits the independently expected table-only transaction",
       (await state()).exact === edited && !await exec("tableCellDialog.open"));
@@ -2714,13 +4196,13 @@ require("./test-userdata-isolation");
       })()`);
       check("native modal paste preserves its BR text structure safe serialization and other cell DOM",
         isolated.trapped && isolated.paste && isolated.drop && isolated.others &&
-        isolated.serialized === "<span>pasted<br>line</span>" &&
+        isolated.serialized === "pasted<br>line" &&
         JSON.stringify(await state()) === JSON.stringify(before), isolated);
       const beforeUpdate = await mark("before-update");
       const completion = await update();
       const settlement = await mark("update-settlement");
       const offset = secondOffset + table.indexOf("**alpha**");
-      const expected = original.slice(0, offset) + "<span>pasted<br>line</span>" +
+      const expected = original.slice(0, offset) + "pasted<br>line" +
         original.slice(offset + "**alpha**".length) + witness;
       const after = await state(), priorHistory = JSON.parse(before.history), afterHistory = JSON.parse(after.history);
       const previous = priorHistory.undo.at(-1), previousText = typeof previous === "string" ? previous : previous?.source;
@@ -2792,6 +4274,243 @@ require("./test-userdata-isolation");
       fs.writeFileSync(path.join(evidence, "keyboard-cancel-witness.json"), JSON.stringify({
         suiteSha256: sha(__filename), fixture: canceledFixture, diagnostic,
       }, null, 2));
+    }
+    const codeOffset = original.indexOf("plain", secondOffset);
+    const codeSource = original.slice(0, codeOffset) + "`ab`" + original.slice(codeOffset + "plain".length);
+    const codeFixture = await fresh("markdown-code-multiline-paste", codeSource);
+    await openGrid();
+    const codeBefore = await state(), codeSaves = saves.length;
+    const pasteSetup = await exec(`(() => {
+      const input=__cells.inputs()[8],code=input.querySelector('code');
+      const walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT),text=walker.nextNode();
+      input.focus();
+      const range=document.createRange();range.setStart(text,1);range.collapse(true);
+      const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+      return {html:input.innerHTML,code:code.textContent,caret:code.contains(selection.anchorNode),offset:selection.anchorOffset};
+    })()`);
+    check("multiline code paste starts inside a real loaded Markdown code span",
+      pasteSetup.code === "ab" && pasteSetup.caret && pasteSetup.offset === 1, pasteSetup);
+    const pastedCode = await pasteCode("LEFT\nRIGHT");
+    check("actual Markdown-code paste immediately replaces each line break with a space in one native insertion",
+      pastedCode.prevented && pastedCode.events.filter(event => event.trusted).length === 1 &&
+      pastedCode.codeBreaks === 0 && pastedCode.text === "aLEFT RIGHTb" &&
+      JSON.stringify(await state()) === JSON.stringify(codeBefore), pastedCode);
+    await key("Z", ["control"]);
+    check("normalized code paste Undo restores its exact captured DOM in one step",
+      await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(pasteSetup.html)) &&
+      JSON.stringify(await state()) === JSON.stringify(codeBefore));
+    await key("Y", ["control"]);
+    check("normalized code paste Redo restores the exact immediately visible single-line content",
+      await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(pastedCode.html)) &&
+      JSON.stringify(await state()) === JSON.stringify(codeBefore));
+    const dispatch = await exec(`(() => {
+      const input=__cells.inputs()[8],provenance=tableCellSession.cells.find(cell=>cell.input===input).provenance;
+      const refused=operation=>{
+        try { operation();return false; }
+        catch(error) { if(error.message!=='tableCells.cellType')throw error;return true; }
+      };
+      const withAttribute=input.cloneNode(true),empty=input.cloneNode(true),structural=input.cloneNode(true);
+      const unowned=input.cloneNode(true);
+      unowned.querySelector('code').removeAttribute(provenance.partAttribute);
+      let unownedSource;
+      const unownedRefused=refused(()=>{unownedSource=serializeSafeTableCell(unowned,provenance);});
+      const wrongOwners=['**value**','<span title="keep">value</span>'].map(source=>{
+        const container=document.createElement('div');
+        const captured=FoliaTableCells.prepareCell(container,source,source,marked,{},parseEmojis,sanitizeTableHtml);
+        const original=container.firstElementChild,part=original.getAttribute(captured.partAttribute);
+        const fragment=captured.fragments.get(part),setup=serializeSafeTableCell(container,captured);
+        const replacement=document.createElement('code');
+        for(const attribute of original.attributes)replacement.setAttribute(attribute.name,attribute.value);
+        replacement.append(...original.childNodes);
+        original.replaceWith(replacement);
+        return {source,setup,kind:fragment.kind,tag:fragment.tag,
+          refused:refused(()=>FoliaTableCells.serializeCell(container,captured))};
+      });
+      structural.querySelector('code').replaceChildren('aLEFT',document.createElement('br'),'RIGHTb');
+      withAttribute.querySelector('code').textContent='ordinary';
+      withAttribute.querySelector('code').className='browser-generated';
+      empty.querySelector('code').replaceChildren();
+      const comparison=structural.cloneNode(true);
+      comparison.querySelectorAll('[data-folia-cell-part]').forEach(node=>node.removeAttribute('data-folia-cell-part'));
+      const generated=document.createElement('div'),authored=document.createElement('div');
+      const source='<code title="keep">a<br>b</code>';
+      const authoredProvenance=FoliaTableCells.prepareCell(authored,source,source,marked,{},parseEmojis,sanitizeTableHtml);
+      const generatedSource='<code>&#58;star:</code>';
+      const generatedProvenance=FoliaTableCells.prepareCell(generated,generatedSource,generatedSource,marked,{},parseEmojis,sanitizeTableHtml);
+      const generatedCode=generated.querySelector('code');
+      generatedProvenance.fragments.get(generatedCode.getAttribute('data-folia-cell-part')).generatedCode=true;
+      generatedCode.append(document.createElement('br'));
+      return {unownedRefused,unownedSource,wrongOwners,unownedPart:unowned.querySelector('code').getAttribute(provenance.partAttribute),
+        validCellProvenance:provenance.fragments instanceof Map&&provenance.fragments.size>0,
+        structural:FoliaTableCells.codeSources(structural.querySelector('code'),provenance),
+        empty:FoliaTableCells.codeSources(empty.querySelector('code'),provenance),
+        attributesRefused:refused(()=>serializeSafeTableCell(withAttribute,provenance)),
+        emptyRefused:refused(()=>serializeSafeTableCell(empty,provenance)),
+        missingAuthorityRefused:refused(()=>serializeSafeTableCell(comparison)),
+        generatedExceptionRefused:refused(()=>serializeSafeTableCell(generated,generatedProvenance)),
+        comparison:FoliaTableCells.serializeCell(comparison),authored:serializeSafeTableCell(authored,authoredProvenance)};
+    })()`);
+    check("CODE without captured ownership refuses even with valid whole-cell provenance",
+      dispatch.unownedRefused && dispatch.unownedPart === null && dispatch.validCellProvenance, dispatch);
+    check("CODE cannot borrow Markdown or authored HTML authority from a captured different tag",
+      dispatch.wrongOwners.length === 2 &&
+      dispatch.wrongOwners.every(owner => owner.setup === owner.source && owner.refused) &&
+      dispatch.wrongOwners[0].kind === "strong" &&
+      dispatch.wrongOwners[1].kind === "html" && dispatch.wrongOwners[1].tag === "SPAN", dispatch.wrongOwners);
+    check("CODE source dispatch keeps explicit failure reasons separate from authored and comparison HTML",
+      dispatch.structural.kind === "unrepresentable" && dispatch.structural.reason === "structural-code-body" &&
+      dispatch.empty.kind === "unrepresentable" && dispatch.empty.reason === "empty-code" &&
+      dispatch.attributesRefused && dispatch.emptyRefused && dispatch.missingAuthorityRefused &&
+      dispatch.generatedExceptionRefused && dispatch.comparison === "<code>aLEFT<br>RIGHTb</code>" &&
+      dispatch.authored === '<code title="keep">a<br>b</code>', dispatch);
+    const codeCompletion = await update(), codeAfter = await state();
+    check("ordinary multiline Markdown-code paste cannot introduce a generated CODE wrapper on Update",
+      !codeAfter.exact.includes("<code") && saves.length === codeSaves,
+      { pastedCode, completion: codeCompletion, after: codeAfter });
+    const pastedExpected = codeSource.replace("`ab`", "`aLEFT RIGHTb`");
+    check("normalized Markdown-code paste Updates clean Markdown once without changing other bytes or disk",
+      !codeCompletion.open && !codeCompletion.error && codeAfter.exact === pastedExpected &&
+      codeAfter.cache === pastedExpected && codeAfter.undo === codeBefore.undo + 1 &&
+      fs.readFileSync(codeFixture.file, "utf8") === codeSource,
+      { codeCompletion, codeAfter, pastedExpected });
+    if (!codeCompletion.open) {
+      await openGrid();
+      check("normalized code paste reopens with the same single-line code text",
+        await exec("__cells.inputs()[8].querySelector('code').textContent==='aLEFT RIGHTb'"));
+    }
+    await cancel();
+    for (const scenario of [
+      { name: "markdown-code-single-line-paste", source: "`ab`", paste: "LEFT", text: "aLEFTb",
+        breaks: 0, expected: "`aLEFTb`" },
+      { name: "markdown-code-empty-line-paste", source: "`ab`", paste: "LEFT\r\n\r\nRIGHT\rEND\n",
+        text: "aLEFT  RIGHT END b", breaks: 0, expected: "`aLEFT  RIGHT END b`" },
+      { name: "typed-code-multiline-paste", source: "plain", typed: "`ab`", paste: "\nLEFT\r\nRIGHT\r",
+        text: "a LEFT RIGHT b", breaks: 0, expected: "`a LEFT RIGHT b`" },
+      { name: "markdown-code-selection-paste", source: "`ab`", paste: "LEFT\nRIGHT", replace: true,
+        text: "aLEFT RIGHT", breaks: 0, expected: "`aLEFT RIGHT`" },
+      { name: "markdown-code-element-range-paste", source: "`ab`", allContents: true,
+        paste: "LEFT\nRIGHT", text: "LEFT RIGHT", breaks: 0, expected: "`LEFT RIGHT`" },
+      { name: "outside-code-parent-paste", source: "`ab`", outside: true,
+        paste: "LEFT\nRIGHT", text: "abLEFTRIGHT", breaks: 0, expected: "`ab`LEFT<br>RIGHT" },
+      { name: "generated-exception-multiline-paste", source: "plain", typed: "`a\\|b`",
+        paste: "\nLEFT\n", text: "a LEFT \\|b", breaks: 0,
+        expected: "<code>a LEFT &#92;&#124;b</code>" },
+      { name: "authored-code-multiline-paste", source: '<code title="keep">ab</code>',
+        paste: "LEFT\r\n\r\nRIGHT", text: "aLEFTRIGHTb", breaks: 2,
+        expected: '<code title="keep">aLEFT<br><br>RIGHTb</code>' },
+      { name: "authored-code-colliding-metadata", source: '<code DATA-FOLIA-CELL-PART="author" data-folia-cell-code="history">ab</code>',
+        paste: "LEFT\nRIGHT", text: "aLEFTRIGHTb", breaks: 1,
+        expected: '<code DATA-FOLIA-CELL-PART="author" data-folia-cell-code="history">aLEFT<br>RIGHTb</code>' },
+    ]) {
+      const body = original.slice(0, codeOffset) + scenario.source + original.slice(codeOffset + "plain".length);
+      const fixture = await fresh(scenario.name, body), before = await state(), saveCount = saves.length;
+      await openGrid();
+      if (scenario.typed) await typeTrustedCell([scenario.typed], 8, { replace: true });
+      const initial = await exec(`(() => {
+        const input=__cells.inputs()[8],code=input.querySelector('code');
+        input.focus();
+        const range=document.createRange(),walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT);
+        const text=walker.nextNode();
+        if (${!!scenario.outside}) {range.setStartAfter(code);range.collapse(true);}
+        else if (${!!scenario.allContents}) range.selectNodeContents(code);
+        else {
+          range.setStart(text,1);
+          if (${!!scenario.replace}) range.setEnd(text,2);
+          else range.collapse(true);
+        }
+        const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        return {html:input.innerHTML,text:code.textContent,caret:code.contains(selection.anchorNode)};
+      })()`);
+      check(scenario.name + " starts with its actual captured code and interior caret",
+        initial.text === (scenario.name === "generated-exception-multiline-paste" ? "a\\|b" : "ab") &&
+        initial.caret === !scenario.outside, initial);
+      if (scenario.name === "markdown-code-single-line-paste") {
+        await exec(`(() => {
+          const range=document.createRange();range.selectNodeContents(__cells.inputs()[8].querySelector('code'));
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+          return true;
+        })()`);
+        await key("Backspace");
+        const cleared = await exec(`(() => {
+          const input=__cells.inputs()[8];
+          try { return {html:input.innerHTML,text:input.textContent,source:serializeSafeTableCell(input)}; }
+          catch(error) { return {html:input.innerHTML,text:input.textContent,error:error.message}; }
+        })()`);
+        check("native code-content deletion stays editable without a generated CODE wrapper",
+          cleared.text === "" && !cleared.error && !cleared.source.includes("<code") &&
+          JSON.stringify(await state()) === JSON.stringify(before), cleared);
+        await key("Z", ["control"]);
+        check("native code-content deletion Undo restores the exact captured rich cell",
+          await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(initial.html)) &&
+          JSON.stringify(await state()) === JSON.stringify(before));
+        await exec(`(() => {
+          const code=__cells.inputs()[8].querySelector('code');
+          const range=document.createRange(),walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT);
+          range.setStart(walker.nextNode(),1);range.collapse(true);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+          return true;
+        })()`);
+      }
+      const pasted = await pasteCode(scenario.paste);
+      check(scenario.name + " preserves existing visible paste behavior through native editing",
+        pasted.prevented && pasted.events.some(event => event.trusted) &&
+        pasted.text === scenario.text && pasted.codeBreaks === scenario.breaks &&
+        JSON.stringify(await state()) === JSON.stringify(before), pasted);
+      await key("Z", ["control"]);
+      check(scenario.name + " is one native cell Undo without changing document authority",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(initial.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(before));
+      await key("Y", ["control"]);
+      check(scenario.name + " restores exact rich code through native Redo",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(pasted.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(before));
+      const completion = await update(), after = await state();
+      const expected = original.slice(0, codeOffset) + scenario.expected + original.slice(codeOffset + "plain".length);
+      check(scenario.name + " preserves exact source authority and authored attributes on Update",
+        !completion.open && !completion.error && after.exact === expected && after.cache === expected &&
+        after.undo === before.undo + 1 && saves.length === saveCount &&
+        fs.readFileSync(fixture.file, "utf8") === body, { completion, after, expected });
+      await openGrid();
+      const reopened = await exec("({text:__cells.inputs()[8].textContent,breaks:__cells.inputs()[8].querySelectorAll('code br').length})");
+      check(scenario.name + " reopens with the same code text and line breaks",
+        reopened.text === scenario.text && reopened.breaks === scenario.breaks, reopened);
+      await cancel();
+    }
+    for (const scenario of [
+      { name: "mixed-code-paste-range", source: "`ab` tail", text: "aLEFTRIGHT" },
+      { name: "two-code-paste-range", source: "`ab` `cd`", text: "aLEFTRIGHTd" },
+    ]) {
+      const body = original.slice(0, codeOffset) + scenario.source + original.slice(codeOffset + "plain".length);
+      const fixture = await fresh(scenario.name, body), before = await state(), saveCount = saves.length;
+      await openGrid();
+      const initial = await exec(`(() => {
+        const input=__cells.inputs()[8],codes=input.querySelectorAll('code');
+        const texts=[],walker=document.createTreeWalker(input,NodeFilter.SHOW_TEXT);
+        for(let node;node=walker.nextNode();)texts.push(node);
+        const range=document.createRange(),first=document.createTreeWalker(codes[0],NodeFilter.SHOW_TEXT).nextNode();
+        const last=codes.length>1?document.createTreeWalker(codes[1],NodeFilter.SHOW_TEXT).nextNode():texts.at(-1);
+        range.setStart(first,1);range.setEnd(last,codes.length>1?1:last.data.length);
+        input.focus();const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+        return {html:input.innerHTML,selected:selection.toString(),codes:codes.length};
+      })()`);
+      check(scenario.name + " establishes a real selection crossing code ownership",
+        initial.selected.length > 1 && initial.codes === (scenario.name === "two-code-paste-range" ? 2 : 1), initial);
+      const pasted = await pasteCode("LEFT\nRIGHT");
+      check(scenario.name + " keeps its visible line break rather than applying the contents-only code policy",
+        pasted.prevented && pasted.events.filter(event=>event.trusted).length === 1 &&
+        pasted.text === scenario.text && await exec("__cells.inputs()[8].querySelectorAll('br').length===1") &&
+        JSON.stringify(await state()) === JSON.stringify(before), pasted);
+      await key("Z", ["control"]);
+      check(scenario.name + " is one native Undo restoring the exact owned cell",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(initial.html)));
+      await key("Y", ["control"]);
+      check(scenario.name + " Redo keeps exact native structure without a document transaction",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(pasted.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(before));
+      await cancel();
+      check(scenario.name + " Cancel preserves all document and disk authority",
+        JSON.stringify(await state()) === JSON.stringify(before) && saves.length === saveCount &&
+        fs.readFileSync(fixture.file, "utf8") === body);
     }
   }
   async function many() {
@@ -2936,7 +4655,10 @@ require("./test-userdata-isolation");
       if (perfOnly) await performanceUnit();
       else {
         await pureInRenderer();
-        for (const [name, run] of Object.entries({ menus, provenance, noop, transaction, adoption, stale, keyboard, many })) {
+        const scenarios = { menus, provenance, noop, input, click, transaction, adoption, stale, keyboard, many };
+        check("cell UI dispatcher contains exactly the declared scenarios",
+          JSON.stringify(Object.keys(scenarios)) === JSON.stringify(uiGroups));
+        for (const [name, run] of Object.entries(scenarios)) {
           if (!selected(name)) continue;
           try {
             if (name === "many") await withCellViewport("hosted many-row", 1008, 681, false, run);
@@ -2952,8 +4674,9 @@ require("./test-userdata-isolation");
           check("cell owned Main shell guards remain installed after " + name, shellGuardsInstalled());
           if (!shellGuardsInstalled()) throw new Error("Main shell guard replacement prevents further scenarios");
         }
-        check("all selected cell UI scenarios ran", proof ? executed.has(proof) :
-          ["menus", "provenance", "noop", "transaction", "adoption", "stale", "keyboard", "many"].every(name => executed.has(name)));
+        check("all selected cell UI scenarios ran",
+          JSON.stringify(uiGroups.filter(name => executed.has(name))) === JSON.stringify(expectedUiGroups) &&
+          (!proof || executed.has(proof)));
       }
     } catch (error) {
       if (results.some(result => !result.ok)) {

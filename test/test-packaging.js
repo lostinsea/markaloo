@@ -2851,8 +2851,9 @@ async function main() {
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
       "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js",
       "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
-      "test:table-cells": "npm run test:table-cells-source && electron test/test-table-cell-editor.js",
+      "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
       "test:table-cells-source": "node --check src/table-cell-editor.js && node --check test/test-table-cell-editor.js && node test/test-table-cell-editor.js --source",
+      "test:table-cells-ui": "electron test/test-table-cell-editor.js --partition=input && electron test/test-table-cell-editor.js --partition=remaining",
       "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     };
     const featureScripts = Object.keys(featureCommands);
@@ -2904,14 +2905,18 @@ async function main() {
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm run test:missing" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm test" }, "test")));
     const nestedCellRoutes = { ...fixtureScripts, ...featureCommands,
-      "test:features": featureScripts.filter(name => name !== "test:table-cells-source")
+      "test:features": featureScripts.filter(name => !["test:table-cells-source", "test:table-cells-ui"].includes(name))
         .map(name => "npm run " + name).join(" && ") };
-    check("feature gate follows the real cell source subroute and rejects its omission or duplication",
+    check("feature gate follows the real cell source and UI subroutes and rejects omissions or duplication",
       beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
       !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
         "test:table-cells": "electron test/test-table-cell-editor.js" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
-        "test:features": nestedCellRoutes["test:features"] + " && npm run test:table-cells-source" }, "test")));
+        "test:table-cells": "npm run test:table-cells-source && electron test/test-table-cell-editor.js" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:features": nestedCellRoutes["test:features"] + " && npm run test:table-cells-source" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:features": nestedCellRoutes["test:features"] + " && npm run test:table-cells-ui" }, "test")));
     function phaseSelection(file, context) {
       const expressions = [...stripJsComments(read(file)).matchAll(/const phases = ([\s\S]*?);\r?\n/g)];
       if (expressions.length !== 1) return null;
@@ -6820,8 +6825,10 @@ async function main() {
     const errorKeys = source => [...source.matchAll(/\bfail\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
       .map(match => match[1]);
     const modelErrorKeys = new Set(errorKeys(cellModel));
-    const rendererErrors = [...stripJsComments(rendererSrc).matchAll(/throw new Error\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
+    const rendererErrorKeys = source => [...stripJsComments(source)
+      .matchAll(/(?:throw\s+|showTableCellError\(\s*)new Error\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
       .map(match => match[1]);
+    const rendererErrors = rendererErrorKeys(rendererSrc);
     const dynamicConsumers = new Set([...modelErrorKeys, ...rendererErrors]);
     check("cell model error keys are shipped literal failures with guarded translated renderer consumers",
       shippedScripts.includes("src/table-cell-editor.js") &&
@@ -6843,6 +6850,16 @@ async function main() {
       hasConsumer("tableCells.mapping", allSrc, dynamicConsumers) &&
       !hasConsumer("tableCells.mapping", allSrc, new Set([...errorKeys(withoutMapping), ...rendererErrors])) &&
       !hasConsumer("tableCells.unusedFixture", "const keys = { 'tableCells.unusedFixture': 'unused' };", dynamicConsumers));
+    const withoutShortcut = rendererSrc.replace(
+      /showTableCellError\(\s*new Error\(\s*['"]tableCells\.formatShortcuts['"]\s*\)\s*\)/g, "void 0");
+    check("direct table popup errors count only when delivered to the translated consumer",
+      withoutShortcut !== rendererSrc &&
+      hasConsumer("tableCells.formatShortcuts", allSrc, dynamicConsumers) &&
+      !hasConsumer("tableCells.formatShortcuts", withoutShortcut,
+        new Set([...modelErrorKeys, ...rendererErrorKeys(withoutShortcut)])) &&
+      rendererErrorKeys("new Error('tableCells.unusedFixture');").length === 0 &&
+      rendererErrorKeys("other(new Error('tableCells.unusedFixture'));").length === 0 &&
+      rendererErrorKeys("// showTableCellError(new Error('tableCells.unusedFixture'));").length === 0);
     const orphaned = uiKeys.filter(key => !hasConsumer(key, allSrc, dynamicConsumers));
     check(
       "every UI string has a consumer",
