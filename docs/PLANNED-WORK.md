@@ -184,14 +184,20 @@ section is kept here so the register has a visible edge.
     the unchanged actual preload in a private VM: 23 checks passed.
     This does not qualify Electron transport. Mixed document/filesystem/
     lifecycle actors still need correction while keeping actual Main authority.
+    The next ordinary read/conditional-refresh actor candidate keeps genuine
+    Main replies before one-use reply faults. Node preload checks passed 23/23
+    and pure observer controls passed 12/12. It is handed to fresh independent
+    Sol/Luna source review; native transport, consent, disk and lifecycle
+    qualification remain **NOT RUN**.
     The separate frozen-bridge
     popup-PDF consumer-fault seam is queued with B after video capture.
     No C corrected-runtime allocation or automatic retry is authorized.
   - The four render-security module/global failures trace to a stale exact
     Mermaid export inventory and an absent earlier fixture prerequisite.
     Their narrow test-only corrections have Node publication/guard checks,
-    not an ordinary Electron pass. Relative-image ownership and later raw-IPC
-    actors remain pending; do not add a product authority fallback.
+    not an ordinary Electron pass. A bounded image/note actor correction is
+    in progress using genuine chooser admission and owner/DOM readiness.
+    Later raw-IPC actors remain pending; do not add a product authority fallback.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
     findings go to their owner; C alone writes package/workflow/register files.

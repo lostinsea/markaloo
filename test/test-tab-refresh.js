@@ -1672,6 +1672,7 @@ if (initialBoundaryHarness || earlyRefreshHarness) {
   });
 }
 const largeRenderRegistration = { handler: null, count: 0 };
+const tabDiskRegistrations = new Map();
 // Main retains the raw receipts before preload projection. The isolated page
 // deliberately has no transport object to intercept.
 let tabDiskObservation = null;
@@ -1735,30 +1736,76 @@ const restoreRegistrationCapture = replaceMethod(ipcMain, "handle", function (ch
     });
   }
   if (["read-owned-tab-disk-snapshot", "refresh-owned-tab-disk-snapshot"].includes(channel)) {
-    return realRegisterHandle.call(this, channel, function (event, data) {
+    const registration = tabDiskRegistrations.get(channel) || { count: 0 };
+    registration.handler = handler;
+    registration.count += 1;
+    tabDiskRegistrations.set(channel, registration);
+    return realRegisterHandle.call(this, channel, async function (event, data) {
       const observation = tabDiskObservation;
       if (!observation || event.sender !== observation.target ||
-          !observation.paths.has(data?.filePath)) {
+          (observation.channels && !observation.channels.has(channel))) {
         return handler.apply(this, arguments);
       }
-      const record = { channel, request: {
-        ...data, owner: { ...data.owner }, diskVersion: { ...data.diskVersion },
-      }, settled: false };
+      // Receipt counts include every selected-channel call from this window,
+      // even malformed paths. Only the filesystem observers filter by path.
+      const current = __shutdown.state();
+      const record = {
+        channel, senderId: event.sender.id,
+        frame: event.senderFrame === event.sender.mainFrame,
+        generation: current.rendererGeneration,
+        pageSession: current.rendererPageSession,
+        request: structuredClone(data), settled: false,
+      };
+      Object.defineProperties(record, {
+        sender: { value: event.sender },
+        senderFrame: { value: event.senderFrame },
+      });
       observation.records.push(record);
-      return Promise.resolve(handler.apply(this, arguments)).then(reply => {
+      const fault = observation.fault;
+      if (fault) fault.calls += 1;
+      try {
+        const actual = await handler.apply(this, arguments);
+        record.actualReply = structuredClone(actual);
+        let reply = actual;
+        if (fault) {
+          if (fault.consumed || tabDiskObservation !== observation ||
+              observation.fault !== fault ||
+              !exactTabDiskReceipt(record, observation, fault.channel, fault.request)) {
+            record.faultFailure = "Unexpected armed tab-disk invocation";
+          } else {
+            fault.consumed = true;
+            if (!fault.accept(record.actualReply)) {
+              record.faultFailure = "Genuine Main tab-disk reply did not satisfy fault setup";
+            } else {
+              record.fault = fault.label;
+              reply = fault.deliver(structuredClone(actual));
+            }
+          }
+          if (record.faultFailure) fault.failures.push(record.faultFailure);
+        }
+        record.deliveredReply = structuredClone(reply);
         record.reply = reply;
         record.settled = true;
         return reply;
-      }, error => {
+      } catch (error) {
         record.error = String(error);
         record.settled = true;
         throw error;
-      });
+      }
     });
   }
   return realRegisterHandle.apply(this, arguments);
 });
 let __shutdown;
+function exactTabDiskReceipt(record, observation, channel, request) {
+  return !!record && record.channel === channel &&
+    record.sender === observation.target &&
+    record.senderFrame === observation.frame &&
+    record.senderFrame === observation.target.mainFrame && record.frame &&
+    record.generation === observation.generation &&
+    record.pageSession === observation.pageSession &&
+    isDeepStrictEqual(record.request, request);
+}
 try {
   ({ __shutdown } = require("../src/main.js"));
 } finally {
@@ -10471,23 +10518,49 @@ async function runTabAuthorityRollbackScenarios(win, exec, dir, sentinel, openNa
 }
 
 async function runConditionalRefreshValidation(win, exec, dir, filePath) {
-  const request = await exec(`(() => {
+  const setup = await exec(`(() => {
     const tab = window.CustomTabs.findTabByPath(${JSON.stringify(filePath)});
     const owner = window.CustomTabs.getDocumentIdentityForTab(
       tab.id, tab.filePath, window.getReloadRequestSession());
-    return { filePath: tab.filePath, pageSession: owner.pageSession,
-      rendererGeneration: owner.rendererGeneration, owner, diskVersion: tab.diskVersion };
-  })()`);
-  const validation = await exec(`(async () => {
-    const request = ${JSON.stringify(request)};
-    const invoke = window.ipcRenderer.invoke;
-    let calls = 0;
-    let forwarded;
-    window.ipcRenderer.invoke = function (channel, payload) {
-      if (channel === 'refresh-owned-tab-disk-snapshot') { calls += 1; forwarded = payload; }
-      return invoke.apply(this, arguments);
+    return {
+      request: { filePath: tab.filePath, pageSession: owner.pageSession,
+        rendererGeneration: owner.rendererGeneration, owner, diskVersion: tab.diskVersion },
+      descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
+      content: tab.content, clean: tab.hasUnsavedChanges === false,
     };
-    try {
+  })()`);
+  const request = setup.request;
+  const channel = "refresh-owned-tab-disk-snapshot";
+  const versionFields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];
+  const projectedRequest = {
+    filePath: request.filePath, pageSession: request.pageSession,
+    rendererGeneration: request.rendererGeneration,
+    owner: Object.fromEntries(["pageSession", "rendererGeneration", "tabId",
+      "documentGeneration", "pathKey", "documentRef"].map(key => [key, request.owner[key]])),
+    diskVersion: Object.fromEntries(versionFields.map(key => [key, request.diskVersion[key]])),
+  };
+  const observation = {
+    target: win.webContents, frame: win.webContents.mainFrame,
+    pageSession: request.pageSession, generation: request.rendererGeneration,
+    channels: new Set([channel]), records: [], fault: null,
+  };
+  const unchanged = reply => reply?.status === "unchanged" &&
+    reply.pathKey === request.owner.pathKey &&
+    Object.keys(reply).sort().join(",") === "diskVersion,pathKey,status" &&
+    versionFields.every(key => Number.isFinite(reply.diskVersion?.[key])) &&
+    ["dev", "ino", "size", "mtimeMs"].every(
+      key => reply.diskVersion[key] === request.diskVersion[key]);
+  const changed = reply => reply?.status === "changed" &&
+    reply.pathKey === request.owner.pathKey && reply.content === setup.content &&
+    !Object.hasOwn(reply, "document") && Number.isFinite(reply.modifiedTime) &&
+    versionFields.every(key => Number.isFinite(reply.diskVersion?.[key])) &&
+    reply.modifiedTime === reply.diskVersion.mtimeMs;
+  if (tabDiskObservation) throw new Error("Overlapping conditional Main observers");
+  let validation;
+  tabDiskObservation = observation;
+  try {
+    const rejected = await exec(`(async () => {
+      const request = ${JSON.stringify(request)};
       const invalid = [
         { ...request, filePath: 'bad\\0path' },
         { ...request, owner: { ...request.owner, documentRef: undefined } },
@@ -10500,45 +10573,128 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
         try { await window.folia.refreshOwnedTabDiskSnapshot(input); rejected.push(false); }
         catch (error) { rejected.push(error.message.includes('Invalid')); }
       }
-      const invalidCalls = calls;
-      calls = 0;
-      const positive = await window.folia.refreshOwnedTabDiskSnapshot({
-        ...request, ignored: true, owner: { ...request.owner, ignored: true },
-        diskVersion: { ...request.diskVersion, ignored: true },
+      return rejected;
+    })()`);
+    const invalidCalls = observation.records.length;
+    const positive = await exec(`window.folia.refreshOwnedTabDiskSnapshot({
+      ...${JSON.stringify(request)}, ignored: true,
+      owner: { ...${JSON.stringify(request.owner)}, ignored: true },
+      diskVersion: { ...${JSON.stringify(request.diskVersion)}, ignored: true },
+    })`);
+    const positiveRecords = observation.records.slice(invalidCalls);
+    const forwarded = positiveRecords[0]?.request;
+    const fields = {
+      calls: positiveRecords.length, request: Object.keys(forwarded || {}).sort(),
+      owner: Object.keys(forwarded?.owner || {}).sort(),
+      version: Object.keys(forwarded?.diskVersion || {}).sort(),
+      response: Object.keys(positive || {}).sort(), status: positive?.status,
+    };
+    const ready = setup.clean && setup.descriptor?.ref === request.owner.documentRef &&
+      positiveRecords.length === 1 &&
+      exactTabDiskReceipt(positiveRecords[0], observation, channel, projectedRequest) &&
+      positiveRecords[0].settled && !positiveRecords[0].error &&
+      unchanged(positiveRecords[0].actualReply) && unchanged(positive) &&
+      isDeepStrictEqual(positiveRecords[0].actualReply, positiveRecords[0].deliveredReply);
+    check("SEC-08 conditional fault setup uses a genuine unchanged Main reply and current native descriptor",
+      ready, JSON.stringify({ setup, positiveRecords, positive }));
+    if (!ready) throw new Error("Conditional Main response-fault setup was not genuinely unchanged");
+    const substitutions = [
+      { deliver: () => undefined },
+      { deliver: actual => ({ ...actual, status: "unknown" }) },
+      { deliver: actual => ({ ...actual, pathKey: "another-file" }) },
+      { deliver: actual => ({ ...actual, content: "must-not-cross-metadata" }) },
+      { deliver: actual => ({ ...actual, modifiedTime: actual.diskVersion.mtimeMs }) },
+      { deliver: actual => ({ ...actual, diskVersion: {
+        ...actual.diskVersion, mtimeMs: actual.diskVersion.mtimeMs + 1,
+      } }) },
+      { changed: true, deliver: actual => ({ ...actual, content: 3 }) },
+      { changed: true, deliver: actual => ({ ...actual, modifiedTime: actual.diskVersion.mtimeMs + 1 }) },
+      { changed: true, deliver: actual => ({ ...actual, document: setup.descriptor }) },
+      { deliver: actual => ({ status: "unavailable", pathKey: actual.pathKey, reason: "unknown" }) },
+      { deliver: actual => ({ status: "unavailable", pathKey: actual.pathKey,
+        reason: "missing", diskVersion: actual.diskVersion }) },
+    ];
+    const badResponses = [], faults = [];
+    for (const [index, substitution] of substitutions.entries()) {
+      // A stale request tuple triggers a genuine changed read without changing
+      // the disk, tab cache, owner registration or adoption baseline.
+      const faultRequest = substitution.changed ? {
+        ...projectedRequest, diskVersion: {
+          ...projectedRequest.diskVersion, mtimeMs: projectedRequest.diskVersion.mtimeMs + 1,
+        },
+      } : projectedRequest;
+      const fault = {
+        channel, request: structuredClone(faultRequest), label: "conditional-reply-" + index,
+        calls: 0, consumed: false, failures: [], accept: substitution.changed ? changed : unchanged,
+        deliver: substitution.deliver,
+      };
+      const start = observation.records.length;
+      observation.fault = fault;
+      try {
+        badResponses.push(await exec(`(async () => {
+          try {
+            await window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(faultRequest)});
+            return false;
+          } catch (error) {
+            return error.message.includes('Invalid conditional tab disk refresh response');
+          }
+        })()`));
+      } finally { observation.fault = null; }
+      const records = observation.records.slice(start);
+      faults.push({
+        label: fault.label, calls: fault.calls, consumed: fault.consumed,
+        failures: fault.failures, records,
+        exact: records.length === 1 &&
+          exactTabDiskReceipt(records[0], observation, channel, faultRequest) &&
+          records[0].settled && !records[0].error && records[0].fault === fault.label &&
+          fault.accept(records[0].actualReply),
       });
-      const fields = { calls, request: Object.keys(forwarded).sort(),
-        owner: Object.keys(forwarded.owner).sort(),
-        version: Object.keys(forwarded.diskVersion).sort(),
-        response: Object.keys(positive).sort(), status: positive.status };
-      const badResponses = [];
-      for (const response of [
-        undefined, { ...positive, status: 'unknown' },
-        { ...positive, pathKey: 'another-file' },
-        { ...positive, content: 'must-not-cross-metadata' },
-        { ...positive, modifiedTime: positive.diskVersion.mtimeMs },
-        { ...positive, diskVersion: { ...positive.diskVersion, mtimeMs: positive.diskVersion.mtimeMs + 1 } },
-        { status: 'changed', pathKey: request.owner.pathKey, content: 3,
-          modifiedTime: request.diskVersion.mtimeMs, diskVersion: request.diskVersion },
-        { status: 'changed', pathKey: request.owner.pathKey, content: 'text',
-          modifiedTime: request.diskVersion.mtimeMs + 1, diskVersion: request.diskVersion },
-        { status: 'changed', pathKey: request.owner.pathKey, content: 'text',
-          modifiedTime: request.diskVersion.mtimeMs, diskVersion: request.diskVersion,
-          document: window.CustomTabs.getDocumentDescriptor() },
-        { status: 'unavailable', pathKey: request.owner.pathKey, reason: 'unknown' },
-        { status: 'unavailable', pathKey: request.owner.pathKey, reason: 'missing',
-          diskVersion: request.diskVersion },
-      ]) {
-        window.ipcRenderer.invoke = () => Promise.resolve(response);
-        try { await window.folia.refreshOwnedTabDiskSnapshot(request); badResponses.push(false); }
-        catch (error) { badResponses.push(error.message.includes('Invalid conditional tab disk refresh response')); }
-      }
-      window.ipcRenderer.invoke = () => Promise.resolve({
-        ...positive, diskVersion: { ...positive.diskVersion, ctimeMs: positive.diskVersion.ctimeMs + 1 },
-      });
-      const ctime = await window.folia.refreshOwnedTabDiskSnapshot(request);
-      return { rejected, invalidCalls, fields, badResponses, ctime: ctime.status };
-    } finally { window.ipcRenderer.invoke = invoke; }
-  })()`);
+    }
+    const ctimeFault = {
+      channel, request: structuredClone(projectedRequest), label: "finite-ctime-only",
+      calls: 0, consumed: false, failures: [], accept: unchanged,
+      deliver: actual => ({ ...actual, diskVersion: {
+        ...actual.diskVersion, ctimeMs: actual.diskVersion.ctimeMs + 1,
+      } }),
+    };
+    const ctimeStart = observation.records.length;
+    let ctime;
+    observation.fault = ctimeFault;
+    try {
+      ctime = await exec(`window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(projectedRequest)})`);
+    } finally { observation.fault = null; }
+    const ctimeRecords = observation.records.slice(ctimeStart);
+    const ctimeReceipt = ctimeRecords[0];
+    const afterStart = observation.records.length;
+    const afterFault = await exec(`window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(projectedRequest)})`);
+    const afterRecords = observation.records.slice(afterStart);
+    const cacheUnchanged = await exec(`(() => {
+      const tab = window.CustomTabs.findTabByPath(${JSON.stringify(filePath)});
+      const version = ${JSON.stringify(request.diskVersion)};
+      return ${JSON.stringify(versionFields)}.every(key => tab.diskVersion[key] === version[key]) &&
+        tab.content === ${JSON.stringify(setup.content)} && tab.hasUnsavedChanges === false;
+    })()`);
+    validation = {
+      rejected, invalidCalls, fields, badResponses, faults, ctime: ctime?.status,
+      ctimeRecords, ctimeCalls: ctimeFault.calls, ctimeConsumed: ctimeFault.consumed,
+      ctimeFailures: ctimeFault.failures,
+      ctimeExact: ctimeRecords.length === 1 &&
+        exactTabDiskReceipt(ctimeReceipt, observation, channel, projectedRequest) &&
+        ctimeReceipt.settled && !ctimeReceipt.error && ctimeReceipt.fault === ctimeFault.label &&
+        unchanged(ctimeReceipt.actualReply) && unchanged(ctime) &&
+        ctimeReceipt.deliveredReply.diskVersion.ctimeMs === ctimeReceipt.actualReply.diskVersion.ctimeMs + 1 &&
+        ctime.diskVersion.ctimeMs === ctimeReceipt.deliveredReply.diskVersion.ctimeMs,
+      cacheUnchanged, afterFault, afterRecords,
+      afterExact: afterRecords.length === 1 &&
+        exactTabDiskReceipt(afterRecords[0], observation, channel, projectedRequest) &&
+        afterRecords[0].settled && !afterRecords[0].error && !afterRecords[0].fault &&
+        unchanged(afterRecords[0].actualReply) && unchanged(afterFault) &&
+        isDeepStrictEqual(afterRecords[0].actualReply, afterRecords[0].deliveredReply),
+    };
+  } finally {
+    observation.fault = null;
+    tabDiskObservation = null;
+  }
   check("SEC-08 conditional bridge rejects invalid cached versions and missing native refs before IPC",
     validation.rejected.length === 5 && validation.rejected.every(Boolean) &&
       validation.invalidCalls === 0, JSON.stringify(validation));
@@ -10548,10 +10704,18 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
       validation.fields.owner.join(",") === "documentGeneration,documentRef,pageSession,pathKey,rendererGeneration,tabId" &&
       validation.fields.version.join(",") === "ctimeMs,dev,ino,mtimeMs,size" &&
       validation.fields.response.join(",") === "diskVersion,pathKey,status" &&
-      validation.ctime === "unchanged", JSON.stringify(validation));
+      validation.ctime === "unchanged" && validation.ctimeCalls === 1 &&
+      validation.ctimeConsumed && validation.ctimeFailures.length === 0 &&
+      validation.ctimeExact && validation.cacheUnchanged, JSON.stringify(validation));
   check("SEC-08 conditional bridge rejects malformed discriminants versions paths and metadata body leakage",
-    validation.badResponses.length === 11 && validation.badResponses.every(Boolean),
+    validation.badResponses.length === 11 && validation.badResponses.every(Boolean) &&
+      validation.faults.length === 11 && validation.faults.every(fault =>
+        fault.calls === 1 && fault.consumed && fault.failures.length === 0 && fault.exact) &&
+      Object.hasOwn(validation.faults[0].records[0], "deliveredReply") &&
+      validation.faults[0].records[0].deliveredReply === undefined,
     JSON.stringify(validation));
+  check("SEC-08 conditional bridge returns an unmodified genuine positive after every response fault is disarmed",
+    validation.afterExact, JSON.stringify(validation));
 
   // Hold a real native delivery: its valid but unregistered ref is not a tab owner.
   const pendingPath = path.join(dir, "conditional-unregistered.md");
@@ -10589,48 +10753,111 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
       ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(
         key => Number.isFinite(unregistered.diskVersion?.[key])),
     JSON.stringify(unregistered));
+  const registration = tabDiskRegistrations.get(channel);
+  if (registration?.count !== 1 || typeof registration.handler !== "function") {
+    throw new Error("The actual Main conditional refresh handler was not captured exactly once");
+  }
+  // Canonicalize attribution targets before installing any counters: setup
+  // filesystem work must not make a refused request appear to have probed.
+  const pathKey = file => actualHostPlatform === "win32" ? file.toLowerCase() : file;
+  const authorityPaths = new Set([filePath, pendingPath].flatMap(file =>
+    [file, fs.realpathSync.native(file)].map(target => pathKey(path.resolve(target)))));
+  const attributed = file => typeof file === "string" &&
+    authorityPaths.has(pathKey(path.resolve(file)));
+  if (tabDiskObservation) throw new Error("Overlapping conditional authority observers");
   let probes = 0;
   let opens = 0;
   const realpath = fs.promises.realpath;
   const stat = fs.promises.stat;
   const open = fs.promises.open;
   const restoreRealpath = replaceMethod(fs.promises, "realpath", function (file) {
-    if ([filePath, pendingPath].includes(file)) probes += 1;
+    if (attributed(file)) probes += 1;
     return realpath.apply(this, arguments);
   });
   const restoreStat = replaceMethod(fs.promises, "stat", function (file) {
-    if ([filePath, pendingPath].includes(file)) probes += 1;
+    if (attributed(file)) probes += 1;
     return stat.apply(this, arguments);
   });
   const restoreOpen = replaceMethod(fs.promises, "open", function (file) {
-    if ([filePath, pendingPath].includes(file)) opens += 1;
+    if (attributed(file)) opens += 1;
     return open.apply(this, arguments);
   });
   let authority;
+  observation.records.length = 0;
+  tabDiskObservation = observation;
   try {
-    authority = await exec(`(async () => {
-      const request = ${JSON.stringify(request)};
-      const refused = [];
-      for (const input of [
-        { ...request, owner: { ...request.owner, tabId: request.owner.tabId + 1000 } },
-        { ...request, owner: { ...request.owner, documentRef: undefined } },
-        ${JSON.stringify(unregistered)},
-      ]) refused.push(await window.ipcRenderer.invoke('refresh-owned-tab-disk-snapshot', input));
-      return { refused };
-    })()`);
+    const unknownRequest = {
+      ...projectedRequest, owner: {
+        ...projectedRequest.owner, tabId: request.owner.tabId + 1000,
+      },
+    };
+    const unknown = await exec(
+      `window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(unknownRequest)})`);
+    // Missing documentRef is rejected by preload and cannot be sent through
+    // the public port. Test Main's own parser directly, with the real caller.
+    const refLessRequest = {
+      ...projectedRequest, owner: { ...projectedRequest.owner, documentRef: undefined },
+    };
+    const caller = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+    const refLess = await boundedDialogWork(Promise.resolve().then(() =>
+      registration.handler(caller, refLessRequest)), "direct Main ref-less conditional refusal");
+    const unregisteredResult = await exec(
+      `window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(unregistered)})`);
+    const unregisteredRequest = {
+      ...projectedRequest, filePath: unregistered.filePath,
+      owner: { ...projectedRequest.owner, tabId: unregistered.owner.tabId,
+        pathKey: unregistered.owner.pathKey, documentRef: unregistered.owner.documentRef },
+      diskVersion: Object.fromEntries(versionFields.map(key => [key, unregistered.diskVersion[key]])),
+    };
+    authority = {
+      refused: [unknown, refLess, unregisteredResult],
+      nativeRefusalReceipts: observation.records.slice(),
+      directMain: { label: "direct actual Main-handler missing-documentRef validation",
+        registeredCount: registration.count, senderId: caller.sender.id,
+        mainFrame: caller.sender === win.webContents && caller.senderFrame === observation.frame,
+        request: structuredClone(refLessRequest), reply: refLess },
+      nativeRefusalsExact: observation.records.length === 2 &&
+        [unknownRequest, unregisteredRequest].every((input, index) => {
+          const record = observation.records[index];
+          return exactTabDiskReceipt(record, observation, channel, input) &&
+            record.settled && !record.error && !record.fault &&
+            record.actualReply === null && record.deliveredReply === null;
+        }),
+    };
     authority.refusedProbes = probes;
     authority.refusedOpens = opens;
     authority.positive = await exec(`window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(request)})`);
     authority.positiveProbes = probes - authority.refusedProbes;
     authority.positiveOpens = opens - authority.refusedOpens;
-  } finally { restoreOpen(); restoreStat(); restoreRealpath(); }
+    authority.positiveReceipts = observation.records.slice(2);
+    authority.positiveExact = authority.positiveReceipts.length === 1 &&
+      exactTabDiskReceipt(authority.positiveReceipts[0], observation, channel, projectedRequest) &&
+      authority.positiveReceipts[0].settled && !authority.positiveReceipts[0].error &&
+      !authority.positiveReceipts[0].fault &&
+      unchanged(authority.positiveReceipts[0].actualReply) &&
+      isDeepStrictEqual(authority.positiveReceipts[0].actualReply, authority.positiveReceipts[0].deliveredReply);
+  } finally {
+    observation.fault = null;
+    tabDiskObservation = null;
+    restoreOpen(); restoreStat(); restoreRealpath();
+  }
+  check("SEC-08 direct Main-handler validation refuses a missing documentRef with the genuine window and main frame",
+    authority.directMain.registeredCount === 1 && authority.directMain.mainFrame &&
+      authority.directMain.reply === null &&
+      Object.hasOwn(authority.directMain.request.owner, "documentRef") &&
+      authority.directMain.request.owner.documentRef === undefined,
+    JSON.stringify(authority.directMain));
   check("SEC-08 conditional authority rejects unknown ref-less and unregistered owners before filesystem probes",
     authority.refused.length === 3 && authority.refused.every(value => value === null) &&
-      authority.refusedProbes === 0 && authority.refusedOpens === 0,
+      authority.refusedProbes === 0 && authority.refusedOpens === 0 &&
+      authority.nativeRefusalsExact && authority.directMain.registeredCount === 1 &&
+      authority.directMain.mainFrame && authority.directMain.reply === null &&
+      Object.hasOwn(authority.directMain.request.owner, "documentRef") &&
+      authority.directMain.request.owner.documentRef === undefined,
     JSON.stringify(authority));
   check("SEC-08 conditional authority positive control observes fresh metadata without opening a descriptor",
     authority.positive?.status === "unchanged" &&
-      authority.positiveProbes > 0 && authority.positiveOpens === 0,
+      authority.positiveProbes > 0 && authority.positiveOpens === 0 && authority.positiveExact,
     JSON.stringify(authority));
 }
 
@@ -17628,66 +17855,115 @@ async function run(win) {
   await runApprovedDocumentTransport();
   await runPdfOnceValidation();
   await runPopupPdfDispatchFailure(exec, sentinel);
-  const bridgeValidation = await exec(`
-    (async () => {
+  const readChannel = "read-owned-tab-disk-snapshot";
+  const readRequest = {
+    filePath: mainOwnedRefresh.validPayload.filePath,
+    pageSession: mainOwnedRefresh.validPayload.pageSession,
+    rendererGeneration: mainOwnedRefresh.validPayload.rendererGeneration,
+    owner: Object.fromEntries(["pageSession", "rendererGeneration", "tabId",
+      "documentGeneration", "pathKey", "documentRef"].map(
+      key => [key, mainOwnedRefresh.validPayload.owner[key]])),
+  };
+  const readObservation = {
+    target: win.webContents, frame: win.webContents.mainFrame,
+    pageSession: readRequest.pageSession, generation: readRequest.rendererGeneration,
+    channels: new Set([readChannel]), records: [], fault: null,
+  };
+  const validReadReply = reply => reply?.content === mainOwnedRefresh.validSnapshot.content &&
+    typeof reply.content === "string" && Number.isFinite(reply.modifiedTime) &&
+    ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(
+      key => Number.isFinite(reply.diskVersion?.[key])) &&
+    reply.modifiedTime === reply.diskVersion.mtimeMs;
+  if (tabDiskObservation) throw new Error("Overlapping owned-read Main observers");
+  let bridgeValidation;
+  tabDiskObservation = readObservation;
+  try {
+    const rejected = await exec(`(async () => {
       const request = ${JSON.stringify(mainOwnedRefresh.validPayload)};
-      const ipc = window.ipcRenderer;
-      const invoke = ipc.invoke;
-      let calls = 0;
-      let forwarded = null;
-      ipc.invoke = function (channel, data) {
-        if (channel === 'read-owned-tab-disk-snapshot') {
-          calls += 1;
-          forwarded = data;
+      const invalid = [
+        { ...request, filePath: 'bad\\0path' },
+        { ...request, owner: { ...request.owner, pageSession: 'other-session' } },
+        { ...request, owner: { ...request.owner, rendererGeneration: request.rendererGeneration + 1 } },
+        { ...request, owner: { ...request.owner, documentGeneration: NaN } },
+      ];
+      const rejected = [];
+      for (const input of invalid) {
+        try {
+          await window.folia.readOwnedTabDiskSnapshot(input);
+          rejected.push(false);
+        } catch (error) {
+          rejected.push(error.message.includes('Invalid owned tab disk snapshot request'));
         }
-        return invoke.apply(this, arguments);
+      }
+      return rejected;
+    })()`);
+    const malformedCalls = readObservation.records.length;
+    const positive = await exec(`window.folia.readOwnedTabDiskSnapshot({
+      ...${JSON.stringify(mainOwnedRefresh.validPayload)}, ignored: true,
+      owner: { ...${JSON.stringify(mainOwnedRefresh.validPayload.owner)}, ignored: true },
+    })`);
+    const positiveRecords = readObservation.records.slice(malformedCalls);
+    const forwarded = positiveRecords[0]?.request;
+    const forwarding = {
+      calls: positiveRecords.length,
+      requestKeys: Object.keys(forwarded || {}).sort(),
+      ownerKeys: Object.keys(forwarded?.owner || {}).sort(), content: positive?.content,
+    };
+    const ready = positiveRecords.length === 1 &&
+      exactTabDiskReceipt(positiveRecords[0], readObservation, readChannel, readRequest) &&
+      positiveRecords[0].settled && !positiveRecords[0].error &&
+      validReadReply(positiveRecords[0].actualReply) && validReadReply(positive) &&
+      isDeepStrictEqual(positiveRecords[0].actualReply, positiveRecords[0].deliveredReply);
+    check("SEC-08 owned-read fault setup retains an exact genuine Main request and complete content snapshot",
+      ready, JSON.stringify({ positiveRecords, positive }));
+    if (!ready) throw new Error("Owned-read Main response-fault setup did not read the genuine owner");
+    const badResponses = [], faults = [];
+    for (const [index, deliver] of [
+      () => undefined,
+      actual => ({ content: 3, modifiedTime: actual.modifiedTime, diskVersion: actual.diskVersion }),
+      actual => ({ ...actual, diskVersion: { ...actual.diskVersion, ino: Infinity } }),
+    ].entries()) {
+      const fault = {
+        channel: readChannel, request: structuredClone(readRequest), label: "owned-read-reply-" + index,
+        calls: 0, consumed: false, failures: [], accept: validReadReply, deliver,
       };
+      const start = readObservation.records.length;
+      readObservation.fault = fault;
       try {
-        const invalid = [
-          { ...request, filePath: 'bad\\0path' },
-          { ...request, owner: { ...request.owner, pageSession: 'other-session' } },
-          { ...request, owner: { ...request.owner, rendererGeneration: request.rendererGeneration + 1 } },
-          { ...request, owner: { ...request.owner, documentGeneration: NaN } },
-        ];
-        const rejected = [];
-        for (const input of invalid) {
+        badResponses.push(await exec(`(async () => {
           try {
-            await window.folia.readOwnedTabDiskSnapshot(input);
-            rejected.push(false);
+            await window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(readRequest)});
+            return false;
           } catch (error) {
-            rejected.push(error.message.includes('Invalid owned tab disk snapshot request'));
+            return error.message.includes('Invalid owned tab disk snapshot response');
           }
-        }
-        const malformedCalls = calls;
-        calls = 0;
-        const positive = await window.folia.readOwnedTabDiskSnapshot({
-          ...request, ignored: true, owner: { ...request.owner, ignored: true },
-        });
-        const forwarding = {
-          calls,
-          requestKeys: Object.keys(forwarded || {}).sort(),
-          ownerKeys: Object.keys(forwarded?.owner || {}).sort(),
-          content: positive?.content,
-        };
-        const badResponses = [];
-        const version = positive.diskVersion;
-        for (const response of [
-          undefined,
-          { content: 3, modifiedTime: positive.modifiedTime, diskVersion: version },
-          { ...positive, diskVersion: { ...version, ino: Infinity } },
-        ]) {
-          ipc.invoke = () => Promise.resolve(response);
-          try {
-            await window.folia.readOwnedTabDiskSnapshot(request);
-            badResponses.push(false);
-          } catch (error) {
-            badResponses.push(error.message.includes('Invalid owned tab disk snapshot response'));
-          }
-        }
-        return { rejected, malformedCalls, forwarding, badResponses };
-      } finally { ipc.invoke = invoke; }
-    })()
-  `);
+        })()`));
+      } finally { readObservation.fault = null; }
+      const records = readObservation.records.slice(start);
+      faults.push({
+        label: fault.label, calls: fault.calls, consumed: fault.consumed,
+        failures: fault.failures, records,
+        exact: records.length === 1 &&
+          exactTabDiskReceipt(records[0], readObservation, readChannel, readRequest) &&
+          records[0].settled && !records[0].error && records[0].fault === fault.label &&
+          validReadReply(records[0].actualReply),
+      });
+    }
+    const afterStart = readObservation.records.length;
+    const afterFault = await exec(`window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(readRequest)})`);
+    const afterRecords = readObservation.records.slice(afterStart);
+    bridgeValidation = {
+      rejected, malformedCalls, forwarding, badResponses, faults, afterFault, afterRecords,
+      afterExact: afterRecords.length === 1 &&
+        exactTabDiskReceipt(afterRecords[0], readObservation, readChannel, readRequest) &&
+        afterRecords[0].settled && !afterRecords[0].error && !afterRecords[0].fault &&
+        validReadReply(afterRecords[0].actualReply) && validReadReply(afterFault) &&
+        isDeepStrictEqual(afterRecords[0].actualReply, afterRecords[0].deliveredReply),
+    };
+  } finally {
+    readObservation.fault = null;
+    tabDiskObservation = null;
+  }
   check(
     "SEC-08 owned bridge rejects malformed request identities before main IPC",
     bridgeValidation.rejected.length === 4 &&
@@ -17708,9 +17984,15 @@ async function run(win) {
   check(
     "SEC-08 owned bridge rejects undefined and malformed main responses instead of returning success-shaped data",
     bridgeValidation.badResponses.length === 3 &&
-      bridgeValidation.badResponses.every(Boolean),
+      bridgeValidation.badResponses.every(Boolean) &&
+      bridgeValidation.faults.length === 3 && bridgeValidation.faults.every(fault =>
+        fault.calls === 1 && fault.consumed && fault.failures.length === 0 && fault.exact) &&
+      Object.hasOwn(bridgeValidation.faults[0].records[0], "deliveredReply") &&
+      bridgeValidation.faults[0].records[0].deliveredReply === undefined,
     JSON.stringify(bridgeValidation),
   );
+  check("SEC-08 owned bridge returns unmodified genuine content after all reply faults are disarmed",
+    bridgeValidation.afterExact, JSON.stringify(bridgeValidation));
   await runConditionalRefreshValidation(win, exec, dir, fileB);
 
   const casePreservedTarget = fs.realpathSync.native(fileB);
