@@ -71,22 +71,30 @@ section is kept here so the register has a visible edge.
     Formal-proof/R1140 deferrals and failed/incomparable performance remain
     separate, not passing.
 
-- `table-cell-typed-emphasis-0.11.2` - **REVIEWED SOURCE; PROOF DECISION PENDING**.
-  - Reviewed candidate scope: typing `**bold**` and `*italic*` formats immediately
+- `table-cell-typed-emphasis-0.11.2` - **REVIEWED SOURCE; RELEASE PREPARATION**.
+  - User-confirmed scope: typing `**bold**` and `*italic*` formats immediately
     and stays formatted after Update and reopening. Underline, buttons and shortcut
     enablement are out of scope. Keep the popup Ctrl/Command+B/I/U block.
   - Start from published `e24af07f`; `6659ef45` adds only its publication closure.
     Preserve the 0.11.1 CODE, paste, source-ownership and stale-target policies.
-  - Retained Astra designed the source-owned typing path. Sol owns this focused
-    source, tests and related documentation until the reviewed source handoff.
-    C then owns version/lock/build/ref/publication work. No new release exists yet.
+  - Retained Astra designed the source-owned typing path. B completed the focused
+    source, tests and related documentation. C owns the serialized release stage.
+    No new release exists yet.
   - C verified source commit `45d7e53f`, tree `6027a454`, parent `6659ef45`,
     against the frozen handoff, committed patch and supplied file/product pins.
-    C preserves its existing register-only commits and Node/strict-audit receipts.
+    Integration commit `c28eff3c` preserves C's existing register-only commits
+    and Node/strict-audit receipts. Fresh independent Sol/Luna integration
+    reviews found no significant blocker or disagreement.
     C is now the sole version/lock/build/ref, register and release-note writer.
-    B's source stays frozen. Publication waits for the coordinator's explicit
-    0.11.2 proof-policy decision and confirmation of the narrowed scope above;
-    do not claim an underline fix or extend the 0.11.1 proof deferral.
+    B's source stays frozen. The user confirmed typing-only scope and explicitly
+    excluded underline. Do not claim an underline fix or enable popup shortcuts.
+  - Package and lock versions are 0.11.2; dependencies and scripts are unchanged.
+    Require fresh independent Sol/Luna metadata review, focused Windows table
+    and editor-scroll checks, all platform builds, strict zero-skip built-ASAR
+    checks and exact source/version correspondence before tagging.
+    Use one normal main/tag publication path; never move an existing tag.
+    Verify actual published downloads, updater manifests and provenance.
+    Do not launch an installer or touch the user's installed app or profile.
   - Shipping-parser-confirmed typing creates captured emphasis owners. Retained
     source atoms and enclosing owners survive one validated native replacement.
     Context-aware delimiter repair keeps the intended nesting without HTML
@@ -117,11 +125,12 @@ section is kept here so the register has a visible edge.
     A protected-content fixture was corrected to put both delimiter runs outside
     authored HTML; its earlier closing run actually entered the HTML owner.
   - Natural baseline reds are functional evidence, not individual mutation proof.
-    Formal individual proofs are **NOT RUN**; no new formal records were added.
-    The unsafe shared helper stays held. Parent is resolving the 0.11.2 proof
-    policy with the user; a prior waiver is not silently extended.
-    C owns the version/build/publication stage after this source handoff and
-    must retain that separate proof status until the explicit decision.
+    Formal individual proofs are **NOT RUN; USER-DEFERRED FOR 0.11.2**;
+    no new formal records were added. The user explicitly selected
+    "Defer separate formal proofs for 0.11.2 (Recommended)" after being told the
+    old helper is unsafe. This is a separate release-specific decision, not an
+    inferred 0.11.1 waiver or a proof-pass claim. The unsafe helper stays held.
+    Existing focused tests and independent reviews remain required.
   - The seven initial B ordinary routes on exact `e24af07f` failed at Electron
     bootstrap before GUI assertions. Those raw results remain preserved.
     A merged-output pipeline subsequently ran the existing document-editor
