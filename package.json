@@ -117,6 +117,7 @@
       "src/document-events.js",
       "src/renderer.js",
       "src/editor-scroll.js",
+      "src/inline-formatting.js",
       "src/table-cell-editor.js",
       "src/popup-preload.js",
       "src/styles.css",

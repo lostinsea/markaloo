@@ -38,11 +38,18 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `edit-text-typed-formatting-0.11.3` - **NEXT; REVIEWED SOURCE HANDOFF PENDING**.
-  - Apply the table-cell typing-formatting improvements to the actual Edit Text
-    popup. Keep typing-only scope: no underline, buttons or shortcut enablement.
-  - Start from published 0.11.2 source `003c4163`, tree `501ccde4`.
-    Do not revise or move its published tag.
+- `edit-text-typed-formatting-0.11.3` - **SOURCE ACTIVE; REVIEWED HANDOFF PENDING**.
+  - User-selected scope: format bold, italic and code inside the actual Edit Text
+    input; keep other Markdown as typed. Preserve raw Markdown rather than adding
+    a separate preview or full rich-text editor. No underline, buttons or shortcut
+    enablement.
+  - Reuse the proven table implementation through one shared inline-formatting
+    core, `src/inline-formatting.js`, used by both table cells and Edit Text.
+    Keep only consumer-specific raw-Markdown and table policies separate, so
+    future fixes reach both consumers. B owns the shared module, both consumers,
+    necessary index wiring and source-packaging oracles.
+  - Start from `30c64183`, the register-only closure of published 0.11.2 source
+    `003c4163`, tree `501ccde4`. Do not revise or move its published tag.
   - B owns source and focused qualification with Astra design, Sol implementation
     and fresh independent Sol/Luna review. C remains the sole package/version,
     lock, workflow, register, main/tag, build and publication writer.
@@ -50,8 +57,16 @@ section is kept here so the register has a visible edge.
     Keep them **NOT RUN / USER-DEFERRED**; the unsafe helper stays held.
     Functional checks, independent reviews and actual package integrity remain
     required. Do not infer proof success from natural red/green tests.
+  - B has the coordinator's exclusive focused local GUI/runtime transfer.
+    Retain the unchanged-product baseline and table regressions in qualification.
+    C remains parked apart from the requested package-file-list handoff.
+  - C adds the agreed shared module to `build.files` for B's combined candidate.
+    Version remains 0.11.2; scripts, dependencies and lockfile stay unchanged.
+    This preparatory commit is local only: the module is still being implemented.
+    Do not push main, build, tag or publish it without B's reviewed source.
+    Combined qualification must prove the module exists, both consumers use it
+    and the built package contains the exact qualified shared runtime bytes.
   - Release and verify 0.11.3 before resuming the earlier broad test fixes.
-    Local GUI work still needs the coordinator's explicit serialized transfer.
     Do not install or inspect the user's app, profiles or documents.
 
 - `post-0.11.1-ordinary-tests` - **PAUSED FOR 0.11.3; C NODE EVIDENCE RETAINED**.
