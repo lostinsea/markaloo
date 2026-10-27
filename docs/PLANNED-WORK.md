@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `table-cell-markdown-0.11.1` - **SOURCE REVIEW COMPLETE; HANDOFF**.
+- `table-cell-markdown-0.11.1` - **RELEASE PREPARATION; BUILD QUALIFICATION PENDING**.
   - Start from `8741c7a7`; keep `v0.11.0` unchanged.
   - Real cell typing must not add browser/editor HTML wrappers to Markdown.
     Backtick inline code must format immediately inside the cell while typing,
@@ -55,8 +55,21 @@ section is kept here so the register has a visible edge.
   - Astra owns the input/rendering/serialization investigation; Sol owns the
     fix, real-input regressions and focused qualification. Fresh Sol/Luna
     reviews must cover the complete correction and any material revisions.
-  - B owns integration and this register. C coordinates package/lock and release
-    changes separately. Published `v0.11.0` is immutable.
+  - B handed off reviewed commit `f135e3bc`, based on `8741c7a7`. C imported
+    that exact commit and verified every handoff file hash.
+  - C now owns package/lock/test scripts, this register, release notes and the
+    single release-ref writer role. B no longer writes these files or refs.
+    Published `v0.11.0` is immutable; its installed app stays untouched.
+  - Package and lock versions are 0.11.1; dependencies are unchanged.
+    Fresh metadata reviews and Node packaging checks precede one exact-source
+    build-only preparation run. Built-package qualification is still pending.
+  - The existing preparation and tag workflows retain the focused table and
+    editor-scroll checks, all platform builds and strict zero-skip ASAR checks.
+    Tag publication also requires attestation. Verify actual new published
+    assets, updater checksums, source and provenance before closing release work.
+  - New minor findings are documented and deferred under the user's release
+    direction. Significant content, build or publication failures stay explicit.
+    Broader ordinary testing resumes only after verified 0.11.1 publication.
   - The unchanged 0.11.0 product reproduced both reports through trusted cell
     input: ordinary DOM text gained a generated source span, and typed
     backticks stayed literal. The official red run retained every prior check.
