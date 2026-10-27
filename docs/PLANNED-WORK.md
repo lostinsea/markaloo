@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `edit-text-typed-formatting-0.11.3` - **SOURCE ACTIVE; REVIEWED HANDOFF PENDING**.
+- `edit-text-typed-formatting-0.11.3` - **REVIEWED SOURCE; RELEASE PREPARATION**.
   - User-selected scope: format bold, italic and code inside the actual Edit Text
     input; keep other Markdown as typed. Preserve raw Markdown rather than adding
     a separate preview or full rich-text editor. No underline, buttons or shortcut
@@ -46,26 +46,47 @@ section is kept here so the register has a visible edge.
   - Reuse the proven table implementation through one shared inline-formatting
     core, `src/inline-formatting.js`, used by both table cells and Edit Text.
     Keep only consumer-specific raw-Markdown and table policies separate, so
-    future fixes reach both consumers. B owns the shared module, both consumers,
-    necessary index wiring and source-packaging oracles.
+    future fixes reach both consumers. B completed the shared module, both
+    consumers, necessary index wiring and source-packaging oracles.
   - Start from `30c64183`, the register-only closure of published 0.11.2 source
     `003c4163`, tree `501ccde4`. Do not revise or move its published tag.
-  - B owns source and focused qualification with Astra design, Sol implementation
-    and fresh independent Sol/Luna review. C remains the sole package/version,
-    lock, workflow, register, main/tag, build and publication writer.
+  - B completed source and focused qualification with Astra design, Sol
+    implementation and independent Sol/Luna review. C verified and fast-forwarded
+    exact source `8091087b`, tree `96ca306d`, parent `a593d6c1`.
+    All twelve raw file pins, the frozen reviewed patch and C-owned metadata match.
+    The shared core is committed and both real consumers use it. C is now the sole
+    package/version, lock, workflow, register, main/tag, build and publication
+    writer; B's source stays frozen.
   - The user explicitly deferred separate formal proofs for 0.11.3 too.
     Keep them **NOT RUN / USER-DEFERRED**; the unsafe helper stays held.
     Functional checks, independent reviews and actual package integrity remain
     required. Do not infer proof success from natural red/green tests.
-  - B has the coordinator's exclusive focused local GUI/runtime transfer.
-    Retain the unchanged-product baseline and table regressions in qualification.
-    C remains parked apart from the requested package-file-list handoff.
-  - C adds the agreed shared module to `build.files` for B's combined candidate.
-    Version remains 0.11.2; scripts, dependencies and lockfile stay unchanged.
-    This preparatory commit is local only: the module is still being implemented.
-    Do not push main, build, tag or publish it without B's reviewed source.
-    Combined qualification must prove the module exists, both consumers use it
-    and the built package contains the exact qualified shared runtime bytes.
+  - Both independent reviewers cleared the required behavior and all five
+    findings. Their findings were complementary; no required-behavior disagreement
+    remains. Static review is separate from runtime qualification.
+  - Final source results: Edit Text 156/156, table source 64/64, input 2163/2163,
+    remaining UI 538/538 and document-editor 60/60. Source packaging passed
+    436 checks with zero failures and two pre-build ASAR skips, including C's
+    fresh imported-source run. These skips are not built-package approval.
+  - Editor-scroll remains 282/283, exit one. Its sole nested-bottom native-wheel
+    failure also occurred on the executed unchanged baseline, 259/260.
+    The final full patch route remains 340/343: a paragraph-menu contract
+    contradiction and two 200%-zoom note-centering failures, offsets 233/223px.
+    The old patch baseline stopped early; do not call it a full-route baseline.
+    Notes root cause and baseline classification are unknown. Earlier same-core
+    notes controls passed, but that receipt lacks a full independent pin bundle.
+    None of these routes is green or a release-gate waiver.
+  - The coordinator transferred exclusive focused runtime to C after B cleanup.
+    Keep the installed app untouched. No broad test-fix or performance campaign.
+  - Package and lock versions are prepared as 0.11.3. The shared module is in
+    `build.files`; scripts, dependencies and workflow gates are unchanged.
+    Require independent integration/metadata review, actual build-only preparation,
+    focused hosted table/editor-scroll checks and strict zero-skip built-ASAR
+    checks. Verify the packaged shared core and both consumers against the exact
+    qualified source before one normal main/tag publication path.
+    Concrete CI/build/integrity failures block publication; do not bypass them.
+    Actual published assets, updater manifests and provenance remain unverified
+    until a successful new tag run and download audit.
   - Release and verify 0.11.3 before resuming the earlier broad test fixes.
     Do not install or inspect the user's app, profiles or documents.
 
