@@ -49,6 +49,12 @@ section is kept here so the register has a visible edge.
   - Fresh pure Node results: profile 72/72, corpus 335/335 and update-state
     42/42, all exit zero. Packaging reports 433 passed, zero failed and two
     built-ASAR skips; this Node run is not built-package proof.
+  - A separate strict Node packaging audit passed 445 checks, zero failed,
+    zero skipped, using the authenticated published ASAR and external update
+    feed at the ordinary lookup paths. This was not a new local build.
+    Initial ASAR-only staging failed the missing-feed oracle; that failure is
+    retained. Adding the actual published feed fixed the fixture, not the tests.
+    Only the staged data and empty directories were removed afterward.
   - Packaging prints intentional failure diagnostics from its in-memory
     negative lifecycle probes. Their named assertions pass; no real worker
     was launched. Keep these diagnostics distinct from suite failures.
