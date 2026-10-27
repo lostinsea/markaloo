@@ -38,6 +38,31 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `post-0.11.1-ordinary-tests` - **ACTIVE; C NODE CHECKS PASSED; GUI QUEUED**.
+  - Resume the existing A9/B7/C12 split after verified 0.11.1 publication.
+    Published baseline is `e24af07f`, tree `af160b79`. C starts at `6659ef45`;
+    only this register differs, not product, test, package or workflow bytes.
+  - C owns `test:packaging`, `test:profile`, `test:corpus`, `test:startup`,
+    `test:document-session`, `test:updates` and all its children, `test:tabs`,
+    `test:reload-dialog`, `test:owned-dialogs`, `test:dialogs`, `test:security`
+    and `test:popups`.
+  - Fresh pure Node results: profile 72/72, corpus 335/335 and update-state
+    42/42, all exit zero. Packaging reports 433 passed, zero failed and two
+    built-ASAR skips; this Node run is not built-package proof.
+  - Packaging prints intentional failure diagnostics from its in-memory
+    negative lifecycle probes. Their named assertions pass; no real worker
+    was launched. Keep these diagnostics distinct from suite failures.
+  - The updates group is incomplete: its ordinary Node launcher starts
+    Electron children. All Electron/UI/native-input runs wait for the
+    coordinator's exclusive A -> B -> C transfer after prior cleanup.
+    No C Electron run or installed-app/profile access has started.
+  - Significant owned failures get focused fixes and independent Sol/Luna
+    review. New minor findings are documented and deferred. Shared-file
+    findings go to their owner; C alone writes package/workflow/register files.
+  - No new controller, admission framework, unsafe proof runner, dependency
+    upgrade, performance campaign or publication. Formal-proof/R1140 deferrals
+    and failed/incomparable performance remain separate, not passing.
+
 - `table-cell-markdown-0.11.1` - **PUBLISHED; BROAD TESTING PENDING**.
   - Start from `8741c7a7`; keep `v0.11.0` unchanged.
   - Real cell typing must not add browser/editor HTML wrappers to Markdown.
@@ -448,9 +473,9 @@ section is kept here so the register has a visible edge.
     oracle before producing comparable samples. Preserve it as failed and
     incomparable; the parent explicitly deferred further performance work.
     No performance pass or speedup is claimed.
-  - The broad ordinary-test repair project is paused. Only directly related
-    checks are in scope; R1140 remains deferred. A reviewed 0.11.1 candidate
-    and release-readiness handoff are pending, not passing. The unsafe shared
+  - Broad ordinary testing has resumed on published 0.11.1; see the current
+    post-release test entry. R1140 remains deferred. The reviewed 0.11.1
+    candidate and publication are complete. The unsafe shared
     mutation runner has not been used; the original-product and review-case
     red runs are retained. The read-only anchor check resolves without changing
     the tree; it is not a mutation proof.
@@ -474,7 +499,7 @@ section is kept here so the register has a visible edge.
     editor-scroll checks; strict Windows ASAR checks passed without skips.
   - Full ordinary tests and R1140 remain deferred, not passing. Combined
     performance is unmeasured; no general speedup claim is made.
-  - Broad test repair is paused for the user-reported 0.11.1 cell defects.
+  - Broad test repair has resumed after verified 0.11.1 publication.
     Older evidence retains its original source binding; do not overwrite it.
 
 - `visual-table-cell-editing` - **FOCUSED RUN ACCEPTED; RELEASE PREPARATION**.
