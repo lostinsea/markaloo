@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `table-cell-markdown-0.11.1` - **RELEASE PREPARATION; BUILD QUALIFICATION PENDING**.
+- `table-cell-markdown-0.11.1` - **PUBLISHED; BROAD TESTING PENDING**.
   - Start from `8741c7a7`; keep `v0.11.0` unchanged.
   - Real cell typing must not add browser/editor HTML wrappers to Markdown.
     Backtick inline code must format immediately inside the cell while typing,
@@ -61,8 +61,31 @@ section is kept here so the register has a visible edge.
     single release-ref writer role. B no longer writes these files or refs.
     Published `v0.11.0` is immutable; its installed app stays untouched.
   - Package and lock versions are 0.11.1; dependencies are unchanged.
-    Fresh metadata reviews and Node packaging checks precede one exact-source
-    build-only preparation run. Built-package qualification is still pending.
+    Fresh independent Sol/Luna metadata reviews found no issue. Node packaging
+    passed 433 checks with no failures and two expected pre-build ASAR skips.
+  - Build-only preparation run [40437165469](https://github.com/lostinsea/markaloo/actions/runs/40437165469)
+    passed on frozen candidate `e24af07f`: source 55/55, input 2124/2124,
+    remaining UI 429/429, editor-scroll 260/260 and strict packaging 445 passed,
+    zero failed, zero skipped. All three platform builds and uploads passed.
+  - The actual Windows payload reports 0.11.1. Packaged source, vendor/font,
+    notices and license bytes match the candidate; the canonical update feed
+    and Setup size/SHA512 match. No binary was launched or installed.
+  - C advanced main normally to `e24af07f` and created annotated `v0.11.1`
+    on that same candidate. No published tag was moved.
+    Tag-triggered run [40438011754](https://github.com/lostinsea/markaloo/actions/runs/40438011754)
+    passed on that exact source: source 55/55, input 2124/2124, remaining UI
+    429/429, editor-scroll 260/260 and strict packaging 445 passed, zero failed,
+    zero skipped. All platform builds, attestation and publication passed.
+  - [Published 0.11.1](https://github.com/lostinsea/markaloo/releases/tag/v0.11.1)
+    is the latest release, not a draft or prerelease. Its reviewed release notes
+    are published. All nine actual downloads match API and tag-build SHA256
+    digests; all three updater manifests match payload sizes and SHA512.
+    Cryptographic provenance for all five binaries binds to this exact tag,
+    source, workflow and run attempt. This is not OS code signing.
+  - The actual published Windows ASAR is identical to the qualified preparation
+    payload. Its source, vendor/font, notices and canonical feed match; package
+    and executable versions are 0.11.1. No binary was launched or installed.
+    The user's installed 0.11.0 app remains untouched.
   - The existing preparation and tag workflows retain the focused table and
     editor-scroll checks, all platform builds and strict zero-skip ASAR checks.
     Tag publication also requires attestation. Verify actual new published
