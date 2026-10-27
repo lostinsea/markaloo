@@ -12,7 +12,7 @@ const baseline = process.argv.includes("--baseline");
 const dirtyOpenProbe = process.argv.includes("--probe-dirty-open");
 const proof = process.env.FOLIA_CELL_PROOF;
 const groups = ["selection", "rows", "splice", "inline", "menus", "provenance",
-  "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "many"];
+  "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "formatting", "many"];
 const uiGroups = groups.slice(4);
 const uiPartitions = { input: ["input"], remaining: uiGroups.filter(name => name !== "input") };
 const partitionArgs = process.argv.filter(arg => arg === "--partition" || arg.startsWith("--partition="));
@@ -4058,6 +4058,264 @@ require("./test-userdata-isolation");
       }
     }
   }
+  async function formatting() {
+    const offset = secondOffset + table.indexOf("| plain |") + 2;
+    const replaced = source => original.slice(0, offset) + source + original.slice(offset + "plain".length);
+    for (const scenario of [
+      { name: "typed bold", opening: "**", body: "bold", strong: 1, em: 0 },
+      { name: "typed italic", opening: "*", body: "italic", strong: 0, em: 1 },
+      { name: "typed nested emphasis", opening: "***", body: "nested", strong: 1, em: 1 },
+    ]) {
+      const fixture = await fresh(scenario.name), before = await state(), saveCount = saves.length;
+      await openGrid();
+      const parts = [...scenario.opening, scenario.body, ...scenario.opening];
+      const snapshots = await typeTrustedCell(parts.slice(0, -1), 8, { replace: true });
+      const partial = await exec(`({text:__cells.inputs()[8].textContent,
+        formatted:__cells.inputs()[8].querySelectorAll('strong,em').length})`);
+      check(scenario.name + " preserves the incomplete opener and closing run through trusted typing",
+        snapshots.every(snapshot => snapshot.events.some(event =>
+          event.event === "beforeinput" && event.trusted && event.type === "insertText")) &&
+        partial.formatted === 0 && partial.text === parts.slice(0, -1).join(""), { snapshots, partial });
+      const live = (await typeTrustedCell([scenario.opening.at(-1)], 8, { preserveCaret: true })).at(-1);
+      const semantics = await exec(`(() => {
+        const input=__cells.inputs()[8],selection=getSelection(),node=selection.anchorNode;
+        const parent=node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement;
+        return {strong:input.querySelectorAll('strong').length,em:input.querySelectorAll('em').length,
+          nested:!!input.querySelector('em>strong'),inside:!!parent?.closest('strong,em')};
+      })()`);
+      check(scenario.name + " formats immediately before blur or Update without a document transaction",
+        live.text === scenario.body && semantics.strong === scenario.strong && semantics.em === scenario.em &&
+        (scenario.opening.length !== 3 || semantics.nested) && live.focused && live.collapsed &&
+        live.caretInCell && !semantics.inside && !live.error &&
+        JSON.stringify(await state()) === JSON.stringify(before) && saves.length === saveCount,
+        { live, semantics });
+      if (scenario.opening.length === 3) await screenshot("immediate-typed-emphasis");
+      await key("Z", ["control"]);
+      const undone = await exec(`({text:__cells.inputs()[8].textContent,
+        formatted:__cells.inputs()[8].querySelectorAll('strong,em').length,
+        selection:getSelection().toString(),collapsed:getSelection().isCollapsed})`);
+      check(scenario.name + " retains a native cell Undo without changing document history",
+        undone.formatted === 0 && [parts.join(""), parts.slice(0, -1).join("")].includes(undone.text) &&
+        JSON.stringify(await state()) === JSON.stringify(before), undone);
+      await key("Y", ["control"]);
+      check(scenario.name + " native Redo restores the exact source-owned live fragment",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(live.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(before));
+      const continued = (await typeTrustedCell([" next"], 8, { preserveCaret: true })).at(-1);
+      const formattedText = await exec("[...__cells.inputs()[8].querySelectorAll('strong,em')].map(node=>node.textContent)");
+      check(scenario.name + " continues outside its completed formatting at the live caret",
+        continued.text === scenario.body + " next" && formattedText.length === scenario.strong + scenario.em &&
+        formattedText.every(text => text === scenario.body) && !continued.error, { continued, formattedText });
+      const completion = await update(), after = await state();
+      const expected = replaced(scenario.opening + scenario.body + scenario.opening + " next");
+      check(scenario.name + " Update saves clean Markdown once and preserves every non-target source byte",
+        !completion.open && !completion.error && after.exact === expected && after.cache === expected &&
+        after.undo === before.undo + 1 && after.redo === 0 && saves.length === saveCount &&
+        fs.readFileSync(fixture.file, "utf8") === original, { completion, after, expected });
+      await openGrid();
+      const reopened = await exec(`({text:__cells.inputs()[8].textContent,
+        strong:__cells.inputs()[8].querySelectorAll('strong').length,
+        em:__cells.inputs()[8].querySelectorAll('em').length})`);
+      check(scenario.name + " reopens with the same semantic formatting and plain continuation",
+        reopened.text === scenario.body + " next" && reopened.strong === scenario.strong &&
+        reopened.em === scenario.em, reopened);
+      if (scenario.opening.length === 3) await screenshot("reopened-typed-emphasis");
+      await cancel();
+      check(scenario.name + " reopen Cancel leaves the exact committed document untouched",
+        JSON.stringify(await state()) === JSON.stringify(after) && saves.length === saveCount);
+      await exec("historyUndo();true");
+      await wait(scenario.name + " document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+      check(scenario.name + " remains one document Undo and never writes the disposable file",
+        (await state()).exact === original && saves.length === saveCount &&
+        fs.readFileSync(fixture.file, "utf8") === original);
+    }
+    for (const scenario of [
+      { name: "italic inside loaded bold", initial: "**outer**", parts: ["*", "inner", "*"], outer: "strong", inner: "em" },
+      { name: "bold inside loaded italic", initial: "*outer*", parts: ["*", "*", "inner", "*", "*"], outer: "em", inner: "strong" },
+    ]) {
+      const body = replaced(scenario.initial), fixture = await fresh(scenario.name, body);
+      const before = await state(), saveCount = saves.length;
+      await openGrid();
+      const owner = await exec(`__cells.inputs()[8].querySelector('${scenario.outer}')
+        .getAttribute(tableCellSession.cells[8].provenance.partAttribute)`);
+      const live = (await typeTrustedCell(scenario.parts, 8, { replace: true })).at(-1);
+      const nested = await exec(`!!__cells.inputs()[8].querySelector('${scenario.outer} ${scenario.inner}')&&
+        __cells.inputs()[8].querySelectorAll('strong,em').length===2&&
+        __cells.inputs()[8].querySelector('${scenario.outer}').getAttribute(tableCellSession.cells[8].provenance.partAttribute)
+          ===${JSON.stringify(owner)}`);
+      check(scenario.name + " creates an owned nested frame without replacing its enclosing formatting",
+        live.text === "inner" && nested && !live.error && JSON.stringify(await state()) === JSON.stringify(before), live);
+      const continued = (await typeTrustedCell([" tail"], 8, { preserveCaret: true })).at(-1);
+      const ancestry = await exec(`(() => {
+        const outer=__cells.inputs()[8].querySelector('${scenario.outer}'),inner=outer?.querySelector('${scenario.inner}');
+        return {outer:outer?.textContent,inner:inner?.textContent,
+          count:__cells.inputs()[8].querySelectorAll('strong,em').length};
+      })()`);
+      check(scenario.name + " continues outside the new inner frame but inside its retained outer owner",
+        ancestry.outer === "inner tail" && ancestry.inner === "inner" && ancestry.count === 2 &&
+        !continued.error, { ancestry, continued });
+      await key("Z", ["control"]);
+      check(scenario.name + " one native Undo restores the nested conversion before continuation",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(live.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(before));
+      await key("Y", ["control"]);
+      check(scenario.name + " native Redo restores continuation and exact owner ancestry",
+        await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(continued.html)) &&
+        JSON.stringify(await state()) === JSON.stringify(before));
+      const completion = await update(), after = await state();
+      const tail = original.slice(offset + "plain".length);
+      const changedCell = after.exact.slice(offset, after.exact.length - tail.length);
+      check(scenario.name + " commits Markdown without HTML and preserves exact surrounding bytes",
+        !completion.open && !completion.error && after.exact.startsWith(original.slice(0, offset)) &&
+        after.exact.endsWith(tail) && /^[*_]+inner[*_]+ tail[*_]+$/.test(changedCell) &&
+        after.undo === before.undo + 1 && saves.length === saveCount &&
+        fs.readFileSync(fixture.file, "utf8") === body, { changedCell, completion, after });
+      await openGrid();
+      check(scenario.name + " reopens the intended nested semantics rather than reversed delimiter ownership",
+        await exec(`!!__cells.inputs()[8].querySelector('${scenario.outer} ${scenario.inner}')&&
+          __cells.inputs()[8].querySelector('${scenario.outer}').textContent==='inner tail'&&
+          __cells.inputs()[8].querySelector('${scenario.inner}').textContent==='inner'`));
+      await cancel();
+      await exec("historyUndo();true");
+      await wait(scenario.name + " document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+      check(scenario.name + " document Undo restores the exact original outer Markdown spelling", (await state()).exact === body);
+    }
+    for (const scenario of [
+      { name: "typed escaped star", initial: "plain", parts: ["\\", "*", "literal", "*"],
+        replace: true, text: "\\*literal*", source: "&#92;&#42;literal&#42;" },
+      { name: "captured entity star", initial: "&#42;loaded", parts: ["*"],
+        text: "*loaded*", source: "&#42;loaded&#42;" },
+      { name: "captured escaped star", initial: "\\*loaded", parts: ["*"],
+        text: "*loaded*", source: "\\*loaded&#42;" },
+      { name: "right-context punctuation flanking", initial: "right", parts: ["*", "-", "*"], atStart: true,
+        text: "*-*right", source: "&#42;-&#42;right" },
+      { name: "invalid whitespace flanking", initial: "plain", parts: ["*", " ", "text", "*"],
+        replace: true, text: "* text*", source: "&#42; text&#42;" },
+      { name: "stars inside loaded code", initial: "`literal`", parts: ["*", "x", "*"], code: true,
+        text: "literal*x*", source: "`literal*x*`" },
+    ]) {
+      const body = replaced(scenario.initial), fixture = await fresh(scenario.name, body);
+      const before = await state(), saveCount = saves.length;
+      await openGrid();
+      if (scenario.atStart || scenario.code) await exec(`(() => {
+        const input=__cells.inputs()[8],target=${scenario.code ? "input.querySelector('code')" : "input"};
+        input.focus();const range=document.createRange();range.selectNodeContents(target);
+        range.collapse(${!scenario.code});getSelection().removeAllRanges();getSelection().addRange(range);return true;
+      })()`);
+      const live = (await typeTrustedCell(scenario.parts, 8,
+        { replace: !!scenario.replace, preserveCaret: !!(scenario.atStart || scenario.code) })).at(-1);
+      check(scenario.name + " preserves literal content through trusted typing without creating emphasis",
+        live.text === scenario.text && !live.error &&
+        await exec("__cells.inputs()[8].querySelectorAll('strong,em').length===0") &&
+        live.events.some(event => event.event === "beforeinput" && event.trusted) &&
+        JSON.stringify(await state()) === JSON.stringify(before), live);
+      const completion = await update(), after = await state();
+      check(scenario.name + " preserves exact protected source and all non-target bytes on Update",
+        !completion.open && !completion.error && after.exact === replaced(scenario.source) &&
+        saves.length === saveCount && fs.readFileSync(fixture.file, "utf8") === body,
+        { completion, after, expected: replaced(scenario.source) });
+      await exec("historyUndo();true");
+      await wait(scenario.name + " document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+    }
+    for (const edge of ["opening", "closing"]) {
+      const initial = edge === "opening" ? '*<img src="cell.svg">*word' : 'word<img src="cell.svg">tail';
+      const body = replaced(initial), fixture = await fresh("zero-width " + edge + " owner", body);
+      const before = await state(), saveCount = saves.length;
+      await openGrid();
+      check("zero-width " + edge + " setup contains the actual retained image and no emphasis",
+        await exec("__cells.inputs()[8].querySelectorAll('img').length===1&&" +
+          "__cells.inputs()[8].querySelectorAll('strong,em').length===0"));
+      if (edge === "opening") await typeTrustedCell(["**"], 8);
+      else {
+        await exec(`(() => {
+          const input=__cells.inputs()[8],range=document.createRange();input.focus();
+          range.selectNodeContents(input);range.collapse(true);
+          getSelection().removeAllRanges();getSelection().addRange(range);return true;
+        })()`);
+        await typeTrustedCell(["*", "*"], 8, { preserveCaret: true });
+        for (const side of ["Before", "After"]) {
+          await exec(`(() => {
+            const range=document.createRange();range.setStart${side}(__cells.inputs()[8].querySelector('img'));
+            range.collapse(true);getSelection().removeAllRanges();getSelection().addRange(range);return true;
+          })()`);
+          await typeTrustedCell(["*"], 8, { preserveCaret: true });
+        }
+      }
+      const live = await exec(`({html:__cells.inputs()[8].innerHTML,text:__cells.inputs()[8].textContent,
+        images:__cells.inputs()[8].querySelectorAll('img').length,
+        formatted:__cells.inputs()[8].querySelectorAll('strong,em').length,error:tableCellError.textContent})`);
+      check("zero-width " + edge + " owner breaks the apparent delimiter run without losing content",
+        live.images === 1 && live.formatted === 0 && !live.error &&
+        live.text === (edge === "opening" ? "**word**" : "**word**tail") &&
+        JSON.stringify(await state()) === JSON.stringify(before), live);
+      const expected = edge === "opening" ? initial + "&#42;&#42;" :
+        '&#42;&#42;word&#42;<img src="cell.svg">&#42;tail';
+      const completion = await update(), after = await state();
+      check("zero-width " + edge + " owner retains exact image source and surrounding document on Update",
+        !completion.open && !completion.error && after.exact === replaced(expected) &&
+        saves.length === saveCount && fs.readFileSync(fixture.file, "utf8") === body,
+        { completion, actual: after.exact, expected: replaced(expected) });
+      await exec("historyUndo();true");
+      await wait("zero-width " + edge + " owner document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+    }
+    const retained = 'head &#42;literal&#42; &amp; :smile: `code` <span title="keep">html</span><!--keep--> tail';
+    const protectedBody = replaced(retained), protectedFixture = await fresh("protected emphasis body", protectedBody);
+    const protectedBefore = await state(), protectedSaves = saves.length;
+    await openGrid();
+    const expectedText = await exec("__cells.inputs()[8].textContent");
+    await exec(`(() => {
+      const input=__cells.inputs()[8];input.focus();const range=document.createRange();
+      range.selectNodeContents(input);range.collapse(true);
+      getSelection().removeAllRanges();getSelection().addRange(range);return true;
+    })()`);
+    await typeTrustedCell(["*", "*"], 8, { preserveCaret: true });
+    await exec(`(() => {
+      const range=document.createRange();range.selectNodeContents(__cells.inputs()[8]);range.collapse(false);
+      getSelection().removeAllRanges();getSelection().addRange(range);return true;
+    })()`);
+    const protectedLive = (await typeTrustedCell(["*", "*"], 8, { preserveCaret: true })).at(-1);
+    check("new bold preserves protected atoms and whole retained code HTML and comment owners",
+      protectedLive.text === expectedText && !protectedLive.error &&
+      await exec(`!!__cells.inputs()[8].querySelector('strong code')&&
+        __cells.inputs()[8].querySelector('strong span[title="keep"]')?.textContent==='html'`) &&
+      JSON.stringify(await state()) === JSON.stringify(protectedBefore), protectedLive);
+    const protectedCompletion = await update();
+    check("new bold retains exact authored atom HTML and comment spelling inside clean Markdown",
+      !protectedCompletion.open && !protectedCompletion.error && (await state()).exact === replaced("**" + retained + "**") &&
+      saves.length === protectedSaves && fs.readFileSync(protectedFixture.file, "utf8") === protectedBody,
+      { protectedCompletion, actual: (await state()).exact, expected: replaced("**" + retained + "**") });
+    await exec("historyUndo();true");
+    await wait("protected emphasis document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+    const imeFixture = await fresh("emphasis composition"), imeBefore = await state(), imeSaves = saves.length;
+    await openGrid();
+    await exec(`(() => {
+      const input=__cells.inputs()[8];input.focus();const range=document.createRange();
+      range.selectNodeContents(input);getSelection().removeAllRanges();getSelection().addRange(range);return true;
+    })()`);
+    await bounded("native emphasis composition", win.webContents.debugger.sendCommand("Input.imeSetComposition",
+      { text: "**ime**", selectionStart: 7, selectionEnd: 7 }));
+    check("actual active Chromium composition does not convert an unfinished emphasis transaction",
+      await exec("tableCellSession.cells[8].composing&&__cells.inputs()[8].querySelectorAll('strong,em').length===0"));
+    await bounded("native emphasis commit", win.webContents.debugger.sendCommand("Input.insertText", { text: "**ime**" }));
+    await settle();
+    const imeLive = await exec(`({html:__cells.inputs()[8].innerHTML,text:__cells.inputs()[8].textContent,
+      bold:__cells.inputs()[8].querySelector('strong')?.textContent,error:tableCellError.textContent})`);
+    check("actual committed Chromium composition creates one owned bold frame before Update",
+      imeLive.bold === "ime" && imeLive.text === "ime" && !imeLive.error &&
+      JSON.stringify(await state()) === JSON.stringify(imeBefore), imeLive);
+    await key("Z", ["control"]);
+    check("composition Undo removes formatting without changing the document",
+      await exec("__cells.inputs()[8].querySelectorAll('strong,em').length===0") &&
+      JSON.stringify(await state()) === JSON.stringify(imeBefore));
+    await key("Y", ["control"]);
+    check("composition Redo restores its exact live semantic owner",
+      await exec("__cells.inputs()[8].innerHTML===" + JSON.stringify(imeLive.html)));
+    const imeCompletion = await update();
+    check("composition bold commits clean Markdown once without writing the source file",
+      !imeCompletion.open && !imeCompletion.error && (await state()).exact === replaced("**ime**") &&
+      (await state()).undo === imeBefore.undo + 1 && saves.length === imeSaves &&
+      fs.readFileSync(imeFixture.file, "utf8") === original, { imeCompletion, after: await state() });
+  }
   async function keyboard() {
     const fixture = await fresh("keyboard");
     const beforeSaves = saves.length;
@@ -4655,7 +4913,7 @@ require("./test-userdata-isolation");
       if (perfOnly) await performanceUnit();
       else {
         await pureInRenderer();
-        const scenarios = { menus, provenance, noop, input, click, transaction, adoption, stale, keyboard, many };
+        const scenarios = { menus, provenance, noop, input, click, transaction, adoption, stale, keyboard, formatting, many };
         check("cell UI dispatcher contains exactly the declared scenarios",
           JSON.stringify(Object.keys(scenarios)) === JSON.stringify(uiGroups));
         for (const [name, run] of Object.entries(scenarios)) {

@@ -588,9 +588,10 @@ window.FoliaTableCells = (() => {
           ...piece, bodyStart: piece.start + piece.bodyOffset,
           bodyEnd: piece.start + piece.bodyOffset + piece.children.reduce((size, child) => size + child.source.length, 0),
         }));
-      // Rewriting one family in a fully wrapped nest can reverse EM/STRONG
-      // ownership when its delimiters combine with the other family's run.
+      // Same-capture nests retain their authored delimiter family. A new
+      // cross-capture frame may need another family to preserve its ancestry.
       const retainDelimiters = new Set(frames.filter(frame => frames.some(other => other !== frame &&
+        other.origin === frame.origin &&
         ((frame.bodyStart === other.start && frame.bodyEnd === other.end) ||
           (other.bodyStart === frame.start && other.bodyEnd === frame.end)))).map(frame => frame.owner));
       const before = at => at > 1 && /[\uDC00-\uDFFF]/.test(source[at - 1]) &&
@@ -739,6 +740,16 @@ window.FoliaTableCells = (() => {
           }
           plan(group);
         }
+        for (const frame of frames) {
+          if (!['em', 'strong'].includes(frame.tokenType) || frame.origin === namespace ||
+              retainDelimiters.has(frame.owner) || delimiters.has(frame.owner)) continue;
+          const parent = frames.find(other => other.owner === frame.parent);
+          if (parent && ['em', 'strong'].includes(parent.tokenType) &&
+              (parent.bodyStart === frame.start || parent.bodyEnd === frame.end) &&
+              (missing.has(frame.owner) || missing.has(parent.owner))) {
+            delimiters.set(frame.owner, (orientation ? '_' : '*').repeat(frame.tokenType === 'strong' ? 2 : 1));
+          }
+        }
       }
       return { sites, normalize, retainDelimiters, delimiters };
     };
@@ -846,11 +857,12 @@ window.FoliaTableCells = (() => {
     return unsupported('semantic-mismatch');
   }
 
-  function codeDelimiters(element, provenance, range, inserted = '') {
+  function codeDelimiters(element, provenance, range, inserted = '', marker = '`') {
+    const punctuation = text => text.replace(/[\p{P}\p{S}]/gu, char => '!'.repeat(char.length));
     const collect = node => cellTextPieces(node, provenance).flatMap(piece => {
       if (!piece.node) return [piece];
       return [{ boundary: piece.node, edge: 0 },
-        ...(piece.node.nodeName === 'CODE' ? [{ skip: piece.node.textContent }] :
+        ...(piece.node.nodeName === 'CODE' || marker === '*' ? [{ skip: piece.node.textContent }] :
           [...piece.node.childNodes].flatMap(collect)),
         { boundary: piece.node, edge: piece.node.childNodes.length }];
     });
@@ -863,14 +875,14 @@ window.FoliaTableCells = (() => {
     const append = (visible, raw, owner) => {
       // Literalized source ticks cannot open or close a newly recognized span.
       // This aligned parser view never supplies its content to CODE or source.
-      syntax += visible === raw ? visible : visible.replace(/`/g, (tick, index) => {
+      syntax += visible === raw ? visible : marker === '*' ? punctuation(visible) : visible.replace(/`/g, (tick, index) => {
         literalTicks.push({ index: position + index, origin: owner.origin, from: owner.from, to: owner.to });
         return 'x';
       });
       if (visible === raw) {
         for (let index = 0; index < visible.length; index++) {
           const char = visible[index];
-          if (char === '`' && !(slashes % 2)) {
+          if (char === marker && !(slashes % 2)) {
             if (run && run.index + run.length === position + index) run.length++;
             else runs.push(run = { index: position + index, length: 1 });
           } else run = null;
@@ -895,7 +907,7 @@ window.FoliaTableCells = (() => {
       if (piece.skip !== undefined) {
         if (position === limit) break;
         const visible = piece.skip.slice(0, limit - position);
-        syntax += visible;
+        syntax += marker === '*' ? punctuation(visible) : visible;
         position += visible.length;
         slashes = 0;
         run = null;
@@ -920,6 +932,46 @@ window.FoliaTableCells = (() => {
     }
     if (syntax.length !== text.length + inserted.length) fail('tableCells.mapping');
     return { text: text + inserted, syntax, runs, literalTicks };
+  }
+
+  function typingSlice(element, provenance, from, to) {
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 ||
+        to < from || to > element.textContent.length) fail('tableCells.mapping');
+    const result = document.createDocumentFragment();
+    let position = 0;
+    for (const piece of [...element.childNodes].flatMap(node => cellTextPieces(node, provenance))) {
+      const length = piece.node ? piece.node.textContent.length : piece.text.length;
+      const start = position;
+      position += length;
+      if (!length && piece.node) {
+        if (from <= start && start <= to) result.append(piece.node.cloneNode(true));
+        continue;
+      }
+      if (position <= from || start >= to) continue;
+      const first = Math.max(from, start) - start, last = Math.min(to, position) - start;
+      if (piece.node) {
+        if (first || last !== length) return null;
+        result.append(piece.node.cloneNode(true));
+        continue;
+      }
+      if (piece.raw !== undefined && (piece.atomic || piece.raw !== piece.text) &&
+          (first || last !== length)) return null;
+      const text = piece.text.slice(first, last);
+      if (piece.raw === undefined) { result.append(document.createTextNode(text)); continue; }
+      const raw = first || last !== length ? piece.raw.slice(first, last) : piece.raw;
+      const sourceStart = piece.from + (piece.raw === piece.text ? first : 0);
+      const sourceEnd = piece.to - (piece.raw === piece.text ? length - last : 0);
+      const span = document.createElement('span'), id = crypto.randomUUID();
+      span.setAttribute(provenance.partAttribute, id);
+      span.textContent = text;
+      // Retained source atoms keep their original spelling and source origin,
+      // even when a new formatting frame takes only part of their old carrier.
+      provenance.fragments.set(id, { kind: piece.kind || 'text', origin: piece.origin,
+        raw, sourceStart, sourceEnd, initialText: text, initial: span.outerHTML, attributes: '[]',
+        units: [{ from: 0, to: text.length, raw, atomic: !!piece.atomic, sourceStart, sourceEnd }] });
+      result.append(span);
+    }
+    return result;
   }
 
   function serializeCell(element, provenance, escapeBoundary = false, delimiterOrientation) {
@@ -1153,5 +1205,5 @@ window.FoliaTableCells = (() => {
   }
   return { normalise, index, resolveSource, resolvePreview, resolveSourceLine, resolvePreviewTable,
     replaceCells, spliceInput, serializeCell,
-    prepareCell, markdownCode, codeSources, codeDelimiters };
+    prepareCell, markdownCode, codeSources, codeDelimiters, typingSlice };
 })();

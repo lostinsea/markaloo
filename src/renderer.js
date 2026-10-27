@@ -11894,7 +11894,7 @@ function serializeSafeTableCell(input, provenance) {
   };
   if (!matches(serialized)) {
     // Joining source can activate syntax across literal and semantic fragments.
-    // Keep literal repair and the two sibling-marker orientations independent.
+    // Keep literal repair and the two delimiter-family orientations independent.
     const bounded = FoliaTableCells.serializeCell(input, provenance, true);
     if (bounded !== serialized && matches(bounded)) return bounded;
     for (const orientation of [0, 1]) {
@@ -12213,7 +12213,7 @@ function tableCellCodeToken(cell, range, inserted) {
 }
 
 function formatTableCellCode(context, code) {
-  const { cell, selection } = context;
+  const { cell } = context;
   cell.activeCode = null;
   const holder = document.createElement('div'), id = crypto.randomUUID();
   const sources = FoliaTableCells.codeSources(code.body, cell.provenance);
@@ -12228,25 +12228,162 @@ function formatTableCellCode(context, code) {
   const fragment = capture.fragments.get(node.getAttribute(cell.provenance.partAttribute));
   fragment.generatedCode = true;
   fragment.initial = node.outerHTML;
-  for (const [part, fragment] of capture.fragments) cell.provenance.fragments.set(part, fragment);
+  insertTableCellInline(context, node, code.range, capture.fragments);
+}
+
+function insertTableCellInline(context, node, range, fragments) {
+  const { cell } = context;
+  const id = node.getAttribute(cell.provenance.codeAttribute);
+  const proposed = proposedTableCellContents(cell, range, node);
+  replaceTableCellContents(context, proposed, fragments, () => {
+    const matches = cell.input.querySelectorAll('[' + cell.provenance.codeAttribute + '="' + id + '"]');
+    const inserted = matches[0];
+    if (matches.length !== 1 || inserted.tagName !== node.tagName) throw new Error('tableCells.cellType');
+    placeTableCellCaretAfter(inserted);
+  });
+}
+
+function proposedTableCellContents(cell, range, replacement) {
+  const proposed = cell.input.cloneNode(true);
+  const copied = original => {
+    const path = [];
+    for (let node = original; node !== cell.input; node = node.parentNode) {
+      path.push([...node.parentNode.childNodes].indexOf(node));
+    }
+    return path.reverse().reduce((node, index) => node.childNodes[index], proposed);
+  };
+  const candidate = document.createRange();
+  candidate.setStart(copied(range.startContainer), range.startOffset);
+  candidate.setEnd(copied(range.endContainer), range.endOffset);
+  candidate.deleteContents();
+  candidate.insertNode(replacement.cloneNode(true));
+  return proposed;
+}
+
+function replaceTableCellContents(context, proposed, fragments, restoreCaret) {
+  const { cell, selection } = context;
+  const operation = { ...cell.provenance, fragments: new Map([...cell.provenance.fragments, ...fragments]) };
+  // Validate the entire retained context before one native replacement. Keeping
+  // all enclosing owners prevents Chromium from stripping their source identity.
+  serializeSafeTableCell(proposed, operation);
+  for (const [part, fragment] of fragments) cell.provenance.fragments.set(part, fragment);
+  const range = document.createRange();
+  range.selectNodeContents(cell.input);
   selection.removeAllRanges();
-  selection.addRange(code.range);
+  selection.addRange(range);
   cell.converting = true;
   try {
     // One native editing command retains the cell's own Undo/Redo stack.
-    if (!document.execCommand('insertHTML', false, node.outerHTML)) throw new Error('tableCells.cellType');
-    const inserted = cell.input.querySelector('code[' + cell.provenance.codeAttribute + '="' + id + '"]');
-    if (!inserted) throw new Error('tableCells.cellType');
-    placeTableCellCaretAfter(inserted);
+    if (!document.execCommand('insertHTML', false, proposed.innerHTML)) throw new Error('tableCells.cellType');
+    if (cell.input.innerHTML !== proposed.innerHTML) throw new Error('tableCells.cellType');
+    restoreCaret();
     tableCellError.textContent = '';
   } finally {
     const liveParts = new Set([...cell.input.querySelectorAll('[' + cell.provenance.partAttribute + ']')].map(node =>
       node.getAttribute(cell.provenance.partAttribute)));
-    for (const part of capture.fragments.keys()) {
+    for (const part of fragments.keys()) {
       if (!liveParts.has(part)) cell.provenance.fragments.delete(part);
     }
     cell.converting = false;
   }
+}
+
+function formatTableCellEmphasis(context) {
+  const { cell, range } = context;
+  if (!range.collapsed) return;
+  let scope = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer : range.startContainer.parentElement;
+  while (scope !== cell.input) {
+    const owner = cell.provenance.fragments.get(scope.getAttribute(cell.provenance.partAttribute));
+    if (owner && !['text', 'escape', 'emoji'].includes(owner.kind)) break;
+    scope = scope.parentElement;
+  }
+  const prefix = FoliaTableCells.codeDelimiters(scope, cell.provenance, range, '', '*');
+  if (!prefix.text.endsWith('*')) return;
+  const end = document.createRange();
+  end.selectNodeContents(scope);
+  end.collapse(false);
+  const full = FoliaTableCells.codeDelimiters(scope, cell.provenance, end, '', '*');
+  const lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
+  lexer.tokens.links = cell.provenance.links;
+  let match = null;
+  const locate = (tokens, offset) => {
+    for (const token of tokens) {
+      if (['strong', 'em'].includes(token.type)) {
+        const edge = (token.raw.length - token.text.length) / 2;
+        const marker = token.raw.slice(0, edge);
+        // A partial closing run must not consume the inner half of ** or ***.
+        if (offset + token.raw.length === prefix.text.length && /^\*+$/.test(marker) &&
+            prefix.runs.some(run => run.index === offset)) {
+          match = { token, offset };
+          return;
+        }
+        locate(token.tokens, offset + edge);
+        if (match) return;
+      }
+      offset += token.raw.length;
+    }
+  };
+  locate(lexer.inlineTokens(full.syntax), 0);
+  if (!match) return;
+  const operation = { ...cell.provenance, fragments: new Map(cell.provenance.fragments) };
+  const build = (token, offset) => {
+    const edge = (token.raw.length - token.text.length) / 2, marker = token.raw.slice(0, edge);
+    const holder = document.createElement('div'), source = marker + 'x' + marker;
+    const capture = FoliaTableCells.prepareCell(holder, source, source, marked,
+      operation.links, parseEmojis, sanitizeTableHtml, operation);
+    const node = holder.firstElementChild;
+    if (holder.childNodes.length !== 1 || node?.tagName !== (token.type === 'strong' ? 'STRONG' : 'EM')) {
+      throw new Error('tableCells.cellType');
+    }
+    for (const [part, fragment] of capture.fragments) operation.fragments.set(part, fragment);
+    node.replaceChildren();
+    let position = offset + edge, start = position;
+    const append = to => {
+      if (to === start) return true;
+      const slice = FoliaTableCells.typingSlice(scope, operation, start, to);
+      if (!slice) return false;
+      node.append(slice);
+      return true;
+    };
+    for (const child of token.tokens) {
+      if (['strong', 'em'].includes(child.type) && child.raw.startsWith('*')) {
+        if (!append(position)) return null;
+        const nested = build(child, position);
+        if (!nested) return null;
+        node.append(nested);
+        position += child.raw.length;
+        start = position;
+      } else position += child.raw.length;
+    }
+    return append(position) ? node : null;
+  };
+  const node = build(match.token, match.offset);
+  if (!node) return;
+  node.setAttribute(cell.provenance.codeAttribute, crypto.randomUUID());
+  const first = tableCellTextPoint(scope, match.offset);
+  if (!first) throw new Error('tableCells.cellType');
+  const replacement = range.cloneRange();
+  replacement.setStart(first.node, first.offset);
+  // Text offsets omit images and comments. Delimiter removal must not consume
+  // a retained owner that the independently built body did not keep.
+  const owners = root => {
+    const counts = new Map();
+    for (const element of root.querySelectorAll('[' + cell.provenance.partAttribute + ']')) {
+      const part = element.getAttribute(cell.provenance.partAttribute);
+      const fragment = cell.provenance.fragments.get(part);
+      if (fragment && !['text', 'escape', 'emoji'].includes(fragment.kind)) {
+        counts.set(part, (counts.get(part) || 0) + 1);
+      }
+    }
+    return counts;
+  };
+  const retained = owners(node), consumed = owners(replacement.cloneContents());
+  if (retained.size !== consumed.size ||
+      [...consumed].some(([part, count]) => retained.get(part) !== count)) return;
+  const fragments = new Map([...operation.fragments].filter(([part]) => !cell.provenance.fragments.has(part)));
+  cell.activeCode = null;
+  insertTableCellInline(context, node, replacement, fragments);
 }
 
 tableCellDialog.addEventListener('beforeinput', event => {
@@ -12254,7 +12391,7 @@ tableCellDialog.addEventListener('beforeinput', event => {
   if (historyCell && (event.inputType === 'historyUndo' || event.inputType === 'historyRedo')) {
     historyCell.activeCode = null;
     historyCell.redoCodes = event.inputType === 'historyRedo' ? new Set(
-      [...historyCell.input.querySelectorAll('code[' + historyCell.provenance.codeAttribute + ']')].map(code =>
+      [...historyCell.input.querySelectorAll(':is(code,strong,em)[' + historyCell.provenance.codeAttribute + ']')].map(code =>
         code.getAttribute(historyCell.provenance.codeAttribute))) : null;
     return;
   }
@@ -12270,7 +12407,7 @@ tableCellDialog.addEventListener('beforeinput', event => {
       if (replaceCapturedTableCellText(context, event.data)) {
         event.preventDefault();
         const current = tableCellInputContext({ target: cell.input });
-        if (current) formatTypedTableCellCode(current);
+        if (current) formatTypedTableCellInline(current, event.data);
         return;
       }
     } catch (error) {
@@ -12281,24 +12418,28 @@ tableCellDialog.addEventListener('beforeinput', event => {
   }
   const previous = range.collapsed && range.startContainer.nodeType === Node.ELEMENT_NODE
     ? range.startContainer.childNodes[range.startOffset - 1] : null;
-  if (previous?.nodeName === 'CODE') {
-    // Chromium otherwise inherits CODE's typing style at this DOM boundary.
-    // Replacing the code plus new text keeps the native edit outside it,
-    // without inserting invisible caret characters into content or clipboard.
+  if (previous?.nodeName === 'CODE' || previous?.matches?.(':is(strong,em)[' + cell.provenance.codeAttribute + ']')) {
+    // Keep continuation outside the completed inner frame without dropping
+    // any enclosing frame or inserting invisible caret characters.
     event.preventDefault();
     const replacement = document.createRange();
     replacement.selectNode(previous);
-    context.selection.removeAllRanges();
-    context.selection.addRange(replacement);
-    cell.converting = true;
+    const offset = tableCellPrefix(cell, range).length + event.data.length;
+    const content = document.createDocumentFragment();
+    content.append(previous.cloneNode(true), document.createTextNode(event.data));
     try {
-      if (!document.execCommand('insertHTML', false, previous.outerHTML + escapeHtml(event.data))) {
-        throw new Error('tableCells.cellType');
-      }
+      replaceTableCellContents(context, proposedTableCellContents(cell, replacement, content), new Map(), () => {
+        const point = tableCellTextPoint(cell.input, offset);
+        if (!point) throw new Error('tableCells.cellType');
+        const caret = document.createRange();
+        caret.setStart(point.node, point.offset);
+        caret.collapse(true);
+        context.selection.removeAllRanges();
+        context.selection.addRange(caret);
+      });
     } catch (error) { showTableCellError(error); }
-    finally { cell.converting = false; }
     const current = tableCellInputContext({ target: cell.input });
-    if (current) formatTypedTableCellCode(current);
+    if (current) formatTypedTableCellInline(current, event.data);
     return;
   }
   const code = tableCellCodeToken(cell, range, event.data);
@@ -12308,27 +12449,27 @@ tableCellDialog.addEventListener('beforeinput', event => {
   catch (error) { showTableCellError(error); }
 });
 
-function formatTypedTableCellCode(context) {
+function formatTypedTableCellInline(context, data) {
   const { cell, range } = context;
   const code = tableCellCodeToken(cell, range, '');
-  if (code) {
-    try { formatTableCellCode(context, code); }
-    catch (error) { showTableCellError(error); }
-  }
+  try {
+    if (code) formatTableCellCode(context, code);
+    else if (data?.endsWith('*')) formatTableCellEmphasis(context);
+  } catch (error) { showTableCellError(error); }
 }
 
 tableCellDialog.addEventListener('input', event => {
   const cell = tableCellForInput(event);
   if (!cell || cell.composing || event.isComposing) return;
   if (event.inputType === 'historyRedo' && cell.redoCodes) {
-    const restored = [...cell.input.querySelectorAll('code[' + cell.provenance.codeAttribute + ']')].filter(code =>
+    const restored = [...cell.input.querySelectorAll(':is(code,strong,em)[' + cell.provenance.codeAttribute + ']')].filter(code =>
       !cell.redoCodes.has(code.getAttribute(cell.provenance.codeAttribute)));
     if (restored.length) placeTableCellCaretAfter(restored.at(-1));
     cell.redoCodes = null;
     return;
   }
   const context = tableCellInputContext(event);
-  if (context && event.inputType === 'insertText') formatTypedTableCellCode(context);
+  if (context && event.inputType === 'insertText') formatTypedTableCellInline(context, event.data);
 });
 
 tableCellDialog.addEventListener('compositionstart', event => {
@@ -12351,11 +12492,7 @@ tableCellDialog.addEventListener('compositionend', event => {
     if (prefix.endsWith(event.data)) {
       rememberTableCellTyping(cell, context.range, event.data, false, true);
     }
-    const code = tableCellCodeToken(cell, context.range, '');
-    if (code) {
-      try { formatTableCellCode(context, code); }
-      catch (error) { showTableCellError(error); }
-    }
+    formatTypedTableCellInline(context, event.data);
   });
 });
 tableCellDialog.addEventListener('focusout', event => {
