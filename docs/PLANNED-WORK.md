@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `edit-text-typed-formatting-0.11.3` - **REVIEWED SOURCE; RELEASE PREPARATION**.
+- `edit-text-typed-formatting-0.11.3` - **PUBLISHED; BROAD TESTING PENDING**.
   - User-selected scope: format bold, italic and code inside the actual Edit Text
     input; keep other Markdown as typed. Preserve raw Markdown rather than adding
     a separate preview or full rich-text editor. No underline, buttons or shortcut
@@ -78,27 +78,48 @@ section is kept here so the register has a visible edge.
     None of these routes is green or a release-gate waiver.
   - The coordinator transferred exclusive focused runtime to C after B cleanup.
     Keep the installed app untouched. No broad test-fix or performance campaign.
-  - Package and lock versions are prepared as 0.11.3. The shared module is in
-    `build.files`; scripts, dependencies and workflow gates are unchanged.
-    Require independent integration/metadata review, actual build-only preparation,
-    focused hosted table/editor-scroll checks and strict zero-skip built-ASAR
-    checks. Verify the packaged shared core and both consumers against the exact
-    qualified source before one normal main/tag publication path.
-    Concrete CI/build/integrity failures block publication; do not bypass them.
-    Actual published assets, updater manifests and provenance remain unverified
-    until a successful new tag run and download audit.
-  - Release and verify 0.11.3 before resuming the earlier broad test fixes.
-    Do not install or inspect the user's app, profiles or documents.
+  - Package and lock versions are 0.11.3. The shared module is in `build.files`;
+    scripts, dependencies and workflow gates are unchanged. Fresh independent
+    Sol/Luna integration and metadata reviews found no significant issue or
+    disagreement. Published source is `87863807`, tree `a6ec2d18`.
+  - Build-only run [40560266947](https://github.com/lostinsea/markaloo/actions/runs/40560266947)
+    passed at attempt 1 on that exact source. C then advanced main normally and
+    created annotated `v0.11.3`, object `1bb43b71`.
+    Keep the published tag and assets unchanged; this is release policy, not a
+    claim that GitHub enforces immutability.
+    Automatic tag run [40562117593](https://github.com/lostinsea/markaloo/actions/runs/40562117593)
+    passed at attempt 1: all platform builds, attestation and publication.
+    Both runs passed hosted source 64/64, input 2163/2163, remaining UI 538/538
+    and editor-scroll 283/283, with zero exits. Strict packaging passed
+    448 checks, zero failures, zero skips. Hosted success does not relabel the
+    retained local failed routes above.
+  - [Published 0.11.3](https://github.com/lostinsea/markaloo/releases/tag/v0.11.3)
+    is latest, public, not a draft or prerelease, with reviewed notes published.
+    All nine actual downloads match API digests and actual tag-build payloads.
+    All three updater manifests match payload filenames, sizes and SHA512.
+    Cryptographic provenance for all five binaries binds to this exact source,
+    tag, workflow, hosted runner and run attempt; it is not OS code signing.
+  - The actual published Windows ASAR matches the qualified preparation.
+    Source, shared core, both consumers, index wiring, vendor/fonts, required
+    production dependencies, notices, license, canonical feed and package/
+    executable versions were checked. Actual tag captures were opened and viewed.
+    No packaged binary or installer was executed; the user's app is untouched.
+  - Publication is verified. Resume the earlier broad test fixes only under the
+    coordinator's resource order and fresh GUI transfer. No broad suite has
+    automatically resumed from the focused release allocation.
 
-- `post-0.11.1-ordinary-tests` - **PAUSED FOR 0.11.3; C NODE EVIDENCE RETAINED**.
-  - Resume the existing A9/B7/C12 split only after verified 0.11.3 publication.
+- `post-0.11.1-ordinary-tests` - **READY FOR COORDINATED RESUMPTION**.
+  - Verified 0.11.3 publication satisfies the release-first condition.
+    Resume the existing A9/B7/C12 split on published `87863807`, tree `a6ec2d18`,
+    under the coordinator's resource order. Register-only closure is not a new
+    product/test snapshot. Do not reuse older results as current qualification.
     Retained C Node results used published 0.11.1 product/test bytes at
     `e24af07f`, tree `af160b79`, with only register changes at `6659ef45`.
   - C owns `test:packaging`, `test:profile`, `test:corpus`, `test:startup`,
     `test:document-session`, `test:updates` and all its children, `test:tabs`,
     `test:reload-dialog`, `test:owned-dialogs`, `test:dialogs`, `test:security`
     and `test:popups`.
-  - Fresh pure Node results: profile 72/72, corpus 335/335 and update-state
+  - Retained 0.11.1 Node results: profile 72/72, corpus 335/335 and update-state
     42/42, all exit zero. Packaging reports 433 passed, zero failed and two
     built-ASAR skips; this Node run is not built-package proof.
   - A separate strict Node packaging audit passed 445 checks, zero failed,
@@ -112,8 +133,8 @@ section is kept here so the register has a visible edge.
     was launched. Keep these diagnostics distinct from suite failures.
   - The updates group is incomplete: its ordinary Node launcher starts
     Electron children. The undelivered B -> C slot allocation is withdrawn.
-    Broad Electron/UI/native-input runs wait for verified 0.11.3 publication
-    and the coordinator's fresh exclusive transfer after prior cleanup.
+    Broad Electron/UI/native-input runs still need the coordinator's fresh
+    exclusive transfer after prior cleanup; the release allocation is not that GO.
     No C Electron run or installed-app/profile access has started.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
@@ -123,7 +144,7 @@ section is kept here so the register has a visible edge.
     Formal-proof/R1140 deferrals and failed/incomparable performance remain
     separate, not passing.
 
-- `table-cell-typed-emphasis-0.11.2` - **PUBLISHED; EDIT TEXT 0.11.3 NEXT**.
+- `table-cell-typed-emphasis-0.11.2` - **PUBLISHED; EDIT TEXT FOLLOW-UP PUBLISHED**.
   - User-confirmed scope: typing `**bold**` and `*italic*` formats immediately
     and stays formatted after Update and reopening. Underline, buttons and shortcut
     enablement are out of scope. Keep the popup Ctrl/Command+B/I/U block.
