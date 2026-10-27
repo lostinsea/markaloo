@@ -14090,56 +14090,178 @@ async function runPdfOnceValidation() {
       probe.errors.length === 1 && probe.errors[0], JSON.stringify(probe));
 }
 
-async function runPopupPdfDispatchFailure(exec, sentinel) {
-  await sentinel.mute("controlled UI dispatch failure");
-  let probe;
-  try {
-    probe = await exec(`(async () => {
-      const original = window.folia, originalAlert = window.alert;
-      let pending = 0, cleanup = 0, dispatches = 0, subscribedBeforeDispatch = false;
-      let response = null, alerts = 0;
-      const sender = new BroadcastChannel('folia-export');
-      sender.onmessage = event => {
-        if (event.data?.type === 'export-result') response = event.data;
+function popupPdfRendererRegions(source) {
+  const text = source.replace(/\r\n/g, "\n");
+  const region = (start, end) => {
+    const first = text.indexOf(start), last = text.indexOf(end);
+    if (first < 0 || last <= first || first !== text.lastIndexOf(start) ||
+        last !== text.lastIndexOf(end)) {
+      throw new Error(`Popup PDF source boundary missing, repeated or reversed: ${start}`);
+    }
+    return text.slice(first, last);
+  };
+  return [
+    region("const UI_STRINGS = {", "\nconst TIMING = {"),
+    region("let exportThemeHold = 0;", "\n// A colour scheme"),
+    region("function showNotification(", "\n// Loading screen functions"),
+    region("window.folia.onPdfExportResult(async (data) => {",
+      "\n\n// The visible editor is shared"),
+    region("// POPUP EXPORT HANDLER (BroadcastChannel)",
+      "// Recent Files Context Menu"),
+  ].join("\n");
+}
+
+async function probePopupPdfConsumer(rendererSource, succeed = false) {
+  const regions = popupPdfRendererRegions(rendererSource);
+  // Fault the transport below the real frozen API, never the isolated page.
+  const run = runPreloadUnitProbe(`(async function(host, succeed) {
+    const window = {};
+    Object.defineProperty(window, 'folia', { value: preloadApi });
+    const errors = [], warnings = [], timers = [], channels = [], posted = [], responses = [];
+    const console = { error: (...args) => errors.push(args),
+      warn: (...args) => warnings.push(args), log() {} };
+    const shown = new Set(), message = { textContent: '' };
+    const document = { getElementById(id) {
+      if (id === 'notificationMessage') return message;
+      if (id === 'notificationToast') return { classList: {
+        add: value => shown.add(value), remove: value => shown.delete(value),
+      }};
+      throw new Error('Unexpected popup PDF DOM access: ' + id);
+    }};
+    const setTimeout = (callback, delay) => timers.push({ callback, delay });
+    let alerts = 0, dialogs = 0, dispatches = 0, cleanup = 0, emissions = 0;
+    let subscribedBeforeDispatch = false, waiter = null, survivorCalls = 0;
+    const currentFilePath = null;
+    const alert = window.alert = () => { alerts++; };
+    function showMessageDialog() { dialogs++; }
+    function restoreExportScheme() { throw new Error('Unexpected export scheme release'); }
+    function resolveDarkPreference() { throw new Error('Unexpected theme resolution'); }
+    function setExportTheme() { throw new Error('Unexpected theme change'); }
+    class BroadcastChannel {
+      constructor(name) {
+        if (name !== 'folia-export') throw new Error('Unexpected export channel');
+        const channel = new host.BroadcastChannel(name);
+        const post = channel.postMessage.bind(channel);
+        channel.postMessage = packet => { posted.push(packet); post(packet); };
+        channels.push(channel);
+        return channel;
+      }
+    }
+    const deadline = Date.now() + 2000;
+    async function until(predicate) {
+      while (!predicate()) {
+        if (Date.now() >= deadline) throw new Error('Popup PDF control deadline');
+        await new Promise(resolve => host.setTimeout(resolve, 5));
+      }
+    }
+    try {
+      ${regions}
+      if (channels.length !== 1 || typeof channels[0].onmessage !== 'function' ||
+          warnings.length || preloadTransport.listenerCount('pdf-export-result') !== 1) {
+        throw new Error('Actual popup PDF consumer was not installed');
+      }
+      const channel = 'pdf-export-result';
+      preloadApi.oncePdfExportResult(() => { survivorCalls++; });
+      const baseline = preloadTransport.listeners(channel);
+      preloadTransport.on('removeListener', (name, listener) => {
+        if (name === channel && waiter &&
+            (listener === waiter || listener.listener === waiter)) cleanup++;
+      });
+      const emit = () => {
+        emissions++;
+        preloadTransport.emit(channel, {}, { success: true, path: 'controlled.pdf' });
+      };
+      const controlledError = new Error('controlled UI dispatch failure');
+      preloadTransport.send = (name, request) => {
+        if (name !== 'export-pdf' || request.currentFileName !== null ||
+            Object.keys(request).join(',') !== 'currentFileName') {
+          throw new Error('Unexpected popup PDF request');
+        }
+        dispatches++;
+        const listeners = preloadTransport.listeners(channel);
+        const added = listeners.filter(listener => !baseline.includes(listener));
+        subscribedBeforeDispatch = added.length === 1 &&
+          baseline.every(listener => listeners.includes(listener));
+        waiter = added[0];
+        if (!succeed) throw controlledError;
+        beginExportThemeHold();
+        emit();
       };
       const initialHold = exportThemeHold;
       beginExportThemeHold();
       const held = exportThemeHold;
-      window.alert = () => { alerts += 1; };
-      window.folia = { ...original,
-        oncePdfExportResult() {
-          pending += 1;
-          let live = true;
-          return () => { if (live) { live = false; pending -= 1; cleanup += 1; } };
-        },
-        exportPdf() {
-          dispatches += 1; subscribedBeforeDispatch = pending === 1;
-          throw new Error('controlled UI dispatch failure');
-        },
+      const sender = new BroadcastChannel('folia-export');
+      sender.onmessage = event => responses.push(event.data);
+      sender.postMessage({ type: 'request-pdf-export' });
+      await until(() => dispatches === 1);
+      // Delivery is asynchronous; use a FIFO marker from the same real sender
+      // to distinguish no reply from a reply that has not arrived yet.
+      channels[0].postMessage({ type: 'control-drain' });
+      await until(() => responses.some(packet => packet.type === 'control-drain'));
+      const replies = responses.filter(packet => packet.type === 'export-result');
+      const afterListeners = preloadTransport.listeners(channel);
+      const descriptor = Object.getOwnPropertyDescriptor(window, 'folia');
+      const result = {
+        initialHold, held, after: exportThemeHold, dispatches, subscribedBeforeDispatch,
+        cleanup, pending: afterListeners.includes(waiter) ? 1 : 0,
+        baselineIntact: succeed
+          ? afterListeners.length === 1 && baseline.includes(afterListeners[0])
+          : afterListeners.length === baseline.length &&
+            baseline.every(listener => afterListeners.includes(listener)),
+        frozen: window.folia === preloadApi && Object.isFrozen(preloadApi) &&
+          descriptor.writable === false && descriptor.configurable === false,
+        replies, emissions, alerts, dialogs,
+        logged: errors.length === 1 && errors[0][0] === 'PDF request delivery failed:' &&
+          errors[0][1] === controlledError,
+        notification: message.textContent,
+        toast: shown.has('show'),
+        notificationTimer: timers.length === 1 && timers[0].delay === 4000,
       };
-      try {
-        sender.postMessage({ type: 'request-pdf-export' });
-        const deadline = Date.now() + 4000;
-        while (!response && Date.now() < deadline) {
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
-        return { initialHold, held, after: exportThemeHold, pending, cleanup, dispatches,
-          subscribedBeforeDispatch, response, alerts,
-          notification: document.getElementById('notificationMessage').textContent };
-      } finally {
-        sender.close(); window.folia = original; window.alert = originalAlert;
-        endExportThemeHold();
+      if (!succeed) {
+        while (exportThemeHold < 2) beginExportThemeHold();
+        emit();
+        await Promise.resolve();
+        const beforeDrain = responses.length;
+        channels[0].postMessage({ type: 'survivor-drain' });
+        await until(() => responses.slice(beforeDrain).some(
+          packet => packet.type === 'survivor-drain'));
+        result.survivors = survivorCalls === 1 && exportThemeHold === 1 &&
+          preloadTransport.listenerCount(channel) === 1;
+        result.lateReplies = responses.filter(packet => packet.type === 'export-result').length;
+        timers[0]?.callback();
+        result.toastCleared = !shown.has('show');
       }
-    })()`);
-  } finally { await sentinel.unmute("controlled UI dispatch failure"); }
+      return result;
+    } finally {
+      for (const channel of channels) channel.close();
+    }
+  })`);
+  return run({ BroadcastChannel: require("worker_threads").BroadcastChannel, setTimeout }, succeed);
+}
+
+async function runPopupPdfDispatchFailure() {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "renderer.js"), "utf8");
+  const probe = await probePopupPdfConsumer(source);
   check("SEC-08 actual popup PDF failure setup reaches a subscribed request and an independent theme hold",
     probe.initialHold === 0 && probe.held === 1 && probe.dispatches === 1 &&
-      probe.subscribedBeforeDispatch, JSON.stringify(probe));
+      probe.subscribedBeforeDispatch && probe.frozen, JSON.stringify(probe));
   check("SEC-08 popup PDF dispatch failure cleans only its waiter and reports directly without releasing another hold",
     probe.pending === 0 && probe.cleanup === 1 && probe.after === probe.held &&
-      probe.alerts === 0 && probe.response?.success === false &&
-      probe.response?.error === "controlled UI dispatch failure" &&
-      probe.notification.includes("controlled UI dispatch failure"), JSON.stringify(probe));
+      probe.baselineIntact && probe.emissions === 0 && probe.alerts === 0 && probe.dialogs === 0 &&
+      probe.replies.length === 1 && probe.replies[0].type === "export-result" &&
+      probe.replies[0].success === false &&
+      probe.replies[0].error === "controlled UI dispatch failure" &&
+      Object.keys(probe.replies[0]).sort().join(",") === "error,success,type" &&
+      probe.logged && probe.notification === "Failed to export PDF: controlled UI dispatch failure" &&
+      probe.toast && probe.notificationTimer, JSON.stringify(probe));
+  check("SEC-08 popup PDF failure leaves other subscribers live without a late ghost reply",
+    probe.survivors && probe.lateReplies === 1 && probe.toastCleared, JSON.stringify(probe));
+  const success = await probePopupPdfConsumer(source, true);
+  check("SEC-08 popup PDF subscribes before even a synchronous completion",
+    success.frozen && success.subscribedBeforeDispatch && success.pending === 0 &&
+      success.cleanup === 1 && success.after === success.held &&
+      success.replies.length === 1 && success.replies[0].success === true &&
+      success.replies[0].path === "controlled.pdf", JSON.stringify(success));
 }
 
 async function runDocumentEventBoundary(win) {
@@ -17854,7 +17976,7 @@ async function run(win) {
   await runLargeRenderTransportValidation();
   await runApprovedDocumentTransport();
   await runPdfOnceValidation();
-  await runPopupPdfDispatchFailure(exec, sentinel);
+  await runPopupPdfDispatchFailure();
   const readChannel = "read-owned-tab-disk-snapshot";
   const readRequest = {
     filePath: mainOwnedRefresh.validPayload.filePath,
