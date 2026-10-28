@@ -210,6 +210,23 @@ section is kept here so the register has a visible edge.
     A's verified results on `45d1c2dd` are zoom 54/54 across all seven phases,
     responsive 37/37 and visual 156/156, once each with normal exit zero.
     C checked packet `ad48d1aa` and all 26 manifest entries; no C runtime replay.
+    **Deadline evidence correction:** recovered exact tool records `54219509`
+    show manual supervision between calls, not independently enforced caps.
+    The 240/180/240s ceilings were plans with prelaunch time-fit checks.
+    `abortAfterSeconds` and `abortUtc` receipts did not enforce an abort;
+    `initial_wait` and read delays were waits, not kill bounds.
+    No autonomous timer/process, route-terminating tool timeout or stop-tool
+    call supplied deadline enforcement. No timeout/abort path was exercised.
+    Actual normal exits, counts, elapsed times 21.8263s/9.9913s/7.0920s and
+    recorded physical clearance remain valid.
+    CIM observations captured the root and descendants present in snapshots,
+    not continuous historical child-birth coverage. Later phase/probe children
+    were not necessarily individually recorded. Retain the final zero-Electron/
+    scoped-runtime census and known-PID endpoint checks without claiming full
+    historical lineage or a global OS-window scan.
+    Raw index `7bb5244a` and context `b6b4f899` bind this correction.
+    Original A packets and closed combined `123ab058` remain preserved;
+    this is a separate register correction, not an amended result or commit.
     These used A's old helper, not the combined C helper. Expected visual
     failure/refusal witnesses are passing negative controls, not interrupted
     routes; all three child probes completed. No screenshot-viewing or
@@ -359,7 +376,10 @@ section is kept here so the register has a visible edge.
     are not a new whole-group pass. Wheel 282/283 and full patch 340/343
     remain red; old bootstrap aborts remain unchanged.
     Any next ordinary run needs the frozen reviewed combined candidate and
-    a fresh finite outside-process deadline/custody/cleanup allocation.
+    a genuinely enforced execution path plus a fresh finite outside-process
+    deadline/custody/cleanup allocation. A new allocation alone does not close
+    the enforcement gap. B remains **HOLD**, without allocation, until that
+    genuinely enforced path is available; none is built or qualified here.
     No C runtime permission follows from old releases or GUI owner NONE.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
