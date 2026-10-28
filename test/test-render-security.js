@@ -4168,14 +4168,21 @@ async function run(win) {
   // `exists.length === 0` is the load-bearing conjunct there - if the catch-all
   // ever swallowed external URLs, the first observable symptom would be
   // fs.existsSync() being called on "http://probe.invalid/page".
+  //
+  // The measurements and recovery obligation below are retained, not rerun or
+  // requalified by this source port. Ordinary input now crosses the unchanged
+  // isolated preload into actual Main. Bounded synchronous native realpath/stat
+  // and exists/read observations replace the old renderer exists counter; they
+  // do not claim to intercept every filesystem API. Shared histories, document
+  // offers and real notification DOM replace the old renderer effect stubs.
+  // The separately pending recovery still receives the caller's Markdown string.
   // ==========================================================================
+  {
   fs.writeFileSync(path.join(s12dir, "https-notes.txt"), "placeholder");
   fs.writeFileSync(path.join(s12dir, "httpd.md"), "# httpd\n");
 
-  // Stubbed here rather than in the shared __s12 setup above so that the
-  // existing SEC-12 assertions - and the reverts anchored to them - are not
-  // disturbed. Restored immediately after this block. Held in a const for the
-  // same reason as S12_INSTALL: n11Click() can have to reinstall it.
+  // Retained only for the separately pending lost-page continuation. Ordinary
+  // N11 uses the actual Main trap; it never installs renderer-Node substitutes.
   const N11_TRAP = `
     (() => {
       const { shell } = require('electron');
@@ -4185,7 +4192,6 @@ async function run(win) {
       return null;
     })()
   `;
-  await exec(N11_TRAP);
 
   // The document every carrier below is clicked in. Held in a const because
   // n11Click() re-renders it after a context wipe; a second literal would be
@@ -4210,9 +4216,11 @@ async function run(win) {
     // Inline SVG, both anchor spellings. Not reachable from markdown link
     // syntax - an SVGAElement can only be authored as raw HTML - which is
     // precisely why it went unhandled for so long.
-    '<svg width="10" height="10" xmlns="http://www.w3.org/2000/svg">',
-    '<a href="http://svg.invalid/p"><text y="8">svgh</text></a>',
-    '<a xlink:href="http://xlink.invalid/p"><text y="8">svgx</text></a>',
+    // Distinct, unclipped hit regions: the former coincident 10px carriers
+    // could be dispatched synthetically, but not both clicked by a pointer.
+    '<svg width="120" height="42" xmlns="http://www.w3.org/2000/svg">',
+    '<a href="http://svg.invalid/p"><text y="16">svgh</text></a>',
+    '<a xlink:href="http://xlink.invalid/p"><text y="36">svgx</text></a>',
     "</svg>",
     "",
   ].join("\n");
@@ -4224,16 +4232,34 @@ async function run(win) {
   let n11Fixture = N11_DOC;
   const n11Render = async (md) => {
     n11Fixture = md;
-    return render(md, "full");
+    await n11NoLate();
+    if (n11Owner) {
+      await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
+      if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
+        throw new Error("N11 previous source Main admission did not actually retire");
+      }
+      n11Owner = null;
+      await n11NoLate();
+    }
+    const heading = /^# (.+)$/m.exec(md)?.[1];
+    if (!["Totality", "Placeholder", "Whitespace"].includes(heading)) {
+      throw new Error("N11 ordinary fixture is not one of its immutable caller documents");
+    }
+    const file = path.join(s12dir, "n11-" + heading.toLowerCase() + ".md");
+    if (n11Exists.call(fs, file) && n11ReadFile.call(fs, file, "utf8") !== md) {
+      throw new Error("N11 refuses to overwrite a different fixture body");
+    }
+    fs.writeFileSync(file, md, "utf8");
+    n11Owner = await admitSecurityImageFixture(file, md, heading, [], []);
+    n11SourcePath = file; n11FixtureBody = md; n11Heading = heading;
+    const normalised = path.normalize(path.resolve(file));
+    // Independent fixture metadata, not an expectation learned from a Main
+    // record that the terminal filesystem verdict is about to judge.
+    n11SourcePaths = Object.freeze({ logical: file, normalised,
+      canonical: n11RealPath.call(n11RealPathHost, normalised) });
+    n11KnownOwners.set(n11Owner.id, { owner: n11Owner, file, body: md, heading });
+    await n11NoLate();
   };
-
-  await n11Render(N11_DOC);
-
-  // The app's own document URL, captured before anything is clicked. Every
-  // click below must leave the top frame here. Read rather than constructed:
-  // the assertion is "the frame did not move", and a hand-built expectation
-  // would be asserting where I think index.html lives.
-  const n11BaseHref = await exec(`location.href`);
 
   // A MAIN-PROCESS WITNESS FOR NAVIGATION, because the renderer-side one is
   // not sufficient on its own. Reading `location.href` and a surviving global
@@ -4274,6 +4300,683 @@ async function run(win) {
   // reconciliation can account for every event the listener saw.
   let n11RecoveryLoads = 0;
 
+  const n11Contents = win.webContents, n11Frame = n11Contents.mainFrame;
+  const n11PageUrl = n11Contents.getURL();
+  const n11Shutdown = require("../src/main.js").__shutdown;
+  const n11Shell = require("electron").shell;
+  const n11Openers = Object.freeze({ path: n11DataSlotValue(n11Shell, "openPath"),
+    external: n11DataSlotValue(n11Shell, "openExternal") });
+  const n11SnapshotOpens = n11DataSlotValue(visualUtils, "snapshotExternalOpenCounts");
+  const n11AuthorityExpected = Object.freeze({
+    native: Object.freeze(Object.getOwnPropertyNames(nativeDialogGuards).map(method =>
+      Object.freeze([method, n11DataSlotValue(nativeDialogGuards, method)]))),
+    chooser: Object.freeze(Object.getOwnPropertyDescriptor(dialog, "showOpenDialog")),
+    prototype: n11DataSlotValue(OwnedDialogs, "prototype"), show: blockSecurityOwnedDialog,
+  });
+  const n11RealPathHost = fs.realpathSync, n11RealPath = n11RealPathHost.native;
+  const n11Stat = fs.statSync, n11Send = n11Contents.send;
+  const n11Exists = fs.existsSync, n11ReadFile = fs.readFileSync;
+  const n11Registration = { handler: securityGestureRegistration.handler,
+    installed: securityGestureRegistration.installed };
+  const n11Slots = {
+    observer: Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer"),
+    send: Object.getOwnPropertyDescriptor(n11Contents, "send"),
+    realpath: Object.getOwnPropertyDescriptor(n11RealPathHost, "native"),
+    stat: Object.getOwnPropertyDescriptor(fs, "statSync"),
+    exists: Object.getOwnPropertyDescriptor(fs, "existsSync"),
+    read: Object.getOwnPropertyDescriptor(fs, "readFileSync"),
+  };
+  const n11Entries = [], n11Sends = [], n11Work = [], n11Faults = [], n11Actions = [];
+  const n11KnownOwners = new Map(), n11ReadinessErrors = [];
+  let n11Owner = null, n11SourcePath = null, n11FixtureBody = null, n11Heading = null;
+  let n11SourcePaths = null;
+  let n11Active = null, n11Sealed = null, n11PageInstalled = false;
+  let n11Installed = false, n11LegacyInstalled = false, n11LegacyCompleted = 0;
+  let n11LegacyRestoredLoads = -1;
+  let n11Failure = null;
+  let n11FSDrainDepth = 0, n11PageAttempted = false;
+  const n11PageKey = require("node:crypto").randomUUID();
+  const n11SamePage = () => !win.isDestroyed() && win.webContents === n11Contents &&
+    !n11Contents.isDestroyed() && n11Contents.mainFrame === n11Frame &&
+    !n11Frame.isDestroyed() && n11Contents.getURL() === n11PageUrl &&
+    n11Frame.url === n11PageUrl;
+  function n11Slice(records, start) {
+    if (!Number.isSafeInteger(start) || start < 0 || start > records.length) {
+      throw new Error("N11 observation history was truncated or has an invalid endpoint");
+    }
+    return records.slice(start);
+  }
+  function n11Seal(before, validated) {
+    return Object.freeze(Object.fromEntries(Object.keys(before).map(key => {
+      if (!Number.isSafeInteger(before[key]) || before[key] < 0 ||
+          !Array.isArray(validated[key]) ||
+          !Number.isSafeInteger(before[key] + validated[key].length)) {
+        throw new Error("N11 cannot seal an invalid or unvalidated history endpoint");
+      }
+      return [key, before[key] + validated[key].length];
+    })));
+  }
+  function n11Projection(event, data) {
+    return { kind: data?.kind, href: data?.href, documentRef: data?.documentRef,
+      owner: event.sender === n11Contents,
+      frame: event.senderFrame === n11Frame && event.senderFrame === n11Contents.mainFrame,
+      windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? null,
+      frameId: event.senderFrame?.frameTreeNodeId ?? null };
+  }
+  const n11Observer = {
+    enter(event, data) {
+      const entry = n11Projection(event, data), action = n11Active;
+      n11Entries.push(entry);
+      if (!action?.pending || action.settled || ++action.entries !== 1 ||
+          !entry.owner || !entry.frame || entry.windowId !== win.id ||
+          entry.kind !== "link" || entry.href !== action.href ||
+          entry.documentRef !== action.source.descriptor.ref) {
+        n11Faults.push("Unexpected, stale or unattributed actual Main gesture");
+        throw new Error(n11Faults.at(-1));
+      }
+      action.entry = entry;
+      return action;
+    },
+    finish(action, result, error) {
+      if (!action || action !== n11Active || action.settled) {
+        n11Faults.push("Actual Main settlement lost its N11 action");
+        return;
+      }
+      action.result = result;
+      action.error = error ? String(error.message || error) : null;
+      action.settled = true;
+    },
+  };
+  const n11ObservedSend = function(channel, value) {
+    if (channel === "external-file-open-request" || channel === "show-error") {
+      n11Sends.push({ action: n11Active?.id ?? null, channel,
+        ...(channel === "show-error" ? { message: value } : { path: value?.filePath }) });
+      if (!n11Active?.pending) n11Faults.push("Unattributed late Main delivery");
+    }
+    return n11Send.apply(this, arguments);
+  };
+  function n11WorkOwner(owner) {
+    if (!owner?.descriptor || !owner.identity) return null;
+    return Object.freeze({ tabId: owner.id, documentRef: owner.descriptor.ref,
+      pageSession: owner.pageSession, rendererGeneration: owner.identity.rendererGeneration,
+      documentGeneration: owner.identity.documentGeneration, pathKey: owner.identity.pathKey });
+  }
+  function n11SourceRestorationWork(record, context) {
+    return record.action === context.action && record.inGesture && record.terminal &&
+      !record.error && !record.forbidden && record.phase === "source-restoration" &&
+      record.restoration === context && isDeepStrictEqual(record.owner, context.source) &&
+      (record.kind === "stat" && record.file === context.paths.logical &&
+        record.regular === true && record.directory === false ||
+       record.kind === "realpath" && record.file === context.paths.normalised &&
+        record.resolved === context.paths.canonical ||
+       record.kind === "exists" && record.file === context.paths.logical && record.exists === true);
+  }
+  function n11FSVerdict(action, work, logical, real) {
+    const route = [], restoration = [], targetLifecycle = [], unclassified = [];
+    if (action.text !== "txt" && action.text !== "md") {
+      return { ok: work.length === 0, route, restoration, targetLifecycle, unclassified: work.slice() };
+    }
+    const owner = n11WorkOwner(action.source), saved = action.restoration;
+    const context = saved?.context;
+    const restored = action.text === "md" && saved?.completed === true &&
+      context?.action === action.id && isDeepStrictEqual(context.source, owner) &&
+      context.target.tabId !== owner.tabId && context.target.documentRef !== owner.documentRef &&
+      context.target.rendererGeneration === owner.rendererGeneration &&
+      context.target.pageSession === owner.pageSession && context.targetPath === logical;
+    const targetWork = record => (record.file === logical || record.file === real) &&
+      (record.kind === "realpath" && record.resolved === real ||
+       record.kind === "stat" && record.regular === true && record.directory === false ||
+       record.kind === "exists" && record.exists === true ||
+       record.kind === "read" && ["string", "buffer"].includes(record.readType) &&
+         record.length === (action.text === "md" ? "# httpd\n".length : "placeholder".length));
+    for (const record of work) {
+      const owned = owner !== null && record.action === action.id && record.inGesture &&
+        record.terminal && !record.error && !record.forbidden &&
+        isDeepStrictEqual(record.owner, owner);
+      if (owned && record.phase === "route" && record.restoration === null && targetWork(record)) {
+        route.push(record);
+      } else if (owned && restored && n11SourceRestorationWork(record, context)) {
+        restoration.push(record);
+      } else if (owned && restored && targetWork(record) &&
+          (record.phase === "source-restoration" && record.restoration === context ||
+           record.phase === "post-restoration" && record.restoration === null)) {
+        targetLifecycle.push(record);
+      } else {
+        unclassified.push(record);
+      }
+    }
+    return { ok: unclassified.length === 0 &&
+      route.some(w => w.kind === "realpath" && w.file === logical) &&
+      route.some(w => w.kind === "stat" && w.file === real) &&
+      (action.text !== "md" || restored &&
+        restoration.some(w => w.kind === "stat") && restoration.some(w => w.kind === "realpath")),
+      route, restoration, targetLifecycle, unclassified };
+  }
+  function n11ObserveFS(kind, original, receiver, args) {
+    const file = String(args[0]), action = n11Active;
+    const forbidden = /^(\\\\|\/\/)|:\/\/|(?:probe|api\.example|svg|xlink)\.invalid/i.test(file);
+    // A blank/stripped carrier must also expose an accidental filesystem call:
+    // conditioning the recorder solely on an expected Main entry would make
+    // those no-entry/no-FS legs incapable of noticing the work they forbid.
+    // Keep observing after the handler settles: offered target reads and late
+    // probes still belong to this pending case. Our own synchronous fixture
+    // checks use captured originals, never a path exemption or async mute.
+    // Idle no-late/disposal drains have no gesture owner. Keep their work as
+    // observed-drain evidence, not silently delegated or credited to Main input.
+    const record = forbidden || action?.pending || n11FSDrainDepth > 0 ?
+      { action: action?.id ?? null, inGesture: !!action?.entry,
+        interval: action?.pending ? "case" : "observed-drain",
+        phase: action?.phase ?? null, owner: n11WorkOwner(action?.source),
+        restoration: action?.phase === "source-restoration" ? action.restoration?.context ?? null : null,
+        kind, file, forbidden, terminal: false } : null;
+    if (record) n11Work.push(record);
+    if (forbidden) {
+      n11Faults.push("Main attempted remote N11 filesystem work");
+      check("N11 Main never attempts remote filesystem work", false, JSON.stringify(record));
+      throw new Error("N11 safety refusal AFTER recording a failed remote-FS attempt");
+    }
+    try {
+      const result = original.apply(receiver, args);
+      if (record) {
+        if (kind === "realpath") record.resolved = result;
+        else if (kind === "exists") record.exists = result;
+        else if (kind === "read") Object.assign(record, {
+          readType: typeof result === "string" ? "string" : "buffer", length: result.length,
+        });
+        else Object.assign(record, { regular: result.isFile(), directory: result.isDirectory() });
+      }
+      return result;
+    } catch (error) {
+      if (record) record.error = String(error.message || error);
+      throw error;
+    } finally { if (record) record.terminal = true; }
+  }
+  const n11ObservedRealPath = function() {
+    return n11ObserveFS("realpath", n11RealPath, this, arguments);
+  };
+  const n11ObservedStat = function() {
+    return n11ObserveFS("stat", n11Stat, this, arguments);
+  };
+  const n11ObservedExists = function() {
+    return n11ObserveFS("exists", n11Exists, this, arguments);
+  };
+  const n11ObservedRead = function() {
+    return n11ObserveFS("read", n11ReadFile, this, arguments);
+  };
+  async function n11ReadPage() {
+    if (!n11SamePage()) throw new Error("N11 page observation no longer owns its original frame");
+    return exec(`(() => {
+      const p = window.__securityN11;
+      if (!p || p.owner !== ${JSON.stringify(n11PageKey)} || p.complete !== true ||
+          p.tabs !== window.CustomTabs || p.folia !== window.folia ||
+          p.session !== window.getReloadRequestSession() || !Array.isArray(window.__e2eErrors)) {
+        throw new Error('N11 page observation lost its owner or suite sentinel');
+      }
+      return {
+        clicks: p.clicks.map(c => ({ found: true, href: c.href, effectiveHref: c.effectiveHref,
+          text: c.text, selected: c.selected, trusted: c.event.isTrusted,
+          prevented: c.event.defaultPrevented, svgAnchor: c.svgAnchor })),
+        errors: p.errors.slice(), notifications: p.notifications.slice(),
+        dialogs: p.dialogCalls.slice(), confirms: p.confirmCalls.slice(),
+        sentinel: window.__e2eErrors.slice(), modal: p.opened ? [true] : [],
+        observing: window.MarkalooDialogs === p.observedDialogs &&
+          window.confirm === p.observedConfirm &&
+          document.getElementById('notificationToast') === p.toast &&
+          document.getElementById('notificationMessage') === p.message,
+        href: location.href, navType: performance.getEntriesByType('navigation')[0]?.type ?? null,
+      };
+    })()`);
+  }
+  function n11Counts(page, opens) {
+    return { shell: opens.shell, external: opens.external, entries: n11Entries.length,
+      sends: n11Sends.length, work: n11Work.length, navigation: n11Navs.length,
+      faults: n11Faults.length, clicks: page.clicks.length, errors: page.errors.length,
+      notifications: page.notifications.length,
+      dialogs: page.dialogs.length, confirms: page.confirms.length,
+      sentinel: page.sentinel.length, modal: page.modal.length };
+  }
+  async function n11Barrier() {
+    await exec(`new Promise(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(() => resolve(true))))`);
+    await exec("window.folia.getVersion()");
+  }
+  async function n11NoLate() {
+    if (!n11Sealed) return;
+    n11FSDrainDepth++;
+    try {
+    await n11Barrier();
+    const trapReady = n11AuthorityIntact() && await waitForExternalTrap(win);
+    const page = await n11ReadPage();
+    const now = n11Counts(page, n11SnapshotOpens());
+    if (!isDeepStrictEqual(now, n11Sealed) || !page.observing || !trapReady ||
+        n11Faults.length || expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
+      check("N11 immutable endpoints reject late or unattributed effects", false,
+        JSON.stringify({ sealed: n11Sealed, now, faults: n11Faults }));
+      throw new Error("N11 late effects or changed observation authority");
+    }
+    } finally { n11FSDrainDepth--; }
+  }
+  async function n11Wait(predicate, label) {
+    const deadline = Date.now() + 12000;
+    for (;;) {
+      const result = await predicate();
+      if (result) return result;
+      if (Date.now() >= deadline) throw new Error("N11 timed out: " + label);
+      await sleep(40);
+    }
+  }
+  async function n11Healthy() {
+    try {
+      if (!n11SamePage() || !n11Owner) return false;
+      const before = n11Shutdown.state();
+      if (before.renderer !== "ready") return false;
+      const generation = await exec("window.folia.getQuitApprovalGeneration()");
+      const owner = await readSecurityImageOwner(n11SourcePath);
+      const page = await n11ReadPage();
+      const after = n11Shutdown.state();
+      return n11SamePage() && page.observing && Array.isArray(page.sentinel) &&
+        before.rendererGeneration === after.rendererGeneration && after.renderer === "ready" &&
+        generation === after.rendererGeneration && generation === n11Owner.identity.rendererGeneration &&
+        after.rendererPageSession === n11Owner.pageSession &&
+        n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) === true &&
+        securityImageOwnerMatches(owner, n11SourcePath, n11FixtureBody, n11Heading) &&
+        owner.id === n11Owner.id && isDeepStrictEqual(owner.identity, n11Owner.identity) &&
+        isDeepStrictEqual(owner.descriptor, n11Owner.descriptor) &&
+        n11ReadFile.call(fs, n11SourcePath, "utf8") === n11FixtureBody;
+    } catch (error) {
+      // Lost-context reads must reach the existing recovery continuation, not
+      // throw before it. This does not qualify that pending continuation.
+      n11ReadinessErrors.push(String(error.message || error));
+      return false;
+    }
+  }
+  async function n11ObserveLegacy(completed) {
+    if (!n11RecoveryLoads || n11RecoveryLoads === n11LegacyRestoredLoads) return;
+    const installed = await exec(`(() => {
+      const base = window.__s12Restore, saved = window.__n11SavedExternal;
+      if (!base && typeof saved === 'undefined') return false;
+      if (typeof require !== 'function') throw new Error('Installed legacy state has no owner');
+      if (window.__securityN11Legacy) return true;
+      const { shell, ipcRenderer } = require('electron'), nodeFs = require('fs');
+      window.__securityN11Legacy = {
+        base, saved, shell, ipcRenderer, nodeFs, local: window.__n11External,
+        external: shell.openExternal, path: shell.openPath, send: ipcRenderer.send,
+        exists: nodeFs.existsSync, confirm: window.confirm, notify: window.showNotification,
+      };
+      return true;
+    })()`);
+    n11LegacyInstalled ||= installed === true;
+    if (completed && installed === true) n11LegacyCompleted = n11RecoveryLoads;
+  }
+  async function n11RestoreLegacy() {
+    await n11ObserveLegacy(false);
+    if (!n11LegacyInstalled) return { installed: false, savedGone: true, localUntouched: true };
+    const restored = await exec(`(() => {
+      const o = window.__securityN11Legacy, errors = [];
+      if (!o || o.base !== window.__s12Restore || o.local !== window.__n11External ||
+          o.saved !== window.__n11SavedExternal) throw new Error('Legacy cleanup lost its installation');
+      const localBefore = o.local?.length;
+      const restore = (object, key, active, original) => {
+        try {
+          if (object[key] !== active || typeof original !== 'function') throw new Error('ownership');
+          object[key] = original;
+          if (object[key] !== original) throw new Error('identity');
+        } catch { errors.push(key); }
+      };
+      if (typeof o.saved !== 'undefined') restore(o.shell, 'openExternal', o.external, o.saved);
+      if (o.base) {
+        restore(o.shell, 'openPath', o.path, o.base.openPath);
+        restore(o.ipcRenderer, 'send', o.send, o.base.send);
+        restore(o.nodeFs, 'existsSync', o.exists, o.base.existsSync);
+        restore(window, 'confirm', o.confirm, o.base.confirm);
+        restore(window, 'showNotification', o.notify, o.base.notify);
+      }
+      if (errors.length) throw new Error('Legacy cleanup ownership failure: ' + errors.join(','));
+      delete window.__n11SavedExternal;
+      const result = { installed: true, savedGone: typeof window.__n11SavedExternal === 'undefined',
+        localUntouched: o.local?.length === localBefore };
+      delete window.__securityN11Legacy;
+      return result;
+    })()`);
+    n11LegacyRestoredLoads = n11RecoveryLoads;
+    n11LegacyInstalled = false;
+    return restored;
+  }
+  async function n11Install() {
+    if (securityGestureRegistration.count !== 1 || typeof n11Registration.handler !== "function" ||
+        typeof n11Registration.installed !== "function" ||
+        Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer")?.value !== null ||
+        typeof n11SnapshotOpens !== "function" ||
+        Object.values(n11Slots).some(slot => slot && !Object.hasOwn(slot, "value")) ||
+        !n11AuthorityIntact() || expectedSecurityQuestion !== null ||
+        !await waitForExternalTrap(win)) throw new Error("N11 Main observation prerequisites failed");
+    const empty = await readSecurityImageOwner(null);
+    if (empty.tabs.length || empty.id !== null || empty.current !== null ||
+        empty.pending.pending || empty.pending.count) throw new Error("N11 requires an actually empty owner");
+    // An attempted setup is not a completed installation. Its exact page key
+    // lets failure cleanup find only resources actually created by this attempt.
+    n11PageAttempted = true;
+    const starting = n11SnapshotOpens();
+    securityGestureRegistration.observer = n11Observer;
+    n11Contents.send = n11ObservedSend;
+    n11RealPathHost.native = n11ObservedRealPath;
+    fs.statSync = n11ObservedStat;
+    fs.existsSync = n11ObservedExists;
+    fs.readFileSync = n11ObservedRead;
+    n11Installed = true;
+    const initial = await exec(`(() => {
+      const toast = document.getElementById('notificationToast');
+      const message = document.getElementById('notificationMessage');
+      if (window.__securityN11 || window.__s12 || window.__s12Restore ||
+          window.__n11External || typeof window.__n11SavedExternal !== 'undefined' ||
+          !Array.isArray(window.__e2eErrors) ||
+          !toast || !message ||
+          typeof window.MarkalooDialogs?.show !== 'function') throw new Error('N11 page setup is not empty');
+      const p = window.__securityN11 = {
+        owner: ${JSON.stringify(n11PageKey)}, complete: false,
+        subscriptionAttempted: false, dialogsInstalled: false, confirmInstalled: false,
+        tabs: window.CustomTabs, folia: window.folia, session: window.getReloadRequestSession(),
+        clicks: [], errors: [], notifications: [], toast, message,
+        dialogCalls: [], confirmCalls: [], opened: false, target: null,
+        dialogs: window.MarkalooDialogs, confirm: window.confirm,
+        dialogsDescriptor: Object.getOwnPropertyDescriptor(window, 'MarkalooDialogs'),
+        confirmDescriptor: Object.getOwnPropertyDescriptor(window, 'confirm'),
+      };
+      p.capture = event => {
+        const a = event.target?.closest?.('#viewer a');
+        if (a) p.clicks.push({ event, href: a.getAttribute('href'),
+          effectiveHref: a.getAttribute('href') ?? a.getAttribute('xlink:href'),
+          text: a.textContent.trim(), selected: a === p.target, svgAnchor: a instanceof SVGAElement });
+      };
+      window.addEventListener('click', p.capture, true);
+      p.subscriptionAttempted = true;
+      p.unsubscribe = window.folia.onError(message => {
+        p.errors.push({ message, text: document.getElementById('notificationMessage')?.textContent,
+          visible: !!document.getElementById('notificationToast')?.classList.contains('show') });
+      });
+      if (typeof p.unsubscribe !== 'function') throw new Error('N11 subscription has no cleanup handle');
+      p.observedDialogs = Object.freeze({ ...p.dialogs, show(...args) {
+        p.dialogCalls.push(String(args[0]?.title || 'untitled'));
+        return p.dialogs.show(...args);
+      } });
+      p.observedConfirm = message => {
+        p.confirmCalls.push(String(message));
+        throw new Error('Unexpected N11 renderer confirmation');
+      };
+      window.MarkalooDialogs = p.observedDialogs; p.dialogsInstalled = true;
+      window.confirm = p.observedConfirm; p.confirmInstalled = true;
+      p.observer = new MutationObserver(records => {
+        if (document.querySelector('#appMessageDialog[open]') ||
+            records.some(r => r.target.id === 'appMessageDialog' &&
+              r.attributeName === 'open' && r.oldValue !== null)) p.opened = true;
+        const messageChanged = records.some(r =>
+          (r.type === 'childList' || r.type === 'characterData') &&
+          (r.target === p.message || p.message.contains(r.target)));
+        const showing = records.filter(r => r.target === p.toast && r.attributeName === 'class')
+          .map(r => (r.oldValue || '').split(/\\s+/).includes('show'));
+        showing.push(p.toast.classList.contains('show'));
+        const shown = showing.some((value, i) => value === false && showing[i + 1] === true);
+        // A prior toast's delayed hide is not a new notification. Message
+        // changes and actual show transitions still expose renderer-only notices
+        // without replacing or swallowing the real showNotification function.
+        if (messageChanged || shown) p.notifications.push({ text: p.message.textContent,
+          visible: p.toast.classList.contains('show') && p.toast.getClientRects().length > 0 });
+      });
+      p.observer.observe(document.body, { subtree: true, childList: true, characterData: true,
+        attributes: true, attributeFilter: ['open', 'class'], attributeOldValue: true });
+      p.complete = true;
+      return { complete: p.complete, sentinel: window.__e2eErrors.length };
+    })()`);
+    if (initial?.complete !== true) throw new Error("N11 page setup did not complete");
+    n11PageInstalled = true;
+    n11Sealed = Object.freeze({ shell: starting.shell, external: starting.external,
+      entries: 0, sends: 0, work: 0, navigation: 0, faults: 0, clicks: 0, errors: 0,
+      notifications: 0, dialogs: 0, confirms: 0, sentinel: initial.sentinel, modal: 0 });
+    await n11NoLate();
+  }
+  function n11RestoreSlot(object, key, installed, original, descriptor) {
+    // A displaced accessor must not reenter application code after the final
+    // snapshot. Ownership and release inspect/restore only data descriptors.
+    if (Object.getOwnPropertyDescriptor(object, key)?.value !== installed) {
+      throw new Error("N11 observation lost ownership: " + key);
+    }
+    if (descriptor) Object.defineProperty(object, key, descriptor);
+    else delete object[key];
+    if (descriptor && descriptor.value !== original ||
+        !isDeepStrictEqual(Object.getOwnPropertyDescriptor(object, key), descriptor)) {
+      throw new Error("N11 observation did not restore its descriptor: " + key);
+    }
+  }
+  function n11DataSlotValue(object, key) {
+    // Electron methods may be inherited. A displaced getter is not a value
+    // witness, and must never be invoked to check the restored identity.
+    for (let owner = object; owner; owner = Object.getPrototypeOf(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (descriptor) return Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+    }
+    return undefined;
+  }
+  function n11AuthorityIntact() {
+    const chooser = Object.getOwnPropertyDescriptor(dialog, "showOpenDialog");
+    return typeof n11Openers.path === "function" && typeof n11Openers.external === "function" &&
+      n11DataSlotValue(n11Shell, "openPath") === n11Openers.path &&
+      n11DataSlotValue(n11Shell, "openExternal") === n11Openers.external &&
+      n11AuthorityExpected.native.every(([method, guard]) =>
+        typeof guard === "function" && n11DataSlotValue(dialog, method) === guard) &&
+      chooser && Object.hasOwn(chooser, "value") && chooser.writable === false &&
+      isDeepStrictEqual(chooser, n11AuthorityExpected.chooser) &&
+      n11DataSlotValue(OwnedDialogs, "prototype") === n11AuthorityExpected.prototype &&
+      n11DataSlotValue(n11AuthorityExpected.prototype, "show") === n11AuthorityExpected.show;
+  }
+  async function n11DisposePage() {
+    if (!n11SamePage()) throw new Error("N11 refuses disposal in a replacement page; fixtures retained");
+    const owners = await exec(`window.CustomTabs.getTabs().map(t => ({
+      id: t.id, path: t.filePath, descriptor: window.CustomTabs.getDocumentDescriptor(t.id),
+      identity: window.CustomTabs.getDocumentIdentityForTab(t.id, t.filePath,
+        window.getReloadRequestSession()),
+    }))`);
+    if (owners.some(owner => {
+      const known = n11KnownOwners.get(owner.id);
+      return !known || owner.path !== known.file ||
+        !isDeepStrictEqual(owner.descriptor, known.owner.descriptor) ||
+        !isDeepStrictEqual(owner.identity, known.owner.identity);
+    })) throw new Error("N11 has an unknown live owner; fixtures retained");
+    return exec(`(() => {
+      const p = window.__securityN11, errors = [];
+      if (!p) return null;
+      if (p.owner !== ${JSON.stringify(n11PageKey)} ||
+          p.tabs !== window.CustomTabs || p.folia !== window.folia ||
+          p.session !== window.getReloadRequestSession() || p.close ||
+          p.toast !== document.getElementById('notificationToast') ||
+          p.message !== document.getElementById('notificationMessage')) {
+        throw new Error('N11 page disposal lost its resource owner');
+      }
+      if (typeof p.capture === 'function') {
+        try { window.removeEventListener('click', p.capture, true); } catch { errors.push('capture'); }
+      }
+      if (typeof p.unsubscribe === 'function') {
+        try { p.unsubscribe(); } catch { errors.push('subscription'); }
+      } else if (p.subscriptionAttempted) errors.push('subscription cleanup handle unavailable');
+      if (p.observer) {
+        try { p.observer.disconnect(); } catch { errors.push('observer'); }
+      }
+      const sameDescriptor = (a, b) => a === b || !!a && !!b &&
+        ['value', 'writable', 'get', 'set', 'enumerable', 'configurable'].every(key => a[key] === b[key]);
+      const restore = (key, active, original, descriptor, installed) => {
+        try {
+          const current = Object.getOwnPropertyDescriptor(window, key);
+          if (!installed && sameDescriptor(current, descriptor)) return;
+          if (typeof active === 'undefined' || current?.value !== active) throw new Error('ownership');
+          if (descriptor) Object.defineProperty(window, key, descriptor);
+          else delete window[key];
+          const restored = Object.getOwnPropertyDescriptor(window, key);
+          if (!sameDescriptor(restored, descriptor)) throw new Error('identity');
+          // Accessor identity is its complete descriptor, not a getter call
+          // after observation teardown. Inherited data must still resolve to
+          // the captured original without invoking a displaced accessor.
+          if (!descriptor || Object.hasOwn(descriptor, 'value')) {
+            let resolved = restored;
+            for (let owner = Object.getPrototypeOf(window); !resolved && owner;
+                owner = Object.getPrototypeOf(owner)) {
+              resolved = Object.getOwnPropertyDescriptor(owner, key);
+            }
+            if (resolved && !Object.hasOwn(resolved, 'value') ||
+                resolved?.value !== original) throw new Error('identity');
+          }
+        } catch { errors.push(key); }
+      };
+      restore('MarkalooDialogs', p.observedDialogs, p.dialogs, p.dialogsDescriptor, p.dialogsInstalled);
+      restore('confirm', p.observedConfirm, p.confirm, p.confirmDescriptor, p.confirmInstalled);
+      if (errors.length) throw new Error('N11 page restoration failure: ' + errors.join(','));
+      const endpoints = { clicks: p.clicks.length, errors: p.errors.length,
+        notifications: p.notifications.length, dialogs: p.dialogCalls.length,
+        confirms: p.confirmCalls.length, sentinel: window.__e2eErrors.length, modal: p.opened ? 1 : 0 };
+      delete window.__securityN11;
+      return endpoints;
+    })()`);
+  }
+
+  function n11TargetMatches(target, retained) {
+    const identity = target.identity, descriptor = target.descriptor;
+    const targetPath = path.join(s12dir, "httpd.md");
+    return Number.isSafeInteger(target.id) && target.id > 0 && target.id !== n11Owner.id &&
+      target.tabs.length === 2 &&
+      target.tabs.filter(t => t.id === n11Owner.id && t.path === n11SourcePath).length === 1 &&
+      target.tabs.filter(t => t.id === target.id && t.path === targetPath).length === 1 &&
+      target.path === targetPath && target.current === targetPath &&
+      target.content === "# httpd\n" && target.original === "# httpd\n" && target.live === "# httpd\n" &&
+      descriptor?.logicalPath === targetPath && descriptor.documentUrl === pathToFileURL(targetPath).href &&
+      typeof descriptor.ref === "string" && /^[a-f0-9]{64}$/.test(descriptor.ref) &&
+      descriptor.ref !== n11Owner.descriptor.ref &&
+      identity?.tabId === target.id && identity.documentRef === descriptor.ref &&
+      target.pageSession === n11Owner.pageSession && identity.pageSession === n11Owner.pageSession &&
+      identity.rendererGeneration === n11Owner.identity.rendererGeneration &&
+      Number.isSafeInteger(identity.documentGeneration) && identity.documentGeneration > 0 &&
+      typeof identity.pathKey === "string" && identity.pathKey.length > 0 &&
+      identity.pathKey !== n11Owner.identity.pathKey &&
+      target.state?.maintained === true && target.state.dirty === false &&
+      target.state.liveWitnessMatchesContent === true && target.markedDirty === false &&
+      target.pending.pending === false && target.pending.count === 0 &&
+      target.heading === "httpd" && target.loading === false && !target.welcome &&
+      target.images.length === 0 && retained?.id === n11Owner.id && retained.path === n11SourcePath &&
+      retained.content === n11FixtureBody && retained.original === n11FixtureBody &&
+      retained.markedDirty === false && retained.state?.maintained === true &&
+      retained.state.dirty === false && retained.state.liveWitnessMatchesContent === true &&
+      isDeepStrictEqual(retained.descriptor, n11Owner.descriptor) &&
+      isDeepStrictEqual(retained.identity, n11Owner.identity);
+  }
+  async function n11RetireTarget() {
+    const targetPath = path.join(s12dir, "httpd.md");
+    let target, retained;
+    await n11Wait(async () => {
+      target = await readSecurityImageOwner(targetPath);
+      retained = await exec(`(() => {
+        const tabs = window.CustomTabs, t = tabs.getTabs().find(t => t.id === ${n11Owner.id});
+        return t ? { id: t.id, path: t.filePath, content: t.content, original: t.originalContent,
+          markedDirty: t.hasUnsavedChanges, state: tabs.__documentState(t),
+          descriptor: tabs.getDocumentDescriptor(t.id),
+          identity: tabs.getDocumentIdentityForTab(t.id, ${JSON.stringify(n11SourcePath)},
+            window.getReloadRequestSession()) } : null;
+      })()`);
+      return n11TargetMatches(target, retained);
+    }, "actual Markdown target admission, read/render and retained two-tab source");
+    const exact = n11TargetMatches(target, retained) &&
+      n11Shutdown.documentAdmissionIsCurrent(target.descriptor.ref) === true &&
+      n11ReadFile.call(fs, targetPath, "utf8") === "# httpd\n" &&
+      n11ReadFile.call(fs, n11SourcePath, "utf8") === n11FixtureBody;
+    check("SETUP N11 Markdown target and source have exact actual two-tab Main identities",
+      exact, JSON.stringify({ target, retained }));
+    if (!exact) throw new Error("N11 refuses to close an unproven Markdown target");
+    n11KnownOwners.set(target.id, { owner: target, file: targetPath, body: "# httpd\n", heading: "httpd" });
+    const action = n11Active;
+    if (!action?.pending || action.text !== "md" || action.source !== n11Owner ||
+        action.phase !== "route" || action.restoration ||
+        n11SourcePaths?.logical !== n11SourcePath ||
+        n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== true) {
+      throw new Error("N11 source-restoration phase lacks its original admitted source action");
+    }
+    // This is lifecycle attribution, not an authority receipt. The real two-tab
+    // identities/admissions above and actual source readiness/retirement below
+    // remain necessary. Each recorder entry retains this immutable context.
+    const context = Object.freeze({ action: action.id, source: n11WorkOwner(n11Owner),
+      paths: n11SourcePaths, target: n11WorkOwner(target), targetPath });
+    const restoration = action.restoration = { context, completed: false };
+    action.phase = "source-restoration";
+    try {
+    await exec(`(() => {
+      const p = window.__securityN11, tabs = window.CustomTabs, t = tabs.getActiveTab();
+      const state = t && tabs.__documentState(t), pending = window.getPendingSaveStatus();
+      if (!p || p.close || t?.id !== ${target.id} || t.filePath !== ${JSON.stringify(targetPath)} ||
+          t.content !== '# httpd\\n' || t.originalContent !== '# httpd\\n' || t.hasUnsavedChanges ||
+          window.originalMarkdown !== '# httpd\\n' || window.currentFilePath !== ${JSON.stringify(targetPath)} ||
+          !state?.maintained || state.dirty || !state.liveWitnessMatchesContent ||
+          pending.pending || pending.count !== 0 || tabs.getTabs().length !== 2 ||
+          document.querySelector('#viewer h1')?.textContent !== 'httpd' ||
+          document.getElementById('loadingScreen')?.classList.contains('active') !== false ||
+          JSON.stringify(tabs.getDocumentDescriptor()) !== ${JSON.stringify(JSON.stringify(target.descriptor))} ||
+          JSON.stringify(tabs.getActiveDocumentIdentity(${JSON.stringify(targetPath)},
+            window.getReloadRequestSession())) !== ${JSON.stringify(JSON.stringify(target.identity))}) {
+        throw new Error('N11 target changed before its actual close');
+      }
+      p.close = { done: false, error: null };
+      Promise.resolve().then(() => tabs.closeTab(${target.id})).then(() => { p.close.done = true; },
+        error => { p.close.error = String(error?.stack || error); p.close.done = true; });
+      return true;
+    })()`);
+    await n11Wait(async () => {
+      const closed = await exec(`(() => {
+        const p = window.__securityN11;
+        if (!p || !p.close) throw new Error('N11 target-close witness lost');
+        return { ...p.close, dialogs: p.dialogCalls.length, confirms: p.confirmCalls.length,
+          opened: p.opened || !!document.querySelector('#appMessageDialog[open]') };
+      })()`);
+      if (closed.error || closed.dialogs || closed.confirms || closed.opened) {
+        throw new Error("N11 target retirement encountered unexpected consent/failure: " + JSON.stringify(closed));
+      }
+      return closed.done;
+    }, "real clean target close without consent");
+    await n11Wait(() => n11Healthy(), "original clean source Main/DOM ownership after target retirement");
+    const retired = n11Shutdown.documentAdmissionIsCurrent(target.descriptor.ref) === false;
+    check("N11 Markdown target really retires its Main admission and restores the original source", retired);
+    if (!retired) throw new Error("N11 target's Main admission is still live");
+    await n11Wait(() => {
+      const work = n11Work.filter(record => n11SourceRestorationWork(record, context));
+      return work.some(record => record.kind === "stat") && work.some(record => record.kind === "realpath");
+    }, "actual source stat and canonical-path witnesses during original-owner restoration");
+    if (n11Active !== action || action.source !== n11Owner || action.phase !== "source-restoration" ||
+        !isDeepStrictEqual(n11WorkOwner(n11Owner), context.source) ||
+        n11SourcePaths !== context.paths || !await n11Healthy() ||
+        n11Shutdown.documentAdmissionIsCurrent(context.source.documentRef) !== true ||
+        n11Shutdown.documentAdmissionIsCurrent(context.target.documentRef) !== false) {
+      throw new Error("N11 source-restoration phase did not complete with its original owners");
+    }
+    restoration.completed = true;
+    } finally { action.phase = "post-restoration"; }
+    await exec(`delete window.__securityN11.close; true`);
+    return true;
+  }
+
+  async function n11LostResult(action, before, point, error) {
+    // Keep the existing caller guards reachable after an observed context loss.
+    // Unknown page evidence is UNKNOWN, not synthetic empty effect arrays or a
+    // successful cancellation. Main histories remain genuine and unsealed.
+    const openPath = n11Slice(await visualUtils.readShellOpens(win), before.shell);
+    const external = n11Slice(await visualUtils.readExternalOpens(win), before.external);
+    const deliveries = n11Slice(n11Sends, before.sends);
+    return {
+      ok: false, observationLost: true, failure: String(error.message || error),
+      clicked: { found: point?.hit === true ? true : null, href: point?.rawHref ?? null,
+        svgAnchor: point?.svgAnchor ?? null, trusted: null, prevented: null, selected: null },
+      openPath, external,
+      offers: deliveries.filter(item => item.channel === "external-file-open-request"),
+      notices: deliveries.filter(item => item.channel === "show-error"),
+      fileWork: n11Slice(n11Work, before.work), errors: null, notifications: null, consentClear: false,
+      entry: action.entry, result: action.result, sourceStable: false, targetRetired: false,
+      nav: { href: n11Contents.isDestroyed() ? null : n11Contents.getURL(), navType: null,
+        alive: false, mainProcessNavs: n11Slice(n11Navs, before.navigation) },
+    };
+  }
+
   // RECOVERY, EXTRACTED FROM n11Click BECAUSE ITS COVERAGE WAS EXACTLY AS WIDE
   // AS THE CALLS THAT WENT THROUGH THAT HELPER. The section also reads the DOM
   // directly - the SVG shape premise, the empty-href probe, the blank-href
@@ -4291,18 +4994,11 @@ async function run(win) {
     // rather than following the link - and that page REPLACES the app's
     // document. Every stub, every observation array and every product global
     // goes with it.
-    // THE CONJUNCT LIST IS THE CLAIM. A liveness probe answers only for the
-    // globals it names, and this one previously named two SECTION globals and
-    // was read as "the document is fully re-armed". It is not: the suite's own
-    // error sentinel is installed before run() and is destroyed by the same
-    // navigation, so a document could satisfy both conjuncts and still abort
-    // the next section. `__e2eErrors` is therefore named here as well - the
-    // recorded disjunction disease, in its "an absence check answers for less
-    // than it claims" form.
-    const alive0 = await exec(
-      `typeof window.__s12 !== 'undefined' && typeof window.__n11External !== 'undefined'` +
-        ` && typeof window.__e2eErrors !== 'undefined'`,
-    );
+    // Healthy ordinary entry means the current Main generation, its admitted
+    // source, the exact clean DOM owner and the live page/suite observations
+    // agree. Missing or destroyed context falls through to the held recovery;
+    // that continuation still needs its separate actual-Main qualification.
+    const alive0 = await n11Healthy();
     if (alive0 === true) return;
 
     // THE RELOAD IS THE RECOVERY, and its absence was a real defect rather
@@ -4373,68 +5069,152 @@ async function run(win) {
   };
 
   const n11Click = async (text) => {
-    // Runs FIRST - before s12Reset(), before anything dereferences a global.
     await n11EnsureAlive(`about to click "${text}"`);
-
-    await s12Reset();
-    await exec(`window.__n11External.length = 0; null`);
-    // Everything the main process saw before this click belongs to setup (the
-    // initial load, and any recovery reload above). Slice from here so the
-    // evidence names only navigations THIS click caused.
-    const navMark = n11Navs.length;
-    const clicked = await exec(`
-      (() => {
-        const a = Array.from(document.querySelectorAll('#viewer a'))
-          .find((x) => (x.textContent || '').trim() === ${JSON.stringify(text)});
-        if (!a) return { found: false };
-        // dispatchEvent rather than a.click(), because its return value is the
-        // only way to see preventDefault() from here. It reports false when the
-        // event was cancelled. Without this, a handler that does nothing and a
-        // handler that is never reached are indistinguishable - every other
-        // observation below is empty in both cases, which is exactly how the
-        // first draft of the placeholder assertion managed to be vacuous.
-        const ev = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-        const notCancelled = a.dispatchEvent(ev);
-        return {
-          found: true,
-          href: a.getAttribute('href'),
-          prevented: notCancelled === false,
-          // WHICH NODE WAS ACTUALLY CLICKED. The selector is by TEXT, so the
-          // SVG legs are only testing SVG handling for as long as the fixture
-          // keeps spelling those labels inside an <svg>. A future fixture edit
-          // adding an ordinary HTML anchor labelled "svgh" would let every
-          // behaviour assertion pass while SVG handling was broken - the
-          // premise block asserts the SVG shape, but nothing tied the premise
-          // to the node the click found. Recorded here so the behaviour
-          // assertions can require it themselves.
-          svgAnchor: a instanceof SVGAElement,
-        };
-      })()
-    `);
-    await sleep(140);
-    // Read the frame's own identity BEFORE the observation arrays, because if
-    // the frame moved those arrays no longer exist and JSON.stringify silently
-    // drops undefined keys - a truncated evidence blob with no explanation.
-    const nav = await exec(`
-      (() => {
-        const n = performance.getEntriesByType('navigation')[0];
-        return {
-          href: location.href,
-          navType: n ? n.type : null,
-          alive: typeof window.__s12 !== 'undefined',
-        };
-      })()
-    `);
-    // The main-process half of the same question. Recorded on every click, not
-    // just the ones that are expected to move, so a surprise navigation is
-    // attributed to the click that caused it rather than discovered later.
-    nav.mainProcessNavs = n11Navs.slice(navMark);
-    const state = (await exec(`window.__s12`)) || {};
-    const external = (await exec(`window.__n11External`)) || [];
-    return { ...state, external, clicked, nav };
+    const hrefs = { txt: "https-notes.txt", md: "httpd.md", web: "http://probe.invalid/page",
+      caps: "HTTPS://api.example.invalid:PORT/v1", svgh: "http://svg.invalid/p",
+      svgx: "http://xlink.invalid/p", empty: "", nbsp: "", bom: "", ctrl: null };
+    if (!Object.hasOwn(hrefs, text)) throw new Error("N11 has no such carrier");
+    const href = hrefs[text], routed = href !== null && href !== "";
+    const local = text === "txt" || text === "md";
+    const logical = local ? path.join(s12dir, href) : null;
+    const real = local ? n11RealPath(logical) : null;
+    const before = n11Sealed;
+    const action = { id: n11Actions.length + 1, source: n11Owner, text, href,
+      pending: true, entries: 0, settled: false, entry: null, phase: "route", restoration: null };
+    n11Actions.push(action);
+    let point = null;
+    try {
+    await n11ObserveLegacy(true);
+    await n11NoLate();
+    point = await exec(`(async () => {
+      const links = Array.from(document.querySelectorAll('#viewer a'))
+        .filter(a => a.textContent.trim() === ${JSON.stringify(text)});
+      if (links.length !== 1) throw new Error('N11 carrier is not unique');
+      const a = links[0], href = a.getAttribute('href') ?? a.getAttribute('xlink:href');
+      if (href !== ${JSON.stringify(href)}) throw new Error('N11 exact href premise changed');
+      a.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const r = a.getBoundingClientRect(), points = [];
+      for (const fx of [0.5, 0.2, 0.8]) for (const fy of [0.5, 0.25, 0.75]) {
+        points.push({ x: Math.round(r.left + r.width * fx), y: Math.round(r.top + r.height * fy) });
+      }
+      const point = points.find(p => document.elementFromPoint(p.x, p.y)?.closest('#viewer a') === a);
+      if (!point) throw new Error('N11 carrier has no verified visible pointer hit');
+      const { x, y } = point, hit = document.elementFromPoint(x, y)?.closest('#viewer a');
+      window.__securityN11.target = a;
+      return { x, y, hit: hit === a, width: r.width, height: r.height, href,
+        rawHref: a.getAttribute('href'),
+        text: a.textContent.trim(), svgAnchor: a instanceof SVGAElement };
+    })()`);
+    const hit = point.hit && point.width > 0 && point.height > 0 && point.href === href &&
+      point.text === text && point.svgAnchor === (text === "svgh" || text === "svgx");
+    check("SETUP N11 exact visible carrier is its genuine pointer hit target: " + text,
+      hit, JSON.stringify(point));
+    if (!hit) throw new Error("N11 refuses an unproven native input target");
+    if (!await n11Healthy()) throw new Error("N11 source authority changed before pointer input");
+    await n11NoLate();
+    n11Active = action;
+    try {
+      n11Contents.sendInputEvent({ type: "mouseDown", x: point.x, y: point.y,
+        button: "left", clickCount: 1 });
+      n11Contents.sendInputEvent({ type: "mouseUp", x: point.x, y: point.y,
+        button: "left", clickCount: 1 });
+      await n11Wait(async () => {
+        const page = await n11ReadPage();
+        return page.clicks.length > before.clicks && (!routed || action.entry);
+      }, "trusted input and, when routed, actual Main entry");
+      if (routed) await n11Wait(() => action.settled, "actual Main handler result");
+      const offers = n11Slice(n11Sends, before.sends)
+        .filter(item => item.channel === "external-file-open-request");
+      let targetRetired = false;
+      if (text === "md" && offers.length === 1 && offers[0].path === logical) {
+        targetRetired = await n11RetireTarget();
+      }
+      const sourceStable = await n11Healthy();
+      await n11Barrier();
+      const page = await n11ReadPage();
+      const opened = n11Slice(await visualUtils.readShellOpens(win), before.shell);
+      const external = n11Slice(await visualUtils.readExternalOpens(win), before.external);
+      const validated = {
+        shell: opened, external, entries: n11Slice(n11Entries, before.entries),
+        sends: n11Slice(n11Sends, before.sends), work: n11Slice(n11Work, before.work),
+        navigation: n11Slice(n11Navs, before.navigation), faults: n11Slice(n11Faults, before.faults),
+        clicks: n11Slice(page.clicks, before.clicks), errors: n11Slice(page.errors, before.errors),
+        notifications: n11Slice(page.notifications, before.notifications),
+        dialogs: n11Slice(page.dialogs, before.dialogs), confirms: n11Slice(page.confirms, before.confirms),
+        sentinel: n11Slice(page.sentinel, before.sentinel), modal: n11Slice(page.modal, before.modal),
+      };
+      const terminalOffers = validated.sends.filter(item => item.channel === "external-file-open-request");
+      const notices = validated.sends.filter(item => item.channel === "show-error");
+      const clicked = validated.clicks[0];
+      const consentClear = validated.dialogs.length === 0 && validated.confirms.length === 0 &&
+        validated.modal.length === 0 && expectedSecurityQuestion === null && n11AuthorityIntact();
+      const fsVerdict = n11FSVerdict(action, validated.work, logical, real);
+      const exactFS = fsVerdict.ok;
+      const ok = validated.clicks.length === 1 && clicked.selected && clicked.trusted &&
+        clicked.text === text && clicked.effectiveHref === href &&
+        clicked.prevented === (text !== "ctrl") &&
+        clicked.svgAnchor === (text === "svgh" || text === "svgx") &&
+        validated.entries.length === (routed ? 1 : 0) &&
+        (!routed || action.entries === 1 && action.entry === validated.entries[0] &&
+          action.result === true && !action.error &&
+          action.entry.documentRef === action.source.descriptor.ref) &&
+        opened.length === (text === "txt" ? 1 : 0) && (text !== "txt" || opened[0] === real) &&
+        external.length === (routed && !local ? 1 : 0) &&
+        (!routed || local || external[0] === href) &&
+        terminalOffers.length === (text === "md" ? 1 : 0) &&
+        (text !== "md" || terminalOffers[0].path === logical && targetRetired) &&
+        notices.length === 0 && validated.errors.length === 0 && validated.notifications.length === 0 &&
+        validated.sentinel.length === 0 &&
+        validated.sends.every(s => s.action === action.id) &&
+        validated.faults.length === 0 && validated.navigation.length === 0 &&
+        exactFS && consentClear && sourceStable && page.observing &&
+        page.href === n11PageUrl && await waitForExternalTrap(win);
+      const report = { ok, openPath: opened, external, offers: terminalOffers,
+        errors: validated.errors, notifications: validated.notifications, notices,
+        fileWork: validated.work, fileClassification: fsVerdict, consentClear,
+        clicked, entry: action.entry, result: action.result, sourceStable, targetRetired,
+        nav: { href: page.href, navType: page.navType, alive: sourceStable,
+          mainProcessNavs: validated.navigation } };
+      if (!ok) {
+        check("N11 genuine trusted route has exact Main, lifecycle and terminal effects: " + text,
+          false, JSON.stringify(report));
+        throw new Error("N11 refuses to seal unvalidated route evidence");
+      }
+      // These are the endpoints actually adjudicated above, never a new sample.
+      n11Sealed = n11Seal(before, validated);
+      await n11NoLate();
+      check("N11 genuine trusted route has exact Main, lifecycle and terminal effects: " + text,
+        ok, JSON.stringify(report));
+      return report;
+    } finally { action.pending = false; n11Active = null; }
+    } catch (error) {
+      action.pending = false; n11Active = null;
+      if (n11SamePage()) {
+        const state = n11Shutdown.state();
+        if (state.renderer === "ready" &&
+            state.rendererGeneration === action.source.identity.rendererGeneration) throw error;
+      }
+      const report = await n11LostResult(action, before, point, error);
+      check("N11 genuine trusted route has exact Main, lifecycle and terminal effects: " + text,
+        false, JSON.stringify(report));
+      return report;
+    }
   };
 
+  try {
+  await n11Install();
+  await n11Render(N11_DOC);
+  const n11BaseHref = await exec(`location.href`);
+
   const n11Txt = await n11Click("txt");
+  check(
+    "SETUP N11 the actual Main filesystem recorder is alive on the real inert target",
+    n11Txt.fileWork.some(item => item.kind === "realpath" && item.terminal && !item.error) &&
+      n11Txt.fileWork.some(item => item.kind === "stat" && item.regular && !item.directory &&
+        item.terminal && !item.error),
+    JSON.stringify(n11Txt.fileWork),
+  );
   check(
     "N11 a local file whose name begins with http is opened, not silently ignored",
     // The href conjunct pins the shape of the bug: without it the assertion
@@ -4445,7 +5225,7 @@ async function run(win) {
       n11Txt.openPath.length === 1 &&
       n11Txt.openPath[0].endsWith("https-notes.txt") &&
       n11Txt.external.length === 0 &&
-      n11Txt.notes.length === 0,
+      n11Txt.errors.length === 0 && n11Txt.notices.length === 0 && n11Txt.notifications.length === 0,
     JSON.stringify(n11Txt),
   );
 
@@ -4455,8 +5235,9 @@ async function run(win) {
     n11Md.clicked.found === true &&
       n11Md.clicked.href === "httpd.md" &&
       n11Md.clicked.prevented === true &&
-      n11Md.ipc.length === 1 &&
-      n11Md.ipc[0].endsWith("httpd.md") &&
+      n11Md.offers.length === 1 &&
+      n11Md.offers[0].path.endsWith("httpd.md") &&
+      n11Md.targetRetired === true &&
       n11Md.openPath.length === 0 &&
       n11Md.external.length === 0,
     JSON.stringify(n11Md),
@@ -4480,7 +5261,7 @@ async function run(win) {
   );
   check(
     "N11 an absolute http URL is never treated as a local path",
-    n11Web.openPath.length === 0 && n11Web.ipc.length === 0 && n11Web.exists.length === 0,
+    n11Web.openPath.length === 0 && n11Web.offers.length === 0 && n11Web.fileWork.length === 0,
     JSON.stringify(n11Web),
   );
 
@@ -4498,8 +5279,8 @@ async function run(win) {
       n11Caps.external.length === 1 &&
       n11Caps.external[0] === "HTTPS://api.example.invalid:PORT/v1" &&
       n11Caps.openPath.length === 0 &&
-      n11Caps.ipc.length === 0 &&
-      n11Caps.exists.length === 0,
+      n11Caps.offers.length === 0 &&
+      n11Caps.fileWork.length === 0,
     JSON.stringify(n11Caps),
   );
 
@@ -4549,6 +5330,7 @@ async function run(win) {
   // immediately above destroys the document, leaving this probe to return []
   // against about:blank#blocked and break its own mustPass.
   await n11EnsureAlive("about to read the SVG shape premise");
+  await n11ObserveLegacy(true);
   const n11SvgShape = await exec(`
     (() => {
       return Array.from(document.querySelectorAll('#viewer svg a')).map((a) => ({
@@ -4609,7 +5391,7 @@ async function run(win) {
       n11SvgH.external.length === 1 &&
       n11SvgH.external[0] === "http://svg.invalid/p" &&
       n11SvgH.openPath.length === 0 &&
-      n11SvgH.exists.length === 0,
+      n11SvgH.fileWork.length === 0,
     JSON.stringify(n11SvgH),
   );
 
@@ -4622,7 +5404,7 @@ async function run(win) {
       n11SvgX.external.length === 1 &&
       n11SvgX.external[0] === "http://xlink.invalid/p" &&
       n11SvgX.openPath.length === 0 &&
-      n11SvgX.exists.length === 0,
+      n11SvgX.fileWork.length === 0,
     JSON.stringify(n11SvgX),
   );
 
@@ -4644,6 +5426,7 @@ async function run(win) {
   // handler deliberately did nothing or was never reached at all, so without
   // reading the cancelled flag the assertion passed with the fix deleted.
   await n11EnsureAlive("about to render the placeholder fixture");
+  await n11ObserveLegacy(true);
   await n11Render("# Placeholder\n\n[empty]()\n");
   const n11Empty = await n11Click("empty");
   const n11EmptyNav = await exec(`
@@ -4663,11 +5446,11 @@ async function run(win) {
       n11Empty.clicked.found === true &&
       n11Empty.clicked.prevented === true &&
       n11Empty.openPath.length === 0 &&
-      n11Empty.ipc.length === 0 &&
+      n11Empty.offers.length === 0 &&
       n11Empty.external.length === 0 &&
-      n11Empty.notes.length === 0 &&
-      n11Empty.confirms.length === 0 &&
-      n11Empty.exists.length === 0,
+      n11Empty.errors.length === 0 && n11Empty.notices.length === 0 && n11Empty.notifications.length === 0 &&
+      n11Empty.consentClear === true &&
+      n11Empty.fileWork.length === 0,
     JSON.stringify({ n11Empty, n11EmptyNav }),
   );
 
@@ -4705,6 +5488,7 @@ async function run(win) {
   // URL_BLANK for a bare trim() was withdrawn as vacuous rather than recorded
   // as proven: the property is real, but it is unobservable from the DOM.
   await n11EnsureAlive("about to render the whitespace fixture");
+  await n11ObserveLegacy(true);
   await n11Render(
     "# Whitespace\n\n" +
       '<a href="&#160;">nbsp</a>\n\n' +
@@ -4757,11 +5541,11 @@ async function run(win) {
         r.clicked.found === true &&
         r.clicked.prevented === true &&
         r.openPath.length === 0 &&
-        r.ipc.length === 0 &&
+        r.offers.length === 0 &&
         r.external.length === 0 &&
-        r.notes.length === 0 &&
-        r.confirms.length === 0 &&
-        r.exists.length === 0,
+        r.errors.length === 0 && r.notices.length === 0 && r.notifications.length === 0 &&
+        r.consentClear === true &&
+        r.fileWork.length === 0,
     ),
     JSON.stringify({ n11Nbsp, n11Bom }),
   );
@@ -4787,11 +5571,11 @@ async function run(win) {
       n11Ctrl.nav.href === n11BaseHref &&
       n11Ctrl.nav.mainProcessNavs.length === 0 &&
       n11Ctrl.openPath.length === 0 &&
-      n11Ctrl.ipc.length === 0 &&
+      n11Ctrl.offers.length === 0 &&
       n11Ctrl.external.length === 0 &&
-      n11Ctrl.notes.length === 0 &&
-      n11Ctrl.confirms.length === 0 &&
-      n11Ctrl.exists.length === 0,
+      n11Ctrl.errors.length === 0 && n11Ctrl.notices.length === 0 && n11Ctrl.notifications.length === 0 &&
+      n11Ctrl.consentClear === true &&
+      n11Ctrl.fileWork.length === 0,
     JSON.stringify({ n11Ctrl, base: n11BaseHref }),
   );
 
@@ -4838,9 +5622,9 @@ async function run(win) {
     JSON.stringify({ carriers: Object.keys(n11All).length, started: n11Started }),
   );
 
-  // TERMINAL RECONCILIATION. The per-click slices are taken 140ms after the
-  // click, so a navigation that started later lands in NO slice and would be
-  // invisible to every assertion above - the index arithmetic proves what was
+  // TERMINAL RECONCILIATION. The former actor sampled at 140ms, so a navigation
+  // that started later landed in NO slice and was invisible to every assertion
+  // above. Even with genuine completion now, index arithmetic proves what was
   // observed between the mark and the read, which is weaker than "nothing
   // happened". This closes the gap from the other end: the listener's total
   // must equal every recovery reload plus everything any slice reported.
@@ -4870,19 +5654,10 @@ async function run(win) {
     }),
   );
 
-  // The navigation witness is scoped to this section. Left attached it would
-  // keep recording for every later block in this file - harmless in itself,
-  // but it makes the listener's lifetime longer than the claim it supports,
-  // and a listener nobody reads is the same defect as a field nobody reads.
-  //
-  // DETACHED BEFORE THE TEARDOWN BELOW, not after, and that ordering is a
-  // MEASUREMENT rather than a preference. Every claim the witness supports -
-  // the ten per-click slices, the aggregate and the reconciliation - has been
-  // evaluated by this line, so it has nothing left to observe; and the
-  // recovery immediately below may issue a reload of its own, which would
-  // otherwise be recorded after the reconciliation that is supposed to account
-  // for every event it sees.
-  win.webContents.removeListener("did-start-navigation", onN11Nav);
+  // Keep the witness armed through ordinary owner/page disposal too. Its
+  // immutable terminal comparison below cannot silently adopt a later event.
+  // The held recovery still reports its real reload count; its larger
+  // restore/admission composition is separately PENDING, not qualified here.
 
   // THE TEARDOWN NEEDS A LIVE DOCUMENT, AND THAT WAS NOT GUARDED - but the
   // stated reason below was WRONG, and the retraction is kept visible because
@@ -4920,65 +5695,184 @@ async function run(win) {
   // suite runs all 161 assertions under R463 and that <area> assertion fails
   // on its own merits - measured, not predicted.
   await n11EnsureAlive("about to restore the external opener");
-
-  await exec(`
-    (() => {
-      require('electron').shell.openExternal = window.__n11SavedExternal;
-      delete window.__n11SavedExternal;
-      return null;
-    })()
-  `);
-
-  // The N11 stub shadowed the SHARED external trap that every windowed suite
-  // installs (test-visual-utils.js trapExternalOpens). If it is not fully
-  // removed, every later block in this file records into a dead local array
-  // and the trap that stops the harness launching the user's browser is
-  // silently disarmed - which is exactly the defect that trap was written for
-  // after the user reported accumulating tabs.
-  //
-  // Asserted BEHAVIOURALLY rather than by checking the saved slot is gone: the
-  // slot being deleted says nothing about which function is now installed. A
-  // probe call must land in the shared trap's array.
-  const n11Restored = await exec(`
-    (() => {
-      const before = (window.__externalOpens || []).length;
-      const localBefore = (window.__n11External || []).length;
-      require('electron').shell.openExternal('https://n11-restore-probe.invalid/');
-      const after = window.__externalOpens || [];
-      return {
-        savedGone: typeof window.__n11SavedExternal === 'undefined',
-        trapInstalled: window.__externalTrapInstalled === true,
-        grew: after.length === before + 1,
-        last: after[after.length - 1] || null,
-        localUntouched: (window.__n11External || []).length === localBefore,
-      };
-    })()
-  `);
+  await n11ObserveLegacy(true);
+  const legacyRestored = await n11RestoreLegacy();
+  await n11NoLate();
+  const probeBefore = n11Sealed;
+  if (expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
+    throw new Error("N11 cannot probe an unowned or missing shared recording trap");
+  }
+  const trapReady = await waitForExternalTrap(win);
+  if (!trapReady || expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
+    throw new Error("N11 cannot probe an unowned or missing shared recording trap");
+  }
+  // A positive Main-side probe must reach the unchanged actual private history,
+  // not renderer compatibility arrays. Use the retained recorder, never a live
+  // property that an awaited callback could have replaced with an OS opener.
+  await n11Openers.external.call(n11Shell, "https://n11-restore-probe.invalid/");
+  if (expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
+    throw new Error("N11 shared trap authority changed during its restoration probe");
+  }
+  const probeExternal = n11Slice(await visualUtils.readExternalOpens(win), probeBefore.external);
+  if (expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
+    throw new Error("N11 shared trap authority changed during its restoration probe");
+  }
+  const savedGone = await exec(`typeof window.__n11SavedExternal === 'undefined'`);
+  const n11Restored = {
+    savedGone: savedGone === true && legacyRestored.savedGone === true,
+    trapInstalled: trapReady && expectedSecurityQuestion === null && n11AuthorityIntact(),
+    grew: probeExternal.length === 1,
+    last: probeExternal.at(-1),
+    localUntouched: n11Entries.length === probeBefore.entries && legacyRestored.localUntouched === true,
+    legacyInstalled: legacyRestored.installed, completedRecoveryLoads: n11LegacyCompleted,
+  };
   check(
     "N11 the local openExternal stub is fully removed and the shared trap answers again",
     n11Restored.savedGone === true &&
       n11Restored.trapInstalled === true &&
       n11Restored.grew === true &&
       n11Restored.last === "https://n11-restore-probe.invalid/" &&
-      // The probe must land in the SHARED array and nowhere else. Without this
-      // conjunct a stub that recorded into both would pass.
+      // The probe must land in the shared history, never either actual local
+      // observer (including legacy state if the held continuation installed it).
       n11Restored.localUntouched === true,
     JSON.stringify(n11Restored),
   );
 
-  await exec(`
-    (() => {
-      const { shell, ipcRenderer } = require('electron');
-      const nodeFs = require('fs');
-      const r = window.__s12Restore;
-      shell.openPath = r.openPath;
-      ipcRenderer.send = r.send;
-      nodeFs.existsSync = r.existsSync;
-      window.confirm = r.confirm;
-      window.showNotification = r.notify;
-      return null;
-    })()
-  `);
+  if (!n11Restored.savedGone || !n11Restored.trapInstalled || !n11Restored.grew ||
+      n11Restored.last !== "https://n11-restore-probe.invalid/" || !n11Restored.localUntouched) {
+    throw new Error("N11 shared-trap restoration probe failed");
+  }
+  n11Sealed = Object.freeze({ ...probeBefore, external: probeBefore.external + probeExternal.length });
+  await n11NoLate();
+  await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
+  if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
+    throw new Error("N11 ordinary source admission did not actually retire");
+  }
+  n11Owner = null;
+  await n11NoLate();
+  const empty = await readSecurityImageOwner(null);
+  await n11NoLate();
+  const retired = empty.tabs.length === 0 && empty.id === null && empty.current === null &&
+    empty.descriptor === null && empty.identity === null &&
+    empty.pending.pending === false && empty.pending.count === 0 &&
+    empty.welcome && empty.heading === "Welcome to Markaloo" && empty.loading === false &&
+    n11Actions.length === 10 && n11Actions.every(action => !action.pending &&
+      (action.href === null || action.href === "" ? !action.entry : action.settled));
+  check("N11 all ordinary source/target owners retire before SEC-13", retired, JSON.stringify(empty));
+  if (!retired) throw new Error("N11 ordinary owner retirement is incomplete");
+  } catch (error) {
+    n11Failure = error;
+    throw error;
+  } finally {
+    const restorationErrors = [];
+    n11FSDrainDepth++;
+    const restore = async (label, operation) => {
+      try { await operation(); }
+      catch (error) { restorationErrors.push(label + ": " + String(error.message || error)); }
+    };
+    let retiredPage = null, trapReady = false, finalOpens = null;
+    // Both resource families retain their independent cleanup. A partially or
+    // fully installed legacy continuation is not forgotten on an ordinary fault.
+    await restore("legacy installed resources", () => n11RestoreLegacy());
+    await restore("known ordinary source", async () => {
+      if (!n11Owner) return;
+      if (!await n11Healthy()) throw new Error("Cannot close an uncertain N11 source; fixtures retained");
+      await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
+      if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
+        throw new Error("N11 source Main retirement was not confirmed");
+      }
+      n11Owner = null;
+    });
+    await restore("page witness", async () => {
+      if (n11PageAttempted || n11PageInstalled) retiredPage = Object.freeze(await n11DisposePage());
+    });
+    await restore("shared trap readiness", async () => {
+      if (!n11AuthorityIntact()) throw new Error("N11 shared trap authority changed before readiness");
+      trapReady = await waitForExternalTrap(win);
+    });
+    // removeListener may invoke application callbacks: finish it before the
+    // final synchronous snapshot/comparison/property-release boundary.
+    try { n11Contents.removeListener("did-start-navigation", onN11Nav); }
+    catch (error) { restorationErrors.push("navigation listener: " + String(error.message || error)); }
+    try { finalOpens = n11SnapshotOpens(); }
+    catch (error) { restorationErrors.push({ label: "final shared histories", error }); }
+    const finalCounts = {
+      shell: finalOpens?.shell ?? null, external: finalOpens?.external ?? null,
+      entries: n11Entries.length, sends: n11Sends.length, work: n11Work.length,
+      navigation: n11Navs.length, faults: n11Faults.length,
+      clicks: retiredPage?.clicks ?? null, errors: retiredPage?.errors ?? null,
+      notifications: retiredPage?.notifications ?? null,
+      dialogs: retiredPage?.dialogs ?? null, confirms: retiredPage?.confirms ?? null,
+      sentinel: retiredPage?.sentinel ?? null, modal: retiredPage?.modal ?? null,
+    };
+    const accounted = n11Sealed !== null && isDeepStrictEqual(finalCounts, n11Sealed) &&
+      n11Faults.length === 0 && expectedSecurityQuestion === null && n11AuthorityIntact() && trapReady;
+    try {
+      if (n11Installed || Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer")?.value === n11Observer) {
+        n11RestoreSlot(securityGestureRegistration, "observer", n11Observer, null, n11Slots.observer);
+      }
+    } catch (error) { restorationErrors.push({ label: "Main gesture observer", error }); }
+    try {
+      if (n11Installed || Object.getOwnPropertyDescriptor(n11Contents, "send")?.value === n11ObservedSend) {
+        n11RestoreSlot(n11Contents, "send", n11ObservedSend, n11Send, n11Slots.send);
+      }
+    } catch (error) { restorationErrors.push({ label: "Main send", error }); }
+    try {
+      if (n11Installed || Object.getOwnPropertyDescriptor(n11RealPathHost, "native")?.value === n11ObservedRealPath) {
+        n11RestoreSlot(n11RealPathHost, "native", n11ObservedRealPath, n11RealPath, n11Slots.realpath);
+      }
+    } catch (error) { restorationErrors.push({ label: "realpath", error }); }
+    try {
+      if (n11Installed || Object.getOwnPropertyDescriptor(fs, "statSync")?.value === n11ObservedStat) {
+        n11RestoreSlot(fs, "statSync", n11ObservedStat, n11Stat, n11Slots.stat);
+      }
+    } catch (error) { restorationErrors.push({ label: "stat", error }); }
+    try {
+      if (n11Installed || Object.getOwnPropertyDescriptor(fs, "existsSync")?.value === n11ObservedExists) {
+        n11RestoreSlot(fs, "existsSync", n11ObservedExists, n11Exists, n11Slots.exists);
+      }
+    } catch (error) { restorationErrors.push({ label: "exists", error }); }
+    try {
+      if (n11Installed || Object.getOwnPropertyDescriptor(fs, "readFileSync")?.value === n11ObservedRead) {
+        n11RestoreSlot(fs, "readFileSync", n11ObservedRead, n11ReadFile, n11Slots.read);
+      }
+    } catch (error) { restorationErrors.push({ label: "read", error }); }
+    n11FSDrainDepth--;
+    const restored = Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer")?.value === null &&
+      Object.getOwnPropertyDescriptor(securityGestureRegistration, "handler")?.value === n11Registration.handler &&
+      Object.getOwnPropertyDescriptor(securityGestureRegistration, "installed")?.value === n11Registration.installed &&
+      Object.getOwnPropertyDescriptor(securityGestureRegistration, "count")?.value === 1 &&
+      n11DataSlotValue(n11Contents, "send") === n11Send &&
+      Object.getOwnPropertyDescriptor(fs, "realpathSync")?.value === n11RealPathHost &&
+      Object.getOwnPropertyDescriptor(n11RealPathHost, "native")?.value === n11RealPath &&
+      Object.getOwnPropertyDescriptor(fs, "statSync")?.value === n11Stat &&
+      Object.getOwnPropertyDescriptor(fs, "existsSync")?.value === n11Exists &&
+      Object.getOwnPropertyDescriptor(fs, "readFileSync")?.value === n11ReadFile &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer"), n11Slots.observer) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(n11Contents, "send"), n11Slots.send) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(n11RealPathHost, "native"), n11Slots.realpath) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(fs, "statSync"), n11Slots.stat) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(fs, "existsSync"), n11Slots.exists) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(fs, "readFileSync"), n11Slots.read) &&
+      expectedSecurityQuestion === null && n11AuthorityIntact() && trapReady;
+    // Both verdicts precede reporting or error formatting: neither can reenter
+    // application getters between the retained snapshot and descriptor release.
+    // Reporting is outside the uninterrupted terminal comparison/release tail.
+    const restorationMessages = restorationErrors.map(item => typeof item === "string" ? item :
+      item.label + ": " + String(item.error.message || item.error));
+    check("N11 final immutable accounting covers asynchronous owner/page disposal", accounted,
+      JSON.stringify({ sealed: n11Sealed, finalCounts, faults: n11Faults,
+        recoveryLoads: n11RecoveryLoads, completedLegacyLoads: n11LegacyCompleted,
+        readinessErrors: n11ReadinessErrors }));
+    check("N11 owned Main observations restore exact identities and retain the shared trap",
+      restored && restorationErrors.length === 0, JSON.stringify(restorationMessages));
+    if (!accounted || !restored || restorationErrors.length) {
+      throw new Error("N11 terminal accounting/restoration failed; fixtures retained: " +
+        restorationMessages.join("; ") +
+        (n11Failure ? "\nOriginal ordinary failure: " + String(n11Failure.stack || n11Failure) : ""));
+    }
+  }
+  }
 
   // ==========================================================================
   // SEC-13 / SEC-14 - attacker-controlled strings reaching innerHTML in the
