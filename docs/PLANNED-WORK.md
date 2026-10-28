@@ -190,17 +190,41 @@ section is kept here so the register has a visible edge.
     reviews both found no significant issue or disagreement. Candidate
     `1ece419e` is committed; native transport, consent, disk and lifecycle
     qualification remain **NOT RUN**.
-    B's frozen-bridge PDF controlled-dispatch-failure source leaf `e3906f19`
-    is queued after C's active N11 unit. The coordinator verified the one-file
-    tabs-test delta from `636bd756` and both actual completed Sol/Luna replies.
-    Both reviews cleared the unit and reran its Node controls. Tabs ownership
-    returns to C; integration still waits for N11 closure. Its Node probe does
-    not qualify Electron transport, native popup/PDF behavior or ordinary tabs.
-    No product/shared-helper edits or runtime permission.
-    A's reviewed leaves `80d90a75` and `45d1c2dd` are also queued after N11,
-    for a separate local integration/register closure. Import only their deltas;
-    preserve C's additive helper and newer security work. Leaf integration is
-    not full-route, formal-proof, performance or release qualification.
+    After N11 closed at `6a10ea00`, C imported only the reviewed queued deltas.
+    B's frozen-bridge PDF leaf `e3906f19` is local `eb51318e`, changing only
+    the tabs test. C read and hash-checked both actual completed Sol/Luna
+    replies: both cleared the source unit and reran its 4 baseline, 7 exact
+    negative and 5 setup-refusal Node controls. Only Sol explicitly confirms
+    source/packet hashes; do not attribute that wording to Luna. C did not rerun
+    these controls. The probe does not qualify Electron contextBridge,
+    Chromium channel delivery, native popup/visible toast/PDF, ordinary tabs,
+    full B7 or formal proofs. Tabs ownership is back with C.
+    A's four-file `80d90a75` leaf is local `9b8b8b09`; the one-file toolbar
+    diagnostic `45d1c2dd` is local `994a9557`. The combined source identity is
+    `994a9557`, tree `44463465`, on closed C `6a10ea00`. Each local commit
+    matches its exact reviewed native delta with the original prefixes and
+    index lengths. All six imported files match their reviewed raw/blob pins.
+    Security `1dd4f5a6`, helper `c34eeb9a` and the closed N11 register stayed
+    unchanged through all three imports. No old whole-file/worktree copies
+    or untracked-fixture cleanup. This register transition is separate.
+    A's verified results on `45d1c2dd` are zoom 54/54 across all seven phases,
+    responsive 37/37 and visual 156/156, once each with normal exit zero.
+    C checked packet `ad48d1aa` and all 26 manifest entries; no C runtime replay.
+    These used A's old helper, not the combined C helper. Expected visual
+    failure/refusal witnesses are passing negative controls, not interrupted
+    routes; all three child probes completed. No screenshot-viewing or
+    universal-performance claim follows.
+    Search 105/106, exit one, and theme 437/437 ran on A's four-file r3
+    candidate over `87863807`, before commit `80d90a75`, with old helper
+    `a7b709bb`. The exact search 2px-height red is **DEFERRED, UNFIXED**.
+    TOC 43/43 is the later complete run on committed `80d90a75`, also with
+    that old helper. None of these are combined `994a9557` runs.
+    Bare `80d90a75` toolbar 13/14 plus 0/1 stays partial; its native 0x0 cause
+    and the old persistence cause remain unknown. Diagnostic 47/47 is only
+    an observation, not a resize fix or retroactive bare-source pass; native
+    reads and enriched polls can change timing. Restart 6/6 applies only to
+    its successful fixture. Earlier reading 348/348 and panels 66/66 are not
+    fresh combined passes. No all-A9, all-28-group or release qualification.
     No C corrected-runtime allocation or automatic retry is authorized.
   - The four render-security module/global failures trace to a stale exact
     Mermaid export inventory and an absent earlier fixture prerequisite.
@@ -313,14 +337,30 @@ section is kept here so the register has a visible edge.
     i/w prefixes and ID length. The only source commit file is
     `test/test-render-security.js`; the register transition is separate.
     No product/helper/protected-recovery change is needed or authorized.
-    Queued A/B leaves are not part of this unit; their separate local
-    integration/register closure remains next.
+    A/B leaves are not part of this N11 source unit; their subsequent local
+    integration/register closure remains separate.
     Earlier results, control failures and blocked packets remain intermediate
     evidence, not corrected-source native or recovery qualification.
     Reviewed prefix, held recovery tail, SEC-13/later and the shared helper
     stay protected; caller Markdown stays a string. No helper or product edits.
     Recovery remains **PENDING**; corrected native routes and formal proofs
     remain **NOT RUN**.
+    Remaining ordinary-route readiness is not established by the combined
+    source identity. Corrected C tabs/popups still need their actual bounded
+    native journeys. Security's held recovery and SEC-13/later compatibility
+    are still pending; healthy N11 fixtures do not qualify either.
+    B's full ordinary tables, Mermaid and syntax routes remain unqualified.
+    Their JavaScript timers are not whole-npm deadlines: tables has a module
+    240s timer until will-quit; Mermaid starts 180s inside whenReady and clears
+    it before finalization; syntax's browser 120s excludes source/fixtures and
+    late cleanup. No completed full-route budget is established. Node --source
+    does not qualify full Electron syntax or supply its runtime budget; no
+    source-only count is claimed. Earlier table-cell focused constituents
+    are not a new whole-group pass. Wheel 282/283 and full patch 340/343
+    remain red; old bootstrap aborts remain unchanged.
+    Any next ordinary run needs the frozen reviewed combined candidate and
+    a fresh finite outside-process deadline/custody/cleanup allocation.
+    No C runtime permission follows from old releases or GUI owner NONE.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
     findings go to their owner; C alone writes package/workflow/register files.
