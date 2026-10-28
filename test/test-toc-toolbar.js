@@ -52,6 +52,12 @@ if (!isElectron) {
   const phases = !proof || proof === "owner" ? ["behavior", "savedToc", "savedClosed"] : ["behavior"];
   const completed = [];
   let passed = 0, total = 0;
+  const stopDependents = (phase, code) => {
+    for (const pending of phases.slice(phases.indexOf(phase) + 1)) {
+      console.log("NOT RUN  toc toolbar " + pending + "  -> prerequisite " + phase + " did not complete successfully");
+    }
+    process.exitCode = code;
+  };
   console.log("TOC toolbar evidence: " + evidence);
   for (const phase of phases) {
     const run = spawnSync(electron, [__filename, phase], {
@@ -68,15 +74,25 @@ if (!isElectron) {
         assertions.length !== Number(footer[3]) || failures !== Number(footer[3]) - Number(footer[2]) ||
         run.status !== (failures ? 1 : 0)) {
       console.error("FAIL TOC toolbar child completion  -> " + (run.error || run.status));
-      process.exit(2);
+      stopDependents(phase, 2);
+      break;
     }
     completed.push(phase);
     passed += Number(footer[2]);
     total += Number(footer[3]);
+    if (failures && phase !== phases[phases.length - 1]) {
+      stopDependents(phase, 1);
+      break;
+    }
   }
-  if (!total || JSON.stringify(completed) !== JSON.stringify(phases)) process.exit(2);
-  console.log(`=== ${passed}/${total} passed ===`);
-  process.exit(passed === total ? 0 : 1);
+  if (!process.exitCode) {
+    if (!total || JSON.stringify(completed) !== JSON.stringify(phases)) {
+      process.exitCode = 2;
+    } else {
+      console.log(`=== ${passed}/${total} passed ===`);
+      process.exitCode = passed === total ? 0 : 1;
+    }
+  }
 } else {
   const { app, BrowserWindow, dialog, shell, session } = electron;
   const { startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
