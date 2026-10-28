@@ -190,8 +190,17 @@ section is kept here so the register has a visible edge.
     reviews both found no significant issue or disagreement. Candidate
     `1ece419e` is committed; native transport, consent, disk and lifecycle
     qualification remain **NOT RUN**.
-    The separate frozen-bridge
-    popup-PDF consumer-fault seam is queued with B after video capture.
+    B's frozen-bridge PDF controlled-dispatch-failure source leaf `e3906f19`
+    is queued after C's active N11 unit. The coordinator verified the one-file
+    tabs-test delta from `636bd756` and both actual completed Sol/Luna replies.
+    Both reviews cleared the unit and reran its Node controls. Tabs ownership
+    returns to C; integration still waits for N11 closure. Its Node probe does
+    not qualify Electron transport, native popup/PDF behavior or ordinary tabs.
+    No product/shared-helper edits or runtime permission.
+    A's reviewed leaves `80d90a75` and `45d1c2dd` are also queued after N11,
+    for a separate local integration/register closure. Import only their deltas;
+    preserve C's additive helper and newer security work. Leaf integration is
+    not full-route, formal-proof, performance or release qualification.
     No C corrected-runtime allocation or automatic retry is authorized.
   - The four render-security module/global failures trace to a stale exact
     Mermaid export inventory and an absent earlier fixture prerequisite.
@@ -221,6 +230,97 @@ section is kept here so the register has a visible edge.
     The existing N11 recovery requirement stays **PENDING** for a separate
     actual-Main reload/restore/admission unit. Do not replace it with fail-stop,
     retire its claims or expand into that journey/framework now.
+    The bounded ordinary N11 source is committed at `e551ea09`, from
+    `636bd756`, after independent full-unit Sol/high and Luna clearance.
+    This accepts the test-source port, not an ordinary or native pass.
+    In the first round, Sol cleared
+    the source; Luna found missing filesystem-probe coverage. C accepted it.
+    The recorder now observes synchronous exists/read calls alongside native
+    realpath/stat. The author and C separately passed 115/115 targeted Node-only
+    controls on that candidate, not on the next corrected source.
+    In the second round, Sol found case tracking ended before the awaited
+    late-effects check. Luna found getter-unsafe final restoration checks and
+    skipped cleanup after partial page setup. C checked and accepted all three.
+    The findings differed; neither reviewer cleared that candidate.
+    The same author corrected case/drain observation, descriptor-safe checks
+    and partial page cleanup. Its retained controls went from 116/25 to 141/0
+    with identical script bytes. The extended controls passed 144/144 in
+    separate author and C Node-only runs; syntax passed. Protected regions and
+    helper stay unchanged. These controls do not qualify Main/native behavior.
+    Third-round Sol found that the target-only filesystem verdict rejects
+    legitimate source restoration, and that remaining terminal opener/guard
+    reads can invoke getters after the snapshot. C accepted both. Existing
+    Astra guidance keeps source stat/realpath work in an owner-bound restoration
+    phase and makes terminal checks descriptor-only, before any reporting.
+    Third-round Luna cleared the old frozen source; Sol did not. C accepted
+    Sol's findings and the same author corrected them in a separate candidate.
+    Both actual replies and their disagreement stay retained.
+    The corrected controls passed 191/191 in separate author and C Node-only
+    runs, preserving the prior 144 controls. The genuine same-script red went
+    from 168/10 through 176/2 to 178/0; the extended final set passed 191/0.
+    Earlier fixture-binding failure and all intermediate records stay retained.
+    The author also disclosed an ambiguous hunk briefly hitting SEC-12, then
+    restoring it exactly before any check ran. C verified the final protected
+    prefix, recovery tail, SEC-13/later and helper against the incoming bytes.
+    Fourth-round Sol found that source watcher existence checks are still
+    rejected during valid Markdown source restoration. Luna found live opener
+    reads and a call after awaited trap readiness in the restoration probe.
+    C checked and accepted both distinct findings; neither review cleared
+    that candidate. The same author corrected the bounded source and controls.
+    C inspected the complete source/control delta and separately replayed
+    248/248 Node-only controls with zero exit; syntax passed. The retained
+    same-script red 205/38 became 243/0 before the final extension.
+    Two old expectations are explicitly corrected: valid source watcher
+    existence is not a failure, and the authorized probe bindings must be
+    excluded from the old whole-scenario byte check. The original assertion
+    bodies and other protected spans remain exact; 189 other prior names stay.
+    Initial fake-window and scheduling corrections remain disclosed, not
+    credited as source sensitivity. Prior packets and actual replies stay.
+    Fifth-round Sol cleared that source. Luna found that page disposal can
+    invoke a restored getter after its page observations have been removed.
+    C checked and accepted this conditional cleanup-safety gap; it is not a
+    demonstrated current product failure. The disagreement and actual replies
+    stay retained. The same author changed only page restoration verification
+    to use complete descriptors and safe data identity, without calling getters.
+    The author and C separately passed 278/278 Node-only controls, with zero
+    exit and syntax passed. The same-script red 262/12 became 274/0 before
+    the final extension; all prior 248 controls stay unchanged. Initial overly
+    specific error-text expectations were corrected before source edits and
+    remain disclosed. That packet then entered the sixth full-unit review.
+    Sixth-round Sol cleared the complete unit. Luna found that inherited-data
+    controls do not independently check the inherited value or its rejection
+    when changed. C accepted this coverage gap; the source guard is already
+    correct. The same author strengthened only the controls/inventory,
+    keeping test source `1dd4f5a6` unchanged. The author and C separately
+    passed 280/280 Node-only controls, zero exit and syntax passed. Both
+    inherited-data positives now check the resolved original value; one actual
+    changed-prototype data case per slot requires explicit cleanup failure
+    and independent release. All prior 278 names/purposes remain; strengthened
+    bodies are disclosed, not called byte-identical. No old-source red is
+    invented for the already-correct source.
+    Seventh-round Sol cleared the complete source/register/controls unit.
+    Luna's only finding interpreted the inventory's before/after hashes as
+    version hashes. The retained generator defines them as the prefix before
+    the function and suffix after it. C independently verified both regions
+    match across versions; their concatenation matches Luna's calculation.
+    The original reply and disagreement remain retained. That synchronous
+    reviewer could not receive a follow-up through the tool. A fresh read-only
+    Luna adjudication checked the complete unit and cleared it, confirming
+    there is no pin inconsistency or remaining blocker. No source/control/
+    packet edit or rerun was needed for this clarification.
+    C verified the committed checkout-filtered source matches `1dd4f5a6`
+    and the exact reviewed source patch matches `2a13071f` with its frozen
+    i/w prefixes and ID length. The only source commit file is
+    `test/test-render-security.js`; the register transition is separate.
+    No product/helper/protected-recovery change is needed or authorized.
+    Queued A/B leaves are not part of this unit; their separate local
+    integration/register closure remains next.
+    Earlier results, control failures and blocked packets remain intermediate
+    evidence, not corrected-source native or recovery qualification.
+    Reviewed prefix, held recovery tail, SEC-13/later and the shared helper
+    stay protected; caller Markdown stays a string. No helper or product edits.
+    Recovery remains **PENDING**; corrected native routes and formal proofs
+    remain **NOT RUN**.
   - Significant owned failures get focused fixes and independent Sol/Luna
     review. New minor findings are documented and deferred. Shared-file
     findings go to their owner; C alone writes package/workflow/register files.
