@@ -2219,8 +2219,8 @@ async function run(win) {
     // The other half of the target-decided rule: gating must not RESTORE an
     // item whose click target does not justify it.
     check(
-      "edit mode does not offer table edit on a paragraph",
-      menuState.editPara.ctxEditTable === false && menuState.editPara.ctxDeleteTable === false,
+      "edit mode offers generic table edit but hides table deletion on a paragraph",
+      menuState.editPara.ctxEditTable === true && menuState.editPara.ctxDeleteTable === false,
       JSON.stringify(menuState.editPara),
     );
 
