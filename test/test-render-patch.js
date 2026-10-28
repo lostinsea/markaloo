@@ -435,6 +435,115 @@ async function run(win) {
   //     `scrollerRect.height / 2` by hand on top of the same mixed-space sum,
   //     so it carried the zoom defect twice over.
   // ---------------------------------------------------------------------
+  function createNotesScrollObservation(s, el) {
+    const events = { scroll: 0, scrollend: 0, trustedScrollend: 0,
+      lastScrollAtMs: null, lastScrollendAtMs: null, lastTrustedScrollendAtMs: null };
+    const listen = (event) => {
+      if (event.target !== s) return;
+      events[event.type]++;
+      if (event.type === "scroll") events.lastScrollAtMs = performance.now();
+      else {
+        events.lastScrollendAtMs = performance.now();
+        if (event.isTrusted) {
+          events.trustedScrollend++;
+          events.lastTrustedScrollendAtMs = performance.now();
+        }
+      }
+    };
+    const dispose = () => {
+      s.removeEventListener("scroll", listen);
+      s.removeEventListener("scrollend", listen);
+    };
+    try {
+      s.addEventListener("scroll", listen);
+      s.addEventListener("scrollend", listen);
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+    const box = (r) => ({ top: r.top, left: r.left, right: r.right,
+      bottom: r.bottom, width: r.width, height: r.height });
+    return {
+      box,
+      dispose,
+      events,
+      poll: () => ({ atMs: performance.now(), scrollTop: s.scrollTop, ...events }),
+      snapshot(sr = s.getBoundingClientRect(), er = el.getBoundingClientRect()) {
+        const viewer = document.getElementById("viewer");
+        // Null optional geometry means unavailable, not a measured zero.
+        const vv = window.visualViewport;
+        const clippingAncestors = [];
+        for (let p = s.parentElement; p; p = p.parentElement) {
+          const style = getComputedStyle(p);
+          if (/(auto|scroll|hidden|clip)/.test(style.overflowX + " " + style.overflowY)) {
+            clippingAncestors.push({ element: p.id || p.tagName, rect: box(p.getBoundingClientRect()),
+              overflowX: style.overflowX, overflowY: style.overflowY,
+              clientWidth: p.clientWidth, clientHeight: p.clientHeight,
+              computedZoom: style.zoom,
+              currentCSSZoom: typeof p.currentCSSZoom === "number" ? p.currentCSSZoom : null });
+          }
+        }
+        return {
+          atMs: performance.now(), timeOriginMs: performance.timeOrigin,
+          connected: s.isConnected && el.isConnected, visibility: document.visibilityState,
+          rectUnits: "viewport CSS pixels", noteRect: box(er), scrollerRect: box(sr),
+          scroller: { element: s.id || s.className, scrollTop: s.scrollTop, scrollLeft: s.scrollLeft,
+            scrollHeight: s.scrollHeight, scrollWidth: s.scrollWidth,
+            clientTop: s.clientTop, clientLeft: s.clientLeft,
+            clientWidth: s.clientWidth, clientHeight: s.clientHeight,
+            offsetWidth: s.offsetWidth, offsetHeight: s.offsetHeight,
+            rangeY: s.scrollHeight - s.clientHeight, units: "element-local CSS pixels" },
+          viewport: { innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+            clientWidth: document.documentElement.clientWidth, clientHeight: document.documentElement.clientHeight,
+            visual: vv ? { width: vv.width, height: vv.height, offsetTop: vv.offsetTop,
+              offsetLeft: vv.offsetLeft, pageTop: vv.pageTop, pageLeft: vv.pageLeft, scale: vv.scale } : null },
+          zoom: { viewerComputed: getComputedStyle(viewer).zoom, scrollerComputed: getComputedStyle(s).zoom,
+            viewerCurrentCSSZoom: typeof viewer.currentCSSZoom === "number" ? viewer.currentCSSZoom : null,
+            scrollerCurrentCSSZoom: typeof s.currentCSSZoom === "number" ? s.currentCSSZoom : null,
+            devicePixelRatio: window.devicePixelRatio },
+          clippingAncestors, events: { ...events },
+        };
+      },
+    };
+  }
+
+  async function recordNotesScrollTail(exec, diagnostic) {
+    const started = performance.now();
+    let last = null;
+    let stable = 0;
+    diagnostic.stopReason = "poll-limit";
+    // Reuse the TOC's finite poll/minimum-age pattern, but do not call it settlement:
+    // even a trusted scrollend cannot rule out a later reading-anchor restoration.
+    // These limits do not interrupt a stuck IPC call; the suite still needs its external cap.
+    for (let i = 0; i < 60; i++) {
+      if (performance.now() - started >= 3000) {
+        diagnostic.stopReason = "elapsed-limit";
+        break;
+      }
+      await sleep(50);
+      const sample = JSON.parse(await exec(`JSON.stringify(window.__patchNotesScroll.poll())`));
+      diagnostic.samples.push(sample);
+      stable = last && sample.scrollTop === last.scrollTop && sample.scroll === last.scroll ? stable + 1 : 0;
+      last = sample;
+      if (stable >= 4 && performance.now() - started >= 300) {
+        diagnostic.stopReason = "stable-samples";
+        break;
+      }
+    }
+    diagnostic.observedHostMs = performance.now() - started;
+    diagnostic.later = JSON.parse(await exec(`JSON.stringify(window.__patchNotesScroll.snapshot())`));
+    diagnostic.changedAfterLastPoll = !last || diagnostic.later.scroller.scrollTop !== last.scrollTop
+      || diagnostic.later.events.scroll !== last.scroll;
+    if (diagnostic.stopReason === "stable-samples" && diagnostic.changedAfterLastPoll) {
+      diagnostic.stopReason = "changed-after-stable-samples";
+    }
+    diagnostic.completionEvidenceWindowStartAtMs = diagnostic.afterOracle.atMs;
+    // This dates an observed event; it does not attribute that scroll to the Notes click.
+    diagnostic.completionEvidence = diagnostic.later.events.trustedScrollend > diagnostic.afterOracle.events.trustedScrollend
+      && diagnostic.later.events.lastTrustedScrollendAtMs >= diagnostic.afterOracle.atMs
+      ? "trusted-scrollend-observed-after-post-oracle-snapshot" : "unknown";
+  }
+
   const NOTE_DOC =
     "# Notes\n\n" +
     "filler paragraph.\n\n".repeat(60) +
@@ -445,7 +554,15 @@ async function run(win) {
   for (const splitView of [false, true]) {
     for (const zoom of [100, 200]) {
       const label = `${splitView ? "split view" : "normal view"} at ${zoom}%`;
-      await exec(`
+      const diagnostic = zoom === 200 ? {
+        label, diagnosticOnly: true, observerVersion: "all-notes-scroll-200-v1",
+        actorRawSha256: require("crypto").createHash("sha256").update(fs.readFileSync(__filename)).digest("hex"),
+        oracleDelayMs: 900, oracleTolerancePx: 120, maxPolls: 60, pollElapsedBudgetMs: 3000,
+        stopReason: "unknown", samples: [], laterRestorationRuledOut: false,
+        observerEffect: "New actor: pre-click listeners/scroller lookup; extra geometry reads after original checks; later polls delay next leg.",
+      } : null;
+      try {
+        await exec(`
         (() => {
           const cw = document.querySelector('.content-wrapper');
           cw.classList.toggle('split-view', ${splitView ? "true" : "false"});
@@ -455,39 +572,82 @@ async function run(win) {
           document.getElementById('viewer').scrollTop = 0;
           updateNotesList();
           const item = document.querySelector('#notesList .notes-item');
+          ${diagnostic ? `
+            if (window.__patchNotesScroll) throw new Error('All Notes scroll observer already installed');
+            const probe = (${createNotesScrollObservation.toString()})(
+              getViewerScroller(), document.querySelector('#viewer [data-note-id="1"]'));
+            probe.label = ${JSON.stringify(label)};
+            probe.itemFound = !!item;
+            window.__patchNotesScroll = probe;
+            probe.clickRequestedAtMs = performance.now();
+          ` : ""}
           if (item) item.click();
           return true;
         })()
-      `);
-      await sleep(900);
-      const note = JSON.parse(
-        await exec(`
+        `);
+        await sleep(900);
+        const note = JSON.parse(
+          await exec(`
           (() => {
+            ${diagnostic ? "const readStartedAtMs = performance.now();" : ""}
             const s = getViewerScroller();
             const el = document.querySelector('#viewer [data-note-id="1"]');
             const sr = s.getBoundingClientRect();
             const er = el.getBoundingClientRect();
-            return JSON.stringify({
+            const result = {
               // Both in viewport pixels, so this comparison needs no
               // conversion regardless of where the zoom sits.
               offsetFromCentre: Math.round(er.top + er.height / 2 - (sr.top + sr.height / 2)),
               scrollable: s.scrollHeight > s.clientHeight + 1,
               scrolled: Math.round(s.scrollTop),
-            });
+            };
+            ${diagnostic ? `
+              window.__patchNotesScroll.original900ms = {
+                readStartedAtMs, readFinishedAtMs: performance.now(),
+                oracle: result, noteRect: window.__patchNotesScroll.box(er),
+                scrollerRect: window.__patchNotesScroll.box(sr),
+              };
+            ` : ""}
+            return JSON.stringify(result);
           })()
-        `),
-      );
-      check(
-        `the note really starts off screen in ${label}, so centring can fail`,
-        note.scrollable === true && note.scrolled > 100,
-        JSON.stringify(note),
-      );
-      // Generous but far tighter than the ~2000px a mis-scaled scroll produces.
-      check(
-        `clicking an All Notes entry centres the note in ${label}`,
-        Math.abs(note.offsetFromCentre) < 120,
-        JSON.stringify(note),
-      );
+          `),
+        );
+        check(
+          `the note really starts off screen in ${label}, so centring can fail`,
+          note.scrollable === true && note.scrolled > 100,
+          JSON.stringify(note),
+        );
+        // Generous but far tighter than the ~2000px a mis-scaled scroll produces.
+        check(
+          `clicking an All Notes entry centres the note in ${label}`,
+          Math.abs(note.offsetFromCentre) < 120,
+          JSON.stringify(note),
+        );
+        if (diagnostic) {
+          diagnostic.afterOracle = JSON.parse(await exec(`JSON.stringify(window.__patchNotesScroll.snapshot())`));
+          diagnostic.pageZoomFactor = win.webContents.getZoomFactor();
+          await recordNotesScrollTail(exec, diagnostic);
+        }
+      } finally {
+        if (diagnostic) {
+          try {
+            diagnostic.observer = JSON.parse(await exec(`
+              (() => {
+                const probe = window.__patchNotesScroll;
+                if (!probe) return JSON.stringify({ cleanup: 'not-installed' });
+                if (probe.label !== ${JSON.stringify(label)}) throw new Error('All Notes observer owner changed');
+                probe.dispose();
+                delete window.__patchNotesScroll;
+                return JSON.stringify({ cleanup: 'removed', itemFound: probe.itemFound,
+                  clickRequestedAtMs: probe.clickRequestedAtMs, original900ms: probe.original900ms,
+                  events: probe.events });
+              })()
+            `));
+          } finally {
+            console.log("DIAGNOSTIC All Notes scroll: " + JSON.stringify(diagnostic));
+          }
+        }
+      }
     }
   }
   await exec(
