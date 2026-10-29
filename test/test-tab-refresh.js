@@ -337,6 +337,11 @@ try {
 } catch (error) {
   failStartup("owned transport contract", error);
 }
+try {
+  require("./test-shutdown-response-contract.js").run(check);
+} catch (error) {
+  failStartup("shutdown response contract", error);
+}
 
 // This is deliberately data-only: capability scheduling must be testable
 // without Electron state, and each group remains independently reportable.
@@ -42358,7 +42363,9 @@ async function runSameDocumentShutdownScenarios(win, exec) {
     { length: 9 },
     (_, index) => path.join(dir, `f22-semantic-${index}.md`),
   );
+  const semanticSeeds = semanticFiles.map((_, index) => `F22 semantic pool seed ${index}\n`);
   let semantic;
+  let semanticAdmission = null;
   let semanticFixtureAttempted = false;
   let semanticCleanupAfterReset = null;
   const hostFileCleanupErrors = [];
@@ -42469,26 +42476,85 @@ async function runSameDocumentShutdownScenarios(win, exec) {
       semanticFixtureAttempted = true;
       try {
         semanticFiles.forEach((file, index) => {
-          write(file, `F22 semantic pool seed ${index}\n`);
+          write(file, semanticSeeds[index]);
         });
       } catch (error) {
         appendSemanticError("semantic host file setup failed", error);
       }
       if (!semantic || !semantic.error) {
         try {
+          await cleanupLiveSemanticTabs();
+          if (semantic && semantic.error) throw new Error(semantic.error);
+          let observed = false;
+          let restoreChooser;
+          let admissionError;
+          const chooser = async (_owner, options) => {
+            if (semanticAdmission || !options?.properties?.includes("multiSelections")) {
+              throw new Error("Unexpected semantic-pool chooser");
+            }
+            semanticAdmission = { chooserCalls: 1 };
+            return { canceled: false, filePaths: semanticFiles.slice() };
+          };
+          try {
+            observed = true;
+            await installDialogBatchPageObservation(exec);
+            restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
+            await exec("window.folia.openFileDialog(); null");
+            if (!await waitForCondition(exec, `
+              window.__dialogBatchNative.processors.length === 1
+            `, 8000)) throw new Error("Semantic native primary was not delivered");
+            const admitted = await boundedDialogWork(exec(`(async () => {
+              const state = window.__dialogBatchNative;
+              if (state.processors.length !== 1) throw new Error('Unexpected semantic primary count');
+              const processor = state.processors[0];
+              await processor.promise;
+              await Promise.all(state.renders.map(record => record.promise));
+              const paths = ${JSON.stringify(semanticFiles)};
+              const seeds = ${JSON.stringify(semanticSeeds)};
+              const tabs = window.CustomTabs.getTabs();
+              const complete = processor.eventUndefined && processor.settled && !processor.error &&
+                processor.packet.path === paths[0] &&
+                JSON.stringify(processor.packet.allPaths) === JSON.stringify(paths) &&
+                processor.packet.extraReadGrants?.length === paths.length - 1 &&
+                tabs.length === paths.length && state.renders.length === 1 &&
+                state.renders.every(record => record.settled && !record.error) &&
+                tabs.every((tab, index) => tab.filePath === paths[index] &&
+                  tab.content === seeds[index] && tab.originalContent === seeds[index] &&
+                  !!window.CustomTabs.getDocumentDescriptor(tab.id)) &&
+                window.CustomTabs.getActiveTab()?.filePath === paths[0] &&
+                document.getElementById('viewer').textContent.includes('F22 semantic pool seed 0');
+              if (!complete) throw new Error('Semantic native pool admission did not settle');
+              return { complete, paths: tabs.map(tab => tab.filePath), primarySettled: processor.settled };
+            })()`), "semantic native original processor and paint", 8000);
+            Object.assign(semanticAdmission, admitted);
+          } catch (error) {
+            admissionError = error;
+          } finally {
+            const failures = [];
+            if (restoreChooser) {
+              try {
+                if (dialog.showOpenDialog !== chooser) throw new Error("Semantic chooser restoration ownership changed");
+                restoreChooser();
+              } catch (error) { failures.push(error); }
+            }
+            if (observed) {
+              try { await restoreDialogBatchPageObservation(exec); }
+              catch (error) { failures.push(error); }
+            }
+            if (admissionError || failures.length) {
+              throw new AggregateError(
+                [admissionError, ...failures].filter(Boolean),
+                "Semantic native admission or owned observer restoration failed",
+              );
+            }
+          }
           semantic = await exec(`
     (async () => {
-      const ipc = require("electron").ipcRenderer;
-      const handler = ipc.listeners("quit-approval-request")[0];
-      const generation = await ipc.invoke("quit-approval-generation");
-      const originalSend = ipc.send;
       const originalIndexOf = String.prototype.indexOf;
       const originalReplace = String.prototype.replace;
       const originalMarkdownEditor = window.markdownEditor;
       const originalEditorWrapper = document.querySelector(".content-wrapper");
       const poolPaths = ${JSON.stringify(semanticFiles)};
-      let nextId = 50000000;
-      let response = null;
       const observations = {};
       let pool = [];
       let pooledClose = { remaining: null, error: null };
@@ -42597,7 +42663,8 @@ async function runSameDocumentShutdownScenarios(win, exec) {
       // WRONG-GUARD because removing the CR-free fast path broke nothing this
       // could see. measure() puts the window around an arbitrary operation, so
       // the assignment assertions below watch the ASSIGNMENT and the shutdown
-      // assertions watch the SHUTDOWN - and both mean what they say.
+      // assertions watch the actual page scan. Synchronous transport/reply
+      // checks live in the mandatory whole-production-code Node contract.
       const measure = (name, run) => {
         let indexOfCalls = 0;
         let replaceCalls = 0;
@@ -42634,34 +42701,20 @@ async function runSameDocumentShutdownScenarios(win, exec) {
         return measured;
       };
       const ask = (name) => {
-        response = null;
-        const measured = measure(name, () => {
-          handler({}, { id: nextId++, reason: "window-close", gen: generation });
-          return null;
-        });
-        measured.dirty = response && response.dirtyFiles;
+        const measured = measure(name, () => window.CustomTabs.__dirtyTabNames(true));
+        measured.dirty = measured.result;
         observations[name] = measured;
         return measured;
       };
-      ipc.send = function (channel, payload) {
-        if (channel === "quit-approval-response") {
-          response = payload;
-          return;
-        }
-        return originalSend.apply(this, arguments);
-      };
       let result;
       try {
-        if (!handler) throw new Error("shutdown listener missing");
-        await closeSequentially(window.CustomTabs.getTabs().slice());
         window.isEditMode = false;
-        window.originalMarkdown = "";
         pool = poolPaths.map((filePath) => {
-          const content = window.fs.readFileSync(filePath, "utf8");
-          const tab = window.CustomTabs.createTab(filePath, content, {
-            activate: false,
-          });
-          if (!tab) throw new Error("semantic pool tab creation failed: " + filePath);
+          const matches = window.CustomTabs.getTabs().filter(tab => tab.filePath === filePath);
+          const tab = matches[0];
+          if (matches.length !== 1 || !window.CustomTabs.getDocumentDescriptor(tab.id)) {
+            throw new Error("semantic pool has no unique admitted tab: " + filePath);
+          }
           return tab;
         });
         await Promise.resolve(window.CustomTabs.switchToTab(pool[0].id));
@@ -42881,7 +42934,14 @@ async function runSameDocumentShutdownScenarios(win, exec) {
         window.markdownEditor = null;
         const unreadableModeEntered = window.CustomTabs.__inEditMode();
         const unreadableEditorAbsent = !window.markdownEditor;
-        const unreadable = ask("unreadable");
+        const unreadable = measure("unreadable", () => {
+          try {
+            window.CustomTabs.__dirtyTabNames(true);
+            return { threw: false };
+          } catch (error) {
+            return { threw: true, name: error.name, message: error.message };
+          }
+        });
         // RESTORED IMMEDIATELY, AND WITNESSED. Everything below this line
         // dereferences the editor; a borrow that is not returned does not fail
         // an assertion, it deletes the rest of the suite. The flag goes back
@@ -42941,28 +43001,6 @@ async function runSameDocumentShutdownScenarios(win, exec) {
         const crlfResurrectUndone = ask("crlfResurrectUndone");
         const crlfCachedAfterUndo = crlfResurrectTab.content;
 
-        // THE REPLAY CACHE IS BOUNDED. Fifty cancelled shutdowns are fifty
-        // answers this document was asked for, and every one of them used to be
-        // retained - with its filename list - for the life of the renderer, to
-        // serve a duplicate that by construction can only ever name the newest
-        // id. Driven through the real handler rather than inspected, so the
-        // duplicate semantics are proven at the same time: the newest id still
-        // replays its exact recorded answer, and the one below it is refused as
-        // stale rather than recomputed against a document that has moved on.
-        await prepare([{ original: "replay-base", content: "replay-base" }]);
-        for (let fill = 0; fill < 50; fill += 1) {
-          response = null;
-          handler({}, { id: nextId++, reason: "window-close", gen: generation });
-        }
-        const replayCache = window.CustomTabs.__shutdownReplayCache();
-        const newestId = nextId - 1;
-        response = null;
-        handler({}, { id: newestId, reason: "window-close", gen: generation });
-        const duplicateReplay = response;
-        response = null;
-        handler({}, { id: newestId - 1, reason: "window-close", gen: generation });
-        const staleDuplicate = response;
-
         result = {
           poolBaseline,
           equalValues: equalLeft === equalRight,
@@ -43012,10 +43050,6 @@ async function runSameDocumentShutdownScenarios(win, exec) {
           crlfCachedAfterEdit,
           crlfResurrectUndone,
           crlfCachedAfterUndo,
-          replayCache,
-          newestId,
-          duplicateReplay,
-          staleDuplicate,
           modeBeforeEnter,
           modeAfterEnter,
           modeAfterExit,
@@ -43028,7 +43062,6 @@ async function runSameDocumentShutdownScenarios(win, exec) {
           error: String(error && error.stack ? error.stack : error),
         };
       } finally {
-        ipc.send = originalSend;
         String.prototype.indexOf = originalIndexOf;
         String.prototype.replace = originalReplace;
         window.markdownEditor = originalMarkdownEditor;
@@ -43168,6 +43201,14 @@ async function runSameDocumentShutdownScenarios(win, exec) {
       }
     }
   }
+  check(
+    "the semantic file pool is admitted by one genuine chooser and original processor",
+    semanticAdmission && semanticAdmission.complete === true &&
+      semanticAdmission.chooserCalls === 1 &&
+      semanticAdmission.primarySettled === true &&
+      JSON.stringify(semanticAdmission.paths) === JSON.stringify(semanticFiles),
+    JSON.stringify(semanticAdmission),
+  );
   check(
     "the semantic cleanup leaves no live tabs or persisted restoration state after a fresh renderer reset",
     semanticCleanupAfterReset &&
@@ -43336,8 +43377,10 @@ async function runSameDocumentShutdownScenarios(win, exec) {
     JSON.stringify(semantic.shutdownAnchor),
   );
   check(
-    "an unreadable active editor preserves dirtyFiles:null rather than approving",
-    semantic.unreadable && semantic.unreadable.dirty === null,
+    "an unreadable active editor makes the actual page scan fail closed",
+    semantic.unreadable?.result?.threw === true &&
+      semantic.unreadable.result.name === "Error" &&
+      semantic.unreadable.result.message === "edit mode is active but the editor is unavailable",
     JSON.stringify(semantic.unreadable),
   );
   check(
@@ -43364,23 +43407,6 @@ async function runSameDocumentShutdownScenarios(win, exec) {
       cachedAfterEdit: semantic.crlfCachedAfterEdit,
       undone: semantic.crlfResurrectUndone,
       cachedAfterUndo: semantic.crlfCachedAfterUndo,
-    }),
-  );
-  check(
-    "fifty cancelled shutdowns retain one replayable answer, and only the newest id replays",
-    semantic.replayCache &&
-      semantic.replayCache.retained === 1 &&
-      semantic.replayCache.id === semantic.newestId &&
-      semantic.replayCache.highestRequestId === semantic.newestId &&
-      semantic.duplicateReplay &&
-      semantic.duplicateReplay.id === semantic.newestId &&
-      Array.isArray(semantic.duplicateReplay.dirtyFiles) &&
-      semantic.staleDuplicate === null,
-    JSON.stringify({
-      replayCache: semantic.replayCache,
-      newestId: semantic.newestId,
-      duplicateReplay: semantic.duplicateReplay,
-      staleDuplicate: semantic.staleDuplicate,
     }),
   );
   check(

@@ -1089,6 +1089,12 @@ async function main() {
       reloadHarness.indexOf(ownedPreflight) > reloadHarness.indexOf(reloadPreflight) &&
       reloadHarness.indexOf(ownedPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
       reloadHarness.indexOf(ownedPreflight, reloadHarness.indexOf(ownedPreflight) + ownedPreflight.length) === -1);
+  const shutdownPreflight = 'require("./test-shutdown-response-contract.js").run(check);';
+  check("direct focused and companion tabs launches cannot omit the whole-production shutdown contract",
+    /^try \{\r?\n  require\("\.\/test-shutdown-response-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("shutdown response contract", error\);\r?\n\}/m.test(reloadHarness) &&
+      reloadHarness.indexOf(shutdownPreflight) > reloadHarness.indexOf(ownedPreflight) &&
+      reloadHarness.indexOf(shutdownPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
+      reloadHarness.indexOf(shutdownPreflight, reloadHarness.indexOf(shutdownPreflight) + shutdownPreflight.length) === -1);
   const inlineScript = '<script src="inline-formatting.js"></script>';
   const tableScript = '<script src="table-cell-editor.js"></script>';
   const inlineSource = read("src/inline-formatting.js");
