@@ -10,7 +10,7 @@ const path = require("node:path");
 const { isDeepStrictEqual } = require("node:util");
 const vm = require("node:vm");
 const projectRequire = createRequire(path.join(process.cwd(), "package.json"));
-const source = fs.readFileSync(path.join(__dirname, "test-tab-refresh.js"), "utf8")
+const source = fs.readFileSync(process.argv[2] || path.join(__dirname, "test-tab-refresh.js"), "utf8")
   .replace(/\r\n/g, "\n");
 const producer = fs.readFileSync(path.join(__dirname, "..", "src", "update-state.js"), "utf8");
 const mainSource = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
@@ -35,6 +35,13 @@ const admissionSource = between(installedSource, "  const admitInstalledFixture 
   "\n  const editInstalledFixture =");
 const editSource = between(installedSource, "  const editInstalledFixture =",
   "\n  // Hold a real main-to-renderer protocol");
+const gapSource = between(installedSource,
+  "    rig.answer = 1;\n    const closeInGap = guardEvent();",
+  "\n    // The initial approval is clean.");
+const gapAdapterSource = between(source, "function installOrdinaryShutdownQuestions(",
+  "\nasync function withOrdinaryShutdownCleanup(");
+const gapCleanupSource = between(source, "async function withOrdinaryShutdownCleanup(",
+  "\nfunction holdOrdinaryShutdownApproval(");
 const validatorSource = between(mainSource, "  validateReady: artifact => {",
   "\n  onDownloadStart:").slice("  validateReady: ".length).trim().replace(/,$/, "");
 const producerModule = { exports: {} };
@@ -183,6 +190,107 @@ function documents() {
   return { actor: context.actor, context, exec, owner, descriptor, tab, state,
     tabs, options, calls, closeCalls,
     setClose: implementation => { closeImplementation = implementation; } };
+}
+
+// Actual caller and ordinary adapter; shared-driver records and Main are ports.
+function installedGap(options = {}) {
+  const win = new EventEmitter();
+  const rig = { dialogs: [], answer: null, closes: 0, quits: 0 };
+  const producer = deferred();
+  const driver = deferred();
+  const consumer = deferred();
+  for (const tail of [producer, driver, consumer]) tail.promise.catch(() => {});
+  const signal = {};
+  const result = { failed: false, displayed: true, cause: "choice", response: 1,
+    ...options.result };
+  const presentation = {
+    title: options.title || "Unsaved changes",
+    buttons: ["Discard changes", "Cancel"],
+  };
+  const record = {
+    options: { ...presentation, message: "f22-installed-commit", signal },
+    pendingReason: "window-close", requestId: 31, presentation,
+    displayed: true, choiceSubmitted: null, choiceDelivered: false,
+    completionKind: null, result: null, producer: producer.promise,
+    presentationReady: Promise.resolve(options.completed
+      ? { kind: "completed", result } : { kind: "displayed", presentation }),
+  };
+  const settle = () => {
+    record.result = options.wrongResultIdentity ? { ...result } : result;
+    if (options.producerError) producer.reject(options.producerError);
+    else producer.resolve(result);
+    if (options.driverError) driver.reject(options.driverError);
+    else driver.resolve();
+    if (options.consumerError) consumer.reject(options.consumerError);
+    else if (!options.holdConsumer) consumer.resolve();
+  };
+  record.choose = index => {
+    assert.equal(index, 1);
+    assert.equal(record.choiceSubmitted, null);
+    record.choiceSubmitted = index;
+    record.choiceDelivered = !options.undelivered;
+    record.completionKind = "choice";
+    settle();
+  };
+  record.joined = Promise.allSettled([producer.promise, driver.promise]).then(outcomes => {
+    const errors = outcomes.filter(item => item.status === "rejected").map(item => item.reason);
+    if (errors.length) throw new AggregateError(errors, "simulated original record work");
+    return record;
+  });
+  record.joined.catch(() => {});
+  const records = [];
+  let onRecord;
+  let restores = 0;
+  let consumerReads = 0;
+  win.on("close", event => {
+    event.preventDefault();
+    if (options.nativeOnly) { rig.dialogs.push(record); return; }
+    if (!onRecord) return;
+    records.push(record);
+    if (options.observerError) rig.answer = () => { throw options.observerError; };
+    record.observerWork = onRecord(record);
+    record.observerWork.catch(() => settle());
+    if (options.completed) settle();
+  });
+  const context = vm.createContext({
+    win, rig, waitUntil, AggregateError, Promise, JSON,
+    enteredDeferredGap: true, gapState: { authorized: false, updateInstallStarted: true },
+    exactGapEdit: "gap edit that nobody has been asked about", commitSignals: 0,
+    guardEvent: () => ({ prevented: false, preventDefault() { this.prevented = true; } }),
+    readInstalledDocument: async () => ({ editor: context.exactGapEdit }),
+    check: (name, passed, detail) => assert.equal(Boolean(passed), true, name + ": " + detail),
+    __shutdown: {
+      state: () => ({ authorized: false }),
+      readQuestionConsumer(id, actualSignal) {
+        consumerReads += 1;
+        assert.equal(id, record.requestId);
+        assert.equal(actualSignal, signal);
+        return options.missingConsumer ? null : consumer.promise;
+      },
+    },
+    installMainOwnedShutdownQuestions(owner, tails, settings) {
+      assert.equal(owner, win);
+      assert.equal(Array.isArray(tails), true);
+      assert.equal(settings.policy, "ordinary-strict");
+      onRecord = settings.onRecord;
+      return {
+        records,
+        async join(afterDispatch) {
+          assert.equal(afterDispatch, undefined, "partial consumer is never full afterDispatch");
+          const outcomes = await Promise.allSettled(records.flatMap(
+            item => [item.joined, item.observerWork]));
+          const errors = outcomes.filter(item => item.status === "rejected").map(item => item.reason);
+          if (errors.length) throw new AggregateError(errors, "simulated observed ledger");
+          return { records: records.slice(), dispatchBoundaryJoined: false };
+        },
+        restore() { restores += 1; },
+      };
+    },
+  });
+  const run = vm.runInContext(gapAdapterSource + gapCleanupSource +
+    "\n(async () => {\n" + gapSource + "\nreturn gapCloseAsked;\n})", context);
+  return { run, record, consumer, get restores() { return restores; },
+    get consumerReads() { return consumerReads; } };
 }
 
 async function main() {
@@ -451,6 +559,59 @@ async function main() {
     render.resolve();
     await completion;
     assert.equal(done, true);
+  });
+  await check("the installed gap drives the exact normal Main question through genuine Cancel", async () => {
+    const h = installedGap();
+    assert.equal(await h.run(), true);
+    assert.equal(h.record.choiceSubmitted, 1);
+    assert.equal(h.record.choiceDelivered, true);
+    assert.equal(h.consumerReads, 1);
+    assert.equal(h.restores, 1);
+  });
+  const normalQuestionAssertion =
+    "a native close inside the installed deferred-commit gap is asked rather than silently authorized";
+  for (const [name, options, failure] of [
+    ["native-only observation", { nativeOnly: true }, "has no single original Main question"],
+    ["fallback title", { title: "Unsaved changes cannot be checked" }, "exact normal Main question"],
+    ["completion without displayed observation", { completed: true }, "exact normal Main question"],
+    ["missing original consumer", { missingConsumer: true }, "original Main consumer completion"],
+    ["undelivered Cancel", { undelivered: true }, normalQuestionAssertion],
+    ["emergency result", { result: { emergency: true } }, normalQuestionAssertion],
+    ["unchosen cancellation", { result: { cause: "cancel" } }, normalQuestionAssertion],
+    ["replaced original result", { wrongResultIdentity: true }, normalQuestionAssertion],
+  ]) {
+    await check(name + " cannot pass the installed normal-question oracle", async () => {
+      const h = installedGap(options);
+      await assert.rejects(h.run(), error => error.message.includes(failure));
+      assert.equal(h.consumerReads, options.nativeOnly ? 0 : 1);
+      assert.equal(h.record.choiceSubmitted, options.nativeOnly || options.completed ? null : 1);
+      assert.equal(h.restores, 1);
+    });
+  }
+  await check("the installed gap retains its original Main consumer before restoring the adapter", async () => {
+    const h = installedGap({ holdConsumer: true });
+    let done = false;
+    const work = h.run().then(() => { done = true; });
+    assert.equal(await waitUntil(() => h.consumerReads === 1), true);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.record.choiceDelivered, true);
+    assert.equal(done, false);
+    assert.equal(h.restores, 0);
+    h.consumer.resolve();
+    await work;
+    assert.equal(h.restores, 1);
+  });
+  await check("independent installed question and consumer errors remain observable", async () => {
+    const producerError = new Error("original producer failed");
+    const driverError = new Error("original driver failed");
+    const observerError = new Error("original observer failed");
+    const consumerError = new Error("original consumer failed");
+    const h = installedGap({ producerError, driverError, observerError, consumerError });
+    const contains = (error, target) => error === target ||
+      Array.from(error.errors || []).some(item => contains(item, target));
+    await assert.rejects(h.run(), error =>
+      [producerError, driverError, observerError, consumerError].every(item => contains(error, item)));
+    assert.equal(h.restores, 1);
   });
   console.log(`${passed} source/VM controls passed; native installation/launcher/fold NOT RUN.`);
 }

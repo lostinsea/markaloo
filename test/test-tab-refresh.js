@@ -38586,8 +38586,48 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     await editInstalledFixture(exactGapEdit, "discard the exact deferred-commit gap edit");
     rig.answer = 1;
     const closeInGap = guardEvent();
-    win.emit("close", closeInGap);
-    const gapCloseAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
+    const gapQuestionTails = [];
+    const gapQuestions = installOrdinaryShutdownQuestions(win, rig, gapQuestionTails);
+    const gapQuestionWork = [];
+    let gapQuestion;
+    let gapQuestionResult;
+    let gapQuestionDrain;
+    const gapCloseAsked = await withOrdinaryShutdownCleanup(async () => {
+      win.emit("close", closeInGap);
+      const captured = await waitUntil(() => gapQuestions.records.length > 0, 10000);
+      if (!captured || gapQuestions.records.length !== 1) {
+        throw new Error("Installed gap close has no single original Main question");
+      }
+      gapQuestion = gapQuestions.records[0];
+      gapQuestionWork.push(gapQuestion.producer, gapQuestion.joined, gapQuestion.observerWork);
+      const presentation = await gapQuestion.presentationReady;
+      const consumer = __shutdown.readQuestionConsumer(
+        gapQuestion.requestId, gapQuestion.options.signal);
+      if (!consumer || typeof consumer.then !== "function") {
+        throw new Error("Installed gap question has no original Main consumer completion");
+      }
+      gapQuestionWork.push(consumer);
+      if (presentation.kind !== "displayed" ||
+          presentation.presentation !== gapQuestion.presentation ||
+          gapQuestion.options.title !== "Unsaved changes" ||
+          JSON.stringify(gapQuestion.options.buttons) !==
+            JSON.stringify(["Discard changes", "Cancel"]) ||
+          rig.dialogs.length !== 1 || rig.dialogs[0] !== gapQuestion) {
+        throw new Error("Installed gap close did not display its exact normal Main question");
+      }
+      return true;
+    }, [
+      async () => {
+        // This joins the question and its consumer, not later renderer/updater work.
+        const outcomes = await Promise.allSettled([gapQuestions.join(), ...gapQuestionWork]);
+        const errors = outcomes.filter(outcome => outcome.status === "rejected")
+          .map(outcome => outcome.reason);
+        if (errors.length) throw new AggregateError(errors, "Installed gap question work failed");
+        gapQuestionDrain = outcomes[0].value;
+        gapQuestionResult = outcomes[1]?.value;
+      },
+      () => gapQuestions.restore(),
+    ]);
     const preservedGapEdit = (await readInstalledDocument()).editor;
     const afterGapClose = __shutdown.state();
     check(
@@ -38597,6 +38637,18 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
         gapState.updateInstallStarted === true &&
         closeInGap.prevented === true &&
         gapCloseAsked &&
+        gapQuestionDrain.dispatchBoundaryJoined === false &&
+        gapQuestionDrain.records.length === 1 &&
+        gapQuestionDrain.records[0] === gapQuestion &&
+        gapQuestion.choiceSubmitted === 1 &&
+        gapQuestion.choiceDelivered === true &&
+        gapQuestion.completionKind === "choice" &&
+        gapQuestion.result === gapQuestionResult &&
+        gapQuestionResult?.failed === false &&
+        !gapQuestionResult.emergency &&
+        gapQuestionResult.displayed === true &&
+        gapQuestionResult.cause === "choice" &&
+        gapQuestionResult.response === 1 &&
         rig.dialogs[0].pendingReason === "window-close" &&
         /f22-installed-commit/.test(String(rig.dialogs[0].options.message)) &&
         preservedGapEdit === exactGapEdit &&
@@ -38609,6 +38661,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
         gapState,
         prevented: closeInGap.prevented,
         gapCloseAsked,
+        dispatchBoundaryJoined: gapQuestionDrain.dispatchBoundaryJoined,
         dialog: rig.dialogs[0],
         preservedGapEdit,
         closes: rig.closes,
