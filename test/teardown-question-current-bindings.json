@@ -1,0 +1,10 @@
+{
+  "suite": "2002dc5dd576e0ef4a7a11af1811b212d0d1951dbeb87f2b1be4a9097107165b",
+  "main": "90a254d194b59abdad5f74ae5475a811f10baa2b25b09ba5f3566bd6a8566861",
+  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",
+  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",
+  "closedRegistration": "0b1bc610dc956875a2bd47067a3ade856f8d43c8c23a029064d425350b04d606",
+  "consumerGetter": "29853d16f400d3deb3bf0fbc5ee6d42ebe49d73f8d6ce0f76b54ae5982704f3d",
+  "chooseCapability": "c16d201645f6902bc33a4a4aa4937a56c71fd2f818e8131872e699723ff0db15",
+  "boundedWork": "83669ccb6885da5bfb7609a017bfa80d837ad504c8881ee094e53a55a7aa2eaf"
+}

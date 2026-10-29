@@ -1160,7 +1160,12 @@ async function main() {
     "test-teardown-source.js", "test-mermaid-popup-contracts.js",
     "test-companion-accounting-contracts.js",
   ];
-  const actorContractCommand = actorContractFiles.map(file => "node test/" + file).join(" && ");
+  const teardownQuestionCommand = "node test/test-teardown-question-source.js " +
+    "test/test-tab-refresh.js test/teardown-question-current-bindings.json src/main.js";
+  const actorContractCommands = [
+    ...actorContractFiles.map(file => "node test/" + file), teardownQuestionCommand,
+  ];
+  const actorContractCommand = actorContractCommands.join(" && ");
   const preservedOrdinaryGroups = [
     "packaging", "profile", "corpus", "startup", "document-session", "features",
     "tabs", "reload-dialog", "owned-dialogs", "dialogs", "security", "popups",
@@ -1180,15 +1185,16 @@ async function main() {
     Object.entries(gatedActorCommands).every(([name, command]) => scripts[name] === command);
   check("all actor contracts run as standalone Node commands rather than unawaited imports",
     pkg.scripts["test:actor-contracts"] === actorContractCommand &&
-      actorContractFiles.every(file => fs.existsSync(path.join(ROOT, "test", file))));
+      [...actorContractFiles, "test-teardown-question-source.js",
+        "teardown-question-current-bindings.json"].every(file => fs.existsSync(path.join(ROOT, "test", file))));
   check("Node contracts gate the preserved ordinary suite and direct actor entrypoints",
     actorContractsRouted(pkg.scripts));
   check("actor routing oracle rejects omissions duplicates late gates and swallowed failures",
     actorContractsRouted(pkg.scripts) &&
-      actorContractFiles.every(file => !actorContractsRouted({
+      actorContractCommands.every(omitted => !actorContractsRouted({
         ...pkg.scripts,
-        "test:actor-contracts": actorContractCommand.split(" && ")
-          .filter(command => command !== "node test/" + file).join(" && "),
+        "test:actor-contracts": actorContractCommands
+          .filter(command => command !== omitted).join(" && "),
       })) &&
       !actorContractsRouted({ ...pkg.scripts,
         "test:actor-contracts": actorContractCommand + " && node test/test-companion-accounting-contracts.js" }) &&
@@ -1200,6 +1206,22 @@ async function main() {
       Object.keys(gatedActorCommands).every(name => !actorContractsRouted({
         ...pkg.scripts, [name]: gatedActorCommands[name].split(" && ").slice(1).join(" && "),
       })));
+  check("teardown routing rejects missing changed and implicit input bindings",
+    actorContractsRouted(pkg.scripts) &&
+      ["node test/test-teardown-question-source.js",
+        ...["test/test-tab-refresh.js", "test/teardown-question-current-bindings.json", "src/main.js"]
+          .flatMap(argument => [
+            teardownQuestionCommand.replace(" " + argument, ""),
+            teardownQuestionCommand.replace(argument, argument + ".missing"),
+          ])].every(replacement => !actorContractsRouted({
+        ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand.replace(teardownQuestionCommand, replacement),
+      })) &&
+      !actorContractsRouted({ ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand + " && " + teardownQuestionCommand }) &&
+      !actorContractsRouted({ ...pkg.scripts,
+        "test:actor-contracts": actorContractCommands.slice(0, -1).join(" && ") +
+          " || " + teardownQuestionCommand }));
   const reloadPreflight = 'require("./test-reload-transport-contract.js").run(check);';
   check("direct focused and companion tabs launches cannot omit the actual-code contract preflight",
     /^try \{\r?\n  require\("\.\/test-reload-transport-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("reload contract", error\);\r?\n\}/m.test(reloadHarness) &&

@@ -5210,6 +5210,192 @@ async function prepareTeardownEditor(exec, filePath, text, marker) {
   })()`);
 }
 
+function installTeardownOwnerLossQuestions(win, tails, mainSource) {
+  const requireWitness = (condition, message) => {
+    if (!condition) throw new Error("Teardown question: " + message);
+  };
+  mainSource ??= fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+  mainSource = mainSource.replace(/\r\n/g, "\n");
+  const parentAnchor = "function attachShutdownGuards(win) {";
+  const endAnchor = "\n// Registered after the single-instance block above,";
+  const start = mainSource.indexOf(parentAnchor);
+  const end = mainSource.indexOf(endAnchor, start);
+  requireWitness(start >= 0 && end > start &&
+    mainSource.indexOf(parentAnchor, start + 1) < 0, "original closed-handler source is unavailable");
+  const parentSource = mainSource.slice(start, end);
+  const registrationAnchor = '  win.on("closed", () => {';
+  const registrationStart = parentSource.indexOf(registrationAnchor);
+  requireWitness(registrationStart >= 0 &&
+    parentSource.indexOf(registrationAnchor, registrationStart + 1) < 0,
+  "original closed registration is ambiguous");
+  const originalListeners = win.rawListeners("closed");
+  const matches = originalListeners.filter(listener => {
+    const source = Function.prototype.toString.call(listener).replace(/\r\n/g, "\n");
+    const registration = `  win.on("closed", ${source});`;
+    return source.includes("// setImmediate continuations are not in pendingShutdown or the commit") &&
+      parentSource.indexOf(registration) === registrationStart &&
+      parentSource.lastIndexOf(registration) === registrationStart;
+  });
+  requireWitness(matches.length === 1, "exact original closed listener is missing or ambiguous");
+  const originalClosed = matches[0];
+  let closedCount = 0;
+  let closedState = null;
+  let closedObservationFailure = null;
+  let orderValidated = false;
+  let capturedQuestion = null;
+  let finishWork = null;
+  let cleanupWork = null;
+  const consumers = new Map();
+  const closedObserver = () => {
+    closedCount += 1;
+    try { closedState = __shutdown.state(); }
+    catch (error) { closedObservationFailure = { error }; }
+  };
+  win.on("closed", closedObserver);
+  let actor;
+  try {
+    actor = installMainOwnedShutdownQuestions(win, tails, { policy: "cancellable" });
+  } catch (error) {
+    win.removeListener("closed", closedObserver);
+    throw error;
+  }
+  const captureConsumer = question => {
+    if (consumers.has(question)) return consumers.get(question);
+    requireWitness(question.owner === win && question.sender === win.webContents,
+      "question belongs to another owner");
+    const original = __shutdown.readQuestionConsumer(question.requestId, question.options.signal);
+    requireWitness(original && typeof original.then === "function",
+      "original question consumer is unavailable, not completed");
+    const consumer = { original, outcome: Promise.allSettled([original]) };
+    consumers.set(question, consumer);
+    return consumer;
+  };
+  const validateOrder = () => {
+    const current = win.rawListeners("closed");
+    let cursor = -1;
+    for (const listener of originalListeners) {
+      cursor = current.indexOf(listener, cursor + 1);
+      requireWitness(cursor >= 0, "original closed-listener order changed");
+    }
+    requireWitness(current.filter(listener => listener === originalClosed).length === 1 &&
+      current.indexOf(originalClosed) < current.indexOf(closedObserver) &&
+      current.filter(listener => listener === closedObserver).length === 1,
+    "closed-prefix observer no longer follows the original handler");
+    requireWitness(!win.isDestroyed() && closedCount === 0, "owner loss occurred before the armed action");
+    orderValidated = true;
+  };
+  const finish = () => {
+    if (finishWork) return finishWork;
+    finishWork = (async () => {
+      const failures = [];
+      try { validateOrder(); } catch (error) { failures.push(error); }
+      // Even failed setup must dispose the real owner, not answer a dead dialog.
+      if (!win.isDestroyed()) {
+        try { win.destroy(); } catch (error) { failures.push(error); }
+      }
+      const sawClosed = await waitUntil(() => closedCount > 0, 10000);
+      if (!orderValidated || !sawClosed || closedCount !== 1) {
+        failures.push(new Error("Teardown question: original synchronous closed prefix was not witnessed"));
+      }
+      if (closedObservationFailure) failures.push(closedObservationFailure.error);
+      if (!closedState) failures.push(new Error("Teardown question: original closed-prefix state was not captured"));
+      if (actor.records.length === 0) {
+        failures.push(new Error("Teardown question: no original question ledger to account for"));
+      }
+      let previous;
+      do {
+        previous = actor.records.length;
+        const observed = [];
+        for (const question of actor.records) {
+          try {
+            observed.push(boundedDialogWork(captureConsumer(question).outcome,
+              "teardown Main question consumer " + question.requestId, 15000));
+          }
+          catch (error) { failures.push(error); }
+        }
+        const outcomes = await Promise.allSettled([
+          boundedDialogWork(actor.join(), "teardown Main question ledger", 15000), ...observed,
+        ]);
+        for (const outcome of outcomes) {
+          if (outcome.status === "rejected") failures.push(outcome.reason);
+          else if (Array.isArray(outcome.value)) {
+            for (const consumption of outcome.value) {
+              if (consumption.status === "rejected") failures.push(consumption.reason);
+            }
+          } else if (outcome.value.dispatchBoundaryJoined !== false) {
+            failures.push(new Error("Teardown question: partial work became a dispatch boundary"));
+          }
+        }
+        // A consumer can synchronously add work after an earlier ledger join.
+        try {
+          const ledger = await boundedDialogWork(actor.join(),
+            "teardown Main question ledger after consumption", 15000);
+          requireWitness(ledger.dispatchBoundaryJoined === false, "ledger claimed a dispatch boundary");
+        } catch (error) { failures.push(error); }
+      } while (actor.records.length !== previous);
+      if (failures.length) throw new AggregateError(failures, "Teardown question owner-loss work failed");
+      return { closedPrefixObserved: true, afterClosedPrefix: closedState, dispatchBoundaryJoined: false };
+    })();
+    return finishWork;
+  };
+  return {
+    actor,
+    async observe(reason) {
+      requireWitness(await waitUntil(() => actor.records.length > 0, 15000),
+        "normal Main question was not observed");
+      requireWitness(actor.records.length === 1, "expected exactly one original question");
+      const question = actor.records[0];
+      requireWitness(question.pendingReason === reason &&
+        Number.isSafeInteger(question.requestId) && question.requestId > 0,
+      "question request/reason does not match");
+      captureConsumer(question);
+      const presentation = await boundedDialogWork(question.presentationReady,
+        "teardown Main question presentation", 15000);
+      requireWitness(presentation.kind === "displayed", "question completed without a displayed witness");
+      requireWitness(!question.settled && question.choiceSubmitted === null && !question.choiceDelivered,
+        "question is not genuinely held unanswered");
+      capturedQuestion = question;
+      return question;
+    },
+    async destroyAndJoin() {
+      requireWitness(capturedQuestion !== null, "displayed question was not admitted");
+      const current = __shutdown.state();
+      requireWitness(!capturedQuestion.settled && capturedQuestion.choiceSubmitted === null &&
+        !capturedQuestion.choiceDelivered && !capturedQuestion.driverSettled &&
+        !capturedQuestion.retired && !capturedQuestion.options.signal.aborted &&
+        current.pendingId === capturedQuestion.requestId &&
+        current.pendingReason === capturedQuestion.pendingReason,
+      "question was replaced, aborted or settled before owner-loss action");
+      const receipt = await finish();
+      requireWitness(actor.records.length === 1, "owner loss produced another question");
+      const question = capturedQuestion;
+      requireWitness(question.settled && question.driverSettled &&
+        question.completionKind === "cancellation" && question.result?.failed === false &&
+        question.choiceSubmitted === null && !question.choiceDelivered,
+      "original provider did not settle by genuine cancellation");
+      let refused = false;
+      try { question.choose(0); }
+      catch (error) {
+        if (!/stale/.test(error?.message || "")) throw error;
+        refused = true;
+      }
+      requireWitness(refused, "retired question accepted a late approval");
+      return { ...receipt, cancellation: question.result, lateChoiceRefused: true };
+    },
+    cleanup() {
+      if (cleanupWork) return cleanupWork;
+      cleanupWork = (async () => {
+        const failures = [];
+        try { await finish(); } catch (error) { failures.push(error); }
+        try { actor.restore(); } catch (error) { failures.push(error); }
+        win.removeListener("closed", closedObserver);
+        if (failures.length) throw new AggregateError(failures, "Teardown question cleanup failed; reset refused");
+      })();
+      return cleanupWork;
+    },
+  };
+}
+
 async function runTeardownScenario(win, kase) {
   if (!["queued", "commit", "pending", "continuation", "poisoned"].includes(kase)) {
     throw new Error("Unknown teardown case: " + kase);
@@ -5229,7 +5415,9 @@ async function runTeardownScenario(win, kase) {
   let bodyError;
   let restoreInstall = null;
   let restoreWindowAllClosed = null;
-  const dialogReleases = [];
+  const questionTails = [];
+  let ownerLossQuestions = null;
+  let ownerLossInstallationAttempted = false;
   let admission;
   const ownsEvent = (event) => {
     if (wc.isDestroyed() || event?.sender !== wc) return false;
@@ -5244,10 +5432,10 @@ async function runTeardownScenario(win, kase) {
     return { live: window.markdownEditor.value, cached: tab.content,
       baseline: tab.originalContent, dirty: tab.hasUnsavedChanges };
   })()`);
-  const namedDirtyQuestion = (reason) => rig.dialogs.length === 1 &&
-    rig.dialogs[0].pendingReason === reason &&
-    rig.dialogs[0].options.title === "Unsaved changes" &&
-    String(rig.dialogs[0].options.message).includes(path.basename(fileT));
+  const namedDirtyQuestion = (reason) => ownerLossQuestions?.actor.records.length === 1 &&
+    ownerLossQuestions.actor.records[0].pendingReason === reason &&
+    ownerLossQuestions.actor.records[0].options.title === "Unsaved changes" &&
+    String(ownerLossQuestions.actor.records[0].options.message).includes(path.basename(fileT));
   const updaterLatchDescriptor = Object.getOwnPropertyDescriptor(
     updaterModule.autoUpdater,
     "quitAndInstallCalled",
@@ -5341,15 +5529,12 @@ async function runTeardownScenario(win, kase) {
       // A close question on screen, an Install press queued behind it, and then
       // the window goes.
       const dirtySetup = await prepareTeardownEditor(exec, fileT, textT, "\nTEARDOWN_CONSENT_EDIT\n");
-      let releaseDialog = null;
-      rig.answer = () =>
-        new Promise((resolve) => {
-          releaseDialog = resolve;
-          dialogReleases.push(resolve);
-        });
+      ownerLossInstallationAttempted = true;
+      ownerLossQuestions = installTeardownOwnerLossQuestions(win, questionTails);
       const teardownClose = guardEvent();
       win.emit("close", teardownClose);
-      const asked = await waitUntil(() => rig.dialogs.length > 0, 15000);
+      const question = await ownerLossQuestions.observe("window-close");
+      const asked = question.pendingReason === "window-close";
       const folded = await foldedEditor();
       await exec(`window.folia.installUpdate(); null;`);
       const queued = await waitUntil(
@@ -5360,37 +5545,37 @@ async function runTeardownScenario(win, kase) {
       // THE SETUP IS ASSERTED BEFORE THE ACT. Without this the case can silently
       // measure nothing at all - which is exactly how a previous run reported a
       // teardown result for a scenario that never entered its own setup.
-      check(
-        "the teardown queued case really has a close question open with an install queued behind it",
-        asked === true &&
+      const queuedSetup = asked === true &&
           queued === true &&
           before.pendingReason === "window-close" &&
           before.queuedReason === "update-install" &&
           namedDirtyQuestion("window-close") &&
+          rig.dialogs.length === 0 &&
           dirtySetup.cached === textT && dirtySetup.live !== textT &&
           folded.cached === dirtySetup.live && folded.live === dirtySetup.live &&
           folded.baseline === textT && folded.dirty === true &&
-          fs.readFileSync(fileT, "utf8") === textT,
-        JSON.stringify({ asked, queued, before, dirtySetup, folded, dialogs: rig.dialogs }),
+          fs.readFileSync(fileT, "utf8") === textT;
+      check(
+        "the teardown queued case really has a close question open with an install queued behind it",
+        queuedSetup,
+        JSON.stringify({ asked, queued, before, dirtySetup, folded,
+          questions: ownerLossQuestions.actor.records, nativeDialogs: rig.dialogs }),
       );
-      win.destroy();
-      await waitUntil(() => win.isDestroyed(), 10000);
-      const after = __shutdown.state();
-      // The reader's answer to the dialog arrives after the window has gone. It
-      // must decide nothing: the record it belonged to is already settled.
-      if (releaseDialog) releaseDialog(0);
-      const producerReturned = await waitUntil(() => rig.dialogs[0]?.response === 0, 5000);
-      await new Promise(resolve => setImmediate(resolve));
+      if (!queuedSetup) throw new Error("Teardown queued question setup did not hold");
+      const loss = await ownerLossQuestions.destroyAndJoin();
+      const after = loss.afterClosedPrefix;
       const afterAnswer = __shutdown.state();
       check(
         "a window that disappears declines the update queued behind its close instead of installing it",
         before.queuedReason === "update-install" &&
           after.queuedReason === null &&
           installs === 0 &&
-          producerReturned &&
-          rig.dialogs.length === 1 &&
+          loss.closedPrefixObserved && loss.lateChoiceRefused &&
+          loss.dispatchBoundaryJoined === false &&
+          ownerLossQuestions.actor.records.length === 1 && rig.dialogs.length === 0 &&
           afterAnswer.updateInstallStarted === false,
-        JSON.stringify({ before, after, afterAnswer, installs, dialogs: rig.dialogs.length }),
+        JSON.stringify({ before, after, afterAnswer, installs, loss,
+          questions: ownerLossQuestions.actor.records.length, nativeDialogs: rig.dialogs.length }),
       );
       check(
         "a window that disappears settles the close it was asked about without running its continuation",
@@ -5728,55 +5913,64 @@ async function runTeardownScenario(win, kase) {
     // case dirties its document for the same reason; this one had been relying
     // on a question that could not be raised.
     const pendingSetup = await prepareTeardownEditor(exec, fileT, textT, "\nTEARDOWN_PENDING_EDIT\n");
-    let releasePendingDialog = null;
-    rig.answer = () =>
-      new Promise((resolve) => {
-        releasePendingDialog = resolve;
-        dialogReleases.push(resolve);
-      });
+    ownerLossInstallationAttempted = true;
+    ownerLossQuestions = installTeardownOwnerLossQuestions(win, questionTails);
     await exec(`window.folia.installUpdate(); null;`);
-    const pendingAsked = await waitUntil(() => rig.dialogs.length > 0, 15000);
+    const pendingQuestion = await ownerLossQuestions.observe("update-install");
+    const pendingAsked = pendingQuestion.pendingReason === "update-install";
     const pendingFolded = await foldedEditor();
     const before = __shutdown.state();
-    check(
-      "the teardown pending case really has an update install question open",
-      pendingAsked === true &&
+    const pendingQuestionSetup = pendingAsked === true &&
         before.pendingReason === "update-install" &&
         namedDirtyQuestion("update-install") &&
+        rig.dialogs.length === 0 &&
         pendingSetup.cached === textT && pendingSetup.live !== textT &&
         pendingFolded.cached === pendingSetup.live && pendingFolded.live === pendingSetup.live &&
         pendingFolded.baseline === textT && pendingFolded.dirty === true &&
-        fs.readFileSync(fileT, "utf8") === textT,
-      JSON.stringify({ pendingAsked, before, pendingSetup, pendingFolded, dialogs: rig.dialogs }),
+        fs.readFileSync(fileT, "utf8") === textT;
+    check(
+      "the teardown pending case really has an update install question open",
+      pendingQuestionSetup,
+      JSON.stringify({ pendingAsked, before, pendingSetup, pendingFolded,
+        questions: ownerLossQuestions.actor.records, nativeDialogs: rig.dialogs }),
     );
-    win.destroy();
-    await waitUntil(() => win.isDestroyed(), 10000);
-    const after = __shutdown.state();
-    if (releasePendingDialog) releasePendingDialog(0);
-    const producerReturned = await waitUntil(() => rig.dialogs[0]?.response === 0, 5000);
-    await new Promise(resolve => setImmediate(resolve));
+    if (!pendingQuestionSetup) throw new Error("Teardown pending question setup did not hold");
+    const pendingLoss = await ownerLossQuestions.destroyAndJoin();
+    const after = pendingLoss.afterClosedPrefix;
     const afterAnswer = __shutdown.state();
     check(
       "a window that disappears refuses the update install it was still being asked about",
       before.pendingReason === "update-install" &&
         after.pendingId === 0 &&
         after.settleWhy === "window-gone-updater" &&
-        rig.dialogs.length === 1 &&
-        producerReturned &&
+        ownerLossQuestions.actor.records.length === 1 && rig.dialogs.length === 0 &&
+        pendingLoss.closedPrefixObserved && pendingLoss.lateChoiceRefused &&
+        pendingLoss.dispatchBoundaryJoined === false &&
         installs === 0 &&
         afterAnswer.pendingId === 0 && afterAnswer.commitPendingId === 0 &&
         afterAnswer.lastRequestId === before.lastRequestId &&
         afterAnswer.authorized === false &&
         afterAnswer.updateInstallStarted === false,
-      JSON.stringify({ before, after, afterAnswer, dialogs: rig.dialogs.length, installs }),
+      JSON.stringify({ before, after, afterAnswer, pendingLoss,
+        questions: ownerLossQuestions.actor.records.length, nativeDialogs: rig.dialogs.length, installs }),
     );
   } catch (error) {
     bodyError = error;
   } finally {
     const failures = [];
-    for (const release of dialogReleases) release(1);
-    __shutdown.reset();
-    await new Promise(resolve => setImmediate(resolve));
+    if (ownerLossQuestions) {
+      try {
+        await ownerLossQuestions.cleanup();
+        __shutdown.reset();
+      } catch (error) { failures.push(error); }
+    } else if (ownerLossInstallationAttempted) {
+      try { if (!win.isDestroyed()) win.destroy(); }
+      catch (error) { failures.push(error); }
+      failures.push(new Error("Teardown question installation failed; original question accounting unavailable; reset refused"));
+    } else {
+      __shutdown.reset();
+      await new Promise(resolve => setImmediate(resolve));
+    }
     const restorations = [
       () => updaterFixture?.restore(),
       () => baseUpdaterBranchBorrow.restore(),
