@@ -31097,8 +31097,15 @@ async function runF22SaveAndReloadScenarios(
   // it. This tests owner-closed ACK acceptance without activating a watcher for
   // a missing path after the tab has gone.
   const closedDeletedFile = path.join(dir, "f22-deleted-closed-a.md");
-  fs.writeFileSync(closedDeletedFile, "F22_DELETED_CLOSED\r\n", "utf8");
-  await clearTabs();
+  const closedSetupRetirement = await closeOwnedFixtureTabs(
+    exec, "F22 adopted deletion owner retirement", { tabIds: [deletedA.id] },
+  );
+  if (closedSetupRetirement.records.length !== 1 ||
+      closedSetupRetirement.records[0].tabId !== deletedA.id ||
+      closedSetupRetirement.remaining.some(tab => tab.id === deletedA.id)) {
+    throw new Error("F22 closed-owner setup did not retire its adopted predecessor");
+  }
+  await seedSettledFixture(closedDeletedFile, "F22_DELETED_CLOSED\r\n");
   const closedDeletedA = await createActiveTab(closedDeletedFile, "F22_DELETED_CLOSED\r\n");
   // A companion path unique to this scenario. Reusing the shared deletion
   // fixture left an unresolved older copy on the same physical key, so
@@ -31108,17 +31115,53 @@ async function runF22SaveAndReloadScenarios(
   //
   // Deliberately NOT unlinked afterwards: removing it while its tab is still
   // watched would manufacture a second, unrelated deletion event in the same
-  // probe. The next scenario's clearTabs() is what disposes of the tab.
+  // probe. Retire this ordinary companion after the held deletion has settled.
   const closedDeletedBFile = path.join(dir, "f22-deleted-closed-b.md");
   const closedDeletedBBytes = "F22_DELETED_CLOSED_B_BASE\r\n";
   await seedSettledFixture(closedDeletedBFile, closedDeletedBBytes);
-  const closedDeletedB = await exec(`window.CustomTabs.createTab(${JSON.stringify(closedDeletedBFile)}, ${JSON.stringify(closedDeletedBBytes)}, { activate: false })`);
-  if (!closedDeletedB || !Number.isSafeInteger(closedDeletedB.id)) {
-    throw new Error(
-      "F22 closed-owner companion tab was not created: " +
-        JSON.stringify({ closedDeletedBFile, closedDeletedB }),
-    );
-  }
+  const closedDeletedB = await createCompanionTab(
+    closedDeletedA, closedDeletedBFile, closedDeletedBBytes,
+  );
+  const closedCloseKey = require("node:crypto").randomUUID();
+  const closedOwnerCapture = await exec(`(() => {
+    if (Object.hasOwn(window, '__f22ClosedOwner')) {
+      throw new Error('An earlier F22 deleted-owner close still owns its evidence');
+    }
+    const tabs = window.CustomTabs;
+    const a = tabs.getTabs().find(tab => tab.id === ${closedDeletedA.id});
+    const b = tabs.getTabs().find(tab => tab.id === ${closedDeletedB.id});
+    const readTab = tab => ({
+      id: tab.id, path: tab.filePath, content: tab.content, saved: tab.originalContent,
+      unsaved: tab.hasUnsavedChanges, state: tabs.__documentState(tab),
+      owner: tabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession()),
+      descriptor: tabs.getDocumentDescriptor(tab.id),
+    });
+    const initial = a && readTab(a);
+    const companion = b && readTab(b);
+    const live = tabs.__inEditMode() ? window.markdownEditor.value : window.originalMarkdown;
+    const bytes = 'F22_DELETED_CLOSED\\r\\n';
+    if (!a || !b || tabs.getActiveTabId() !== a.id ||
+        window.currentFilePath !== a.filePath ||
+        a.filePath !== ${JSON.stringify(closedDeletedFile)} ||
+        initial.content !== bytes || initial.saved !== bytes || initial.unsaved !== false ||
+        !initial.state.maintained || initial.state.dirty || initial.state.reloadConflict ||
+        initial.state.deletionTombstone ||
+        b.filePath !== ${JSON.stringify(closedDeletedBFile)} ||
+        companion.content !== ${JSON.stringify(closedDeletedBBytes)} ||
+        companion.saved !== ${JSON.stringify(closedDeletedBBytes)} ||
+        !companion.state.maintained || companion.state.dirty || companion.unsaved ||
+        live !== (tabs.__inEditMode() ? bytes.replace(/\\r\\n/g, '\\n') : bytes) ||
+        !initial.owner || initial.owner.documentRef !== initial.descriptor?.ref) {
+      throw new Error('F22 deleted-owner capture lacks its exact clean live primary');
+    }
+    const evidence = window.__f22ClosedOwner = {
+      key: ${JSON.stringify(closedCloseKey)}, a, b, readTab,
+      initial: JSON.stringify(initial), initialLive: live, presentations: [],
+      done: null, settled: false, error: null, answered: false,
+    };
+    return { a: initial, b: companion, initialLive: live };
+  })()`);
   const heldClosedDeliveries = [];
   const realClosedSend = wc.send;
   const restoreClosedSend = replaceMethod(wc, "send", function(channel, ...args) {
@@ -31142,47 +31185,208 @@ async function runF22SaveAndReloadScenarios(
   // document. Unawaited, it left A still selected, so the close below asked
   // about the ACTIVE tab rather than a background one. Witness B's own owner.
   await switchAndWitness(closedDeletedB.id, closedDeletedBFile, null);
-  // A is clean and deleted, so closeTab() asks exactly one question. Approve
-  // that exact wording and refuse anything else: a blanket `() => true` would
-  // also approve a question this scenario never expected, and the stub is
-  // removed again immediately so no later dialog is suppressed.
-  const closedCloseWarning = `"${path.basename(closedDeletedFile)}" was deleted ` +
-    "outside Folia. Close this in-memory copy anyway?";
-  const closedClose = await exec(`
-    (async () => {
-      const expected = ${JSON.stringify(closedCloseWarning)};
-      const realConfirm = window.confirm;
-      const asked = [];
-      const unexpected = [];
-      try {
-        window.confirm = (message) => {
-          const text = String(message);
-          asked.push(text);
-          if (text === expected) return true;
-          unexpected.push(text);
-          return false;
-        };
-        await window.CustomTabs.closeTab(${closedDeletedA.id});
-      } finally {
-        window.confirm = realConfirm;
+  const closedOwnerFields = ["pageSession", "rendererGeneration", "tabId",
+    "documentGeneration", "pathKey", "documentRef"];
+  const closedMainCurrent = (capture, admitted) => {
+    const current = __shutdown.state();
+    const owners = __shutdown.documentSessionState().owners;
+    return current.renderer === "ready" && current.pendingId === 0 &&
+      current.rendererPageSession === ready.rendererPageSession &&
+      current.rendererGeneration === ready.rendererGeneration &&
+      capture.owner.pageSession === current.rendererPageSession &&
+      capture.owner.rendererGeneration === current.rendererGeneration &&
+      __shutdown.documentAdmissionIsCurrent(capture.descriptor.ref) === admitted &&
+      owners.some(owner => closedOwnerFields.every(field =>
+        owner[field] === capture.owner[field]) &&
+        owner.readTarget === capture.descriptor.readTarget) === admitted;
+  };
+  let closedClose = null;
+  const closedCloseErrors = [];
+  try {
+    if (!closedEnvelopeHeld || heldClosedDeliveries.length !== 1 || !closedHeldIdentity) {
+      throw new Error("F22 deleted-owner close lacks its original held producer envelope");
+    }
+    if (focusedRendererDialogGuard) {
+      throw new Error("F22 deleted-owner question has no focused-guard presentation permit");
+    }
+    await exec("window.folia.getVersion()");
+    if (!closedMainCurrent(closedOwnerCapture.a, true) ||
+        !closedMainCurrent(closedOwnerCapture.b, true)) {
+      throw new Error("F22 deleted-owner close lacks its current Main owners");
+    }
+    await exec(`(() => {
+      const e = window.__f22ClosedOwner;
+      if (e?.key !== ${JSON.stringify(closedCloseKey)}) throw new Error('F22 close evidence changed');
+      const tabs = window.CustomTabs;
+      const read = () => ({
+        a: e.readTab(e.a), b: e.readTab(e.b),
+        selected: tabs.getActiveTabId(), path: window.currentFilePath,
+        live: tabs.__inEditMode() ? window.markdownEditor.value : window.originalMarkdown,
+        original: window.originalMarkdown, editing: tabs.__inEditMode(),
+        selection: window.getActiveFileSelectionGeneration(),
+        saves: window.getPendingSaveStatus(), freeze: tabs.__shutdownFreeze(),
+        reload: window.getReloadRequestDiagnostics(),
+      });
+      e.before = JSON.stringify(read());
+      const before = JSON.parse(e.before);
+      const initialTab = JSON.parse(e.initial);
+      delete initialTab.state;
+      const { state: currentState, ...currentTab } = before.a;
+      e.deletion = window.folia.queryDocumentDeletionState({
+        ...before.a.owner, filePath: e.a.filePath,
+      });
+      if (!tabs.getTabs().includes(e.a) || !tabs.getTabs().includes(e.b) ||
+          JSON.stringify(currentTab) !== JSON.stringify(initialTab) ||
+          !currentState.maintained || currentState.dirty || currentState.reloadConflict ||
+          currentState.deletionTombstone ||
+          before.selected !== e.b.id || before.path !== e.b.filePath ||
+          before.b.state.dirty || before.b.unsaved ||
+          before.live.replace(/\\r\\n?/g, '\\n') !== before.b.content.replace(/\\r\\n?/g, '\\n') ||
+          before.saves.count !== 0 || window.getPendingSaveStatus(e.a.filePath).count !== 0 ||
+          before.freeze.frozen || before.freeze.deferredOperationCount !== 0 ||
+          before.freeze.deferredOperationsDropped || before.reload.pendingNavigationToken !== 0 ||
+          e.deletion?.known !== true || e.deletion.unresolved !== true ||
+          e.deletion.unreadable || !Number.isSafeInteger(e.deletion.revision) ||
+          document.querySelector('dialog[open]')) {
+        throw new Error('F22 close is not the captured clean deleted background owner');
       }
-      return {
-        asked,
-        unexpected,
-        gone: !window.CustomTabs.getTabs().some(tab => tab.id === ${closedDeletedA.id}),
+      e.validate = () => {
+        const now = read();
+        const expected = JSON.parse(e.before);
+        expected.freeze.dialogDecisionIntent += 1;
+        const deletion = window.folia.queryDocumentDeletionState({
+          ...before.a.owner, filePath: e.a.filePath,
+        });
+        return tabs.getTabs().includes(e.a) && tabs.getTabs().includes(e.b) &&
+          JSON.stringify(now) === JSON.stringify(expected) &&
+          deletion?.known === true && deletion.unresolved === true &&
+          !deletion.unreadable && deletion.revision === e.deletion.revision;
       };
-    })()
-  `);
-  if (
-    !closedClose ||
-    closedClose.unexpected.length !== 0 ||
-    closedClose.asked.length !== 1 ||
-    closedClose.asked[0] !== closedCloseWarning
-  ) {
-    throw new Error(
-      "F22 closed-owner close did not ask exactly its own deletion warning: " +
-        JSON.stringify({ expected: closedCloseWarning, observed: closedClose }),
-    );
+      e.readSelected = () => {
+        const now = read();
+        return JSON.stringify({
+          b: now.b, selected: now.selected, path: now.path, live: now.live,
+          original: now.original, editing: now.editing, selection: now.selection,
+          saves: now.saves, reload: now.reload,
+        });
+      };
+      e.selectedBefore = e.readSelected();
+      e.proto = HTMLDialogElement.prototype;
+      e.originalShow = e.proto.showModal;
+      e.invoking = false;
+      e.show = function(...args) {
+        const presentation = {
+          dialog: this, invoked: e.invoking,
+          footer: this.querySelector('#appMessageButtons'),
+          title: this.querySelector('#appMessageTitle'),
+          name: this.querySelector('#appMessageName'),
+          message: this.querySelector('#appMessageText'),
+          buttons: Array.from(this.querySelectorAll('[data-dialog-choice]')),
+        };
+        e.presentations.push(presentation);
+        return e.originalShow.apply(this, args);
+      };
+      e.ownsPresentation = () => {
+        const p = e.presentations[0];
+        return e.proto.showModal === e.show && e.presentations.length === 1 &&
+          p?.invoked === true && p.dialog.id === 'appMessageDialog' && p.dialog.open &&
+          p.dialog === document.getElementById('appMessageDialog') &&
+          p.footer === p.dialog.querySelector('#appMessageButtons') &&
+          p.buttons.length === 2 && p.buttons.every((button, index) =>
+            button === p.footer.querySelectorAll('[data-dialog-choice]')[index]);
+      };
+      e.proto.showModal = e.show;
+      try {
+        e.invoking = true;
+        e.done = tabs.closeTab(e.a.id);
+      } finally { e.invoking = false; }
+      if (!e.done || typeof e.done.then !== 'function') {
+        throw new Error('F22 close did not return its original Promise');
+      }
+      e.done.then(() => { e.settled = true; },
+        error => { e.error = String(error.stack || error); e.settled = true; });
+      return null;
+    })()`);
+    await exec("window.folia.getVersion()");
+    if (!closedMainCurrent(closedOwnerCapture.a, true) ||
+        !closedMainCurrent(closedOwnerCapture.b, true)) {
+      throw new Error("F22 deleted-owner Main ownership changed before consent");
+    }
+    closedClose = await exec(`(async () => {
+      const e = window.__f22ClosedOwner;
+      if (e?.key !== ${JSON.stringify(closedCloseKey)}) throw new Error('F22 close evidence changed');
+      const p = e.presentations[0];
+      const expectedName = String(e.a.filename).split(/[\\\\/]/).pop()
+        .replace(/\\s+/g, ' ').slice(0, 120);
+      if (!e.ownsPresentation() || !e.validate() || e.settled || e.answered ||
+          p.title !== p.dialog.querySelector('#appMessageTitle') ||
+          p.name !== p.dialog.querySelector('#appMessageName') ||
+          p.message !== p.dialog.querySelector('#appMessageText') ||
+          p.footer.querySelectorAll('button').length !== 2 ||
+          p.title.textContent !== 'Close this copy?' || p.name.textContent !== expectedName ||
+          p.message.textContent !== 'This tab may be the only remaining copy of the file. Close the tab?' ||
+          JSON.stringify(p.buttons.map(button => ({
+            id: button.dataset.dialogChoice, label: button.textContent,
+          }))) !== JSON.stringify([
+            { id: 'cancel', label: 'Cancel' }, { id: 'proceed', label: 'Close tab' },
+          ])) {
+        throw new Error('F22 deleted-owner question is unexpected or stale');
+      }
+      e.answered = true;
+      p.buttons[1].click();
+      const deadline = Date.now() + 8000;
+      while (!e.settled && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      if (!e.settled) throw new Error('F22 original deleted-owner close remained incomplete');
+      await e.done;
+      if (e.error || p.dialog.open || e.presentations.length !== 1 ||
+          window.CustomTabs.getTabs().includes(e.a) ||
+          e.readSelected() !== e.selectedBefore) {
+        throw new Error('F22 deleted-owner close did not preserve its selected companion');
+      }
+      return { gone: true, answered: e.answered, presentations: e.presentations.length };
+    })()`);
+    await exec("window.folia.getVersion()");
+    if (!closedMainCurrent(closedOwnerCapture.a, false) ||
+        !closedMainCurrent(closedOwnerCapture.b, true)) {
+      throw new Error("F22 deleted-owner close did not retire only its captured Main owner");
+    }
+  } catch (error) {
+    closedCloseErrors.push(error);
+  } finally {
+    try {
+      await exec(`(async () => {
+        const e = window.__f22ClosedOwner;
+        if (e?.key !== ${JSON.stringify(closedCloseKey)}) throw new Error('F22 close cleanup lost its evidence');
+        const failures = [];
+        try {
+          if (e.done && !e.settled) {
+            if (e.ownsPresentation?.() &&
+                e.presentations[0].buttons[0].dataset.dialogChoice === 'cancel') {
+              e.presentations[0].buttons[0].click();
+            }
+            const deadline = Date.now() + 8000;
+            while (!e.settled && Date.now() < deadline) {
+              await new Promise(resolve => setTimeout(resolve, 25));
+            }
+            if (!e.settled) throw new Error('F22 owned close did not settle during cleanup');
+            await e.done;
+          }
+        } catch (error) { failures.push(String(error.stack || error)); }
+        if (e.show) {
+          if (e.proto.showModal !== e.show) failures.push('F22 presentation hook ownership changed');
+          else e.proto.showModal = e.originalShow;
+        }
+        e.cleanupFailures = failures;
+        if (failures.length) throw new Error(JSON.stringify(failures));
+        if (${JSON.stringify(closedCloseErrors.length === 0)}) delete window.__f22ClosedOwner;
+        return null;
+      })()`);
+    } catch (error) { closedCloseErrors.push(error); }
+  }
+  if (closedCloseErrors.length) {
+    throw new AggregateError(closedCloseErrors, "F22 genuine deleted-owner close failed");
   }
   const closedDeletedGone = closedClose.gone;
   const closedAfterClose = mainDeletionAckProbe.recordSnapshot(
@@ -31204,6 +31408,18 @@ async function runF22SaveAndReloadScenarios(
   const closedAfterLateAcknowledgement = mainDeletionAckProbe.recordSnapshot(
     closedHeldIdentity,
   );
+  if (closedDeletedGone !== true) {
+    throw new Error("F22 closed-owner companion cannot retire before its deleted owner");
+  }
+  const closedCompanionRetirement = await closeOwnedFixtureTabs(
+    exec, "F22 closed-owner companion retirement", { tabIds: [closedDeletedB.id] },
+  );
+  if (closedCompanionRetirement.records.length !== 1 ||
+      closedCompanionRetirement.records[0].tabId !== closedDeletedB.id ||
+      closedCompanionRetirement.remaining.some(tab =>
+        tab.id === closedDeletedA.id || tab.id === closedDeletedB.id)) {
+    throw new Error("F22 closed-owner pair did not retire its exact owners");
+  }
 
   // Keep the owning tab open and active, but explicitly adopt the recreated
   // file before releasing its held old-generation envelope. This reaches the
@@ -31211,7 +31427,6 @@ async function runF22SaveAndReloadScenarios(
   // the preceding closed-owner scenario retains that distinct terminal reason.
   const replacementDeletedFile = path.join(dir, "f22-deleted-replacement-a.md");
   fs.writeFileSync(replacementDeletedFile, "F22_DELETED_REPLACEMENT_OLD\r\n", "utf8");
-  await clearTabs();
   const replacementDeletedA = await createActiveTab(replacementDeletedFile, "F22_DELETED_REPLACEMENT_OLD\r\n");
   const heldReplacementDeliveries = [];
   const realReplacementSend = wc.send;
