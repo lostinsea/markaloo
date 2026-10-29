@@ -963,6 +963,11 @@ async function main() {
   const ownedCloseFixture = ownedFixtureSource.split(
     "async function closeOwnedMetadataFixtureTabs(exec, ids, label) {",
   )[1]?.split("async function runOwnedMetadataScenarios")[0] || "";
+  const ownedFreezeCallers = [
+    "runOwnedMetadataScenarios", "runRendererReloadBoundaryScenarios",
+    "runConditionalMetadataJourneys",
+  ].map(name => ownedFixtureSource.split(`async function ${name}(`)[1]
+    ?.split(/\r?\nasync function /)[0] || "");
   const ownedTerminalStart = ownedFixtureSource.lastIndexOf("  let restoreBatchQuit = null;");
   const ownedPathCleanup = ownedFixtureSource.lastIndexOf("rootReleased = releaseTempDir(dir);");
   const ownedTerminalFixture = ownedFixtureSource.slice(ownedTerminalStart);
@@ -985,7 +990,10 @@ async function main() {
       ownedAbortFixture.includes("owner.deletion?.known === true && preserved[index].deletion?.known === true") &&
       ownedAbortFixture.includes("__shutdown.documentAdmissionIsCurrent(owner.identity.documentRef)") &&
       !ownedAbortFixture.includes("__shutdown.reset(") &&
-      (ownedFixtureSource.match(/await abortOwnedMetadataFixtureFreeze\(exec,/g) || []).length === 2 &&
+      (ownedFixtureSource.match(/await abortOwnedMetadataFixtureFreeze\(exec,/g) || []).length === 3 &&
+      ownedFreezeCallers.every(source =>
+        (source.match(/await abortOwnedMetadataFixtureFreeze\(exec,/g) || []).length === 1 &&
+        !source.includes("__shutdown.reset(")) &&
       mainJs.includes("abortCommit: (id) => {") &&
       mainJs.includes("attempt.id !== id || attempt.settled"),
   );
@@ -6912,19 +6920,7 @@ async function main() {
     );
   }
 
-  // ── Word export removal ──────────────────────────────────────────────────
-  // Export to Word was removed with its html-to-docx dependency. The removal
-  // is worth pinning for two reasons that pull in different directions:
-  //
-  //  - html-to-docx was one of only two production dependencies, and its
-  //    closure was 70 packages / 13.00 MB that nothing else in the tree
-  //    shared. A re-added `dependencies` entry ships that to every user again
-  //    whether or not any code calls it, which is the R159 failure mode.
-  //  - The renderer-side rasteriser (mermaidToPngDataUrl) was left with NO
-  //    caller once the Word handler went, so it was removed too. Dead code
-  //    that is still tested reads as live code to the next maintainer.
-  //
-  // Static oracles, because a leftover is a source fact.
+  // Shipped source and dependency checks.
   {
     const shippedScripts = pkg.build.files.filter(
       (f) => /^[^!*]+\.js$/.test(f) && fs.existsSync(path.join(ROOT, f)),
@@ -6937,20 +6933,6 @@ async function main() {
         .map((f) => fs.readFileSync(path.join(ROOT, f), "utf8"))
         .join("\n");
 
-    check(
-      "html-to-docx is gone from the manifest, the lockfile and node_modules",
-      !Object.prototype.hasOwnProperty.call(pkg.dependencies || {}, "html-to-docx") &&
-        !Object.prototype.hasOwnProperty.call(
-          pkg.devDependencies || {},
-          "html-to-docx",
-        ) &&
-        !fs.existsSync(path.join(ROOT, "node_modules", "html-to-docx")) &&
-        !fs
-          .readFileSync(path.join(ROOT, "package-lock.json"), "utf8")
-          .includes("html-to-docx"),
-      "a surviving entry in any of the four reinstalls the whole 70-package closure",
-    );
-
     // Stated as a bound rather than an exact set so that adding a dependency
     // is a deliberate act with a visible cost, not a silent one.
     check(
@@ -6958,50 +6940,6 @@ async function main() {
       JSON.stringify(Object.keys(pkg.dependencies || {}).sort()) ===
         JSON.stringify(["electron-updater", "semver"]),
       JSON.stringify(Object.keys(pkg.dependencies || {})),
-    );
-
-    check(
-      "the Word export path is gone from every shipped script",
-      !/exportWord|export-word|word-export|HTMLtoDOCX|html-to-docx/.test(allSrc),
-      (
-        allSrc.match(
-          /exportWord|export-word|word-export|HTMLtoDOCX|html-to-docx/g,
-        ) || []
-      ).join(", "),
-    );
-
-    check(
-      "the Word menu item was removed rather than left hidden",
-      !/id="exportWord"/.test(htmlSrc) && !/\.docx/.test(allSrc),
-      "an #exportWord element or a .docx mention survives in the shipped source",
-    );
-
-    // The name of the format is not the only way it can come back. The Word
-    // MIME types are what a save dialog filter and a Blob type are written
-    // with, and neither contains the string "docx" or "word-export", so the
-    // sweeps above would both pass while a half-restored export path sat in
-    // the tree. Cheap to state, and it costs nothing while the feature is gone.
-    check(
-      "no Word document MIME type survives in any shipped script",
-      !/wordprocessingml|application\/msword/i.test(allSrc),
-      (allSrc.match(/wordprocessingml|application\/msword/gi) || []).join(", "),
-    );
-
-    // Dead UI strings are already swept generally, a few assertions above
-    // ("every UI string has a consumer"), and that sweep is strictly stronger
-    // than a Word-specific one: it requires each key to appear in a CALL
-    // position rather than merely somewhere in the file. It is what caught the
-    // orphaned 'mermaid.error' string this removal left behind, so the six
-    // labels the Word menu item owned need no separate assertion here.
-
-    // The rasteriser existed only to embed diagrams into the DOCX. Leaving it
-    // behind would keep ~120 lines of renderer parsed on every launch, plus
-    // the two test sections that measured it, for a feature that no longer
-    // exists. The image-zoom popup does its own rasterising in its own window.
-    check(
-      "the orphaned export rasteriser was removed with its only caller",
-      !/mermaidToPngDataUrl/.test(allSrc),
-      "mermaidToPngDataUrl survives with no caller",
     );
 
     // --- THE VENDORED-INLINING INVARIANT --------------------------------

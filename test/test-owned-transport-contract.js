@@ -167,6 +167,79 @@ function run(report = (name, ok, detail) => {
         Object.getOwnPropertyDescriptor(transport, 'invoke').enumerable === original.enumerable &&
         normalRequests.length === 1 && restored.status === 'unchanged' &&
         Object.isFrozen(api));
+
+      const committedCheck = (name, ok, detail = '') => outcome.results.push({
+        name: 'COMMITTED contract ' + name, ok: !!ok, detail: String(detail),
+      });
+      const committedRequest = {
+        capability: 'b'.repeat(32), pageSession: 'committed-contract-page',
+        rendererGeneration: 2,
+      };
+      const committedPositive = { valid: true, pathKey: 'committed-contract-key', version: diskVersion };
+      const normalCommittedSends = [];
+      transport.sendSync = function (channel, payload) {
+        normalCommittedSends.push({ channel, payload });
+        return committedPositive;
+      };
+      const syncDescriptor = Object.getOwnPropertyDescriptor(transport, 'sendSync');
+      const committedSends = [];
+      let committedResponse = committedPositive;
+      const syncReplacement = function (channel, payload) {
+        committedSends.push({ channel, payload });
+        return committedResponse;
+      };
+      Object.defineProperty(transport, 'sendSync', { ...syncDescriptor, value: syncReplacement });
+      try {
+        const rejected = [];
+        for (const input of [
+          null, [], { ...committedRequest, capability: 'bad' },
+          { ...committedRequest, pageSession: '' },
+          { ...committedRequest, rendererGeneration: Infinity },
+        ]) {
+          try { api.checkCommittedDiskAdoption(input); rejected.push(false); }
+          catch (error) { rejected.push(error.message.includes('Invalid')); }
+        }
+        committedCheck('rejects all five malformed capability envelopes before transport',
+          rejected.length === 5 && rejected.every(Boolean) && committedSends.length === 0,
+          JSON.stringify({ rejected, calls: committedSends }));
+        const positive = api.checkCommittedDiskAdoption({
+          ...committedRequest, filePath: 'not-authority', ignored: true,
+        });
+        committedCheck('copies only capability fields and preserves the valid metadata receipt',
+          committedSends.length === 1 &&
+          committedSends[0].channel === 'check-committed-disk-adoption' &&
+          Object.keys(committedSends[0].payload).sort().join(',') ===
+            'capability,pageSession,rendererGeneration' &&
+          Object.keys(committedRequest).every(key =>
+            committedSends[0].payload[key] === committedRequest[key]) &&
+          JSON.stringify(positive) === JSON.stringify(committedPositive) &&
+          positive !== committedPositive && Object.isFrozen(positive) &&
+          Object.isFrozen(positive.version), JSON.stringify({ committedSends, positive }));
+        const badResponses = [];
+        for (const response of [
+          undefined, [], { ...committedPositive, valid: 'true' },
+          { ...committedPositive, pathKey: 'bad\\0path' },
+          { ...committedPositive, version: { ...committedPositive.version, size: Infinity } },
+          { ...committedPositive, content: 'body-must-not-cross' },
+          { valid: false }, { valid: false, why: 'refused', version: committedPositive.version },
+        ]) {
+          committedResponse = response;
+          try { api.checkCommittedDiskAdoption(committedRequest); badResponses.push(false); }
+          catch (error) {
+            badResponses.push(error.message.includes('Invalid committed disk adoption response'));
+          }
+        }
+        committedCheck('rejects all eight malformed receipts and metadata body leakage',
+          badResponses.length === 8 && badResponses.every(Boolean), JSON.stringify(badResponses));
+      } finally {
+        if (transport.sendSync !== syncReplacement) throw new Error('Committed contract lost transport ownership');
+        Object.defineProperty(transport, 'sendSync', syncDescriptor);
+      }
+      const afterRestore = api.checkCommittedDiskAdoption(committedRequest);
+      const restoredSync = Object.getOwnPropertyDescriptor(transport, 'sendSync');
+      committedCheck('restores the exact sync transport descriptor and remains usable',
+        Reflect.ownKeys(syncDescriptor).every(key => restoredSync[key] === syncDescriptor[key]) &&
+        normalCommittedSends.length === 1 && afterRestore.valid === true && Object.isFrozen(api));
     })().then(
       () => { outcome.completed = true; },
       error => { outcome.error = String(error.stack || error); outcome.completed = true; },
@@ -174,8 +247,8 @@ function run(report = (name, ok, detail) => {
     void 0;
   `, context, { filename: __filename, timeout: 1000 });
   const outcome = JSON.parse(vm.runInContext("JSON.stringify(outcome)", context, { timeout: 1000 }));
-  if (outcome.completed !== true || outcome.error || outcome.results.length !== 10) {
-    throw new Error("Owned preload contract did not complete all ten checks: " + JSON.stringify(outcome));
+  if (outcome.completed !== true || outcome.error || outcome.results.length !== 14) {
+    throw new Error("Owned preload contract did not complete all fourteen checks: " + JSON.stringify(outcome));
   }
   for (const result of outcome.results) report(result.name, result.ok, result.detail);
   const failures = outcome.results.filter(result => !result.ok);

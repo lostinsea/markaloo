@@ -10881,6 +10881,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
     canceled: false, filePaths: [filePath],
   }));
   let tabId;
+  let deletionEvidenceExpected = false;
   try {
     await exec("window.folia.openFileDialog(); null;");
     if (!await waitForCondition(exec,
@@ -10918,26 +10919,55 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       pageSession: prepared.request.pageSession,
       rendererGeneration: prepared.request.rendererGeneration,
     };
-    const malformed = await exec(`(() => {
-      const request = ${JSON.stringify(request)};
-      const sync = window.ipcRenderer.sendSync;
-      let calls = 0;
-      const rejected = [];
-      window.ipcRenderer.sendSync = function () { calls += 1; return sync.apply(this, arguments); };
-      try {
-        for (const input of [
-          null, [], { ...request, capability: 'bad' },
-          { ...request, pageSession: '' }, { ...request, rendererGeneration: Infinity },
-        ]) {
-          try { window.folia.checkCommittedDiskAdoption(input); rejected.push(false); }
-          catch (error) { rejected.push(error.message.includes('Invalid')); }
-        }
-        return { rejected, calls };
-      } finally { window.ipcRenderer.sendSync = sync; }
-    })()`);
-    check("SEC-08 committed bridge rejects malformed capability envelopes before IPC",
-      malformed.rejected.length === 5 && malformed.rejected.every(Boolean) && malformed.calls === 0,
-      JSON.stringify(malformed));
+    // Malformed envelopes and fabricated receipts run in the mandatory whole-
+    // preload contract. This actor keeps genuine Main authority and disk checks.
+    const channel = "check-committed-disk-adoption";
+    const listeners = ipcMain.listeners(channel);
+    if (listeners.length !== 1) throw new Error("Committed check requires one original Main listener");
+    const originalListener = listeners[0];
+    const frame = win.webContents.mainFrame;
+    const receipts = [];
+    let listenerRemoved = false;
+    let listenerInstalled = false;
+    const observed = function (event, data) {
+      if (event.sender !== win.webContents) return originalListener.apply(this, arguments);
+      const current = __shutdown.state();
+      const record = {
+        request: structuredClone(data),
+        frame: event.senderFrame === frame && frame === win.webContents.mainFrame,
+        generation: current.rendererGeneration, pageSession: current.rendererPageSession,
+        replies: 0,
+      };
+      const forwardingEvent = new Proxy(event, {
+        set(target, key, value) {
+          if (key === "returnValue") {
+            record.reply = structuredClone(value);
+            record.replies += 1;
+          }
+          return Reflect.set(target, key, value, target);
+        },
+      });
+      const result = originalListener.call(this, forwardingEvent, data);
+      receipts.push(record);
+      return result;
+    };
+    const restoreListener = () => {
+      const current = ipcMain.listeners(channel);
+      if (!listenerRemoved && current.length === 1 && current[0] === originalListener) return;
+      if (listenerRemoved && !listenerInstalled &&
+          (current.length === 0 || current.length === 1 && current[0] === originalListener)) {
+        if (current.length === 0) ipcMain.on(channel, originalListener);
+        return;
+      }
+      if (!listenerInstalled || current.length !== 1 || current[0] !== observed) {
+        throw new Error("Committed fixture no longer owns its Main observer");
+      }
+      ipcMain.removeListener(channel, observed);
+      ipcMain.on(channel, originalListener);
+      if (ipcMain.listeners(channel).length !== 1 || ipcMain.listeners(channel)[0] !== originalListener) {
+        throw new Error("Committed fixture did not restore its unique original listener");
+      }
+    };
     let probes = 0;
     const stat = fs.statSync;
     const realpath = fs.realpathSync.native;
@@ -10954,6 +10984,10 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
     });
     let authority;
     try {
+      ipcMain.removeListener(channel, originalListener);
+      listenerRemoved = true;
+      ipcMain.on(channel, observed);
+      listenerInstalled = true;
       authority = await exec(`(() => {
         const request = ${JSON.stringify(request)};
         return [
@@ -10961,7 +10995,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
           { ...request, pageSession: request.pageSession + '-foreign' },
           { ...request, rendererGeneration: request.rendererGeneration + 1 },
           request,
-        ].map(input => window.ipcRenderer.sendSync('check-committed-disk-adoption', input));
+        ].map(input => window.folia.checkCommittedDiskAdoption(input));
       })()`);
       authority = { refused: authority, refusedProbes: probes };
       const committed = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(prepared.request)})`);
@@ -10971,21 +11005,34 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       probes = 0;
       authority.positive = await exec(`(() => {
         const request = ${JSON.stringify(request)};
-        const sync = window.ipcRenderer.sendSync;
-        let forwarded;
-        window.ipcRenderer.sendSync = function (channel, data) {
-          if (channel === 'check-committed-disk-adoption') forwarded = data;
-          return sync.apply(this, arguments);
-        };
-        try {
-          const first = window.folia.checkCommittedDiskAdoption({ ...request, filePath: 'not-authority', ignored: true });
-          const firstFields = Object.keys(forwarded).sort();
-          const second = window.folia.checkCommittedDiskAdoption(request);
-          return { first, second, firstFields, fields: Object.keys(forwarded).sort() };
-        } finally { window.ipcRenderer.sendSync = sync; }
+        const first = window.folia.checkCommittedDiskAdoption({
+          ...request, filePath: 'not-authority', ignored: true,
+        });
+        const second = window.folia.checkCommittedDiskAdoption(request);
+        return { first, second };
       })()`);
+      authority.positive.firstFields = Object.keys(receipts[4]?.request || {}).sort();
+      authority.positive.fields = Object.keys(receipts[5]?.request || {}).sort();
       authority.positiveProbes = probes;
-    } finally { restoreRealpath(); restoreStat(); }
+      const expected = [
+        { ...request, capability: "f".repeat(32) },
+        { ...request, pageSession: request.pageSession + "-foreign" },
+        { ...request, rendererGeneration: request.rendererGeneration + 1 },
+        request, request, request,
+      ];
+      const replies = [...authority.refused, authority.positive.first, authority.positive.second];
+      const qualified = receipts.length === expected.length && receipts.every((record, index) =>
+        record.frame && record.generation === request.rendererGeneration &&
+        record.pageSession === request.pageSession && record.replies === 1 &&
+        isDeepStrictEqual(record.request, expected[index]) &&
+        isDeepStrictEqual(record.reply, replies[index]));
+      check("SEC-08 committed checks observe exact main-frame original Main replies for all native requests",
+        qualified, JSON.stringify(receipts));
+      if (!qualified) throw new Error("Committed native checks lack exact original Main correlation");
+    } finally {
+      try { restoreListener(); }
+      finally { restoreRealpath(); restoreStat(); }
+    }
     check("SEC-08 committed authority rejects unknown foreign and still-pending grants before filesystem probes",
       authority.refused.length === 4 && authority.refused.every(reply => reply.valid === false) &&
         authority.refusedProbes === 0, JSON.stringify(authority));
@@ -10995,28 +11042,6 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
         authority.positive.firstFields.join(",") === "capability,pageSession,rendererGeneration" &&
         authority.positive.fields.join(",") === "capability,pageSession,rendererGeneration" &&
         authority.positiveProbes > 0, JSON.stringify(authority));
-    const badResponses = await exec(`(() => {
-      const request = ${JSON.stringify(request)};
-      const positive = ${JSON.stringify(authority.positive.first)};
-      const sync = window.ipcRenderer.sendSync;
-      const rejected = [];
-      try {
-        for (const response of [
-          undefined, [], { ...positive, valid: 'true' },
-          { ...positive, pathKey: 'bad\\0path' },
-          { ...positive, version: { ...positive.version, size: Infinity } },
-          { ...positive, content: 'body-must-not-cross' },
-          { valid: false }, { valid: false, why: 'refused', version: positive.version },
-        ]) {
-          window.ipcRenderer.sendSync = () => response;
-          try { window.folia.checkCommittedDiskAdoption(request); rejected.push(false); }
-          catch (error) { rejected.push(error.message.includes('Invalid committed disk adoption response')); }
-        }
-        return rejected;
-      } finally { window.ipcRenderer.sendSync = sync; }
-    })()`);
-    check("SEC-08 committed bridge rejects malformed receipts and metadata body leakage",
-      badResponses.length === 8 && badResponses.every(Boolean), JSON.stringify(badResponses));
     write(filePath, "# Committed adoption check\n\nLATE_CHANGED_AFTER_COMMIT\n");
     const late = await exec(`window.folia.checkCommittedDiskAdoption(${JSON.stringify(request)})`);
     check("SEC-08 committed check refuses real disk changes after approval",
@@ -11032,6 +11057,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       const owner = window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, window.getReloadRequestSession());
       return window.folia.queryDocumentDeletionState({ ...owner, filePath: tab.filePath });
     })()`);
+    deletionEvidenceExpected = deletion.known === true && deletion.ownDeletion === true;
     write(filePath, original);
     const deletionGrant = await prepare();
     check("SEC-08 pre-dialog check setup retains actual deletion evidence and attests the restored file",
@@ -11078,12 +11104,92 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       JSON.stringify(stale));
   } finally {
     restoreChooser();
-    if (tabId) await exec(`(async () => {
-      const confirm = window.confirm;
-      window.confirm = () => true;
-      try { return await window.CustomTabs.closeTab(${tabId}); }
-      finally { window.confirm = confirm; }
-    })()`);
+    if (tabId) {
+      const closing = await exec(`(() => {
+        if (window.__committedAdoptionClose) throw new Error('Overlapping committed fixture close');
+        const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${tabId});
+        if (!tab) throw new Error('Committed fixture disappeared before owned cleanup');
+        const identity = window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, window.getReloadRequestSession());
+        const deletion = window.folia.queryDocumentDeletionState({
+          ...identity, filePath: tab.filePath,
+        });
+        if (deletion.known !== true) throw new Error('Committed cleanup cannot authenticate its owner');
+        const probe = window.__committedAdoptionClose = { identity, deletion, settled: false };
+        probe.done = Promise.resolve(window.CustomTabs.closeTab(tab.id)).then(
+          () => { probe.settled = true; },
+          error => { probe.error = String(error.message || error); probe.settled = true; },
+        );
+        return { identity, deletion };
+      })()`);
+      const owner = closing.identity;
+      const requiresQuestion = deletionEvidenceExpected || closing.deletion.unresolved === true;
+      try {
+        const reached = await waitForCondition(exec, requiresQuestion
+          ? "document.getElementById('appMessageDialog')?.open === true"
+          : `window.__committedAdoptionClose.settled ||
+             document.getElementById('appMessageDialog')?.open === true`, 5000);
+        if (!reached) throw new Error(requiresQuestion
+          ? "Committed deleted fixture closed or stalled without its required deletion question"
+          : "Committed fixture close did not settle");
+        const question = await exec(`(() => {
+          const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${tabId});
+          return {
+            open: document.getElementById('appMessageDialog')?.open === true,
+            pending: window.__committedAdoptionClose.settled === false,
+            title: document.getElementById('appMessageTitle').textContent,
+            message: document.getElementById('appMessageText').textContent,
+            fileName: document.getElementById('appMessageName').textContent,
+            buttons: Array.from(document.querySelectorAll('#appMessageButtons [data-dialog-choice]'),
+              button => ({ id: button.dataset.dialogChoice, label: button.textContent })),
+            owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+              tab.id, tab.filePath, window.getReloadRequestSession()),
+            deletion: tab && window.folia.queryDocumentDeletionState({
+              ...${JSON.stringify(owner)}, filePath: ${JSON.stringify(filePath)},
+            }),
+          };
+        })()`);
+        if (question.open) {
+          const expected = requiresQuestion && closing.deletion.unresolved === true &&
+            question.pending && question.title === "Close this copy?" &&
+            question.message === "This tab may be the only remaining copy of the file. Close the tab?" &&
+            question.fileName === path.basename(filePath) &&
+            isDeepStrictEqual(question.buttons, [
+              { id: "cancel", label: "Cancel" }, { id: "proceed", label: "Close tab" },
+            ]) &&
+            Object.keys(owner).every(key => question.owner?.[key] === owner[key]) &&
+            question.deletion?.known === true && question.deletion.unresolved === true;
+          if (!expected) throw new Error("Unexpected committed fixture close question: " + JSON.stringify(question));
+          await exec("document.querySelector('#appMessageDialog [data-dialog-choice=\"proceed\"]').click(); null;");
+        }
+        if (!await waitForCondition(exec, "window.__committedAdoptionClose.settled", 5000)) {
+          throw new Error("Committed fixture close did not settle after its answer");
+        }
+        const outcome = await exec(`({
+          error: window.__committedAdoptionClose.error,
+          remains: window.CustomTabs.getTabs().some(tab => tab.id === ${tabId}),
+          dialogOpen: document.getElementById('appMessageDialog')?.open === true,
+        })`);
+        const retired = owner && __shutdown.documentAdmissionIsCurrent(owner.documentRef) === false;
+        check("SEC-08 committed fixture cleanup closes the actual owner without bypassing its deletion question",
+          !outcome.error && !outcome.remains && !outcome.dialogOpen && retired &&
+            (!requiresQuestion || question.open && question.pending),
+          JSON.stringify({ owner, closing, requiresQuestion, question, outcome, retired }));
+        if (outcome.error || outcome.remains || outcome.dialogOpen || !retired ||
+            requiresQuestion && (!question.open || !question.pending)) {
+          throw new Error("Committed fixture close left its native owner live");
+        }
+      } finally {
+        await exec(`(() => {
+          const probe = window.__committedAdoptionClose;
+          if (probe && JSON.stringify(probe.identity) !== ${JSON.stringify(JSON.stringify(owner))}) {
+            throw new Error('Committed fixture lost close-probe ownership');
+          }
+          delete window.__committedAdoptionClose;
+          return null;
+        })()`);
+      }
+    }
   }
 }
 
