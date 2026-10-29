@@ -26,7 +26,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const { randomUUID } = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { VISUAL_PROBE_SOURCE, inspectVisual, captureScreenshot, startErrorSentinel, proveSentinelAlive, LIVENESS_MUTE_REASON, trapExternalOpens, waitForExternalTrap, readExternalOpens, readShellOpens, clearExternalOpens, tempDir, releaseTempDir } = require("./test-visual-utils");
+const { admitTestDocument, VISUAL_PROBE_SOURCE, inspectVisual, captureScreenshot, startErrorSentinel, proveSentinelAlive, LIVENESS_MUTE_REASON, trapExternalOpens, waitForExternalTrap, readExternalOpens, readShellOpens, clearExternalOpens, tempDir, releaseTempDir } = require("./test-visual-utils");
 
 // Isolate this suite's userData profile before main.js exists and before the
 // app is ready. See test-userdata-isolation.js.
@@ -46,27 +46,22 @@ const jsM = JSON.stringify(fileM);
 // A deliberately diagram-free document. Section 6 needs a state where the
 // viewer contains zero .mermaid elements while the app is still running.
 const filePlain = path.join(dir, "plain.md");
-const jsPlain = JSON.stringify(filePlain);
 const DOC_PLAIN = "# Plain\n\nNo diagrams here at all.\n";
 
 // Section 11 needs a document tall enough to actually scroll, and a diagram the
 // SVG cache has never seen (a cache hit would leave toRender empty and the
 // render would never reach ensureMermaid at all - a vacuous pass).
 const fileLong = path.join(dir, "long.md");
-const jsLong = JSON.stringify(fileLong);
 const DOC_LONG = "# Long\n\n" + "Filler paragraph so the document scrolls.\n\n".repeat(400);
 const fileRace = path.join(dir, "race.md");
-const jsRace = JSON.stringify(fileRace);
 const DOC_RACE = "# Race\n\n```mermaid\ngraph LR\n  RaceOnly1 --> RaceOnly2\n```\n";
 const fileRace2 = path.join(dir, "race2.md");
-const jsRace2 = JSON.stringify(fileRace2);
 const DOC_RACE2 = "# Race2\n\n```mermaid\ngraph LR\n  RaceTwo1 --> RaceTwo2\n```\n";
 
 // One good diagram followed by one unparseable one, in that order. The order is
 // the whole point: it puts a diagram that DID render before the failure, so the
 // post-render passes can be asked whether they still ran for it.
 const fileMixed = path.join(dir, "mixed.md");
-const jsMixed = JSON.stringify(fileMixed);
 const DOC_MIXED =
   "# Mixed\n\n" +
   "```mermaid\ngraph LR\n  MixedGood1[Good one] --> MixedGood2[Good two]\n```\n\n" +
@@ -77,14 +72,12 @@ const DOC_MIXED =
 // measures whether document content can reach an innerHTML sink through the
 // error path.
 const fileInject = path.join(dir, "inject.md");
-const jsInject = JSON.stringify(fileInject);
 const DOC_INJECT =
   "# Inject\n\n" +
   '```mermaid\nnotADiagramTypeAtAll <i id="mermaid-inject-probe">probe</i>\n```\n';
 
 // A sequence diagram on its own, for the actor-lifeline measurement.
 const fileSeq = path.join(dir, "sequence.md");
-const jsSeq = JSON.stringify(fileSeq);
 const DOC_SEQ =
   "# Sequence\n\n" +
   "```mermaid\nsequenceDiagram\n  Alice->>Bob: first\n  Bob-->>Alice: second\n  Alice->>Bob: third\n```\n";
@@ -121,6 +114,9 @@ classDiagram
 `;
 
 const results = [];
+let failureSentinel = null;
+let harnessStage = "window load";
+let failureDiagnostics = null;
 function check(name, ok, detail) {
   results.push({ name, ok, detail: ok ? "" : String(detail) });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : "  -> " + detail}`);
@@ -130,6 +126,7 @@ function writeReport(summary) {
   const lines = results.map(
     (r) => `${r.ok ? "PASS" : "FAIL"}  ${r.name}${r.ok ? "" : "  -> " + r.detail}`,
   );
+  if (failureDiagnostics) lines.push(failureDiagnostics);
   lines.push(summary);
   try {
     fs.writeFileSync(path.join(__dirname, "test-mermaid-results.txt"), lines.join("\n") + "\n");
@@ -188,7 +185,9 @@ async function run(win) {
   // Watches the whole suite, not just the moments a screenshot is taken. See
   // startErrorSentinel() for why: a red mermaid error graphic that appears and
   // is then repainted over leaves no trace in an end-of-run screenshot.
+  harnessStage = "error and external-open sentinels";
   const sentinel = startErrorSentinel(win, { label: "mermaid" });
+  failureSentinel = sentinel;
   // No suite may reach the user's browser. See trapExternalOpens().
   await trapExternalOpens(win);
 
@@ -201,11 +200,17 @@ async function run(win) {
   fs.writeFileSync(fileInject, DOC_INJECT, "utf8");
   fs.writeFileSync(fileSeq, DOC_SEQ, "utf8");
 
+  harnessStage = "reset tabs";
   await exec(`
-    localStorage.clear();
-    window.CustomTabs.getTabs().forEach(t => { t.hasUnsavedChanges = false; });
-    window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-    null;
+    try {
+      localStorage.clear();
+      window.CustomTabs.getTabs().forEach(t => { t.hasUnsavedChanges = false; });
+      window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
+      null;
+    } catch (error) {
+      console.error("Mermaid setup reset tabs: " + String(error && (error.stack || error.message) || error));
+      throw error;
+    }
   `);
 
   // Pin the theme before anything renders.
@@ -216,25 +221,29 @@ async function run(win) {
   // screen" regression produces dark diagrams even with the bug present. Force
   // light through the app's own theme path so the cache is deterministically
   // populated with light entries and the later flip to dark is meaningful.
+  harnessStage = "initial light theme";
   await exec(`
     (async () => {
-      document.body.classList.remove('dark-mode');
-      localStorage.setItem('darkMode', 'disabled');
-      localStorage.setItem('themeMode', 'light');
-      await updateMermaidTheme(false);
-      return document.body.classList.contains('dark-mode');
+      try {
+        document.body.classList.remove('dark-mode');
+        localStorage.setItem('darkMode', 'disabled');
+        localStorage.setItem('themeMode', 'light');
+        await updateMermaidTheme(false);
+        return document.body.classList.contains('dark-mode');
+      } catch (error) {
+        console.error("Mermaid setup initial light theme: " + String(error && (error.stack || error.message) || error));
+        throw error;
+      }
     })()
   `);
 
-  await exec(`
-    (() => {
-      const t = window.CustomTabs.createTab(${jsM}, window.fs.readFileSync(${jsM}, 'utf8'));
-      return t.id;
-    })()
-  `);
+  harnessStage = "initial document admission";
+  await admitTestDocument(win, fileM, fs.readFileSync(fileM, "utf8"));
 
   // Diagram rendering is async and happens after the markdown is inserted.
+  harnessStage = "initial diagram readiness";
   await waitFor(exec, "all diagrams to render", DIAGRAMS_READY);
+  harnessStage = "scenarios";
 
   // --- 1. The library itself is the version we vendored --------------------
   // mermaid 11 dropped the `version()` helper, so ask the vendored bundle what
@@ -563,13 +572,7 @@ async function run(win) {
   // whenever the viewer happened to contain zero .mermaid elements, so the
   // next document opened rendered with the previous theme's colours. That is
   // the ordinary startup path: the theme is resolved before any file is open.
-  await exec(`
-    (() => {
-      const t = window.CustomTabs.createTab(${jsPlain}, window.fs.readFileSync(${jsPlain}, 'utf8'));
-      window.CustomTabs.switchToTab(t.id);
-      return t.id;
-    })()
-  `);
+  await admitTestDocument(win, filePlain, fs.readFileSync(filePlain, "utf8"));
   await waitFor(
     exec,
     "the diagram-free document to replace the diagrams",
@@ -963,9 +966,7 @@ async function run(win) {
     );
 
     try {
-      await exec(
-        `(() => { const t = window.CustomTabs.createTab(${JSON.stringify(holdDoc)}, window.fs.readFileSync(${JSON.stringify(holdDoc)}, 'utf8')); return t.id; })()`,
-      );
+      await admitTestDocument(win, holdDoc, fs.readFileSync(holdDoc, "utf8"));
       await waitFor(exec, "the 8c theme-hold fixture to finish drawing", DIAGRAMS_READY);
       await exec(`window.alert = () => {}; true`);
 
@@ -1129,9 +1130,7 @@ async function run(win) {
     );
 
     try {
-      await exec(
-        `(() => { const t = window.CustomTabs.createTab(${JSON.stringify(overlapDoc)}, window.fs.readFileSync(${JSON.stringify(overlapDoc)}, 'utf8')); return t.id; })()`,
-      );
+      await admitTestDocument(win, overlapDoc, fs.readFileSync(overlapDoc, "utf8"));
       await waitFor(exec, "the 8e overlap fixture to finish drawing", DIAGRAMS_READY);
       await exec(`window.alert = () => {}; true`);
 
@@ -1393,7 +1392,7 @@ async function run(win) {
   // A document with no diagrams must not drag it in either. Wait for the render
   // to actually complete before concluding mermaid stayed away - a fixed sleep
   // that expired mid-render would pass for the wrong reason.
-  await exec(`renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full')`);
+  await exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full')`);
   await waitFor(
     exec,
     "the plain document to finish rendering",
@@ -1406,7 +1405,7 @@ async function run(win) {
   );
 
   // A document WITH a diagram must load it, initialise it, and draw.
-  await exec(`renderMarkdown(window.fs.readFileSync(${jsM}, 'utf8'), 'full')`);
+  await exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileM, "utf8"))}, 'full')`);
   await waitFor(exec, "the lazily loaded mermaid to draw", DIAGRAMS_READY);
   const afterDiagram = await exec(`
     ({ loaded: typeof window.mermaid !== 'undefined',
@@ -1476,11 +1475,11 @@ async function run(win) {
   );
 
   // Render A: a diagram document, which parks inside the stubbed ensureMermaid.
-  exec(`renderMarkdown(window.fs.readFileSync(${jsRace}, 'utf8'), 'full')`).catch(() => {});
+  exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileRace, "utf8"))}, 'full')`).catch(() => {});
   await waitFor(exec, "the losing render to park inside ensureMermaid", `window.__parked === true`);
 
   // Render B supersedes it, and the user scrolls down in that new document.
-  await exec(`renderMarkdown(window.fs.readFileSync(${jsLong}, 'utf8'), 'full')`);
+  await exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileLong, "utf8"))}, 'full')`);
   await waitFor(
     exec,
     "the winning render to settle",
@@ -1571,10 +1570,10 @@ async function run(win) {
       "below would be vacuous",
   );
 
-  exec(`renderMarkdown(window.fs.readFileSync(${jsRace2}, 'utf8'), 'full')`).catch(() => {});
+  exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileRace2, "utf8"))}, 'full')`).catch(() => {});
   await waitFor(exec, "the losing render to park inside mermaid.run", `window.__parked2 === true`);
 
-  await exec(`renderMarkdown(window.fs.readFileSync(${jsLong}, 'utf8'), 'full')`);
+  await exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileLong, "utf8"))}, 'full')`);
   await waitFor(
     exec,
     "the winning render to settle",
@@ -1667,9 +1666,9 @@ async function run(win) {
   // message for the whole suite, including the places it would be a real bug.
   await sentinel.mute("deliberate stale-draw failure (race probe 3)");
 
-  exec(`renderMarkdown(window.fs.readFileSync(${jsRace}, 'utf8'), 'full')`).catch(() => {});
+  exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileRace, "utf8"))}, 'full')`).catch(() => {});
   await waitFor(exec, "the losing render to park in its draw", `window.__parkedA === true`);
-  exec(`renderMarkdown(window.fs.readFileSync(${jsRace2}, 'utf8'), 'full')`).catch(() => {});
+  exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileRace2, "utf8"))}, 'full')`).catch(() => {});
   await waitFor(
     exec,
     "the winning render's undrawn diagrams to reach the DOM",
@@ -1759,7 +1758,7 @@ async function run(win) {
       if (document.body.classList.contains('dark-mode')) {
         document.getElementById('darkModeToggle').click();
       }
-      await window.renderMarkdown(window.fs.readFileSync(${jsPerf}, 'utf8'), 'full');
+      await window.renderMarkdown(${JSON.stringify(fs.readFileSync(JSON.parse(jsPerf), "utf8"))}, 'full');
       document.querySelector('.content-wrapper').scrollTop = 0;
       return null;
     })()
@@ -1990,7 +1989,7 @@ async function run(win) {
           }
         };
         try {
-          await window.renderMarkdown(window.fs.readFileSync(${jsMixed}, 'utf8'), 'full');
+          await window.renderMarkdown(${JSON.stringify(fs.readFileSync(fileMixed, "utf8"))}, 'full');
         } finally {
           mermaid.run = realRun;
         }
@@ -2021,7 +2020,7 @@ async function run(win) {
     // hand the sentinel a genuine finding it was never opened for.
     await exec(`
       (async () => {
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -2050,7 +2049,7 @@ async function run(win) {
   try {
     await exec(`
       (async () => {
-        await window.renderMarkdown(window.fs.readFileSync(${jsInject}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(fileInject, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -2071,7 +2070,7 @@ async function run(win) {
     `);
     await exec(`
       (async () => {
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -2108,7 +2107,7 @@ async function run(win) {
           throw new Error('boom <i id="mermaid-banner-probe">injected</i> boom');
         };
         try {
-          await window.renderMarkdown(window.fs.readFileSync(${jsRace}, 'utf8'), 'full');
+          await window.renderMarkdown(${JSON.stringify(fs.readFileSync(fileRace, "utf8"))}, 'full');
         } catch (e) {
         } finally {
           mermaid.run = realRun;
@@ -2198,7 +2197,7 @@ async function run(win) {
         // only runs if the IIFE itself starts. If exec() rejects before that,
         // mermaid.run would stay patched for every later scenario.
         if (window.__realMermaidRun) { mermaid.run = window.__realMermaidRun; delete window.__realMermaidRun; }
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -2270,7 +2269,7 @@ async function run(win) {
         if (document.body.classList.contains('dark-mode')) {
           document.body.classList.remove('dark-mode');
         }
-        const src = window.fs.readFileSync(${jsMixed}, 'utf8');
+        const src = ${JSON.stringify(fs.readFileSync(fileMixed, "utf8"))};
         await window.renderMarkdown(src, 'full');
         // The fallback re-render is guarded by originalMarkdown, and calling
         // renderMarkdown() directly never sets it. Without this line the
@@ -2330,7 +2329,7 @@ async function run(win) {
     await exec(`
       (async () => {
         document.body.classList.remove('dark-mode');
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -2361,7 +2360,7 @@ async function run(win) {
   //     is a fix or an unnecessary hard-coded colour fighting the theme.
   await exec(`
     (async () => {
-      await window.renderMarkdown(window.fs.readFileSync(${jsSeq}, 'utf8'), 'full');
+      await window.renderMarkdown(${JSON.stringify(fs.readFileSync(fileSeq, "utf8"))}, 'full');
       return null;
     })()
   `);
@@ -2451,7 +2450,7 @@ async function run(win) {
   try {
     inDom = await exec(`
       (async () => {
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         await window.renderMermaidInDOM(
           'notADiagramTypeAtAll <b id="mermaid-indom-probe">probe</b>',
           'insert',
@@ -2474,7 +2473,7 @@ async function run(win) {
     `);
     await exec(`
       (async () => {
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -2526,7 +2525,7 @@ async function run(win) {
   try {
     dialogRun = await exec(`
       (async () => {
-        const plain = window.fs.readFileSync(${jsPlain}, 'utf8');
+        const plain = ${JSON.stringify(fs.readFileSync(filePlain, "utf8"))};
         await window.renderMarkdown(plain, 'full');
         const ta = document.getElementById('mermaidTemplateCode');
         const overlay = document.getElementById('mermaidTemplateOverlay');
@@ -2647,7 +2646,7 @@ async function run(win) {
     await exec(`
       (async () => {
         if (window.__realMermaidRun) { mermaid.run = window.__realMermaidRun; delete window.__realMermaidRun; }
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -3402,7 +3401,7 @@ async function run(win) {
     `);
     await exec(`
       (async () => {
-        await window.renderMarkdown(window.fs.readFileSync(${jsPlain}, 'utf8'), 'full');
+        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
         return null;
       })()
     `).catch(() => {});
@@ -3810,6 +3809,8 @@ async function run(win) {
     JSON.stringify(alive),
   );
 
+  // Transfer ownership before awaiting stop so a rejection cannot stop it twice.
+  failureSentinel = null;
   const sentinelReport = await sentinel.stop();
   check(
     "nothing rendered a visible error at any point during the suite",
@@ -3916,6 +3917,18 @@ app.whenReady().then(async () => {
     }
     await run(win);
   } catch (e) {
+    const diagnostics = { stage: harnessStage };
+    const sentinel = failureSentinel;
+    failureSentinel = null;
+    if (sentinel) {
+      try {
+        diagnostics.sentinel = await sentinel.stop();
+      } catch (sentinelError) {
+        diagnostics.sentinelError = String(sentinelError?.stack || sentinelError);
+      }
+    }
+    failureDiagnostics = "Mermaid harness diagnostics: " + JSON.stringify(diagnostics);
+    console.log(failureDiagnostics);
     check("harness completed without throwing", false, String((e && e.stack) || (e && e.message) || require("util").inspect(e)));
   }
 
