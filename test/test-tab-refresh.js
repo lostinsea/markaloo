@@ -20036,17 +20036,21 @@ async function run(win) {
       a.content = '# Alpha\\n\\nSTRAY_GUARD\\n';
       a.hasUnsavedChanges = true;
       window.originalMarkdown = a.content;
-      window.ipcRenderer.emit('save-markdown-result', {}, {
+      const receivers = window.FoliaDocumentEvents.listeners('save-markdown-result');
+      if (receivers.length !== 1) throw new Error('Stray Save requires the installed document receiver');
+      receivers[0](undefined, {
         success: true,
         path: ${JSON.stringify(path.join(dir, "gone.md"))},
       });
       const after = window.CustomTabs.getTabs().find(t => t.id === ${ids.a});
-      return { content: after.content, dirty: after.hasUnsavedChanges };
+      return { content: after.content, dirty: after.hasUnsavedChanges,
+        receiverCount: receivers.length };
     })()
   `);
   check(
     "save result for a closed tab does not clobber the active tab",
-    beforeStray.content.includes("STRAY_GUARD") && beforeStray.dirty === true,
+    beforeStray.receiverCount === 1 &&
+      beforeStray.content.includes("STRAY_GUARD") && beforeStray.dirty === true,
     JSON.stringify(beforeStray),
   );
 
@@ -22750,7 +22754,8 @@ async function run(win) {
     })()`);
     const foreignAndConflict = await exec(`
       (() => {
-        const ipc = require("electron").ipcRenderer;
+        const receivers = window.FoliaDocumentEvents.listeners("file-reload-result");
+        if (receivers.length !== 1) throw new Error("Hostile reloads require the installed document receiver");
         const tab = window.CustomTabs.getActiveTab();
         const snapshot = () => ({
           content: tab.content, original: tab.originalContent,
@@ -22765,7 +22770,7 @@ async function run(win) {
             !trusted || !trusted.reloadRequest || !trusted.reloadSession) {
           return { unavailable: true };
         }
-        const send = data => ipc.emit("file-reload-result", {}, data);
+        const send = data => receivers[0](undefined, data);
         send({ ...base, reloadRequest: {
           ...base.reloadRequest, sequence: base.reloadRequest.sequence + 1,
         }});
@@ -38937,7 +38942,11 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     // and every durable document identity untouched.
     const frozenMutationMatrix = await exec(`
       (() => {
-        const ipc = require("electron").ipcRenderer;
+        const deliver = (channel, data) => {
+          const receivers = window.FoliaDocumentEvents.listeners(channel);
+          if (receivers.length !== 1) throw new Error('Frozen mutation requires one installed ' + channel + ' receiver');
+          receivers[0](undefined, data);
+        };
         const active = window.CustomTabs.getActiveTab();
         const other = window.CustomTabs.getTabs().find(tab => tab.id !== active.id);
         const before = {
@@ -38964,16 +38973,15 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
             key, ctrlKey: true, bubbles: true, cancelable: true,
           }));
         }
-        // These are the real IPC listener entrances.  A refusal occurs before
-        // their payload can become authority, including a nominally-successful
-        // reload and save completion.
-        ipc.emit("file-reload-result", {}, {
+        // Exercise the installed page receivers, not native IPC delivery.
+        // Each shared hostile packet must be refused before it gains authority.
+        deliver("file-reload-result", {
           success: true, path: before.path, content: "FROZEN_RELOAD",
           reloadRequest: { sequence: 1, path: before.path, snapshot: before.original,
             session: "frozen-test-session" },
         });
-        ipc.emit("save-markdown-result", {}, { success: true, filePath: before.path });
-        ipc.emit("file-opened", {}, { filePath: "C:\\\\frozen-open.md", content: "FROZEN_OPEN" });
+        deliver("save-markdown-result", { success: true, filePath: before.path });
+        deliver("file-opened", { filePath: "C:\\\\frozen-open.md", content: "FROZEN_OPEN" });
         const after = {
           tabs: window.CustomTabs.getTabs().map(tab => ({
             id: tab.id, path: tab.filePath, content: tab.content,
