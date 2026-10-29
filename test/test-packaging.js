@@ -1149,6 +1149,7 @@ async function main() {
     "test-shutdown-response-contract.js", "test-deletion-delivery-contract.js",
     "test-default-tabs-contracts.js", "test-fixture-close-contracts.js",
     "test-default-save-contracts.js", "test-shutdown-lifecycle-source.js",
+    "test-ordinary-shutdown-source.js",
     "test-f22-fixture-contracts.js", "test-f22-closed-companion-contracts.js",
     "test-security-actor-contracts.js",
     "test-installed-update-contracts.js", "test-shutdown-deadline-source.js",

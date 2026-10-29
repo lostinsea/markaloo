@@ -39903,58 +39903,470 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
   }
 }
 
-async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = null) {
-  const baseUpdaterBranchBorrow = createBaseUpdaterBranchBorrow();
-  const fileQ1 = path.join(dir, "quit-alpha.md");
-  const fileQ2 = path.join(dir, "quit-beta.md");
-  let phaseTwoReopenOrdinal = 0;
-  const impostorFile = path.join(dir, "impostor.html");
-  const indexFile = path.join(__dirname, "..", "src", "index.html");
-  write(fileQ1, "# Quit Alpha\n\nQ_ALPHA\n");
-  write(fileQ2, "# Quit Beta\n\nQ_BETA\n");
-  fs.writeFileSync(
-    impostorFile,
-    '<!doctype html><meta charset="utf-8"><title>impostor</title><p>not a document window</p>',
-    "utf8",
-  );
-  const cleanCloseFixtureInputs = (() => {
-    try {
-      const alphaBytes = fs.readFileSync(fileQ1);
-      const betaBytes = fs.readFileSync(fileQ2);
-      const rendererGeneration = __shutdown.state().rendererGeneration;
-      if (!Number.isSafeInteger(rendererGeneration) || rendererGeneration <= 0) {
-        throw new Error("the current renderer generation is unavailable");
+function installOrdinaryShutdownQuestions(win, rig, tails) {
+  const guardedShow = OwnedDialogs.prototype.show;
+  const records = [];
+  let restored = false;
+  const show = function (owner, options) {
+    const state = __shutdown.state();
+    const confirm = options?.title === "Unsaved changes" ? "Discard changes"
+      : options?.title === "Unsaved changes cannot be checked" ? "Close anyway" : null;
+    if (owner !== win || state.pendingId <= 0 ||
+        !["window-close", "ctrl-q", "app-quit", "update-install"].includes(state.pendingReason) ||
+        !confirm || options.defaultId !== 1 || options.cancelId !== 1 ||
+        JSON.stringify(options.buttons) !== JSON.stringify([confirm, "Cancel"]) ||
+        typeof options.isCurrent !== "function" || !options.isCurrent() ||
+        options.signal?.aborted) {
+      return Reflect.apply(guardedShow, this, arguments);
+    }
+    const producer = Reflect.apply(realOwnedDialogShow, this, arguments);
+    if (!producer || typeof producer.then !== "function") {
+      throw new Error("Ordinary owned question did not return its original producer Promise");
+    }
+    tails.push(producer);
+    const queue = this.owners.get(owner);
+    const matches = [queue?.active, ...(queue?.queue || [])].filter(
+      request => request?.options === options && request.owner === win &&
+        request.sender === win.webContents);
+    if (matches.length !== 1) {
+      throw new Error("Ordinary owned question has no exact original broker request");
+    }
+    const request = matches[0];
+    const record = {
+      options, pendingReason: state.pendingReason, requestId: state.pendingId,
+      generation: state.rendererGeneration, pageSession: state.rendererPageSession,
+      brokerId: request.id, response: null, displayed: false,
+      settled: false, driverSettled: false, driverError: null,
+    };
+    records.push(record);
+    const current = () => {
+      const now = __shutdown.state();
+      return !restored && now.pendingId === record.requestId &&
+        now.rendererGeneration === record.generation &&
+        now.rendererPageSession === record.pageSession &&
+        !request.done && request.owner === win && request.sender === win.webContents &&
+        request.options === options && options.isCurrent() && !options.signal?.aborted;
+    };
+    let failed = false;
+    let answerHost = null;
+    let closedListener = null;
+    const driver = withOrdinaryShutdownCleanup(async () => {
+      try {
+        const displayed = await waitUntil(async () => {
+          if (!current()) throw new Error("Ordinary owned question changed before presentation");
+          const host = request.window;
+          if (!request.displayed || !host || host.isDestroyed() || !host.isVisible()) return false;
+          if (host.getParentWindow() !== win || host.webContents.getURL() !== ownedDialogUrl) {
+            throw new Error("Ordinary owned question displayed in a different host");
+          }
+          const preferences = host.webContents.getLastWebPreferences();
+          if (preferences.nodeIntegration !== false || preferences.contextIsolation !== true ||
+              preferences.sandbox !== true) {
+            throw new Error("Ordinary owned question is not isolated");
+          }
+          return host.webContents.executeJavaScript(
+            "document.getElementById('appMessageDialog')?.open === true", true);
+        }, 12000);
+        if (!displayed) throw new Error("Ordinary owned question did not display");
+        const host = request.window;
+        const presentation = await host.webContents.executeJavaScript(`(() => ({
+          title: document.getElementById('appMessageTitle').textContent,
+          message: document.getElementById('appMessageText').textContent,
+          detail: document.getElementById('appMessageDetail').textContent,
+          buttons: Array.from(document.querySelectorAll('#appMessageButtons button'),
+            button => button.textContent),
+          focused: document.activeElement.dataset.dialogChoice,
+        }))()`, true);
+        const expected = {
+          title: options.title, message: options.message, detail: options.detail,
+          buttons: options.buttons, focused: String(options.defaultId),
+        };
+        if (!current() || JSON.stringify(presentation) !== JSON.stringify(expected)) {
+          throw new Error("Ordinary owned question did not present its exact current options");
+        }
+        record.displayed = true;
+        record.presentation = presentation;
+        rig.dialogs.push(record);
+        const answer = typeof rig.answer === "function" ? await rig.answer(options) : rig.answer;
+        if (!Number.isSafeInteger(answer) || answer < 0 || answer >= options.buttons.length ||
+            !current() || !request.displayed || request.window !== host) {
+          throw new Error("Ordinary owned question changed before its explicit answer");
+        }
+        answerHost = host;
+        const closed = new Promise(resolve => {
+          closedListener = resolve;
+          host.once("closed", closedListener);
+        });
+        // A genuine choice destroys this host before its evaluation response is guaranteed.
+        await Promise.race([closed, host.webContents.executeJavaScript(
+          `document.querySelector('#appMessageButtons [data-dialog-choice="${answer}"]').click(); true`,
+          true)]);
+        const result = await producer;
+        record.response = result.response;
+        record.result = result;
+        record.settled = true;
+        if (result.failed || result.displayed !== true || result.cause !== "choice" ||
+            result.response !== answer || !host.isDestroyed()) {
+          throw new Error("Ordinary owned question did not return its genuine chosen result");
+        }
+      } catch (error) {
+        failed = true;
+        record.driverError = String(error.stack || error);
+        throw error;
+      }
+    }, [
+      () => {
+        if (closedListener) answerHost.removeListener("closed", closedListener);
+      },
+      () => {
+        if (failed && request.window && !request.window.isDestroyed()) request.window.destroy();
+      },
+      async () => {
+        try { await producer; } finally { record.settled = true; }
+      },
+    ]);
+    // Keep the rejection on the original work for the mandatory join.
+    driver.then(
+      () => { record.driverSettled = true; },
+      error => {
+        record.driverSettled = true;
+        record.driverError = String(error.stack || error);
+      },
+    );
+    tails.push(driver);
+    return producer;
+  };
+  const undo = replaceMethod(OwnedDialogs.prototype, "show", show);
+  return {
+    records,
+    restore() {
+      if (restored) throw new Error("Ordinary owned question actor was restored twice");
+      if (records.some(record => !record.settled || !record.driverSettled)) {
+        throw new Error("Ordinary owned question actor still has original unfinished work");
+      }
+      if (OwnedDialogs.prototype.show !== show) {
+        throw new Error("Ordinary owned question actor restoration ownership changed");
+      }
+      undo();
+      restored = true;
+    },
+  };
+}
+
+async function withOrdinaryShutdownCleanup(work, cleanup) {
+  const errors = [];
+  let result;
+  try { result = await work(); } catch (error) { errors.push(error); }
+  for (const restore of cleanup) {
+    try { await restore(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) {
+    throw new AggregateError(errors, "Ordinary shutdown operation or cleanup failed:\n" +
+      errors.map(error => String(error?.stack || error)).join("\n"));
+  }
+  return result;
+}
+
+function holdOrdinaryShutdownApproval(win) {
+  const wc = win.webContents;
+  const frame = wc.mainFrame;
+  const initial = __shutdown.state();
+  const originalSend = wc.send;
+  const originalEmit = ipcMain.emit;
+  let request = null;
+  let ingress = null;
+  let released = false;
+  let retired = null;
+  let restored = false;
+  let restorationAttempted = false;
+  const ownsEvent = event => event?.sender === wc && !wc.isDestroyed() &&
+    event.senderFrame && !event.senderFrame.isDestroyed() && !frame.isDestroyed() &&
+    event.senderFrame.parent === null &&
+    (event.senderFrame === frame ||
+      event.senderFrame.frameTreeNodeId === frame.frameTreeNodeId);
+  const send = function (channel, payload) {
+    if (channel === "quit-approval-request" && request === null &&
+        payload?.reason === "window-close" && payload.id === initial.lastRequestId + 1) {
+      const state = __shutdown.state();
+      if (this !== wc || state.pendingId !== payload?.id ||
+          payload.gen !== initial.rendererGeneration ||
+          state.rendererPageSession !== initial.rendererPageSession) {
+        throw new Error("Ordinary approval observation has a different owner or request");
+      }
+      request = payload;
+    }
+    return Reflect.apply(originalSend, this, arguments);
+  };
+  const emit = function (channel, event, payload) {
+    if (channel === "quit-approval-response" && request && !ingress &&
+        !released && !retired && ownsEvent(event) &&
+        payload?.id === request.id && payload.gen === request.gen) {
+      const state = __shutdown.state();
+      if (state.pendingId === request.id &&
+          state.rendererGeneration === request.gen &&
+          state.rendererPageSession === initial.rendererPageSession) {
+        ingress = { receiver: this, args: Array.from(arguments), payload };
+        return true;
+      }
+    }
+    return Reflect.apply(originalEmit, this, arguments);
+  };
+  const restoreSend = replaceMethod(wc, "send", send);
+  let restoreEmit;
+  try {
+    restoreEmit = replaceMethod(ipcMain, "emit", emit);
+  } catch (error) {
+    restoreSend();
+    throw error;
+  }
+  return {
+    get request() { return request; },
+    get response() { return ingress?.payload || null; },
+    ownsEvent,
+    snapshot: () => ({ request, captured: !!ingress, released, retired,
+      restored, restorationAttempted }),
+    release() {
+      const state = __shutdown.state();
+      if (!ingress || released || retired || !ownsEvent(ingress.args[1]) ||
+          state.pendingId !== request.id || state.rendererGeneration !== request.gen ||
+          state.rendererPageSession !== initial.rendererPageSession) {
+        throw new Error("Ordinary approval cannot be released twice or on another attempt");
+      }
+      released = true;
+      return Reflect.apply(originalEmit, ingress.receiver, ingress.args);
+    },
+    retire(reason) {
+      if (!ingress || released || retired || typeof reason !== "string" || !reason) {
+        throw new Error("Ordinary approval cannot be retired twice or without a reason");
+      }
+      retired = reason;
+    },
+    restore() {
+      if (restorationAttempted) return;
+      restorationAttempted = true;
+      const failures = [];
+      try {
+        if (wc.send !== send) throw new Error("Ordinary request observation ownership changed");
+        restoreSend();
+      } catch (error) { failures.push(error); }
+      try {
+        if (ipcMain.emit !== emit) throw new Error("Ordinary ingress observation ownership changed");
+        restoreEmit();
+      } catch (error) { failures.push(error); }
+      restored = failures.length === 0;
+      if (failures.length) {
+        throw new AggregateError(failures, "Ordinary approval observation restoration failed");
+      }
+    },
+    dispose() {
+      if (ingress && !released && !retired) retired = "ordinary fixture cleanup";
+      this.restore();
+    },
+  };
+}
+
+async function editOrdinaryShutdownFixture(exec, marker) {
+  if (typeof marker !== "string" || !marker.trim()) {
+    throw new Error("Ordinary shutdown input needs a nonempty edit marker");
+  }
+  await exec(`(() => {
+    if (!window.CustomTabs.__inEditMode()) document.getElementById('toggleEdit').click();
+    return true;
+  })()`);
+  if (!await waitForCondition(exec, `
+    window.CustomTabs.__inEditMode() && window.markdownEditor &&
+    document.body.inert === false &&
+    !window.markdownEditor.readOnly &&
+    window.markdownEditor.value === window.CustomTabs.getActiveTab().content`, 8000)) {
+    throw new Error("Ordinary shutdown edit did not reach the live current editor");
+  }
+  return exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    const editor = window.markdownEditor;
+    const before = {
+      tabId: tab.id, name: tab.filename, cache: tab.content, baseline: tab.originalContent,
+    };
+    editor.value += ${JSON.stringify(`\n${marker}\n`)};
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    if (editor.value === before.cache || tab.content !== before.cache ||
+        tab.originalContent !== before.baseline || editor.readOnly || document.body.inert) {
+      throw new Error('Ordinary shutdown input did not retain independent live and cache witnesses');
+    }
+    return {
+      ...before, live: editor.value, cacheAfter: tab.content,
+      baselineAfter: tab.originalContent,
+      cachedClean: tab.content === tab.originalContent,
+      editorReadOnly: editor.readOnly,
+    };
+  })()`);
+}
+
+async function switchOrdinaryShutdownFixture(exec, tabId, paintMarker) {
+  return exec(`(async () => {
+    const withCleanup = ${withOrdinaryShutdownCleanup.toString()};
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'renderMarkdown');
+    const original = window.renderMarkdown;
+    const renders = [];
+    const observe = function (...args) {
+      const promise = Reflect.apply(original, this, args);
+      renders.push(promise);
+      return promise;
+    };
+    window.renderMarkdown = observe;
+    return withCleanup(async () => {
+      await window.CustomTabs.switchToTab(${JSON.stringify(tabId)});
+      if (renders.length !== 1) throw new Error('Ordinary switch did not start one real render');
+      await renders[0];
+      await window.CustomTabs.settleSessionLayout();
+      const tab = window.CustomTabs.getActiveTab();
+      if (tab?.id !== ${JSON.stringify(tabId)} ||
+          !document.getElementById('viewer').textContent.includes(${JSON.stringify(paintMarker)})) {
+        throw new Error('Ordinary switch did not paint its actual selected document');
+      }
+      return { tabId: tab.id, filePath: tab.filePath, content: tab.content };
+    }, [() => {
+      if (window.renderMarkdown !== observe) {
+        throw new Error('Ordinary switch render observation ownership changed');
+      }
+      if (descriptor) Object.defineProperty(window, 'renderMarkdown', descriptor);
+      else delete window.renderMarkdown;
+    }]);
+  })()`);
+}
+
+async function captureOrdinaryShutdownDiscards(exec, phase) {
+  const captured = await exec(`(() => {
+    const tabs = window.CustomTabs;
+    if (tabs.isDocumentFrozen()) throw new Error('Ordinary fixture retirement is still frozen');
+    const selected = tabs.getActiveTabId();
+    const editing = tabs.__inEditMode();
+    if (editing && !window.markdownEditor) {
+      throw new Error('Ordinary fixture retirement cannot read the active editor');
+    }
+    const normalize = value => value.replace(/\\r\\n?/g, '\\n');
+    return tabs.getTabs().map(tab => {
+      const owner = tabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const content = selected === tab.id
+        ? editing ? window.markdownEditor.value : window.originalMarkdown
+        : tab.content;
+      const state = tabs.__documentState(tab);
+      if (typeof content !== 'string' || typeof tab.originalContent !== 'string') {
+        throw new Error('Ordinary fixture retirement has no readable live text');
       }
       return {
-        alpha: {
-          path: fileQ1,
-          pathKey: nativePathKey(fs.realpathSync.native(fileQ1)),
-          bytes: alphaBytes.toString("base64"),
-          content: alphaBytes.toString("utf8"),
-        },
-        beta: {
-          path: fileQ2,
-          pathKey: nativePathKey(fs.realpathSync.native(fileQ2)),
-          bytes: betaBytes.toString("base64"),
-          content: betaBytes.toString("utf8"),
-        },
-        rendererGeneration,
+        tabId: tab.id, filePath: tab.filePath, owner, content,
+        needsDiscard: state.dirty || normalize(content) !== normalize(tab.originalContent),
       };
-    } catch (error) {
-      return {
-        setupError: "clean-close fixture could not capture real fixture bytes and canonical paths: " +
-          String(error && error.message || error),
-      };
+    });
+  })()`);
+  for (const tab of captured) {
+    if (typeof tab.filePath !== "string" || !path.isAbsolute(tab.filePath)) {
+      throw new Error(`${phase} cannot retire a non-file fixture`);
     }
-  })();
-  const jsQ1 = JSON.stringify(fileQ1);
-  const jsQ2 = JSON.stringify(fileQ2);
+    const relative = path.relative(dir, tab.filePath);
+    if (!relative || path.isAbsolute(relative) ||
+        relative === ".." || relative.startsWith(`..${path.sep}`)) {
+      throw new Error(`${phase} cannot discard a document outside the test fixture directory`);
+    }
+  }
+  return captured.filter(tab => tab.needsDiscard).map(
+    ({ needsDiscard, ...tab }) => ({
+      ...tab,
+      reason: `${phase}: discard only this captured ordinary test fixture`,
+    }),
+  );
+}
 
+async function retireOrdinaryShutdownFixtures(exec, phase) {
+  const expectedDiscards = await captureOrdinaryShutdownDiscards(exec, phase);
+  const outcome = await closeOwnedFixtureTabs(exec, phase, { expectedDiscards });
+  await exec("window.CustomTabs.settleSessionLayout()");
+  return outcome;
+}
+
+async function waitForOrdinaryShutdownContinuation(reason, afterId) {
+  let observed = null;
+  const invoked = await waitUntil(() => {
+    observed = __shutdown.timing.state().requests.find(record =>
+      record.id > afterId && record.reason === reason &&
+      Number.isFinite(record.continuationInvokedAt)) || null;
+    return observed !== null;
+  }, 10000);
+  if (!invoked) {
+    throw new Error(`The actual ${reason} continuation did not enter after request ${afterId}`);
+  }
+  return observed;
+}
+
+async function observeOrdinaryShutdownFixtures(exec) {
+  return exec(`(() => {
+    const tabs = window.CustomTabs;
+    const pageSession = window.getReloadRequestSession();
+    const viewer = document.getElementById('viewer');
+    return {
+      tabs: tabs.getTabs().map(tab => ({
+        id: tab.id, filePath: tab.filePath, content: tab.content,
+        original: tab.originalContent, dirty: tab.hasUnsavedChanges,
+        descriptor: tabs.getDocumentDescriptor(tab.id),
+        owner: tabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession),
+      })),
+      dirty: tabs.__dirtyTabNames(),
+      activeId: tabs.getActiveTabId(),
+      activeDomIds: Array.from(document.querySelectorAll('.tab.active'),
+        element => element.dataset.tabId),
+      currentFilePath: window.currentFilePath,
+      originalMarkdown: window.originalMarkdown,
+      editing: tabs.__inEditMode(),
+      editorText: tabs.__inEditMode() ? window.markdownEditor.value : null,
+      headings: viewer ? Array.from(viewer.querySelectorAll('h1'),
+        element => element.textContent.trim()) : null,
+      paragraphs: viewer ? Array.from(viewer.querySelectorAll('p'),
+        element => element.textContent.trim()) : null,
+    };
+  })()`);
+}
+
+async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = null) {
+  const fileQ1 = path.join(dir, "quit-alpha.md");
+  const fileQ2 = path.join(dir, "quit-beta.md");
+  const impostorFile = path.join(dir, "ordinary-shutdown-impostor.html");
+  const updateArtifact = path.join(dir, "ordinary-update-fixture.bin");
+  write(fileQ1, "# Quit Alpha\n\nQ_ALPHA\n");
+  write(fileQ2, "# Quit Beta\n\nQ_BETA\n");
+  write(impostorFile, '<!doctype html><meta charset="utf-8"><title>impostor</title>');
+  write(updateArtifact, "Ordinary installed update fixture\n");
+  const cleanCloseFixtureInputs = {
+    alpha: {
+      path: fileQ1,
+      pathKey: nativePathKey(fs.realpathSync.native(fileQ1)),
+      content: fs.readFileSync(fileQ1, "utf8"),
+    },
+    beta: {
+      path: fileQ2,
+      pathKey: nativePathKey(fs.realpathSync.native(fileQ2)),
+      content: fs.readFileSync(fileQ2, "utf8"),
+    },
+  };
+  const jsQ1 = JSON.stringify(fileQ1);
   const rig = shutdownRig(win);
+  let baseUpdaterBranchBorrow = null;
   const wc = win.webContents;
+  const requestCounterOwner = require("node:crypto").randomUUID();
+  const dialogTails = [];
+  const rendererTails = [];
+  const heldDialogs = [];
+  const ownedHolds = [];
+  let bodyError = null;
+  let counterPageSession = null;
+  const timingWasEnabled = __shutdown.timing.state().enabled;
+  let ownedQuestions = null;
+  let restoreOrdinaryEmergencyGuard = null;
+  let readinessFixture = null;
+  let automaticUpdatesAvailable = null;
   let installs = 0;
   let installThrows = false;
-  let installDefersQuit = false;
+  let installEmitsPublicCommit = false;
   let updaterModule = null;
   let restoreInstall = null;
   let restoreUpdaterLatch = null;
@@ -39963,11 +40375,111 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
   const countPublicUpdateCommit = () => {
     publicUpdateCommitSignals += 1;
   };
+  const openCleanFixtures = async () => {
+    const alpha = await openShutdownLifecycleFixture(
+      exec, fileQ1, cleanCloseFixtureInputs.alpha.content, "Q_ALPHA");
+    const alphaWitness = await observeOrdinaryShutdownFixtures(exec);
+    const beta = await openShutdownLifecycleFixture(
+      exec, fileQ2, cleanCloseFixtureInputs.beta.content, "Q_BETA");
+    const betaWitness = await observeOrdinaryShutdownFixtures(exec);
+    return { alpha, alphaWitness, beta, betaWitness };
+  };
+  // This is disposable fixture retirement, not evidence that Save or shutdown
+  // discarded an edit. The supplier validates the actual ordinary question.
+  const restoreCleanDocuments = async () => {
+    await joinDialogs();
+    const state = __shutdown.state();
+    if (state.pendingId || state.commitPendingId ||
+        state.shutdownPendingContinuationCount !== 0) {
+      throw new Error("Ordinary fixture transition started before its consuming attempt settled");
+    }
+    const freeze = await exec("window.CustomTabs.__shutdownFreeze()");
+    if (freeze.frozen) {
+      if (!state.authorized) {
+        throw new Error("Ordinary fixture transition found an unauthorised retained freeze");
+      }
+      const selectedPath = await exec("window.CustomTabs.getActiveTab()?.filePath");
+      const fixture = Object.values(cleanCloseFixtureInputs).find(
+        entry => entry.path === selectedPath);
+      if (!fixture) throw new Error("Ordinary frozen transition does not own its selected fixture");
+      __shutdown.reset();
+      if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 5000)) {
+        throw new Error("Ordinary fixture transition did not receive the Main thaw");
+      }
+      const generation = __shutdown.state().rendererGeneration;
+      wc.reload();
+      if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
+          __shutdown.state().rendererGeneration > generation, 20000)) {
+        throw new Error("Ordinary fixture transition did not reach a replacement page");
+      }
+      await settleShutdownLifecycleRestore(exec, fixture.path, fixture.content,
+        fixture.path === fileQ1 ? "Q_ALPHA" : "Q_BETA");
+    }
+    await retireOrdinaryShutdownFixtures(exec, "ordinary shutdown case transition");
+    __shutdown.reset();
+    if (!freeze.frozen && (state.renderer !== "ready" || freeze.deferredOperationsDropped)) {
+      const generation = __shutdown.state().rendererGeneration;
+      wc.reload();
+      if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
+          __shutdown.state().rendererGeneration > generation, 20000)) {
+        throw new Error("Ordinary fixture transition did not restore an empty ready page");
+      }
+      await boundedDialogWork(exec(`(async () => {
+        const deadline = Date.now() + 8000;
+        while (Date.now() < deadline) {
+          try {
+            await window.CustomTabs.settleSessionLayout();
+            if (window.CustomTabs.getTabs().length !== 0) {
+              throw new Error('Ordinary replacement restored unexpected retired tabs');
+            }
+            return true;
+          } catch (error) {
+            if (error.message !== 'The open tabs are still awaiting document restore') throw error;
+          }
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        throw new Error('Ordinary empty replacement layout did not settle');
+      })()`), "ordinary empty replacement layout", 10000);
+    }
+    await openCleanFixtures();
+    const witness = await observeOrdinaryShutdownFixtures(exec);
+    return { ...witness, tabs: witness.tabs.length };
+  };
+  const ownApprovalHold = () => {
+    const hold = holdOrdinaryShutdownApproval(win);
+    ownedHolds.push(hold);
+    return hold;
+  };
+  const ownCommitHold = () => {
+    const hold = holdDeadlineCommitIngress(win);
+    ownedHolds.push(hold);
+    return hold;
+  };
+  const holdDialog = () => {
+    let resolve;
+    let settled = false;
+    const promise = new Promise(done => { resolve = done; });
+    const held = {
+      promise,
+      get settled() { return settled; },
+      settle(answer) {
+        if (settled) throw new Error("Ordinary held dialog was answered twice");
+        settled = true;
+        resolve(answer);
+      },
+    };
+    heldDialogs.push(held);
+    return held;
+  };
+  const joinDialogs = async () => {
+    await Promise.all(dialogTails);
+  };
+  const resetOrdinaryRig = async () => {
+    await joinDialogs();
+    rig.reset();
+  };
   try {
-    // TRAP: the updater module costs ~175ms to require and main.js loads it on
-    // first use only (test-startup-perf.js pins that). Nothing in this
-    // protocol may pull it in early - so this is checked BEFORE the suite
-    // itself requires it below.
+    baseUpdaterBranchBorrow = createBaseUpdaterBranchBorrow();
     check(
       "the shutdown protocol has not pulled the updater module in behind the lazy load",
       !Object.keys(require.cache).some((p) =>
@@ -39977,503 +40489,114 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
         .filter((p) => p.includes("electron-updater"))
         .join(", "),
     );
+    if (!timingWasEnabled) __shutdown.timing.enable();
+    ownedQuestions = installOrdinaryShutdownQuestions(win, rig, dialogTails);
+    restoreOrdinaryEmergencyGuard = replaceMethod(dialog, "showMessageBox", (...args) =>
+      unexpectedDialog("ordinary shutdown emergency fallback", args.at(-1)));
     updaterModule = require("electron-updater");
-    // Model electron-updater's real, protected latch. Its BaseUpdater path
-    // silently declines a second quitAndInstall() call when this is already
-    // true, so omitting it makes a mock prove the opposite of production.
     const updaterLatchDescriptor = Object.getOwnPropertyDescriptor(
-      updaterModule.autoUpdater,
-      "quitAndInstallCalled",
-    );
+      updaterModule.autoUpdater, "quitAndInstallCalled");
     restoreUpdaterLatch = () => {
       if (updaterLatchDescriptor) {
-        Object.defineProperty(
-          updaterModule.autoUpdater,
-          "quitAndInstallCalled",
-          updaterLatchDescriptor,
-        );
+        Object.defineProperty(updaterModule.autoUpdater, "quitAndInstallCalled",
+          updaterLatchDescriptor);
       } else {
         delete updaterModule.autoUpdater.quitAndInstallCalled;
       }
     };
-    // In some electron-updater versions this protected field is inherited
-    // behind an accessor. Define an own value so the mock models the exact
-    // boolean main.js reads rather than silently assigning a no-op.
-    setUpdaterLatch = (value) =>
+    setUpdaterLatch = value =>
       Object.defineProperty(updaterModule.autoUpdater, "quitAndInstallCalled", {
-        value,
-        writable: true,
-        configurable: true,
-        enumerable: false,
+        value, writable: true, configurable: true, enumerable: false,
       });
     setUpdaterLatch(false);
     electronAutoUpdater.on("before-quit-for-update", countPublicUpdateCommit);
-    restoreInstall = replaceMethod(
-      updaterModule.autoUpdater,
-      "quitAndInstall",
-      () => {
-        baseUpdaterBranchBorrow.recordQuitAndInstall();
-        installs += 1;
-        if (installThrows) throw new Error("installer spawn failed (test)");
-        setUpdaterLatch(true);
-        if (installDefersQuit) {
-          // This is Electron's PUBLIC autoUpdater event, not an event invented
-          // on electron-updater's mock. It is the product's documented commit
-          // boundary between the void call and the delayed lifecycle quit.
-          setUpdaterLatch(true);
-          electronAutoUpdater.emit("before-quit-for-update");
-          app.emit("before-quit", guardEvent());
-        }
-      },
-    );
-    // A known-clean two-tab document set. Earlier scenarios leave edits and
-    // edit sessions behind, and closeTab() asks about a dirty tab through a
-    // real window.confirm - which would block executeJavaScript forever - so
-    // the teardown answers for itself until every close settles.
-    const shutdownFixtureTeardown = await exec(`
-      (async () => {
-        const realConfirm = window.confirm;
-        const confirmStub = () => true;
-        let closeAllStarted = false;
-        let closeAllSettled = false;
-        window.confirm = confirmStub;
-        try {
-          const tabs = window.CustomTabs.getTabs().slice();
-          const activeId = window.CustomTabs.getActiveTabId();
-          const closeAll = (async () => {
-            for (const tab of tabs.filter(t => t.id !== activeId)
-              .concat(tabs.filter(t => t.id === activeId))) {
-              await window.CustomTabs.closeTab(tab.id);
-            }
-          })();
-          closeAllStarted = true;
-          // Do not restore the native confirm on the deadline: closeTab() can
-          // still reach a later dirty tab, where the native modal would block
-          // the renderer forever. The settlement handler owns restoration.
-          const closeAllOutcome = closeAll.then(
-            () => ({ settled: true, error: null }),
-            error => ({
-              settled: true,
-              error: String(error && error.message ? error.message : error),
-            }),
-          );
-          void closeAllOutcome.then(() => {
-            closeAllSettled = true;
-            if (window.confirm === confirmStub) window.confirm = realConfirm;
-          });
-          let timeoutId;
-          const outcome = await Promise.race([
-            closeAllOutcome,
-            new Promise(resolve => {
-              timeoutId = setTimeout(() => resolve({ timedOut: true }), 8000);
-            }),
-          ]);
-          clearTimeout(timeoutId);
-          if (outcome.timedOut) {
-            throw new Error(
-              "shutdown fixture tab cleanup timed out before closeAll settled; confirm remains stubbed until settlement",
-            );
-          }
-          if (outcome.error) {
-            throw new Error("shutdown fixture tab cleanup failed: " + outcome.error);
-          }
-        } finally {
-          if (!closeAllStarted || closeAllSettled) window.confirm = realConfirm;
-        }
-        window.isEditMode = false;
-        localStorage.clear();
-        return {
-          remaining: window.CustomTabs.getTabs().map(t => ({
-            id: t.id,
-            dirty: t.hasUnsavedChanges,
-          })),
-          dirty: window.CustomTabs.__dirtyTabNames(),
-          closeAllSettled,
-          confirmRestored: window.confirm === realConfirm,
-        };
-      })()
-    `);
-    // A witness for the REQUEST half of the round trip. Without it "the window
-    // closed and nothing was asked" cannot tell a renderer that answered
-    // "clean" apart from a guard that never asked at all.
-    await exec(`
-      window.__quitRequestCount = 0;
-      require('electron').ipcRenderer.on('quit-approval-request', () => { window.__quitRequestCount++; });
-      null;
-    `);
-    // EVERY DOCUMENT STORE, THROUGH THE PATHS THE PRODUCT USES.
-    //
-    // A document is held in three places at once: the tab's cache
-    // (`tab.content`, an accessor that maintains the dirty state), the ACTIVE
-    // document's live copy (`window.originalMarkdown` in view mode, the
-    // textarea in edit mode), and the on-disk baseline (`tab.originalContent`).
-    // A scenario that leaves an edit in ANY of them hands it to the next one:
-    // the shutdown fold pulls the live copy into the cache, so a mutation left
-    // in `window.originalMarkdown` becomes a dirty tab several assertions
-    // later, in a scenario that never touched it. Measured exactly that way -
-    // the freeze block deliberately leaves a live-copy mutation behind, and the
-    // window-all-closed cascade three assertions later then found the document
-    // dirty and asked a second question.
-    //
-    // Nothing here reaches into private state: it writes the same fields the
-    // product writes, and then asks the PRODUCT whether anything is unsaved.
-    const restoreCleanDocuments = () =>
-      exec(`
-        (() => {
-          for (const tab of window.CustomTabs.getTabs()) {
-            tab.content = tab.originalContent;
-            tab.hasUnsavedChanges = false;
-          }
-          const active = window.CustomTabs.getActiveTab();
-          const baseline = active ? active.originalContent : "";
-          window.originalMarkdown = baseline;
-          // The editor is the live copy while the split view is up, so leaving
-          // it holding an old edit is the same leak by another route.
-          if (window.markdownEditor && window.CustomTabs.__inEditMode()) {
-            window.markdownEditor.value = baseline;
-          }
-          return {
-            tabs: window.CustomTabs.getTabs().length,
-            editing: window.CustomTabs.__inEditMode(),
-            // Asked with the product's own function - the one the shutdown
-            // scan runs - so this cannot agree while the scan disagrees.
-            dirty: window.CustomTabs.__dirtyTabNames(),
-          };
-        })()
-      `);
+    restoreInstall = replaceMethod(updaterModule.autoUpdater, "quitAndInstall", () => {
+      baseUpdaterBranchBorrow.recordQuitAndInstall();
+      installs += 1;
+      if (installThrows) throw new Error("installer spawn failed (test)");
+      setUpdaterLatch(true);
+      if (installEmitsPublicCommit) {
+        electronAutoUpdater.emit("before-quit-for-update");
+        app.quit();
+      }
+    });
+    const shutdownFixtureTeardown = await retireOrdinaryShutdownFixtures(
+      exec, "before ordinary shutdown scenarios");
+    // Reset before admission, never after the new owners register baselines.
+    __shutdown.reset();
+    await exec(`(() => {
+      if (window.__ordinaryShutdownRequestCounter) {
+        throw new Error('Ordinary shutdown request observation is already owned');
+      }
+      const state = {
+        owner: ${JSON.stringify(requestCounterOwner)}, count: 0, off: null,
+      };
+      state.off = window.folia.onQuitApprovalRequest(() => { state.count += 1; });
+      window.__ordinaryShutdownRequestCounter = state;
+      return true;
+    })()`);
+    counterPageSession = __shutdown.state().rendererPageSession;
     if (consoleAttribution) {
-      await consoleAttribution.begin("shutdown-quit-alpha-beta-clean-open", {
-        alpha: cleanCloseFixtureInputs.alpha || null,
-        beta: cleanCloseFixtureInputs.beta || null,
-        setupError: cleanCloseFixtureInputs.setupError || null,
-      });
+      await consoleAttribution.begin("shutdown-quit-alpha-beta-clean-open",
+        cleanCloseFixtureInputs);
     }
     let cleanCloseFixture;
     try {
-      cleanCloseFixture = await exec(`
-      (async () => {
-        const ipc = require("electron").ipcRenderer;
-        const Buffer = require("buffer").Buffer;
-        const fixture = ${JSON.stringify(cleanCloseFixtureInputs)};
-        if (fixture.setupError) {
-          return { settled: false, setupError: fixture.setupError };
-        }
-        const expectedA = fixture.alpha;
-        const expectedB = fixture.beta;
-        const fileA = expectedA.path;
-        const fileB = expectedB.path;
-        const markerA = "Q_ALPHA";
-        const markerB = "Q_BETA";
-        const titleA = "Quit Alpha";
-        const titleB = "Quit Beta";
-        const readExactFile = (filePath) => {
-          try {
-            const bytes = Buffer.from(window.fs.readFileSync(filePath));
-            return {
-              error: null,
-              bytes: bytes.toString("base64"),
-              content: bytes.toString("utf8"),
-            };
-          } catch (error) {
-            return { error: String(error && error.message || error) };
-          }
-        };
-        const observe = (expected, marker, title) => {
-          const expectedPath = expected.path;
-          const tabs = window.CustomTabs.getTabs();
-          const activeTab = window.CustomTabs.getActiveTab();
-          const activeDomTabs = [...document.querySelectorAll(".tab.active")];
-          const viewer = document.querySelector("#viewer");
-          const viewerText = viewer ? viewer.textContent : "";
-          const viewerHeadingTexts = viewer
-            ? [...viewer.querySelectorAll("h1")].map(heading => heading.textContent.trim())
-            : [];
-          const viewerMarkerTexts = viewer
-            ? [...viewer.querySelectorAll("p")].map(paragraph => paragraph.textContent.trim())
-            : [];
-          const alphaFile = readExactFile(expectedA.path);
-          const betaFile = readExactFile(expectedB.path);
-          const file = expectedPath === expectedA.path ? alphaFile : betaFile;
-          let identity = null;
-          let pageSession = null;
-          let ownerSetupError = null;
-          if (!window.CustomTabs ||
-              typeof window.CustomTabs.getActiveDocumentIdentity !== "function") {
-            ownerSetupError = "getActiveDocumentIdentity public owner API is unavailable";
-          } else if (typeof window.getReloadRequestSession !== "function") {
-            ownerSetupError = "getReloadRequestSession public owner API is unavailable";
-          } else {
-            try {
-              pageSession = window.getReloadRequestSession();
-              if (typeof pageSession !== "string" || pageSession.length === 0) {
-                ownerSetupError = "getReloadRequestSession returned no page session";
-              } else if (activeTab) {
-                identity = window.CustomTabs.getActiveDocumentIdentity(
-                  activeTab.filePath,
-                  pageSession,
-                );
-                if (!identity) {
-                  ownerSetupError = "getActiveDocumentIdentity returned no active owner";
-                }
-              }
-            } catch (error) {
-              ownerSetupError = "public owner API failed: " +
-                String(error && error.message || error);
-            }
-          }
-          const tabForExpectedPath = tabs.filter(tab => tab.filePath === expectedPath);
-          return {
-            expectedPath,
-            marker,
-            title,
-            file,
-            pageSession,
-            ownerSetupError,
-            tabs: tabs.map(tab => ({
-              id: tab.id,
-              filePath: tab.filePath,
-              content: tab.content,
-              originalContent: tab.originalContent,
-              dirty: tab.hasUnsavedChanges,
-            })),
-            expectedTabIds: tabForExpectedPath.map(tab => tab.id),
-            activeId: window.CustomTabs.getActiveTabId(),
-            activeTabId: activeTab && activeTab.id,
-            activeTabPath: activeTab && activeTab.filePath,
-            activeTabContent: activeTab && activeTab.content,
-            activeTabOriginalContent: activeTab && activeTab.originalContent,
-            activeDomIds: activeDomTabs.map(tab => tab.dataset.tabId),
-            currentFilePath: window.currentFilePath,
-            originalMarkdown: window.originalMarkdown,
-            viewerPresent: !!viewer,
-            viewerContainsMarker: !!viewer && viewerText.includes(marker),
-            viewerContainsExpectedContent: !!viewer &&
-              viewerText.includes(marker) && viewerText.includes(title),
-            viewerHeadingTexts,
-            viewerMarkerTexts,
-            viewerHasExactHeadingMarkerStructure:
-              viewerHeadingTexts.length === 1 && viewerHeadingTexts[0] === title &&
-              viewerMarkerTexts.length === 1 && viewerMarkerTexts[0] === marker,
-            viewerContainsAlphaTitle: !!viewer && viewerText.includes(titleA),
-            viewerContainsAlphaMarker: !!viewer && viewerText.includes(markerA),
-            allTabsClean: tabs.every(tab => tab.hasUnsavedChanges === false) &&
-              window.CustomTabs.__dirtyTabNames().length === 0,
-            alphaFile,
-            betaFile,
-            alphaFileMatchesExpected: alphaFile.error === null &&
-              alphaFile.bytes === expectedA.bytes && alphaFile.content === expectedA.content,
-            betaFileMatchesExpected: betaFile.error === null &&
-              betaFile.bytes === expectedB.bytes && betaFile.content === expectedB.content,
-            fileMatchesExpected: file.error === null &&
-              file.bytes === expected.bytes && file.content === expected.content,
-            identity,
-            identityMatchesActive: ownerSetupError === null && !!activeTab &&
-              !!identity && Number.isSafeInteger(identity.tabId) &&
-              identity.tabId > 0 && identity.tabId === activeTab.id &&
-              Number.isSafeInteger(identity.documentGeneration) &&
-              identity.documentGeneration > 0 &&
-              identity.pageSession === pageSession &&
-              Number.isSafeInteger(identity.rendererGeneration) &&
-              identity.rendererGeneration === fixture.rendererGeneration &&
-              identity.pathKey === expected.pathKey,
-          };
-        };
-        const waitForWitness = async (expected, marker, title, predicate) => {
-          let witness = observe(expected, marker, title);
-          for (let attempt = 0; attempt < 50; attempt += 1) {
-            if (witness.ownerSetupError) {
-              return { settled: false, setupError: witness.ownerSetupError, witness };
-            }
-            if (predicate(witness)) {
-              return { settled: true, attempt, witness };
-            }
-            await new Promise(resolve => setTimeout(resolve, 20));
-            witness = observe(expected, marker, title);
-          }
-          return { settled: false, witness };
-        };
-        const aOpened = () => observe(expectedA, markerA, titleA);
-        ipc.send("open-file-path", { filePath: fileA });
-        const openA = await waitForWitness(expectedA, markerA, titleA, witness =>
-          witness.alphaFileMatchesExpected === true &&
-          witness.betaFileMatchesExpected === true &&
-          witness.fileMatchesExpected === true &&
-          witness.tabs.length === 1 && witness.expectedTabIds.length === 1 &&
-          witness.expectedTabIds[0] === witness.activeId &&
-          witness.activeTabId === witness.activeId &&
-          witness.activeTabPath === expectedA.path &&
-          witness.activeTabContent === expectedA.content &&
-          witness.activeTabOriginalContent === expectedA.content &&
-          witness.tabs[0].filePath === expectedA.path &&
-          witness.tabs[0].content === expectedA.content &&
-          witness.tabs[0].originalContent === expectedA.content &&
-          witness.tabs[0].dirty === false &&
-          witness.activeDomIds.length === 1 &&
-          witness.activeDomIds[0] === String(witness.activeId) &&
-          witness.currentFilePath === expectedA.path &&
-          witness.originalMarkdown === expectedA.content &&
-          witness.viewerPresent === true &&
-          witness.viewerContainsExpectedContent === true &&
-          witness.allTabsClean === true && witness.identityMatchesActive === true,
-        );
-        if (!openA.settled) {
-          return {
-            settled: false, setupError: openA.setupError,
-            error: openA.setupError ||
-              "clean-close fixture did not render the exact quit-alpha store state",
-            diagnostic: { openA, afterA: aOpened() },
-          };
-        }
-        ipc.send("open-file-path", { filePath: fileB });
-        const openB = await waitForWitness(expectedB, markerB, titleB, witness => {
-          const tabA = witness.tabs.filter(tab => tab.filePath === expectedA.path);
-          const tabB = witness.tabs.filter(tab => tab.filePath === expectedB.path);
-          const a = tabA[0];
-          const b = tabB[0];
-          return expectedA.path !== expectedB.path &&
-            expectedA.pathKey !== expectedB.pathKey &&
-            witness.alphaFileMatchesExpected === true &&
-            witness.betaFileMatchesExpected === true &&
-            witness.fileMatchesExpected === true && witness.tabs.length === 2 &&
-            tabA.length === 1 && tabB.length === 1 && a && b && a.id !== b.id &&
-            a.filePath === expectedA.path && a.content === expectedA.content &&
-            a.originalContent === expectedA.content && a.dirty === false &&
-            b.filePath === expectedB.path && b.content === expectedB.content &&
-            b.originalContent === expectedB.content && b.dirty === false &&
-            witness.expectedTabIds.length === 1 && witness.expectedTabIds[0] === b.id &&
-            witness.activeId === b.id && witness.activeTabId === b.id &&
-            witness.activeTabPath === expectedB.path &&
-            witness.activeTabContent === expectedB.content &&
-            witness.activeTabOriginalContent === expectedB.content &&
-            witness.activeDomIds.length === 1 &&
-            witness.activeDomIds[0] === String(b.id) &&
-            witness.currentFilePath === expectedB.path &&
-            witness.originalMarkdown === expectedB.content &&
-            witness.viewerPresent === true &&
-            witness.viewerContainsExpectedContent === true &&
-            witness.viewerHasExactHeadingMarkerStructure === true &&
-            witness.viewerContainsAlphaTitle === false &&
-            witness.viewerContainsAlphaMarker === false &&
-            witness.allTabsClean === true && witness.identityMatchesActive === true;
-        });
-        if (!openB.settled) {
-          return {
-            settled: false, setupError: openB.setupError,
-            error: openB.setupError ||
-              "clean-close fixture did not render the exact quit-beta store state",
-            diagnostic: { openA, openB },
-          };
-        }
-        const final = openB.witness;
-        const a = final.tabs.find(tab => tab.filePath === expectedA.path);
-        const b = final.tabs.find(tab => tab.filePath === expectedB.path);
-        return {
-          settled: true,
-          expected: { alpha: expectedA, beta: expectedB },
-          final: { ...final, a, b },
-          diagnostic: { openA, openB },
-        };
-      })()
-      `);
+      cleanCloseFixture = await openCleanFixtures();
     } finally {
       if (consoleAttribution) {
         await consoleAttribution.end({
-          settled: cleanCloseFixture ? cleanCloseFixture.settled === true : false,
-          setupError: cleanCloseFixture && cleanCloseFixture.setupError,
-          diagnostic: cleanCloseFixture && cleanCloseFixture.diagnostic,
+          settled: !!cleanCloseFixture,
+          diagnostic: cleanCloseFixture || null,
         });
       }
     }
-    const cleanCloseSetup = await exec(`(() => ({
-      tabs: window.CustomTabs.getTabs().map(t => ({
-        id: t.id, filePath: t.filePath, content: t.content,
-        original: t.originalContent, dirty: t.hasUnsavedChanges,
-      })),
-      dirty: window.CustomTabs.__dirtyTabNames(),
-      activeId: window.CustomTabs.getActiveTabId(),
-      currentFilePath: window.currentFilePath,
-      originalMarkdown: window.originalMarkdown,
-    }))()`);
+    const { alpha, alphaWitness, beta, betaWitness } = cleanCloseFixture;
+    const matchesTab = (tab, admitted, fixture) => !!tab &&
+      tab.id === admitted.tabId && tab.filePath === fixture.path &&
+      tab.content === fixture.content && tab.original === fixture.content &&
+      tab.dirty === false && tab.descriptor?.ref === admitted.descriptor.ref &&
+      tab.owner?.documentRef === admitted.owner.documentRef &&
+      tab.owner?.pathKey === fixture.pathKey &&
+      __shutdown.documentAdmissionIsCurrent(tab.descriptor.ref);
     check(
       "the native clean-close fixture has no dirty tabs after awaited teardown",
       shutdownFixtureTeardown.remaining.length === 0 &&
-        shutdownFixtureTeardown.dirty.length === 0 &&
-        shutdownFixtureTeardown.closeAllSettled === true &&
-        shutdownFixtureTeardown.confirmRestored === true &&
-        cleanCloseFixtureInputs.setupError === undefined && cleanCloseFixture &&
-        cleanCloseFixture.error === undefined && cleanCloseFixture.setupError === undefined &&
-        cleanCloseFixture.settled === true &&
-        cleanCloseFixture.expected.alpha.path !== cleanCloseFixture.expected.beta.path &&
-        cleanCloseFixture.expected.alpha.pathKey !== cleanCloseFixture.expected.beta.pathKey &&
-        cleanCloseFixture.final.tabs.length === 2 && cleanCloseFixture.final.a &&
-        cleanCloseFixture.final.b &&
-        cleanCloseFixture.final.a.id !== cleanCloseFixture.final.b.id &&
-        cleanCloseFixture.final.a.filePath === cleanCloseFixture.expected.alpha.path &&
-        cleanCloseFixture.final.a.content === cleanCloseFixture.expected.alpha.content &&
-        cleanCloseFixture.final.a.originalContent === cleanCloseFixture.expected.alpha.content &&
-        cleanCloseFixture.final.b.filePath === cleanCloseFixture.expected.beta.path &&
-        cleanCloseFixture.final.b.content === cleanCloseFixture.expected.beta.content &&
-        cleanCloseFixture.final.b.originalContent === cleanCloseFixture.expected.beta.content &&
-        cleanCloseFixture.final.activeTabContent === cleanCloseFixture.expected.beta.content &&
-        cleanCloseFixture.final.activeTabOriginalContent === cleanCloseFixture.expected.beta.content &&
-        cleanCloseFixture.final.activeId === cleanCloseFixture.final.b.id &&
-        cleanCloseFixture.final.activeDomIds.length === 1 &&
-        cleanCloseFixture.final.activeDomIds[0] === String(cleanCloseFixture.final.b.id) &&
-        cleanCloseFixture.final.currentFilePath === cleanCloseFixture.expected.beta.path &&
-        cleanCloseFixture.final.originalMarkdown === cleanCloseFixture.expected.beta.content &&
-        cleanCloseFixture.final.viewerContainsExpectedContent === true &&
-        cleanCloseFixture.final.viewerHasExactHeadingMarkerStructure === true &&
-        cleanCloseFixture.final.viewerContainsAlphaTitle === false &&
-        cleanCloseFixture.final.viewerContainsAlphaMarker === false &&
-        cleanCloseFixture.final.allTabsClean === true &&
-        cleanCloseFixture.final.alphaFileMatchesExpected === true &&
-        cleanCloseFixture.final.betaFileMatchesExpected === true &&
-        cleanCloseFixture.final.fileMatchesExpected === true &&
-        cleanCloseFixture.final.identityMatchesActive === true &&
-        cleanCloseSetup.tabs.length === 2 && cleanCloseSetup.tabs.every(tab =>
-          tab.content === tab.original && tab.dirty === false) &&
-        cleanCloseSetup.tabs.some(tab => tab.id === cleanCloseFixture.final.a.id &&
-          tab.filePath === cleanCloseFixture.expected.alpha.path &&
-          tab.content === cleanCloseFixture.expected.alpha.content &&
-          tab.original === cleanCloseFixture.expected.alpha.content) &&
-        cleanCloseSetup.tabs.some(tab => tab.id === cleanCloseFixture.final.b.id &&
-          tab.filePath === cleanCloseFixture.expected.beta.path &&
-          tab.content === cleanCloseFixture.expected.beta.content &&
-          tab.original === cleanCloseFixture.expected.beta.content) &&
-        cleanCloseSetup.dirty.length === 0 &&
-        cleanCloseSetup.activeId === cleanCloseFixture.final.b.id &&
-        cleanCloseSetup.currentFilePath === cleanCloseFixture.expected.beta.path &&
-        cleanCloseSetup.originalMarkdown === cleanCloseFixture.expected.beta.content &&
-        cleanCloseFixture.diagnostic.openA.settled === true &&
-        cleanCloseFixture.diagnostic.openA.witness.fileMatchesExpected === true &&
-        cleanCloseFixture.diagnostic.openA.witness.identityMatchesActive === true &&
-        cleanCloseFixture.diagnostic.openA.witness.activeTabContent ===
-          cleanCloseFixture.expected.alpha.content &&
-        cleanCloseFixture.diagnostic.openA.witness.activeTabOriginalContent ===
-          cleanCloseFixture.expected.alpha.content &&
-        cleanCloseFixture.diagnostic.openA.witness.originalMarkdown ===
-          cleanCloseFixture.expected.alpha.content &&
-        cleanCloseFixture.diagnostic.openA.witness.viewerContainsExpectedContent === true &&
-        cleanCloseFixture.diagnostic.openB.settled === true &&
-        cleanCloseFixture.diagnostic.openB.witness.fileMatchesExpected === true &&
-        cleanCloseFixture.diagnostic.openB.witness.tabs.length === 2 &&
-        cleanCloseFixture.diagnostic.openB.witness.viewerContainsExpectedContent === true &&
-        cleanCloseFixture.diagnostic.openB.witness.viewerHasExactHeadingMarkerStructure === true &&
-        cleanCloseFixture.diagnostic.openB.witness.viewerContainsAlphaTitle === false &&
-        cleanCloseFixture.diagnostic.openB.witness.viewerContainsAlphaMarker === false &&
-        cleanCloseFixture.diagnostic.openB.witness.identityMatchesActive === true,
-      JSON.stringify({
-        shutdownFixtureTeardown, cleanCloseFixtureInputs, cleanCloseFixture, cleanCloseSetup,
-      }),
+        alphaWitness.tabs.length === 1 && betaWitness.tabs.length === 2 &&
+        matchesTab(alphaWitness.tabs[0], alpha, cleanCloseFixtureInputs.alpha) &&
+        matchesTab(betaWitness.tabs.find(tab => tab.id === alpha.tabId),
+          alpha, cleanCloseFixtureInputs.alpha) &&
+        matchesTab(betaWitness.tabs.find(tab => tab.id === beta.tabId),
+          beta, cleanCloseFixtureInputs.beta) &&
+        alpha.tabId !== beta.tabId &&
+        alphaWitness.dirty.length === 0 && betaWitness.dirty.length === 0 &&
+        alphaWitness.activeId === alpha.tabId &&
+        betaWitness.activeId === beta.tabId &&
+        JSON.stringify(alphaWitness.activeDomIds) === JSON.stringify([String(alpha.tabId)]) &&
+        JSON.stringify(betaWitness.activeDomIds) === JSON.stringify([String(beta.tabId)]) &&
+        alphaWitness.currentFilePath === fileQ1 &&
+        betaWitness.currentFilePath === fileQ2 &&
+        alphaWitness.originalMarkdown === cleanCloseFixtureInputs.alpha.content &&
+        betaWitness.originalMarkdown === cleanCloseFixtureInputs.beta.content &&
+        (!alphaWitness.editing ||
+          alphaWitness.editorText === cleanCloseFixtureInputs.alpha.content) &&
+        (!betaWitness.editing ||
+          betaWitness.editorText === cleanCloseFixtureInputs.beta.content) &&
+        JSON.stringify(alphaWitness.headings) === JSON.stringify(["Quit Alpha"]) &&
+        JSON.stringify(betaWitness.headings) === JSON.stringify(["Quit Beta"]) &&
+        JSON.stringify(alphaWitness.paragraphs) === JSON.stringify(["Q_ALPHA"]) &&
+        JSON.stringify(betaWitness.paragraphs) === JSON.stringify(["Q_BETA"]) &&
+        fs.readFileSync(fileQ1, "utf8") === cleanCloseFixtureInputs.alpha.content &&
+        fs.readFileSync(fileQ2, "utf8") === cleanCloseFixtureInputs.beta.content,
+      JSON.stringify({ shutdownFixtureTeardown, cleanCloseFixtureInputs, cleanCloseFixture }),
     );
 
     // -- a clean close is still a CHECKED close, and completes -------------
-    __shutdown.reset();
-    rig.reset();
+    await resetOrdinaryRig();
     const cleanClose = guardEvent();
     win.emit("close", cleanClose);
     const cleanClosed = await waitUntil(() => rig.closes > 0);
-    const requestsSeen = await exec(`window.__quitRequestCount`);
+    const requestsSeen = await exec(`window.__ordinaryShutdownRequestCounter.count`);
     check(
       "a native close with nothing unsaved is held, checked with the renderer and then completed",
       cleanClose.prevented === true &&
@@ -40500,148 +40623,67 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       JSON.stringify({ prevented: secondClose.prevented, closes: rig.closes }),
     );
 
-    // ============================================================
-    // Two-phase commit: an answer is not a commit (F22)
-    // ============================================================
-    //
-    // THE GAP THIS CLOSES. The renderer's answer describes the document at one
-    // instant; main then defers the continuation to a later turn of the loop by
-    // design, and the reader can type in between. Re-checking the document
-    // GENERATION cannot see that - the same document with new text in it is the
-    // same generation - so the approval used to be acted on with nothing having
-    // looked at the document again. The commit phase re-reads it and refuses an
-    // answer the document has moved past.
-    __shutdown.reset();
-    rig.reset();
+    // Hold the real phase-one reply in Main, edit the actual live textarea,
+    // then release that same reply through its original handler.
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     rig.answer = 1;
     const beforeLateEdit = __shutdown.state().lastRequestId;
-    // A clean document, so the first question settles silently; the edit lands
-    // between the answer and the commit, which is the whole point.
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
     const lateEditText = "LATE EDIT MADE AFTER THE ANSWER WAS GIVEN";
-    // THE INJECTION HAS TO WIN THE RACE IT IS TESTING, DETERMINISTICALLY.
-    //
-    // `executeJavaScript` travels a different path from `webContents.send`, so
-    // an edit dispatched that way from an ORDINARY listener raced the commit and
-    // usually lost - the commit arrived first, the fold found nothing moved, and
-    // the test recorded a lost edit as a product failure. Measured: the commit
-    // was authorised and the close completed with the edit still sitting in the
-    // live copy, unfolded.
-    //
-    // Two changes make it exact. The listener is PREPENDED, so it runs before
-    // main.js's own response handler - which is what sends the commit - and the
-    // mutation travels on the SAME webContents.send channel as the commit, so
-    // Electron's own ordering guarantee puts it first. The renderer applies it
-    // synchronously to `window.originalMarkdown`, which is where a real
-    // view-mode edit lives, so what the commit then folds is a genuine edit made
-    // between the answer and the commit.
-    await exec(`
-      (() => {
-        const ipc = require("electron").ipcRenderer;
-        window.__f22LateEdits = 0;
-        ipc.removeAllListeners("__f22-test-live-edit");
-        ipc.on("__f22-test-live-edit", (event, text) => {
-          window.originalMarkdown = text;
-          window.__f22LateEdits += 1;
-        });
-        return true;
-      })()
-    `);
-    let lateEditInjected = false;
-    const injectLateEdit = () => {
-      // Fired the instant the renderer's answer reaches main and BEFORE the
-      // handler that turns it into a commit, which is exactly the window the
-      // old design could not see into.
-      if (lateEditInjected) return;
-      lateEditInjected = true;
-      try {
-        win.webContents.send("__f22-test-live-edit", lateEditText);
-      } catch (error) {
-        // Reported by the assertion below through lateEditApplied.
-      }
-    };
-    ipcMain.prependListener("quit-approval-response", injectLateEdit);
+    const lateHold = ownApprovalHold();
     let lateClose;
-    try {
+    let lateEditApplied;
+    let lateEditInjected = false;
+    await withOrdinaryShutdownCleanup(async () => {
       lateClose = guardEvent();
       win.emit("close", lateClose);
-      // The commit is refused, so the intent is raised again as a FRESH
-      // question - and this time the document is dirty, so it raises a dialog.
-      await waitUntil(() => rig.dialogs.length === 1, 10000);
-      await sleep(250);
-    } finally {
-      ipcMain.removeListener("quit-approval-response", injectLateEdit);
-    }
-    // THE SETUP CONTROL. "The edit never arrived" and "the edit arrived and was
-    // ignored" are the same failure to an assertion that only reads the end
-    // state, and the first of those is a broken test rather than a broken
-    // product. Counted in the renderer, by the renderer.
-    const lateEditApplied = await exec(`window.__f22LateEdits`);
+      if (!await waitUntil(() => lateHold.response !== null, 8000)) {
+        throw new Error("Ordinary late edit did not capture its genuine clean answer");
+      }
+      if (lateHold.response.dirtyFiles?.length !== 0 ||
+          lateHold.request.id !== __shutdown.state().pendingId) {
+        throw new Error("Ordinary late edit did not start from its exact clean request");
+      }
+      lateEditApplied = await editOrdinaryShutdownFixture(exec, lateEditText);
+      lateEditInjected = true;
+      lateHold.release();
+      if (!await waitUntil(() => rig.dialogs.length === 1 &&
+          rig.dialogs[0].response === 1 && __shutdown.state().pendingId === 0, 10000)) {
+        throw new Error("Ordinary late edit did not settle the real replacement question");
+      }
+    }, [() => lateHold.dispose()]);
     check(
       "the late edit really reached the renderer between the answer and the commit",
-      lateEditInjected === true && lateEditApplied === 1,
-      JSON.stringify({ lateEditInjected, lateEditApplied }),
+      lateEditInjected && lateEditApplied &&
+        lateEditApplied.live.includes(lateEditText) &&
+        lateEditApplied.cacheAfter === lateEditApplied.cache &&
+        lateEditApplied.baselineAfter === lateEditApplied.baseline &&
+        lateHold.snapshot().released && lateHold.snapshot().restored,
+      JSON.stringify({ lateEditApplied, hold: lateHold.snapshot() }),
     );
     const lateState = __shutdown.state();
-    const preservedLateEdit = await exec(
-      `window.CustomTabs.getActiveTab().content`,
-    );
+    const preservedLateEdit = await exec("window.CustomTabs.getActiveTab().content");
     check(
       "an edit made between the answer and the commit is caught, and the close asks again",
-      lateEditInjected &&
-        lateClose.prevented === true &&
+      lateClose.prevented === true &&
         lateState.commitRefusedCount >= 1 &&
-        // A refused commit raises the intent again rather than acting on it, so
-        // more than one request id was consumed for this one gesture.
         lateState.lastRequestId > beforeLateEdit + 1 &&
-        rig.dialogs.length === 1 &&
-        // Cancel: nothing closed, nothing authorised, and the edit is intact.
-        rig.closes === 0 &&
-        lateState.authorized === false &&
-        preservedLateEdit === lateEditText,
-      JSON.stringify({
-        lateEditInjected,
-        prevented: lateClose.prevented,
-        beforeLateEdit,
-        state: lateState,
-        dialogs: rig.dialogs.length,
-        closes: rig.closes,
-        preservedLateEdit,
-      }),
+        rig.dialogs.length === 1 && rig.closes === 0 &&
+        lateState.authorized === false && preservedLateEdit === lateEditApplied.live,
+      JSON.stringify({ lateEditApplied, lateState, preservedLateEdit, dialogs: rig.dialogs }),
     );
-    const freezeAfterRefusal = await exec(
-      `window.CustomTabs.__shutdownFreeze()`,
-    );
+    const freezeAfterRefusal = await exec("window.CustomTabs.__shutdownFreeze()");
     check(
       "a refused commit leaves the document editable rather than frozen",
-      freezeAfterRefusal &&
-        freezeAfterRefusal.frozen === false &&
-        freezeAfterRefusal.editorReadOnly === false,
+      freezeAfterRefusal.frozen === false && freezeAfterRefusal.editorReadOnly === false,
       JSON.stringify(freezeAfterRefusal),
     );
 
     // The ordinary path: nothing moves, the commit confirms, and the document
     // is frozen for the instant between the confirmation and the close.
-    __shutdown.reset();
-    rig.reset();
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
     const committedClose = guardEvent();
     win.emit("close", committedClose);
     const committedClosed = await waitUntil(() => rig.closes === 1, 10000);
@@ -40675,15 +40717,14 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     const lateViewMutation = await exec(`
       (() => {
         const before = window.CustomTabs.getActiveTab().content;
+        const liveBefore = window.originalMarkdown;
         window.originalMarkdown = "MUTATION ATTEMPTED AFTER THE COMMIT";
-        const ipc = require("electron").ipcRenderer;
-        const handler = ipc.listeners("quit-approval-request")[0];
-        // Drive the real fold, which is what a late shutdown scan would do.
-        window.CustomTabs.getTabs();
         const freeze = window.CustomTabs.__shutdownFreeze();
         return {
           wrapperInert: freeze.wrapperInert,
           contentBefore: before,
+          liveBefore,
+          liveAfter: window.originalMarkdown,
           contentAfter: window.CustomTabs.getActiveTab().content,
         };
       })()
@@ -40693,8 +40734,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       freezeAfterCommit &&
         freezeAfterCommit.wrapperInert === true &&
         lateViewMutation &&
-        // The live copy moved, and the cache did NOT follow it: the consent was
-        // taken against the earlier revision and nothing may be adopted past it.
+        lateViewMutation.liveAfter === lateViewMutation.liveBefore &&
         lateViewMutation.contentAfter === lateViewMutation.contentBefore,
       JSON.stringify({ freeze: freezeAfterCommit, lateViewMutation }),
     );
@@ -40761,7 +40801,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     const frozenSources = frozenMutationMatrix &&
       frozenMutationMatrix.after.freeze.mutationAttemptsBySource;
     check(
-      "the retained freeze refuses public setters, tab operations, keyboard commands, and IPC completion paths without advancing the document",
+      "the retained freeze refuses public mutations and hostile installed page-receiver packets without advancing the document",
       frozenMutationMatrix &&
         JSON.stringify(frozenMutationMatrix.after.tabs) === JSON.stringify(frozenMutationMatrix.before.tabs) &&
         frozenMutationMatrix.after.activeId === frozenMutationMatrix.before.activeId &&
@@ -40828,147 +40868,46 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       (frozenRestore.after.freeze.mutationAttemptsBySource["tab:switch"] || 0) ===
         (frozenRestore.before.freeze.mutationAttemptsBySource["tab:switch"] || 0);
 
-    // A Windows installer hand-off asks a later renderer question with this
-    // flag while its first, revision-bound commit remains authoritative. Drive
-    // that real CustomTabs IPC listener with a current generation and observe
-    // its reply through the real main-process channel; a retained request must
-    // not thaw the document merely because it is newer.
-    const retainedRequestId = 900000;
-    const retainedGeneration = await exec(
-      `window.ipcRenderer.invoke('quit-approval-generation')`,
-    );
-    let retainedReply = null;
-    const observeRetainedReply = (_event, data) => {
-      if (data && data.id === retainedRequestId) retainedReply = data;
-    };
-    ipcMain.on("quit-approval-response", observeRetainedReply);
-    try {
-      wc.send("quit-approval-request", {
-        id: retainedRequestId,
-        reason: "update-install",
-        gen: retainedGeneration,
-        retainFreeze: true,
-      });
-      await waitUntil(() => retainedReply !== null, 5000);
-    } finally {
-      ipcMain.removeListener("quit-approval-response", observeRetainedReply);
-    }
-    const retainedFreeze = await exec(`window.CustomTabs.__shutdownFreeze()`);
     check(
-      "a retained launch request leaves the committed document frozen",
-      retainedReply &&
-        retainedReply.gen === retainedGeneration &&
-        frozenRestorePreserved &&
-        retainedFreeze &&
-        retainedFreeze.frozen === true &&
-        retainedFreeze.editorReadOnly === true &&
-        retainedFreeze.wrapperInert === true,
-      JSON.stringify({
-        retainedGeneration,
-        retainedReply,
-        frozenRestore,
-        retainedFreeze,
-      }),
+      "a frozen saved-tab restore preserves the committed tabs and Main layout",
+      frozenRestorePreserved,
+      JSON.stringify(frozenRestore),
     );
-
-    // NO PERMANENTLY FROZEN UI. The preceding direct live-copy mutation was
-    // correctly refused while frozen, so it cannot also manufacture the dirty
-    // question this case needs. First exercise the retry-safe main-process
-    // thaw, wait for its real IPC delivery, then make a normal live edit and
-    // decline the ensuing close.
+    // The old id=900000 retainFreeze packet was not an installed handoff.
+    // Actual Main retainFreeze producer coverage remains a separate dependency.
     __shutdown.reset();
-    rig.reset();
+    await resetOrdinaryRig();
     rig.answer = 1;
     const resetThawed = await waitForCondition(
-      exec,
-      `!window.CustomTabs.isDocumentFrozen()`,
-      5000,
-    );
-    // The direct retained probe deliberately uses a high request id so the
-    // listener cannot replay a cached ordinary request. A fresh page restores
-    // its per-page sequence before the next native close.
-    // Do not run restoreTabs() while a shutdown fixture is being discarded:
-    // its persisted entries belong to the prior document and would make this
-    // sequence test depend on startup restoration. Recreate the two real
-    // fixture files immediately after the new renderer is ready instead.
-    await exec(`localStorage.clear(); null;`);
-    await __shutdown.seedDocumentSessionLayout({ entries: [], activeEntryId: null });
+      exec, "!window.CustomTabs.isDocumentFrozen()", 5000);
     const thawReloadGeneration = __shutdown.state().rendererGeneration;
     wc.reload();
     const thawedPageReady = await waitUntil(
-      () => {
-        const state = __shutdown.state();
-        return state.renderer === "ready" &&
-          state.rendererGeneration > thawReloadGeneration;
-      },
-      20000,
-    );
-    if (!thawedPageReady) {
-      throw new Error("thaw reload fixture did not reach a new renderer generation");
-    }
-    await exec(`
-      (() => {
-        const a = window.CustomTabs.createTab(
-          ${jsQ1},
-          window.fs.readFileSync(${jsQ1}, "utf8"),
-        );
-        const b = window.CustomTabs.createTab(
-          ${jsQ2},
-          window.fs.readFileSync(${jsQ2}, "utf8"),
-        );
-        window.CustomTabs.switchToTab(b.id);
-        return { a: a.id, b: b.id };
-      })()
-    `);
-    const thawEdit = await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        window.originalMarkdown = tab.content + "\\nEDIT_AFTER_RETRY_SAFE_THAW\\n";
-        return {
-          dirty: window.CustomTabs.__dirtyTabNames(),
-          editorReadOnly: window.markdownEditor && window.markdownEditor.readOnly,
-        };
-      })()
-    `);
+      () => __shutdown.state().renderer === "ready" &&
+        __shutdown.state().rendererGeneration > thawReloadGeneration, 20000);
+    if (!thawedPageReady) throw new Error("Ordinary thaw did not reach a replacement page");
+    await settleShutdownLifecycleRestore(exec, fileQ2,
+      cleanCloseFixtureInputs.beta.content, "Q_BETA");
+    const thawEdit = await editOrdinaryShutdownFixture(exec, "EDIT_AFTER_RETRY_SAFE_THAW");
     const thawClose = guardEvent();
     win.emit("close", thawClose);
-    const thawAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
-    await sleep(200);
-    const freezeAfterNewQuestion = await exec(
-      `window.CustomTabs.__shutdownFreeze()`,
-    );
+    const thawAsked = await waitUntil(() => rig.dialogs.length === 1 &&
+      rig.dialogs[0].response === 1 && __shutdown.state().pendingId === 0, 10000);
+    const freezeAfterNewQuestion = await exec("window.CustomTabs.__shutdownFreeze()");
     check(
       "a retry-safe thaw releases a committed freeze before a later dirty question",
-      resetThawed &&
-        thawedPageReady &&
-        thawAsked &&
-        thawEdit &&
-        thawEdit.dirty.length > 0 &&
-        thawEdit.editorReadOnly === false &&
-        freezeAfterNewQuestion &&
+      resetThawed && thawedPageReady && thawAsked &&
+        thawEdit.cachedClean && thawEdit.live !== thawEdit.cache &&
+        thawEdit.cacheAfter === thawEdit.cache && !thawEdit.editorReadOnly &&
         freezeAfterNewQuestion.editorReadOnly === false,
-      JSON.stringify({
-        resetThawed,
-        thawedPageReady,
-        thawAsked,
-        thawEdit,
-        freezeAfterNewQuestion,
-      }),
+      JSON.stringify({ resetThawed, thawedPageReady, thawAsked, thawEdit, freezeAfterNewQuestion }),
     );
     check(
       "a retry-safe thaw restores the document surface as well as the editor",
-      resetThawed &&
-        thawedPageReady &&
-        thawAsked &&
-        freezeAfterNewQuestion &&
+      resetThawed && thawedPageReady && thawAsked &&
         freezeAfterNewQuestion.frozen === false &&
         freezeAfterNewQuestion.wrapperInert === false,
-      JSON.stringify({
-        resetThawed,
-        thawedPageReady,
-        thawAsked,
-        freezeAfterNewQuestion,
-      }),
+      JSON.stringify({ resetThawed, thawAsked, freezeAfterNewQuestion }),
     );
 
     // THE REAL CASCADE. On Windows the approved X does not end there: the
@@ -40988,14 +40927,11 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     // declined close instead. Measured: one dialog, `settleWhy:"user"`, and a
     // second question exactly as the assertion says must not happen.
     //
-    // The restore writes the product's own stores - the tab caches, the live
-    // copy, the editor if the split view is up - and then asks the PRODUCT
-    // whether anything is unsaved. Nothing private is reset, so a real defect
-    // that leaves a document dirty still shows up here as a failure.
-    __shutdown.reset();
-    rig.reset();
-    rig.answer = 1;
+    // Retire the captured disposable owners and admit fresh physical files.
+    // This cleanup is not evidence that the earlier shutdown discarded edits.
     const beforeCascadeClean = await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    rig.answer = 1;
     check(
       "the freeze scenarios leave no edit behind in any document store",
       !!beforeCascadeClean &&
@@ -41022,15 +40958,15 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       }),
     );
     const beforeCascade = __shutdown.state().lastRequestId;
-    rig.reset();
+    await resetOrdinaryRig();
     rig.driveQuitLifecycle = true;
     app.emit("window-all-closed");
     await sleep(250);
     check(
       "an approved native close crosses the real window-all-closed cascade without a second question",
-      rig.quits === 1 &&
-        rig.quitEvents.length === 1 &&
-        rig.quitEvents[0].prevented === false &&
+      rig.quits === (actualHostPlatform === "darwin" ? 0 : 1) &&
+        rig.quitEvents.length === (actualHostPlatform === "darwin" ? 0 : 1) &&
+        (actualHostPlatform === "darwin" || rig.quitEvents[0].prevented === false) &&
         rig.dialogs.length === 0 &&
         __shutdown.state().lastRequestId === beforeCascade &&
         __shutdown.state().pendingId === 0,
@@ -41047,8 +40983,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     // The reader's newest work lives in window.originalMarkdown (view-mode
     // table/checkbox/note edits) until snapshotActiveTab() folds it into the
     // tab. A scan that skipped the snapshot would call this document clean.
-    __shutdown.reset();
-    rig.reset();
+    await resetOrdinaryRig();
     rig.answer = 1;
     // THE LIVE-ONLY EDIT IS CONSTRUCTED AT ITS OWN BOUNDARY. What this measures
     // is that a document whose ONLY unsaved text sits in the renderer's live
@@ -41057,19 +40992,14 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     // "the cache is clean" false and the assertion would report a defect that
     // belongs several scenarios upstream.
     const liveBase = await restoreCleanDocuments();
-    const live = await exec(`
-      (() => {
-        const t = window.CustomTabs.getActiveTab();
-        window.originalMarkdown = t.content + '\\n\\nLIVE_EDIT\\n';
-        return { name: t.filename, cachedClean: t.content === t.originalContent };
-      })()
-    `);
+    const live = await editOrdinaryShutdownFixture(exec, "LIVE_EDIT");
     const liveTabIds = await exec(
       `window.CustomTabs.getTabs().map(t => t.id).join(',')`,
     );
     check(
       "the reader's newest edit really is live-only, absent from the tab's own cache",
-      live.cachedClean === true &&
+      live.cachedClean === true && live.live !== live.cache &&
+        live.cacheAfter === live.cache && live.baselineAfter === live.baseline &&
         Array.isArray(liveBase.dirty) &&
         liveBase.dirty.length === 0,
       JSON.stringify({ live, liveBase }),
@@ -41127,24 +41057,24 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       JSON.stringify({ before: liveTabIds, after: tabsAfterCancel }),
     );
 
-    // -- a dirty BACKGROUND tab --------------------------------------------
-    // The active tab is clean again and the background tab's own
-    // hasUnsavedChanges flag says false - so only a content-against-original
-    // comparison across EVERY tab can find this.
-    __shutdown.reset();
-    rig.reset();
+    // Real input becomes background cache only after the actual switch/render.
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     rig.answer = 1;
-    const bg = await exec(`
-      (() => {
-        const active = window.CustomTabs.getActiveTab();
-        active.content = active.originalContent;
-        window.originalMarkdown = active.originalContent;
-        const other = window.CustomTabs.getTabs().find(t => t.id !== active.id);
-        other.content = other.originalContent + '\\nBACKGROUND_EDIT\\n';
-        other.hasUnsavedChanges = false;
-        return { active: active.filename, background: other.filename };
-      })()
-    `);
+    const backgroundEdit = await editOrdinaryShutdownFixture(exec, "BACKGROUND_EDIT");
+    const alphaTabId = await exec(`window.CustomTabs.getTabs().find(
+      tab => tab.filePath === ${jsQ1}).id`);
+    await switchOrdinaryShutdownFixture(exec, alphaTabId, "Q_ALPHA");
+    const bg = await exec(`(() => {
+      const active = window.CustomTabs.getActiveTab();
+      const other = window.CustomTabs.getTabs().find(tab => tab.id !== active.id);
+      if (other.content !== ${JSON.stringify(backgroundEdit.live)} ||
+          other.originalContent !== ${JSON.stringify(backgroundEdit.baseline)}) {
+        throw new Error('The real switch did not fold the background live edit');
+      }
+      other.hasUnsavedChanges = false;
+      return { active: active.filename, background: other.filename };
+    })()`);
     const bgClose = guardEvent();
     win.emit("close", bgClose);
     await waitUntil(() => rig.dialogs.length > 0);
@@ -41172,8 +41102,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     // Muted because the overlay's console.error IS the expected behaviour
     // here; the sentinel would otherwise report the suite's own deliberate
     // failure as a defect.
-    __shutdown.reset();
-    rig.reset();
+    await resetOrdinaryRig();
     rig.answer = 1;
     let blindClose;
     let blindAsked;
@@ -41255,14 +41184,15 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     // documents as taking seconds on a large document. Driven with a real
     // busy loop rather than a stranded request, so what is measured is
     // Chromium's hang detection reaching this protocol.
-    __shutdown.reset();
-    rig.reset();
+    await resetOrdinaryRig();
     rig.answer = 1;
-    exec(`
+    const hungProducer = exec(`
       const until = Date.now() + 7000;
       while (Date.now() < until) {}
       null;
-    `).catch(() => {});
+    `);
+    rendererTails.push(hungProducer);
+    const hungTask = hungProducer.then(() => null, error => error);
     await sleep(300);
     const hungClose = guardEvent();
     win.emit("close", hungClose);
@@ -41291,9 +41221,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       }),
     );
     // And the renderer that comes back is still the one that answers.
-    await waitForCondition(exec, `true`, 20000);
-    __shutdown.reset();
-    rig.reset();
+    const hungFailure = await hungTask;
+    if (hungFailure) throw hungFailure;
+    await resetOrdinaryRig();
     rig.answer = 1;
     const recoveredClose = guardEvent();
     win.emit("close", recoveredClose);
@@ -41306,16 +41236,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     );
 
     // -- more than one dirty document --------------------------------------
-    __shutdown.reset();
-    rig.reset();
+    await resetOrdinaryRig();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const active = window.CustomTabs.getActiveTab();
-        window.originalMarkdown = active.originalContent + '\\nBOTH_EDIT\\n';
-        return true;
-      })()
-    `);
+    await editOrdinaryShutdownFixture(exec, "BOTH_EDIT");
     const bothClose = guardEvent();
     win.emit("close", bothClose);
     await waitUntil(() => rig.dialogs.length > 0);
@@ -41349,8 +41272,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     );
 
     // -- two gestures, one question ----------------------------------------
-    __shutdown.reset();
-    rig.reset();
+    await restoreCleanDocuments();
+    await editOrdinaryShutdownFixture(exec, "INDEPENDENT_DIRTY_SHUTDOWN");
+    await resetOrdinaryRig();
     rig.answer = 0;
     const firstOfTwo = guardEvent();
     const secondOfTwo = guardEvent();
@@ -41373,8 +41297,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     );
 
     // -- Ctrl+Q shares the guard -------------------------------------------
-    __shutdown.reset();
-    rig.reset();
+    await restoreCleanDocuments();
+    await editOrdinaryShutdownFixture(exec, "INDEPENDENT_DIRTY_SHUTDOWN");
+    await resetOrdinaryRig();
     rig.answer = 1;
     win.webContents.sendInputEvent({
       type: "keyDown",
@@ -41410,8 +41335,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     );
 
     // -- an ordinary application quit, renderer alive ----------------------
-    __shutdown.reset();
-    rig.reset();
+    await restoreCleanDocuments();
+    await editOrdinaryShutdownFixture(exec, "INDEPENDENT_DIRTY_SHUTDOWN");
+    await resetOrdinaryRig();
     rig.answer = 1;
     const appQuit = guardEvent();
     app.emit("before-quit", appQuit);
@@ -41430,406 +41356,331 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       }),
     );
 
-    // -- an update install is a shutdown, and waits its turn ---------------
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    // Nothing has been downloaded yet, so the press cannot install anything
-    // and must not put a discard-your-changes question on screen for it.
-    const beforePreflight = __shutdown.state().lastRequestId;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await sleep(500);
-    check(
-      "an install press with nothing downloaded asks nothing and starts nothing",
-      installs === 0 &&
-        rig.dialogs.length === 0 &&
-        __shutdown.state().lastRequestId === beforePreflight,
-      JSON.stringify({
-        installs,
-        dialogs: rig.dialogs.length,
-        lastRequestId: __shutdown.state().lastRequestId,
-        beforePreflight,
-      }),
-    );
+    // Reset does not make the controller cold or grant download readiness.
+    // Keep the genuine initial public state before borrowing any providers.
+    const initialUpdateState = await exec("window.folia.getUpdateState()");
+    automaticUpdatesAvailable = actualHostPlatform !== "darwin" &&
+      initialUpdateState.manualOnly !== true;
+    if (!automaticUpdatesAvailable) {
+      check(
+        "ordinary shutdown observes the genuine manual-only updater boundary",
+        actualHostPlatform === "darwin" && initialUpdateState.manualOnly === true &&
+          initialUpdateState.canInstall === false,
+        JSON.stringify(initialUpdateState),
+      );
+      unavailable("ordinary shutdown automatic-update scenarios",
+        "the current updater is manual-only; ordinary close and quit checks still run");
+    } else {
+      await resetOrdinaryRig();
+      installs = 0;
+      if (!initialUpdateState.readyVersion && !initialUpdateState.canInstall) {
+        const beforePreflight = __shutdown.state().lastRequestId;
+        await exec("window.folia.installUpdate(); null");
+        await exec("window.folia.getVersion()");
+        check(
+          "an install press with nothing downloaded asks nothing and starts nothing",
+          installs === 0 && rig.dialogs.length === 0 &&
+            __shutdown.state().lastRequestId === beforePreflight,
+          JSON.stringify({ initialUpdateState, installs, dialogs: rig.dialogs, beforePreflight,
+            state: __shutdown.state() }),
+        );
+      } else {
+        unavailable("an install press with nothing downloaded asks nothing and starts nothing",
+          "this controller already remembers a ready download; reset does not clear it");
+      }
+      readinessFixture = createInstalledUpdaterFixture(
+        exec, updaterModule.autoUpdater, updateArtifact);
+      const prepareUpdateCase = async (label, { dirty = true } = {}) => {
+        await joinDialogs();
+        await restoreCleanDocuments();
+        await resetOrdinaryRig();
+        installs = 0;
+        setUpdaterLatch(false);
+        const edit = dirty ? await editOrdinaryShutdownFixture(exec, label) : null;
+        const prepared = await readinessFixture.prepare();
+        if (prepared.state.readyVersion !== prepared.candidate ||
+            prepared.state.canInstall !== true || !fs.statSync(updateArtifact).isFile()) {
+          throw new Error("Ordinary update did not retain its genuine ready candidate and artifact");
+        }
+        return { prepared, edit };
+      };
 
-    // Arm a downloaded update through the real updater event, which is the
-    // only thing that makes the Install button reachable in the product.
-    updaterModule.autoUpdater.emit("update-downloaded", {
-      version: "9.9.9",
-      downloadedFile: fileQ1,
-    });
-    await sleep(200);
+      // Cancel, retry and duplicate presses consume one prepared candidate.
+      await prepareUpdateCase("ORDINARY_INSTALL_CANCEL_RETRY");
+      const firstInstallDialog = holdDialog();
+      rig.answer = () => firstInstallDialog.promise;
+      await exec("window.folia.installUpdate(); null");
+      const installAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
+      check(
+        "an update install is deferred behind the same approval, installing nothing first",
+        installAsked && installs === 0 && rig.dialogs[0].pendingReason === "update-install" &&
+          rig.quits === 0,
+        JSON.stringify({ installs, dialogs: rig.dialogs, quits: rig.quits }),
+      );
+      firstInstallDialog.settle(1);
+      await joinDialogs();
+      if (!await waitUntil(() => __shutdown.state().pendingId === 0, 5000)) {
+        throw new Error("Cancelled ordinary install did not settle its real approval");
+      }
+      check(
+        "cancelling an update install installs nothing and leaves the app usable",
+        installs === 0 && __shutdown.state().authorized === false &&
+          __shutdown.state().pendingId === 0,
+        JSON.stringify({ installs, state: __shutdown.state() }),
+      );
+      rig.answer = 0;
+      const retryAfter = __shutdown.state().lastRequestId;
+      await exec("window.folia.installUpdate(); null");
+      await waitForOrdinaryShutdownContinuation("update-install", retryAfter);
+      const beforeRepeatedInstall = {
+        dialogs: rig.dialogs.length, lastRequestId: __shutdown.state().lastRequestId,
+      };
+      await exec("window.folia.installUpdate(); null");
+      await exec("window.folia.getVersion()");
+      check(
+        "an approved update installs exactly once, however often it is asked for",
+        installs === 1,
+        JSON.stringify({ installs, dialogs: rig.dialogs }),
+      );
+      check(
+        "a repeated install press is refused before it opens a second approval question",
+        rig.dialogs.length === beforeRepeatedInstall.dialogs &&
+          __shutdown.state().lastRequestId === beforeRepeatedInstall.lastRequestId,
+        JSON.stringify({ beforeRepeatedInstall, dialogs: rig.dialogs, state: __shutdown.state() }),
+      );
+      check(
+        "a repeated install press leaves no standing permission to close in silence",
+        installs === 1 && __shutdown.state().authorized === false,
+        JSON.stringify({ installs, state: __shutdown.state() }),
+      );
 
-    let releaseDialog = null;
-    rig.answer = () =>
-      new Promise((resolve) => {
-        releaseDialog = resolve;
-      });
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    const installAsked = await waitUntil(() => rig.dialogs.length > 0);
-    await sleep(200);
-    check(
-      "an update install is deferred behind the same approval, installing nothing first",
-      installAsked &&
-        installs === 0 &&
-        rig.dialogs[0].pendingReason === "update-install" &&
-        rig.quits === 0,
-      JSON.stringify({
-        installs,
-        reason: rig.dialogs.length ? rig.dialogs[0].pendingReason : null,
-        quits: rig.quits,
-      }),
-    );
-    if (releaseDialog) releaseDialog(1);
-    await sleep(300);
-    check(
-      "cancelling an update install installs nothing and leaves the app usable",
-      installs === 0 &&
-        __shutdown.state().authorized === false &&
-        __shutdown.state().pendingId === 0,
-      JSON.stringify({ installs, state: __shutdown.state() }),
-    );
+      // This actor emits the actual public boundary synchronously. It does not
+      // claim to model BaseUpdater's delayed lifecycle callback.
+      await prepareUpdateCase("ORDINARY_PUBLIC_UPDATE_BOUNDARY");
+      publicUpdateCommitSignals = 0;
+      installEmitsPublicCommit = true;
+      rig.driveQuitLifecycle = true;
+      rig.answer = 0;
+      await exec("window.folia.installUpdate(); null");
+      if (!await waitUntil(() => rig.quits === 2, 10000)) {
+        throw new Error("Ordinary public updater boundary did not reach its approved quit");
+      }
+      await joinDialogs();
+      installEmitsPublicCommit = false;
+      check(
+        "an installed updater commit always raises one distinct fresh approval before quitting",
+        installs === 1 && rig.quits === 2 && rig.dialogs.length === 2 &&
+          rig.dialogs[0].pendingReason === "update-install" &&
+          rig.dialogs[1].pendingReason === "update-install" &&
+          rig.dialogs[0].requestId !== rig.dialogs[1].requestId &&
+          publicUpdateCommitSignals === 1 && rig.quitEvents.length === 2 &&
+          rig.quitEvents[0].prevented === true &&
+          rig.quitEvents[1].prevented === false,
+        JSON.stringify({ installs, quits: rig.quits, dialogs: rig.dialogs,
+          publicUpdateCommitSignals, quitEvents: rig.quitEvents }),
+      );
 
-    rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await waitUntil(() => installs > 0);
-    const beforeRepeatedInstall = {
-      dialogs: rig.dialogs.length,
-      lastRequestId: __shutdown.state().lastRequestId,
-    };
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await sleep(400);
-    check(
-      "an approved update installs exactly once, however often it is asked for",
-      installs === 1,
-      JSON.stringify({ installs, dialogs: rig.dialogs.length }),
-    );
-    check(
-      "a repeated install press is refused before it opens a second approval question",
-      rig.dialogs.length === beforeRepeatedInstall.dialogs &&
-        __shutdown.state().lastRequestId === beforeRepeatedInstall.lastRequestId,
-      JSON.stringify({
-        beforeRepeatedInstall,
-        dialogs: rig.dialogs.length,
-        lastRequestId: __shutdown.state().lastRequestId,
-      }),
-    );
-    // The press that lands AFTER the installer has been handed off must report
-    // that it started nothing. Reporting success for a call the updater
-    // library ignores is how an app that is still running ends up authorised
-    // to close without asking - the F22 defect, re-entered through the Install
-    // button.
-    check(
-      "a repeated install press leaves no standing permission to close in silence",
-      installs === 1 && __shutdown.state().authorized === false,
-      JSON.stringify({ installs, state: __shutdown.state() }),
-    );
+      await prepareUpdateCase("ORDINARY_PROTECTED_UPDATER_LATCH");
+      setUpdaterLatch(true);
+      rig.answer = 0;
+      const refusedAfter = __shutdown.state().lastRequestId;
+      await exec("window.folia.installUpdate(); null");
+      const refusedInvocation = await waitForOrdinaryShutdownContinuation(
+        "update-install", refusedAfter);
+      await joinDialogs();
+      const refusedState = __shutdown.state();
+      await resetOrdinaryRig();
+      await editOrdinaryShutdownFixture(exec, "SILENT_UPDATER_REFUSAL_EDIT");
+      const dirtyAfterRefusal = guardEvent();
+      win.emit("close", dirtyAfterRefusal);
+      const refusalAsked = await waitUntil(() => rig.dialogs.length === 1 &&
+        rig.dialogs[0].response === 1 && __shutdown.state().pendingId === 0, 10000);
+      await joinDialogs();
+      check(
+        "an installed updater silent refusal withdraws authorization and the next dirty close asks",
+        refusedInvocation && installs === 0 && rig.quits === 0 &&
+          refusedState.authorized === false && refusedState.pendingId === 0 &&
+          refusalAsked && dirtyAfterRefusal.prevented === true && rig.dialogs.length === 1,
+        JSON.stringify({ refusedInvocation, installs, refusedState,
+          refusalAsked, dialogs: rig.dialogs }),
+      );
+      setUpdaterLatch(false);
 
-    // -- installed updater: public commit, delayed quit, silent refusal -----
-    // quitAndInstall() returns without quitting: Electron emits its PUBLIC
-    // before-quit-for-update event and the updater defers app.quit() to a
-    // setImmediate. A bypass cleared at the void return would ask again
-    // mid-install; one left after a silent refusal would lose later edits.
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    publicUpdateCommitSignals = 0;
-    setUpdaterLatch(false);
-    installDefersQuit = true;
-    rig.driveQuitLifecycle = true;
-    rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await waitUntil(() => rig.quits > 0);
-    await sleep(300);
-    installDefersQuit = false;
-    check(
-      "an installed updater commit always raises one distinct fresh approval before quitting",
-      installs === 1 &&
-        rig.quits === 1 &&
-        rig.dialogs.length === 2 &&
-        publicUpdateCommitSignals === 1 &&
-        rig.quitEvents.length === 1 &&
-        rig.quitEvents[0].prevented === false,
-      JSON.stringify({
-        installs,
-        quits: rig.quits,
-        dialogs: rig.dialogs.length,
-        publicUpdateCommitSignals,
-        beforeQuitPrevented: rig.quitEvents[0] && rig.quitEvents[0].prevented,
-      }),
-    );
-
-    // A real BaseUpdater has already set this latch when a previous attempt
-    // owns (or has refused) the operation. It returns from quitAndInstall()
-    // without a public commit event. The app stays open, so its speculative
-    // authorization MUST be gone and a later dirty close MUST ask again.
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    setUpdaterLatch(true);
-    // Approve this clean/previously-dirty update question so execution reaches
-    // the updater's protected latch; Cancel would only test the dialog.
-    rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await sleep(350);
-    const refusedState = __shutdown.state();
-    rig.reset();
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent + '\\nSILENT_UPDATER_REFUSAL_EDIT\\n';
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.content;
-        return true;
-      })()
-    `);
-    const dirtyAfterRefusal = guardEvent();
-    win.emit("close", dirtyAfterRefusal);
-    const refusalAsked = await waitUntil(() => rig.dialogs.length === 1);
-    await sleep(150);
-    check(
-      "an installed updater silent refusal withdraws authorization and the next dirty close asks",
-      installs === 0 &&
-        rig.quits === 0 &&
-        refusedState.authorized === false &&
-        refusedState.pendingId === 0 &&
-        refusalAsked &&
-        dirtyAfterRefusal.prevented === true &&
-        rig.dialogs.length === 1,
-      JSON.stringify({
-        installs,
-        quits: rig.quits,
-        refusedState,
-        refusalAsked,
-        prevented: dirtyAfterRefusal.prevented,
-        dialogs: rig.dialogs.length,
-      }),
-    );
-    setUpdaterLatch(false);
-
-    // -- a stronger intent arriving while the question is on screen --------
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    let releaseHeld = null;
-    rig.answer = () =>
-      new Promise((resolve) => {
-        releaseHeld = resolve;
-      });
-    const heldClose = guardEvent();
-    win.emit("close", heldClose);
-    await waitUntil(() => rig.dialogs.length > 0);
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await sleep(400);
-    check(
-      "an install arriving mid-question is queued rather than swapped into the open question",
-      __shutdown.state().queuedReason === "update-install" &&
-        rig.dialogs.length === 1 &&
-        installs === 0,
-      JSON.stringify({ state: __shutdown.state(), dialogs: rig.dialogs.length, installs }),
-    );
-    if (releaseHeld) releaseHeld(0);
-    await waitUntil(() => installs > 0);
-    await sleep(200);
-    check(
-      "a queued update is raised as its own fresh approval rather than coalesced into a close",
-      rig.closes === 0 &&
-        installs === 0 &&
-        rig.dialogs.length === 2 &&
-        rig.dialogs[1].pendingReason === "update-install",
-      JSON.stringify({ closes: rig.closes, installs, dialogs: rig.dialogs.length }),
-    );
-
-    // -- and the same intent when the answer is no -------------------------
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    let releaseDeclined = null;
-    rig.answer = () =>
-      new Promise((resolve) => {
-        releaseDeclined = resolve;
-      });
-    const declinedClose = guardEvent();
-    win.emit("close", declinedClose);
-    await waitUntil(() => rig.dialogs.length > 0);
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await sleep(400);
-    rig.answer = 1;
-    if (releaseDeclined) releaseDeclined(1);
-    const reRaised = await waitUntil(() => rig.dialogs.length > 1);
-    await sleep(300);
-    check(
-      "declining a close re-raises the queued install as its own question rather than dropping it",
-      reRaised &&
-        rig.dialogs.length === 2 &&
+      await prepareUpdateCase("ORDINARY_ACCEPTED_CLOSE_QUEUED_UPDATE");
+      const firstCloseDialog = holdDialog();
+      const queuedInstallDialog = holdDialog();
+      let heldDialogCalls = 0;
+      rig.answer = () => {
+        heldDialogCalls += 1;
+        if (heldDialogCalls === 1) return firstCloseDialog.promise;
+        if (heldDialogCalls === 2) return queuedInstallDialog.promise;
+        throw new Error("Ordinary queued-update case raised an unexpected third question");
+      };
+      const heldClose = guardEvent();
+      win.emit("close", heldClose);
+      if (!await waitUntil(() => rig.dialogs.length === 1, 10000)) {
+        throw new Error("Ordinary queued-update fixture did not hold its first close question");
+      }
+      await exec("window.folia.installUpdate(); null");
+      const installQueued = await waitUntil(
+        () => __shutdown.state().queuedReason === "update-install", 5000);
+      check(
+        "an install arriving mid-question is queued rather than swapped into the open question",
+        installQueued && rig.dialogs.length === 1 && installs === 0,
+        JSON.stringify({ state: __shutdown.state(), dialogs: rig.dialogs, installs }),
+      );
+      firstCloseDialog.settle(0);
+      const freshInstallHeld = await waitUntil(() => rig.dialogs.length === 2 &&
         rig.dialogs[1].pendingReason === "update-install" &&
-        installs === 0 &&
-        rig.closes === 0,
-      JSON.stringify({
-        dialogs: rig.dialogs.map((d) => d.pendingReason),
-        installs,
-        closes: rig.closes,
-      }),
-    );
+        rig.dialogs[1].response === null, 10000);
+      check(
+        "a queued update is raised as its own fresh approval rather than coalesced into a close",
+        freshInstallHeld && rig.closes === 0 && installs === 0 &&
+          rig.dialogs.length === 2 &&
+          rig.dialogs[1].requestId > rig.dialogs[0].requestId,
+        JSON.stringify({ closes: rig.closes, installs, dialogs: rig.dialogs }),
+      );
+      queuedInstallDialog.settle(1);
+      await joinDialogs();
+      if (!await waitUntil(() => __shutdown.state().pendingId === 0 &&
+          __shutdown.state().commitPendingId === 0, 5000)) {
+        throw new Error("Ordinary queued update did not settle its distinct second answer");
+      }
+      check(
+        "cancelling the fresh queued-update question joins both original dialog producers",
+        firstCloseDialog.settled && queuedInstallDialog.settled &&
+          rig.dialogs.every(record => record.response !== null) &&
+          installs === 0 && rig.closes === 0 && __shutdown.state().authorized === false,
+        JSON.stringify({ dialogs: rig.dialogs, installs, state: __shutdown.state() }),
+      );
 
-    // -- a continuation that fails takes its authorization with it ---------
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    installThrows = true;
-    setUpdaterLatch(false);
-    rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    await waitUntil(() => installs > 0);
-    await sleep(300);
-    installThrows = false;
-    check(
-      "a shutdown that fails to start withdraws the permission it was given",
-      installs === 1 && __shutdown.state().authorized === false,
-      JSON.stringify({ installs, state: __shutdown.state() }),
-    );
-    const afterFailure = guardEvent();
-    win.emit("close", afterFailure);
-    await waitUntil(() => rig.dialogs.length > 1);
-    await sleep(200);
-    check(
-      "the close after a failed shutdown is asked about again rather than waved through",
-      afterFailure.prevented === true && rig.dialogs.length === 2,
-      JSON.stringify({ prevented: afterFailure.prevented, dialogs: rig.dialogs.length }),
-    );
+      await prepareUpdateCase("ORDINARY_DECLINED_CLOSE_QUEUED_UPDATE");
+      const declinedCloseDialog = holdDialog();
+      rig.answer = () => declinedCloseDialog.promise;
+      const declinedClose = guardEvent();
+      win.emit("close", declinedClose);
+      if (!await waitUntil(() => rig.dialogs.length === 1, 10000)) {
+        throw new Error("Ordinary declined-close fixture did not hold its first question");
+      }
+      await exec("window.folia.installUpdate(); null");
+      if (!await waitUntil(() => __shutdown.state().queuedReason === "update-install", 5000)) {
+        throw new Error("Ordinary declined-close fixture did not queue its real install request");
+      }
+      rig.answer = 1;
+      declinedCloseDialog.settle(1);
+      const reRaised = await waitUntil(() => rig.dialogs.length === 2 &&
+        rig.dialogs[1].response === 1 && __shutdown.state().pendingId === 0, 10000);
+      await joinDialogs();
+      check(
+        "declining a close re-raises the queued install as its own question rather than dropping it",
+        reRaised && rig.dialogs.length === 2 &&
+          rig.dialogs[1].pendingReason === "update-install" &&
+          rig.dialogs[1].requestId > rig.dialogs[0].requestId &&
+          installs === 0 && rig.closes === 0,
+        JSON.stringify({ dialogs: rig.dialogs, installs, closes: rig.closes }),
+      );
 
-    // ============================================================
-    // A NEW INTENT CROSSING AN IN-FLIGHT COMMIT (F22)
-    // ============================================================
-    //
-    // THE GAP THIS CLOSES. The commit phase asks the renderer to confirm an
-    // answer against the revision it was given. That round trip is real time,
-    // and a second gesture can land inside it. The commit knew nothing about
-    // that: it would confirm, and its continuation would run alongside a
-    // question the reader had already replaced - a close going through on the
-    // strength of an answer the newer intent was about to supersede.
-    //
-    // The commit now carries the request epoch it STARTED with, a newer intent
-    // invalidates it, and the intents behind it are raised again rather than
-    // dropped.
-    //
-    // The gesture is injected from the `quit-approval-response` listener,
-    // which fires after main has already sent the commit and before the
-    // renderer's reply can arrive: that is the exact window, entered
-    // deterministically rather than by sleeping and hoping.
-    //
-    // EVERY TAB, NOT JUST THE ACTIVE ONE. The whole design of these three cases
-    // rests on the close settling SILENTLY - a clean answer settles inside the
-    // response handler, which is what puts a commit in flight for the crossing
-    // intent to invalidate. One dirty background tab raises a dialog instead,
-    // the settle then happens on a later turn, no commit is ever in flight when
-    // the intent crosses, and all three cases quietly measure a different
-    // protocol. Measured: a leftover live-copy edit from an earlier scenario
-    // did exactly that and produced four failures that named the wrong cause.
-    // `restoreCleanDocuments` is the one helper for it, shared with the
-    // scenarios above so there is a single definition of "nothing unsaved".
-    const makeDocumentClean = restoreCleanDocuments;
+      await prepareUpdateCase("ORDINARY_THROWING_INSTALLER_ENTRY");
+      installThrows = true;
+      rig.answer = 0;
+      const throwingAfter = __shutdown.state().lastRequestId;
+      await exec("window.folia.installUpdate(); null");
+      await waitForOrdinaryShutdownContinuation("update-install", throwingAfter);
+      await joinDialogs();
+      installThrows = false;
+      check(
+        "a shutdown that fails to start withdraws the permission it was given",
+        installs === 1 && __shutdown.state().authorized === false,
+        JSON.stringify({ installs, state: __shutdown.state() }),
+      );
+      rig.answer = 1;
+      const afterFailure = guardEvent();
+      win.emit("close", afterFailure);
+      if (!await waitUntil(() => rig.dialogs.length === 2 &&
+          rig.dialogs[1].response === 1 && __shutdown.state().pendingId === 0, 10000)) {
+        throw new Error("Ordinary failed-install follow-up did not settle its fresh close question");
+      }
+      await joinDialogs();
+      check(
+        "the close after a failed shutdown is asked about again rather than waved through",
+        afterFailure.prevented === true && rig.dialogs.length === 2,
+        JSON.stringify({ prevented: afterFailure.prevented, dialogs: rig.dialogs }),
+      );
 
-    // -- a STRONGER intent crossing the commit -----------------------------
-    __shutdown.reset();
-    rig.reset();
-    installs = 0;
-    setUpdaterLatch(false);
-    rig.answer = 0;
-    const crossCleanliness = await makeDocumentClean();
-    check(
-      "the commit-crossing cases start from a document set with nothing unsaved",
-      !!crossCleanliness &&
-        crossCleanliness.tabs > 0 &&
-        Array.isArray(crossCleanliness.dirty) &&
-        crossCleanliness.dirty.length === 0,
-      JSON.stringify(crossCleanliness),
-    );
-    const beforeCross = __shutdown.state().lastRequestId;
-    let crossedInstall = 0;
-    let crossCommitInFlight = null;
-    const installHandler = ipcMain.listeners("install-update")[0];
-    const crossWithInstall = () => {
-      if (crossedInstall) return;
-      crossedInstall = 1;
-      // Sampled before the crossing intent, in the same tick main sent the
-      // commit on. A zero here means the case never entered the state it
-      // claims to test, and the assertions below would be measuring nothing.
-      crossCommitInFlight = __shutdown.state().commitPendingId;
-      // Synchronous, and through the REAL handler: this is the product's own
-      // Install path, not a direct requestShutdown call that would skip its
-      // preflight.
-      installHandler(portableInstallEvent(win));
-    };
-    ipcMain.on("quit-approval-response", crossWithInstall);
-    let crossClose;
-    try {
-      crossClose = guardEvent();
-      win.emit("close", crossClose);
-      await waitUntil(() => installs > 0, 10000);
-      await sleep(300);
-    } finally {
-      ipcMain.removeListener("quit-approval-response", crossWithInstall);
+      const crossingSetup = await prepareUpdateCase("ORDINARY_STRONGER_INTENT_CROSSING",
+        { dirty: false });
+      rig.answer = 0;
+      const crossCleanliness = await observeOrdinaryShutdownFixtures(exec);
+      check(
+        "the commit-crossing cases start from a document set with nothing unsaved",
+        crossingSetup.edit === null && crossCleanliness.tabs.length === 2 &&
+          crossCleanliness.dirty.length === 0,
+        JSON.stringify({ crossingSetup, crossCleanliness }),
+      );
+      const beforeCross = __shutdown.state().lastRequestId;
+      let crossedInstall = 0;
+      let crossCommitInFlight = null;
+      const installHandler = ipcMain.listeners("install-update")[0];
+      if (typeof installHandler !== "function") throw new Error("Ordinary install handler is missing");
+      const crossWithInstall = (event, response) => {
+        if (crossedInstall || event.sender !== wc ||
+            response?.id !== __shutdown.state().commitPendingId) return;
+        crossedInstall = 1;
+        crossCommitInFlight = __shutdown.state().commitPendingId;
+        // Reuse the genuine current sender event at this exact synchronous seam.
+        installHandler(event);
+      };
+      ipcMain.on("quit-approval-response", crossWithInstall);
+      let crossClose;
+      try {
+        crossClose = guardEvent();
+        win.emit("close", crossClose);
+        await waitForOrdinaryShutdownContinuation("update-install", beforeCross);
+        await joinDialogs();
+        if (!await waitUntil(() => __shutdown.state().staleCommitCount >= 1, 5000)) {
+          throw new Error("Ordinary stronger crossing did not receive its original late commit reply");
+        }
+      } finally {
+        ipcMain.removeListener("quit-approval-response", crossWithInstall);
+      }
+      const crossState = __shutdown.state();
+      check(
+        "the install really crossed a commit that was in flight at that instant",
+        crossedInstall === 1 && crossCommitInFlight > 0 && rig.dialogs.length === 0,
+        JSON.stringify({ crossedInstall, crossCommitInFlight, dialogs: rig.dialogs }),
+      );
+      check(
+        "an install arriving inside an in-flight close commit invalidates that commit",
+        crossClose.prevented === true && crossState.commitRefusedCount >= 1 &&
+          crossState.commitRefusedWhy === "superseded-by-new-intent" && rig.closes === 0,
+        JSON.stringify({ crossState, closes: rig.closes, installs }),
+      );
+      check(
+        "the intent that crossed a commit is approved through its own request rather than the old one",
+        installs === 1 && crossState.lastRequestId > beforeCross + 1 && crossState.pendingId === 0,
+        JSON.stringify({ installs, beforeCross, crossState }),
+      );
+      check(
+        "the late reply to an invalidated commit is counted and does nothing",
+        crossState.staleCommitCount >= 1 && crossState.commitPendingId === 0,
+        JSON.stringify({ crossState, closes: rig.closes }),
+      );
     }
-    const crossState = __shutdown.state();
-    check(
-      "the install really crossed a commit that was in flight at that instant",
-      crossedInstall === 1 &&
-        crossCommitInFlight !== null &&
-        crossCommitInFlight > 0 &&
-        rig.dialogs.length === 0,
-      JSON.stringify({
-        crossedInstall,
-        crossCommitInFlight,
-        dialogs: rig.dialogs.length,
-      }),
-    );
-    check(
-      "an install arriving inside an in-flight close commit invalidates that commit",
-      crossedInstall === 1 &&
-        crossClose.prevented === true &&
-        crossState.commitRefusedCount >= 1 &&
-        crossState.commitRefusedWhy === "superseded-by-new-intent" &&
-        // The close did NOT go through on the strength of the commit it had
-        // already been sent.
-        rig.closes === 0,
-      JSON.stringify({
-        crossedInstall,
-        prevented: crossClose.prevented,
-        state: crossState,
-        closes: rig.closes,
-        installs,
-      }),
-    );
-    check(
-      "the intent that crossed a commit is approved through its own request rather than the old one",
-      installs === 1 &&
-        // More than one id was consumed: the invalidated close was re-raised
-        // and the install was asked as its own question after it.
-        crossState.lastRequestId > beforeCross + 1 &&
-        crossState.pendingId === 0,
-      JSON.stringify({ installs, beforeCross, state: crossState }),
-    );
-    check(
-      "the late reply to an invalidated commit is counted and does nothing",
-      crossState.staleCommitCount >= 1 && crossState.commitPendingId === 0,
-      JSON.stringify({ state: crossState, closes: rig.closes }),
-    );
 
     // -- a SAME-RANK intent crossing the commit ----------------------------
     // A second X while the first one's commit is in flight. The commit is
     // invalidated exactly as above, but the re-raised close absorbs the
     // duplicate rather than closing the window twice.
-    __shutdown.reset();
-    rig.reset();
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     installs = 0;
     rig.answer = 0;
-    await makeDocumentClean();
     const beforeDoubleClose = __shutdown.state().lastRequestId;
     let secondCloseEvent = null;
     let doubleCommitInFlight = null;
-    const crossWithClose = () => {
-      if (secondCloseEvent) return;
+    const crossWithClose = (event, response) => {
+      if (secondCloseEvent || event.sender !== wc ||
+          response?.id !== __shutdown.state().commitPendingId) return;
       doubleCommitInFlight = __shutdown.state().commitPendingId;
       secondCloseEvent = guardEvent();
       win.emit("close", secondCloseEvent);
@@ -41839,8 +41690,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     try {
       firstCloseEvent = guardEvent();
       win.emit("close", firstCloseEvent);
-      await waitUntil(() => rig.closes > 0, 10000);
-      await sleep(300);
+      if (!await waitUntil(() => rig.closes === 1, 10000)) {
+        throw new Error("Ordinary same-rank crossing did not reach its actual close");
+      }
     } finally {
       ipcMain.removeListener("quit-approval-response", crossWithClose);
     }
@@ -41870,55 +41722,55 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       }),
     );
 
-    // -- the renderer wedges while its commit is outstanding ---------------
-    // A renderer that is alive but not answering has no event of its own to
-    // release a commit: the reply simply never comes. Chromium's hang
-    // notification is the one signal for it, and it must settle the commit
-    // rather than leave the app holding a frozen document and an unanswerable
-    // question.
-    __shutdown.reset();
-    rig.reset();
+    // Inject only the notification after the renderer has genuinely frozen.
+    // This is not a native hang or renderer-listener-removal test.
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     installs = 0;
     rig.answer = 1;
-    await makeDocumentClean();
     let wedged = 0;
     let wedgeCommitInFlight = null;
-    const wedgeApprovalRequests = [];
-    const realWedgeSend = wc.send;
-    const restoreWedgeSend = replaceMethod(wc, "send", function (channel, ...args) {
-      if (channel === "quit-approval-request") wedgeApprovalRequests.push(args[0]);
-      return realWedgeSend.call(this, channel, ...args);
-    });
-    const wedgeDuringCommit = () => {
-      if (wedged) return;
-      wedged = 1;
-      wedgeCommitInFlight = __shutdown.state().commitPendingId;
-      win.emit("unresponsive");
-    };
-    ipcMain.on("quit-approval-response", wedgeDuringCommit);
+    const wedgeHold = ownCommitHold();
+    let wedgeFrozen = null;
     let wedgeClose;
-    try {
+    await withOrdinaryShutdownCleanup(async () => {
       wedgeClose = guardEvent();
       win.emit("close", wedgeClose);
-      await waitUntil(() => rig.dialogs.length > 0, 10000);
-      await sleep(300);
-    } finally {
-      ipcMain.removeListener("quit-approval-response", wedgeDuringCommit);
-      restoreWedgeSend();
-    }
+      if (!await waitUntil(() => wedgeHold.answer !== null, 10000)) {
+        throw new Error("Ordinary unresponsive fixture did not hold real committed ingress");
+      }
+      wedgeCommitInFlight = __shutdown.state().commitPendingId;
+      wedgeFrozen = await exec("window.CustomTabs.__shutdownFreeze()");
+      if (!wedgeFrozen.frozen || wedgeFrozen.id !== wedgeHold.packet.id ||
+          wedgeCommitInFlight !== wedgeHold.packet.id) {
+        throw new Error("Ordinary unresponsive fixture did not establish its exact real freeze");
+      }
+      wedged = 1;
+      win.emit("unresponsive");
+      if (!await waitUntil(() => rig.dialogs.length === 1 &&
+          rig.dialogs[0].response === 1 && __shutdown.state().pendingId === 0, 10000)) {
+        throw new Error("Ordinary unresponsive fallback did not join its real Cancel answer");
+      }
+      await joinDialogs();
+      if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 5000)) {
+        throw new Error("Ordinary unresponsive fallback did not deliver the Main thaw");
+      }
+      wedgeHold.retire("the real commit was cancelled by the synthetic unresponsive notification");
+    }, [() => wedgeHold.dispose()]);
+    const wedgeApprovalRequests = wedgeHold.approvalRequests;
     const wedgeState = __shutdown.state();
     const freezeAfterWedge = await exec(
       `window.CustomTabs.__shutdownFreeze()`,
     );
     check(
-      "the wedge really arrived while a commit was in flight",
+      "the unresponsive notification follows the real freeze and held committed ingress",
       wedged === 1 &&
-        wedgeCommitInFlight !== null &&
-        wedgeCommitInFlight > 0,
-      JSON.stringify({ wedged, wedgeCommitInFlight }),
+        wedgeCommitInFlight > 0 && wedgeFrozen.frozen &&
+        wedgeHold.snapshot().retired && wedgeHold.snapshot().restored,
+      JSON.stringify({ wedged, wedgeCommitInFlight, wedgeFrozen, hold: wedgeHold.snapshot() }),
     );
     check(
-      "an unresponsive renderer settles the commit it can no longer answer and asks in the main process",
+      "an unresponsive notification cancels the real held commit and asks once in the main process",
       wedged === 1 &&
         wedgeClose.prevented === true &&
         wedgeState.commitRefusedWhy === "unresponsive-during-commit" &&
@@ -41950,12 +41802,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     );
 
     // -- who the main process believes it is talking to ---------------------
-    // The sender check is the security control here, and "the suite passed" is
-    // not evidence for it. This measures the frame the real renderer's answers
-    // actually arrive on, so the strict main-frame test in isApprovalSender is
-    // asserted against reality rather than assumed from the typings.
-    __shutdown.reset();
-    rig.reset();
+    // Observe the legitimate sender. This does not test subframe rejection.
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     rig.answer = 0;
     let senderFacts = null;
     const captureSender = (event) => {
@@ -41973,8 +41822,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     try {
       const senderClose = guardEvent();
       win.emit("close", senderClose);
-      await waitUntil(() => senderFacts !== null);
-      await sleep(200);
+      if (!await waitUntil(() => senderFacts !== null && rig.closes === 1, 10000)) {
+        throw new Error("Ordinary sender observation did not join its actual approved close");
+      }
       check(
         "the renderer's answers arrive on the document window's own main frame",
         !!senderFacts &&
@@ -41989,1857 +41839,658 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     }
 
     // -- a popup is not a document window ----------------------------------
-    __shutdown.reset();
-    rig.reset();
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
     const beforePopup = __shutdown.state().lastRequestId;
-    await exec(`
-      window.ipcRenderer.send('open-mermaid-popup', {
-        svgContent: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#4a90d9"></rect></svg>',
-        isDarkMode: false
-      });
-      null;
-    `);
-    const popupOpened = await waitUntil(
-      () => BrowserWindow.getAllWindows().length > 1,
-      10000,
-    );
-    const popup = BrowserWindow.getAllWindows().find((w) => w.id !== win.id);
-    if (popup) popup.close();
-    const popupGone = await waitUntil(
-      () => !popup || popup.isDestroyed(),
-      10000,
-    );
-    check(
-      "closing a popup is not a shutdown: it is neither held nor asked about",
-      popupOpened &&
-        popupGone &&
-        rig.dialogs.length === 0 &&
-        __shutdown.state().lastRequestId === beforePopup &&
-        __shutdown.state().pendingId === 0,
-      JSON.stringify({
-        popupOpened,
-        popupGone,
-        dialogs: rig.dialogs.length,
-        lastRequestId: __shutdown.state().lastRequestId,
-        beforePopup,
-      }),
-    );
-
-    // -- answers to a question that was not asked of them -------------------
-    // The real listener is lifted off the channel so the question stays open
-    // on purpose - the same removeAllListeners/restore pattern custom-tabs.js
-    // itself uses for 'file-changed-externally'. Without it the renderer
-    // answers within milliseconds and there is no open question to aim a wrong
-    // id, a wrong sender or an unreadable answer at.
-    //
-    // KEEP THIS BLOCK BRIEF. A question nothing answers is eventually rescued
-    // by the renderer-hang net (measured at roughly six seconds), and that
-    // would settle the very request these checks need left open. Everything
-    // here runs well inside that budget; do not add waits to it.
-    //
-    // AND BREVITY ALONE IS NOT A GUARANTEE, because the net is driven by
-    // Chromium's own hang monitor rather than by a timer this harness controls.
-    // The impostor case has to build and drive a SECOND renderer while the
-    // question is open, and on a loaded machine that round trip is enough for
-    // the monitor to report the document renderer as hung: measured twice in a
-    // row here, main.js escalated request #39 and declined it before the
-    // impostor had been refused, so the sender-gate assertion and the
-    // unreadable-answer assertion after it were both reading a request that no
-    // longer existed. The escalation is detached for exactly this region and
-    // put back immediately afterwards - the same idiom, and the same reason, as
-    // the loading-renderer case in runRendererLossScenario. It is not being
-    // weakened: its three assertions sit directly above this block and run
-    // against a wedge this harness creates deliberately.
-    const sameDocUnresponsive = win.listeners("unresponsive");
-    win.removeAllListeners("unresponsive");
-    try {
-      __shutdown.reset();
-      rig.reset();
-      rig.answer = 0;
+    const windowsBeforePopup = new Set(BrowserWindow.getAllWindows().map(window => window.id));
+    let popup = null;
+    await withOrdinaryShutdownCleanup(async () => {
       await exec(`
-        (() => {
-          const ipc = require('electron').ipcRenderer;
-          window.__quitHandlers = ipc.listeners('quit-approval-request').slice();
-          ipc.removeAllListeners('quit-approval-request');
-          window.__lastQuitRequest = null;
-          ipc.on('quit-approval-request', (e, d) => { window.__lastQuitRequest = d; });
-          return window.__quitHandlers.length;
-        })()
+        window.folia.openMermaidPopup({
+          svgContent: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#4a90d9"></rect></svg>',
+          isDarkMode: false
+        });
+        null;
       `);
-      const staleClose = guardEvent();
-      win.emit("close", staleClose);
-      const requestSeen = await waitUntil(() =>
-        exec(`!!window.__lastQuitRequest`),
+      const newWindows = () => BrowserWindow.getAllWindows().filter(
+        window => !windowsBeforePopup.has(window.id));
+      const popupOpened = await waitUntil(() => newWindows().length === 1, 10000);
+      const created = newWindows();
+      if (!popupOpened || created.length !== 1 ||
+          created[0].webContents.getLastWebPreferences().preload !==
+            path.join(__dirname, "..", "src", "popup-preload.js")) {
+        throw new Error("Ordinary popup close did not capture its one new isolated popup");
+      }
+      popup = created[0];
+      popup.close();
+      const popupGone = await waitUntil(() => popup.isDestroyed(), 10000);
+      check(
+        "closing a popup is not a shutdown: it is neither held nor asked about",
+        popupOpened && popupGone && rig.dialogs.length === 0 &&
+          __shutdown.state().lastRequestId === beforePopup &&
+          __shutdown.state().pendingId === 0,
+        JSON.stringify({ popupOpened, popupGone, dialogs: rig.dialogs.length,
+          lastRequestId: __shutdown.state().lastRequestId, beforePopup }),
       );
-      const openId = __shutdown.state().pendingId;
-      const openRequest = await exec(`window.__lastQuitRequest`);
+    }, [() => { if (popup && !popup.isDestroyed()) popup.destroy(); }]);
+
+    // Main-side holds retain genuine ingress. No page listener is removed.
+    const beginHeldApproval = async () => {
+      const hold = ownApprovalHold();
+      try {
+        const close = guardEvent();
+        win.emit("close", close);
+        if (!await waitUntil(() => hold.response !== null, 8000)) {
+          throw new Error("Ordinary protocol fixture did not receive its genuine renderer answer");
+        }
+        const state = __shutdown.state();
+        if (hold.request.id !== state.pendingId ||
+            hold.response.id !== hold.request.id || hold.response.gen !== hold.request.gen ||
+            !Number.isSafeInteger(hold.response.revision) || hold.response.revision < 0 ||
+            !Array.isArray(hold.response.dirtyFiles)) {
+          throw new Error("Ordinary protocol fixture has no exact valid baseline reply");
+        }
+        return { hold, close, request: hold.request, response: hold.response };
+      } catch (error) {
+        return withOrdinaryShutdownCleanup(() => { throw error; }, [() => hold.dispose()]);
+      }
+    };
+    const sendApproval = payload =>
+      exec(`window.folia.respondToQuitApproval(${JSON.stringify(payload)}); null`);
+    const sendCommitted = payload =>
+      exec(`window.folia.respondToQuitCommit(${JSON.stringify(payload)}); null`);
+    const requestFinished = async () => {
+      await joinDialogs();
+      if (!await waitUntil(() => __shutdown.state().pendingId === 0 &&
+          __shutdown.state().commitPendingId === 0, 10000)) {
+        throw new Error("Ordinary protocol attempt did not settle its real result");
+      }
+    };
+
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    const stale = await beginHeldApproval();
+    await withOrdinaryShutdownCleanup(async () => {
       const readyBefore = __shutdown.state();
-      const wrongReadyGeneration =
-        openRequest && Number.isSafeInteger(openRequest.gen)
-          ? openRequest.gen + 1
-          : NaN;
+      const wrongReadyGeneration = stale.request.gen + 1;
       check(
         "the forged READY setup has an observed open request, a real renderer session, and a distinct safe generation",
-        requestSeen &&
-          Number.isSafeInteger(openId) &&
-          openId > 0 &&
-          !!openRequest &&
-          openRequest.id === openId &&
-          readyBefore.pendingId === openId &&
-          Number.isSafeInteger(openRequest.gen) &&
-          openRequest.gen === readyBefore.rendererGeneration &&
+        stale.close.prevented === true && stale.request.id === readyBefore.pendingId &&
+          stale.request.gen === readyBefore.rendererGeneration &&
           Number.isSafeInteger(wrongReadyGeneration) &&
-          wrongReadyGeneration > 0 &&
           wrongReadyGeneration !== readyBefore.rendererGeneration &&
           typeof readyBefore.rendererPageSession === "string" &&
           readyBefore.rendererPageSession.length > 0 &&
           readyBefore.rendererPageSession.length <= 128,
-        JSON.stringify({
-          requestSeen,
-          openId,
-          openRequest,
-          wrongReadyGeneration,
-          readyBefore,
-        }),
+        JSON.stringify({ request: stale.request, readyBefore, wrongReadyGeneration }),
       );
-      await exec(
-        `window.ipcRenderer.send('quit-approval-ready', { gen: ${wrongReadyGeneration}, pageSession: ${JSON.stringify(readyBefore.rendererPageSession)} }); null;`,
-      );
-      await sleep(100);
+      await exec(`window.folia.announceQuitApprovalReady({
+        gen: ${wrongReadyGeneration},
+        pageSession: ${JSON.stringify(readyBefore.rendererPageSession)}
+      }); null`);
+      if (!await waitUntil(() => __shutdown.state().staleReadyCount ===
+          readyBefore.staleReadyCount + 1, 5000)) {
+        throw new Error("Ordinary wrong-generation READY did not reach its actual detector");
+      }
       check(
         "a forged wrong-generation READY is ignored without changing the open request",
-        __shutdown.state().pendingId === openId &&
+        __shutdown.state().pendingId === stale.request.id &&
           __shutdown.state().staleReadyCount === readyBefore.staleReadyCount + 1,
-        JSON.stringify({ before: readyBefore, after: __shutdown.state(), openId }),
+        JSON.stringify({ readyBefore, after: __shutdown.state() }),
       );
       const responseBefore = __shutdown.state();
-      await exec(
-        `window.ipcRenderer.send('quit-approval-response', { id: ${openId}, gen: ${openRequest.gen + 1}, dirtyFiles: [] }); null;`,
-      );
-      await sleep(100);
+      await sendApproval({ ...stale.response, gen: stale.request.gen + 1 });
+      if (!await waitUntil(() => __shutdown.state().staleResponseCount ===
+          responseBefore.staleResponseCount + 1, 5000)) {
+        throw new Error("Ordinary wrong-generation response did not reach its actual detector");
+      }
       check(
         "a wrong-generation response is ignored while its request remains open",
-        __shutdown.state().pendingId === openId &&
+        __shutdown.state().pendingId === stale.request.id &&
           __shutdown.state().renderer === "ready" &&
           __shutdown.state().invalidRevisionCount === responseBefore.invalidRevisionCount &&
           __shutdown.state().staleResponseCount === responseBefore.staleResponseCount + 1,
-        JSON.stringify({ before: responseBefore, after: __shutdown.state(), openId }),
+        JSON.stringify({ responseBefore, after: __shutdown.state() }),
       );
-      await exec(
-        `window.ipcRenderer.send('quit-approval-response', { id: ${openId + 500}, gen: ${openRequest.gen}, dirtyFiles: [] }); null;`,
-      );
-      await sleep(400);
+      await sendApproval({ ...stale.response, id: stale.request.id + 500 });
+      if (!await waitUntil(() => __shutdown.state().staleResponseCount ===
+          responseBefore.staleResponseCount + 2, 5000)) {
+        throw new Error("Ordinary wrong-id response did not reach its actual detector");
+      }
       check(
         "an answer carrying the wrong request id is ignored and the question stays open",
-        requestSeen &&
-          openId > 0 &&
-          __shutdown.state().pendingId === openId &&
+        __shutdown.state().pendingId === stale.request.id &&
           __shutdown.state().renderer === "ready" &&
           __shutdown.state().invalidRevisionCount === responseBefore.invalidRevisionCount &&
-          rig.closes === 0 &&
-          rig.dialogs.length === 0,
-        JSON.stringify({
-          requestSeen,
-          openId,
-          state: __shutdown.state(),
-          closes: rig.closes,
-        }),
+          rig.closes === 0 && rig.dialogs.length === 0,
+        JSON.stringify({ request: stale.request, state: __shutdown.state(), closes: rig.closes }),
       );
-
-      // The phase-two revision is mandatory. Drive malformed values from the
-      // real document sender with an otherwise exact request identity, then
-      // exercise both native fallback outcomes. Every row gets its own name so
-      // a revert cannot hide one rejected representation behind another.
-      const invalidRevisionCases = [
-        { name: "missing", property: "", why: "missing" },
-        { name: "null", property: ", revision: null", why: "not-a-safe-integer" },
-        { name: "string", property: ", revision: 'legacy'", why: "not-a-safe-integer" },
-        { name: "fractional", property: ", revision: 1.5", why: "not-a-safe-integer" },
-        { name: "negative", property: ", revision: -1", why: "negative" },
-        {
-          name: "greater than MAX_SAFE_INTEGER",
-          property: ", revision: Number.MAX_SAFE_INTEGER + 1",
-          why: "not-a-safe-integer",
-        },
-      ];
-      const holdRawApprovalRequest = async () => {
-        await exec(`
-          (() => {
-            const ipc = require('electron').ipcRenderer;
-            window.__quitHandlers = ipc.listeners('quit-approval-request').slice();
-            ipc.removeAllListeners('quit-approval-request');
-            window.__lastQuitRequest = null;
-            ipc.on('quit-approval-request', (_event, request) => {
-              window.__lastQuitRequest = request;
-            });
-            return window.__quitHandlers.length;
-          })()
-        `);
-        const close = guardEvent();
-        win.emit("close", close);
-        const seen = await waitUntil(() => exec(`!!window.__lastQuitRequest`), 5000);
-        return { close, seen, request: await exec(`window.__lastQuitRequest`) };
-      };
-      const reloadInvalidRevisionRendererFromEmptyPersistence = async (label) => {
-        const reloadGeneration = __shutdown.state().rendererGeneration;
-        await __shutdown.seedDocumentSessionLayout({ entries: [], activeEntryId: null });
-        const cleared = await exec(`
-          (() => {
-            localStorage.clear();
-            return {
-              openTabs: localStorage.getItem("openTabs"),
-              activeTabPath: localStorage.getItem("activeTabPath"),
-            };
-          })()
-        `);
-        if (
-          !cleared ||
-          cleared.openTabs !== null ||
-          cleared.activeTabPath !== null ||
-          __shutdown.documentSessionState().entries.length !== 0
-        ) {
-          throw new Error(
-            `${label} invalid-revision reload could not clear persisted tabs: ` +
-              JSON.stringify(cleared),
-          );
-        }
-        wc.reload();
-        const ready = await waitUntil(() => {
-          const state = __shutdown.state();
-          return state.renderer === "ready" &&
-            state.rendererGeneration > reloadGeneration;
-        }, 20000);
-        const replacement = ready
-          ? await exec(`
-            (() => {
-              const rawOpenTabs = localStorage.getItem("openTabs");
-              const rawActiveTabPath = localStorage.getItem("activeTabPath");
-              let openTabs = null;
-              let openTabsValid = rawOpenTabs === null;
-              if (rawOpenTabs !== null) {
-                try {
-                  openTabs = JSON.parse(rawOpenTabs);
-                  openTabsValid = Array.isArray(openTabs);
-                } catch (error) {
-                  openTabs = {
-                    parseError: String(error && error.message ? error.message : error),
-                  };
-                }
-              }
-              const active = window.CustomTabs.getActiveTab() || null;
-              return {
-                tabs: window.CustomTabs.getTabs().map(tab => ({
-                  id: tab.id,
-                  filePath: tab.filePath || null,
-                })),
-                active: active
-                  ? { id: active.id, filePath: active.filePath || null }
-                  : null,
-                currentFilePath: window.currentFilePath || null,
-                tabPersistence: {
-                  rawOpenTabs,
-                  openTabs,
-                  openTabsValid,
-                  openTabsEmpty:
-                    rawOpenTabs === null ||
-                    (openTabsValid && openTabs.length === 0),
-                  rawActiveTabPath,
-                  activeTabPathEmpty:
-                    rawActiveTabPath === null || rawActiveTabPath === "",
-                },
-              };
-            })()
-          `)
-          : null;
-        const empty =
-          ready &&
-          replacement &&
-          replacement.tabs.length === 0 &&
-          replacement.active === null &&
-          replacement.currentFilePath === null &&
-          __shutdown.documentSessionState().entries.length === 0 &&
-          replacement.tabPersistence.openTabsEmpty === true &&
-          replacement.tabPersistence.activeTabPathEmpty === true;
-        check(
-          `${label} invalid-revision replacement starts with no restored tab`,
-          empty,
-          JSON.stringify({ cleared, replacement, state: __shutdown.state() }),
-        );
-        if (!empty) {
-          throw new Error(
-            `${label} invalid-revision replacement restored persisted state: ` +
-              JSON.stringify({ cleared, replacement, state: __shutdown.state() }),
-          );
-        }
-        return { ready, cleared, replacement };
-      };
-      for (const invalid of invalidRevisionCases) {
-        __shutdown.reset();
-        rig.reset();
-        rig.answer = 1;
-        const cancelled = await holdRawApprovalRequest();
-        const cancelBefore = __shutdown.state();
-        await exec(
-          `window.ipcRenderer.send('quit-approval-response', { id: ${cancelled.request ? cancelled.request.id : -1}, gen: ${cancelled.request ? cancelled.request.gen : -1}, dirtyFiles: []${invalid.property} }); null;`,
-        );
-        const cancelFallback = await waitUntil(
-          () => rig.dialogs.length === 1 && __shutdown.state().pendingId === 0,
-          5000,
-        );
-        const cancelAfter = __shutdown.state();
-        const cancelDialog = rig.dialogs[0];
-        const cancelCloses = rig.closes;
-
-        // An invalid response makes this renderer unusable. Reload so the
-        // confirm half is a fresh correct-id/generation request, not a
-        // permissive shortcut around the already-poisoned document.
-        const invalidCancelReload =
-          await reloadInvalidRevisionRendererFromEmptyPersistence(
-            `invalid-cancel ${invalid.name}`,
-          );
-        const invalidCancelRendererReady = invalidCancelReload.ready;
-        __shutdown.reset();
-        rig.reset();
-        rig.answer = 0;
-        const confirmed = await holdRawApprovalRequest();
-        await exec(
-          `window.ipcRenderer.send('quit-approval-response', { id: ${confirmed.request ? confirmed.request.id : -1}, gen: ${confirmed.request ? confirmed.request.gen : -1}, dirtyFiles: []${invalid.property} }); null;`,
-        );
-        const confirmFallback = await waitUntil(
-          () => rig.dialogs.length === 1 && rig.closes === 1,
-          5000,
-        );
-        const confirmAfter = __shutdown.state();
-        const confirmDialog = rig.dialogs[0];
-        check(
-          `an otherwise-valid ${invalid.name} shutdown revision is refused through the unreadable native fallback`,
-          cancelled.seen &&
-            cancelled.close.prevented === true &&
-            cancelFallback &&
-            cancelAfter.invalidRevisionCount === cancelBefore.invalidRevisionCount + 1 &&
-            cancelAfter.invalidRevisionWhy === invalid.why &&
-            cancelAfter.renderer === "unusable" &&
-            cancelAfter.rendererUnusableReason ===
-              `invalid shutdown approval revision (${invalid.why})` &&
-            cancelAfter.settleWhy === "fallback-unreadable" &&
-            cancelAfter.commitPendingId === 0 &&
-            cancelAfter.pendingId === 0 &&
-            cancelAfter.authorized === false &&
-            cancelCloses === 0 &&
-            cancelDialog &&
-            cancelDialog.pendingReason === "window-close" &&
-            cancelDialog.options.title === "Unsaved changes cannot be checked" &&
-            cancelDialog.options.message ===
-              "Folia cannot confirm whether anything is unsaved." &&
-            cancelDialog.options.detail ===
-              "The document view could not check the open documents.\n\nClosing now may discard unsaved changes." &&
-            JSON.stringify(cancelDialog.options.buttons) ===
-              JSON.stringify(["Close anyway", "Cancel"]) &&
-            cancelDialog.options.defaultId === 1 &&
-            cancelDialog.options.cancelId === 1 &&
-            confirmed.seen &&
-            confirmed.close.prevented === true &&
-            confirmFallback &&
-            confirmAfter.invalidRevisionCount === 1 &&
-            confirmAfter.invalidRevisionWhy === invalid.why &&
-            confirmAfter.renderer === "unusable" &&
-            confirmAfter.rendererUnusableReason ===
-              `invalid shutdown approval revision (${invalid.why})` &&
-            confirmAfter.settleWhy === "fallback-unreadable" &&
-            confirmAfter.commitPendingId === 0 &&
-            confirmAfter.pendingId === 0 &&
-            confirmAfter.authorized === true &&
-            confirmDialog &&
-            confirmDialog.pendingReason === "window-close" &&
-            confirmDialog.options.title === "Unsaved changes cannot be checked" &&
-            confirmDialog.options.message ===
-              "Folia cannot confirm whether anything is unsaved." &&
-            confirmDialog.options.detail ===
-              "The document view could not check the open documents.\n\nClosing now may discard unsaved changes." &&
-            JSON.stringify(confirmDialog.options.buttons) ===
-              JSON.stringify(["Close anyway", "Cancel"]) &&
-            confirmDialog.options.defaultId === 1 &&
-            confirmDialog.options.cancelId === 1 &&
-            rig.closes === 1,
-          JSON.stringify({
-            invalid,
-            cancel: {
-              seen: cancelled.seen,
-              prevented: cancelled.close.prevented,
-              before: cancelBefore,
-              after: cancelAfter,
-              dialog: cancelDialog,
-              closes: cancelCloses,
-            },
-            confirm: {
-              seen: confirmed.seen,
-              prevented: confirmed.close.prevented,
-              after: confirmAfter,
-              dialog: confirmDialog,
-            },
-            closes: rig.closes,
-          }),
-        );
-        // The confirm half deliberately made this renderer unusable; restore
-        // a new document before the next representation gets its own exact
-        // request/generation pair.
-        const invalidConfirmReload =
-          await reloadInvalidRevisionRendererFromEmptyPersistence(
-            `invalid-confirm ${invalid.name}`,
-          );
-        const invalidConfirmRendererReady = invalidConfirmReload.ready;
+      stale.hold.release();
+      if (!await waitUntil(() => rig.closes === 1, 10000)) {
+        throw new Error("Ordinary stale-response fixture did not join its original valid close");
       }
+    }, [() => stale.hold.dispose()]);
 
-      // Phase two is an acknowledgement of the exact frozen document, not a
-      // second chance for a renderer to invent a different revision. Hold the
-      // real commit request, then inject replies from the real document
-      // sender. Invalid acknowledgements must refuse and ask again; a stale
-      // identity must be ignored without disturbing the commit it does not
-      // own. This deliberately covers the wire representations a legacy or
-      // compromised renderer can produce, rather than only the renderer's
-      // current well-formed reply.
-      const cleanCommittedReplyDocument = async () => {
-        const existingProvisional = await exec(`(() => {
-          const tab = window.CustomTabs.getActiveTab();
-          return tab && !window.CustomTabs.getDocumentDescriptor(tab.id) ? tab.filePath : null;
-        })()`);
-        const phaseTwoReopenPath = existingProvisional || path.join(
-          dir,
-          `phase-two-reopen-${++phaseTwoReopenOrdinal}.md`,
-        );
-        const phaseTwoReopenBytes = existingProvisional
-          ? fs.readFileSync(existingProvisional, "utf8") :
-          `# Phase two fresh reopen ${phaseTwoReopenOrdinal}\n\n` +
-          "PHASE_TWO_FRESH_REOPEN\n";
-        if (!existingProvisional) fs.writeFileSync(phaseTwoReopenPath, phaseTwoReopenBytes, "utf8");
-        const phaseTwoReopenStats = fs.statSync(phaseTwoReopenPath);
-        const phaseTwoReopenFixture = {
-          path: phaseTwoReopenPath,
-          pathKey: nativePathKey(fs.realpathSync.native(phaseTwoReopenPath)),
-          bytes: phaseTwoReopenBytes,
-          diskVersion: {
-            dev: phaseTwoReopenStats.dev,
-            ino: phaseTwoReopenStats.ino,
-            size: phaseTwoReopenStats.size,
-            mtimeMs: phaseTwoReopenStats.mtimeMs,
-            ctimeMs: phaseTwoReopenStats.ctimeMs,
-          },
+    const invalidRevisionCases = [
+      { name: "missing", why: "missing" },
+      { name: "null", revision: null, why: "not-a-safe-integer" },
+      { name: "string", revision: "legacy", why: "not-a-safe-integer" },
+      { name: "fractional", revision: 1.5, why: "not-a-safe-integer" },
+      { name: "negative", revision: -1, why: "negative" },
+      { name: "greater than MAX_SAFE_INTEGER", revision: Number.MAX_SAFE_INTEGER + 1,
+        why: "not-a-safe-integer" },
+    ];
+    const invalidFallback = async (invalid, answer) => {
+      await restoreCleanDocuments();
+      await resetOrdinaryRig();
+      rig.answer = answer;
+      const armed = await beginHeldApproval();
+      return withOrdinaryShutdownCleanup(async () => {
+        if (armed.response.dirtyFiles.length !== 0) {
+          throw new Error("Invalid-revision fixture did not produce its real clean baseline");
+        }
+        const before = __shutdown.state();
+        const packet = { ...armed.response, revision: invalid.revision };
+        if (invalid.name === "missing") delete packet.revision;
+        await sendApproval(packet);
+        await requestFinished();
+        if (answer === 0 && !await waitUntil(() => rig.closes === 1, 10000)) {
+          throw new Error("Invalid-revision confirm did not invoke its actual close");
+        }
+        return {
+          seen: true, prevented: armed.close.prevented, before, after: __shutdown.state(),
+          dialogs: rig.dialogs.slice(), closes: rig.closes,
         };
-        const restoreNativeChooser = replaceMethod(dialog, "showOpenDialog", async () => ({
-          canceled: false, filePaths: [phaseTwoReopenPath],
-        }));
-        const result = await exec(`
-          (async () => {
-            try {
-            const tabs = window.CustomTabs;
-            let active = tabs.getActiveTab();
-            let restoredByOpen = false;
-            let reopenWitness = null;
-            const adoptionDiagnostics = [];
-            if (!active || !tabs.getDocumentDescriptor(active.id)) {
-              if (active) {
-                window.originalMarkdown = active.originalContent;
-                tabs.updateTabContent(active.originalContent, false);
-              }
-              const fixture = ${JSON.stringify(phaseTwoReopenFixture)};
-              const targetPath = fixture.path;
-              const ipc = require("electron").ipcRenderer;
-              const consoleErrorDescriptor = Object.getOwnPropertyDescriptor(
-                console,
-                "error",
-              );
-              const originalConsoleError = console.error;
-              const captureAdoptionRefusal = (message, state) => {
-                if (
-                  message !== "[CustomTabs] Disk adoption attestation refused:" &&
-                  message !== "[CustomTabs] Disk adoption was refused:"
-                ) {
-                  return;
-                }
-                adoptionDiagnostics.push({
-                  message,
-                  why: state && state.why !== undefined ? state.why : null,
-                  known: state && state.known !== undefined ? state.known : null,
-                  versionMatches:
-                    state && state.versionMatches !== undefined
-                      ? state.versionMatches
-                      : null,
-                  revision:
-                    state && state.revision !== undefined ? state.revision : null,
-                  pathKey:
-                    state && state.pathKey !== undefined ? state.pathKey : null,
-                  capabilityPresent: !!(
-                    state &&
-                    typeof state.capability === "string" &&
-                    state.capability.length > 0
-                  ),
-                  active: (() => {
-                    const current = tabs.getActiveTab();
-                    return current ? {
-                      id: current.id,
-                      filePath: current.filePath,
-                    } : null;
-                  })(),
-                  currentFilePath: window.currentFilePath || null,
-                  rendererGeneration: window.getReloadRequestSession(),
-                  selectionGeneration: window.getActiveFileSelectionGeneration(),
-                });
-              };
-              console.error = function (...args) {
-                captureAdoptionRefusal(args[0], args[1]);
-                return Reflect.apply(originalConsoleError, this, args);
-              };
-              try {
-                ipc.send("open-file-dialog");
-                const deadline = Date.now() + 5000;
-                while (Date.now() < deadline) {
-                  active = tabs.getActiveTab();
-                  if (
-                    active &&
-                    active.filePath === targetPath &&
-                    window.currentFilePath === targetPath &&
-                    !!tabs.getDocumentDescriptor(active.id)
-                  ) {
-                    restoredByOpen = true;
-                    break;
-                  }
-                  await new Promise(resolve => setTimeout(resolve, 25));
-                }
-                if (!restoredByOpen) {
-                  throw new Error(
-                    "phase-two clean setup could not reopen its live fixture: " +
-                      JSON.stringify({
-                        targetPath,
-                        active: active && {
-                          id: active.id,
-                          filePath: active.filePath,
-                        },
-                        currentFilePath: window.currentFilePath,
-                        adoptionDiagnostics,
-                      }),
-                  );
-                }
-                const stat = window.fs.statSync(targetPath);
-                const physicalIdentity = {
-                  diskVersion: {
-                    dev: stat.dev,
-                    ino: stat.ino,
-                    size: stat.size,
-                    mtimeMs: stat.mtimeMs,
-                    ctimeMs: stat.ctimeMs,
-                  },
-                };
-                const owner = tabs.getActiveDocumentIdentity(
-                  targetPath,
-                  window.getReloadRequestSession(),
-                );
-                reopenWitness = {
-                  fixture,
-                  active: {
-                    id: active.id,
-                    filePath: active.filePath,
-                  },
-                  currentFilePath: window.currentFilePath || null,
-                  physicalIdentity,
-                  owner,
-                  physicalIdentityMatches:
-                    ["dev", "ino", "size", "mtimeMs"].every(
-                      key =>
-                        physicalIdentity.diskVersion[key] ===
-                        fixture.diskVersion[key],
-                    ),
-                  ctimeMatches:
-                    physicalIdentity.diskVersion.ctimeMs ===
-                    fixture.diskVersion.ctimeMs,
-                  selectedOwnerMatches:
-                    !!owner &&
-                    owner.tabId === active.id &&
-                    owner.pathKey === fixture.pathKey &&
-                    owner.pageSession === window.getReloadRequestSession(),
-                };
-                if (
-                  active.filePath !== targetPath ||
-                  window.currentFilePath !== targetPath ||
-                  !reopenWitness.physicalIdentityMatches ||
-                  !reopenWitness.selectedOwnerMatches
-                ) {
-                  throw new Error(
-                    "phase-two fresh reopen did not establish its physical selected owner: " +
-                      JSON.stringify(reopenWitness),
-                  );
-                }
-              } finally {
-                if (consoleErrorDescriptor) {
-                  Object.defineProperty(
-                    console,
-                    "error",
-                    consoleErrorDescriptor,
-                  );
-                } else {
-                  delete console.error;
-                }
-              }
-            }
-            const freeze = tabs.__shutdownFreeze();
-            const editing = tabs.__inEditMode();
-            const editor = window.markdownEditor;
-            if (!active || freeze.frozen || freeze.deferredOperationsDropped) {
-              throw new Error(
-                "phase-two clean setup cannot mutate the live document: " +
-                  JSON.stringify({
-                    active: active && {
-                      id: active.id,
-                      filePath: active.filePath,
-                      dirty: active.hasUnsavedChanges,
-                    },
-                    freeze,
-                    editing,
-                    editorPresent: !!editor,
-                  }),
-              );
-            }
-            if (editing && !editor) {
-              throw new Error("phase-two clean setup found edit mode without its textarea");
-            }
-            const expected = active.originalContent;
-            if (editing) editor.value = expected;
-            window.originalMarkdown = expected;
-            tabs.updateTabContent(expected, false);
-            tabs.getTabs().forEach(tab => {
-              if (tab !== active) tab.content = tab.originalContent;
-            });
-            const dirtyFiles = tabs.__dirtyTabNames(true);
-            if (dirtyFiles.length === 0) {
-              tabs.getTabs().forEach(tab => {
-                tab.hasUnsavedChanges = false;
-              });
-            }
-            const activeAfter = tabs.getActiveTab();
-            const publicDirtyFiles = tabs
-              .getTabs()
-              .filter(tab => tab.hasUnsavedChanges)
-              .map(tab => tab.filePath || tab.filename);
-            const normalize = value =>
-              typeof value === "string" ? value.replace(/\\r\\n/g, "\\n") : value;
-            const editorMatchesExpected =
-              !editing || normalize(editor.value) === normalize(expected);
-            const witness = {
-              activeTabId: activeAfter && activeAfter.id,
-              activePath: activeAfter && activeAfter.filePath,
-              activeFilename: activeAfter && activeAfter.filename,
-              restoredByOpen,
-              reopenWitness,
-              adoptionDiagnostics,
-              identity: tabs.getActiveDocumentIdentity(),
-              editing,
-              editorPresent: !!editor,
-              editorReadOnly: !!(editor && editor.readOnly),
-              editorLength: editor ? editor.value.length : null,
-              expectedLength: expected.length,
-              editorMatchesExpected,
-              activeDirty: !!(activeAfter && activeAfter.hasUnsavedChanges),
-              dirtyFiles,
-              publicDirtyFiles,
-              freeze: {
-                frozen: !!freeze.frozen,
-                deferredOperationsDropped: !!freeze.deferredOperationsDropped,
-              },
-            };
-            if (
-              !witness.activeTabId ||
-              !witness.activePath ||
-              !editorMatchesExpected ||
-              witness.activeDirty ||
-              dirtyFiles.length !== 0 ||
-              publicDirtyFiles.length !== 0
-            ) {
-              throw new Error(
-                "phase-two clean setup did not produce a clean live document: " +
-                  JSON.stringify(witness),
-              );
-            }
-              return { ok: true, witness };
-            } catch (error) {
-              return {
-                ok: false,
-                error: {
-                  name:
-                    error && typeof error.name === "string"
-                      ? error.name
-                      : "Error",
-                  message:
-                    error && typeof error.message === "string"
-                      ? error.message
-                      : String(error),
-                  stack:
-                    error && typeof error.stack === "string"
-                      ? error.stack
-                      : String(error),
-                },
-              };
-            }
-          })()
-        `).finally(restoreNativeChooser);
-        if (result && result.ok === true) return result.witness;
-        throw new Error(
-          "phase-two clean setup renderer exception: " +
-            JSON.stringify(result && result.error ? result.error : result),
-        );
+      }, [() => armed.hold.dispose()]);
+    };
+    for (const invalid of invalidRevisionCases) {
+      const cancelled = await invalidFallback(invalid, 1);
+      const confirmed = await invalidFallback(invalid, 0);
+      const exactFallback = (result, answer) => {
+        const state = result.after;
+        const dialogRecord = result.dialogs[0];
+        const options = dialogRecord?.options;
+        return result.seen && result.prevented && result.dialogs.length === 1 &&
+          state.invalidRevisionCount === result.before.invalidRevisionCount + 1 &&
+          state.invalidRevisionWhy === invalid.why &&
+          state.renderer === "unusable" &&
+          state.rendererUnusableReason === `invalid shutdown approval revision (${invalid.why})` &&
+          state.settleWhy === "fallback-unreadable" &&
+          state.commitPendingId === 0 && state.pendingId === 0 &&
+          state.authorized === (answer === 0) && result.closes === (answer === 0 ? 1 : 0) &&
+          dialogRecord.pendingReason === "window-close" && dialogRecord.response === answer &&
+          options.title === "Unsaved changes cannot be checked" &&
+          options.message === "Markaloo cannot confirm whether anything is unsaved." &&
+          options.detail === "The document view could not check the open documents.\n\nClosing now may discard unsaved changes." &&
+          JSON.stringify(options.buttons) === JSON.stringify(["Close anyway", "Cancel"]) &&
+          options.defaultId === 1 && options.cancelId === 1;
       };
-      const holdPhaseTwoCommit = async () => {
-        let held = null;
-        let response = null;
-        const realSend = wc.send;
-        const isApprovalResponseSender = event => {
-          const sender = event.sender;
-          if (
-            !sender ||
-            sender.isDestroyed() ||
-            sender.id !== wc.id
-          ) {
-            return false;
-          }
-          const frame = event.senderFrame;
-          const main = sender.mainFrame;
-          if (!frame || frame.isDestroyed() || !main || main.isDestroyed()) {
-            return false;
-          }
-          return (
-            (frame === main ||
-              frame.frameTreeNodeId === main.frameTreeNodeId) &&
-            frame.parent === null
-          );
-        };
-        const onApprovalResponse = (event, payload) => {
-          if (isApprovalResponseSender(event) && response === null) {
-            response = payload;
-          }
-        };
-        const restoreSend = replaceMethod(wc, "send", function (channel, payload) {
-          if (channel === "quit-approval-commit" && held === null) {
-            held = payload;
-            return;
-          }
-          return realSend.call(this, channel, payload);
-        });
-        ipcMain.on("quit-approval-response", onApprovalResponse);
-        try {
-          const close = guardEvent();
-          win.emit("close", close);
-          const heldReady = await waitUntil(
-            () =>
-              held !== null &&
-              response !== null &&
-              response.id === held.id &&
-              response.gen === held.gen &&
-              __shutdown.state().commitPendingId === held.id,
-            10000,
-          );
-          return { close, held, heldReady, response };
-        } finally {
-          restoreSend();
-          ipcMain.removeListener("quit-approval-response", onApprovalResponse);
-        }
-      };
-      const committedReplyCases = [
-        {
-          name: "missing revision",
-          fields: "",
-          invalidWhy: "missing",
-          outcome: "refused",
-        },
-        {
-          name: "null revision",
-          fields: ", revision: null",
-          invalidWhy: "not-a-safe-integer",
-          outcome: "refused",
-        },
-        {
-          name: "string revision",
-          fields: ", revision: 'legacy'",
-          invalidWhy: "not-a-safe-integer",
-          outcome: "refused",
-        },
-        {
-          name: "fractional revision",
-          fields: ", revision: 1.5",
-          invalidWhy: "not-a-safe-integer",
-          outcome: "refused",
-        },
-        {
-          name: "negative revision",
-          fields: ", revision: -1",
-          invalidWhy: "negative",
-          outcome: "refused",
-        },
-        {
-          name: "unsafe revision",
-          fields: ", revision: Number.MAX_SAFE_INTEGER + 1",
-          invalidWhy: "not-a-safe-integer",
-          outcome: "refused",
-        },
-        {
-          name: "mismatched revision",
-          fields: (commit) => `, revision: ${commit.revision + 1}`,
-          invalidWhy: "mismatch",
-          outcome: "refused",
-        },
-        {
-          name: "stale request id",
-          fields: (commit) => `, id: ${commit.id + 1}, revision: ${commit.revision}`,
-          outcome: "stale",
-        },
-        {
-          name: "stale generation",
-          fields: (commit) => `, gen: ${commit.gen + 1}, revision: ${commit.revision}`,
-          outcome: "stale",
-        },
-        {
-          name: "explicitly uncommitted exact revision",
-          fields: (commit) => `, revision: ${commit.revision}`,
-          committed: false,
-          outcome: "refused",
-        },
-        {
-          name: "exact revision",
-          fields: (commit) => `, revision: ${commit.revision}`,
-          outcome: "committed",
-        },
-      ];
-      for (const replyCase of committedReplyCases) {
-        __shutdown.reset();
-        rig.reset();
-        const cleanSetup = await cleanCommittedReplyDocument();
-        const armed = await holdPhaseTwoCommit();
-        const commit = armed.held;
-        if (
-          !armed.heldReady ||
-          !commit ||
-          !armed.response ||
-          armed.response.id !== commit.id ||
-          armed.response.gen !== commit.gen ||
-          !Array.isArray(armed.response.dirtyFiles) ||
-          armed.response.dirtyFiles.length !== 0
-        ) {
-          throw new Error(
-            "phase-two commit setup did not receive a clean live approval: " +
-              JSON.stringify({ replyCase: replyCase.name, cleanSetup, armed }),
-          );
-        }
-        const fields =
-          typeof replyCase.fields === "function"
-            ? commit
-              ? replyCase.fields(commit)
-              : ""
-            : replyCase.fields;
-        const committed = replyCase.committed !== false;
-        const beforeReply = __shutdown.state();
-        const staleBefore = beforeReply.staleCommitCount;
-        const refusedBefore = beforeReply.commitRefusedCount;
-        let committedFreezeWitness = null;
-        let committedFreezeObserved = false;
-        let reissuedRequest = null;
-        let restoreReissuedRequest = null;
-        if (replyCase.outcome === "refused") {
-          const realSend = wc.send;
-          restoreReissuedRequest = replaceMethod(
-            wc,
-            "send",
-            function (channel, payload) {
-              if (
-                channel === "quit-approval-request" &&
-                reissuedRequest === null
-              ) {
-                reissuedRequest = payload;
-                return;
-              }
-              return realSend.call(this, channel, payload);
-            },
-          );
-        }
-        try {
-          if (replyCase.outcome === "committed" && commit) {
-            wc.send("quit-approval-commit", commit);
-            committedFreezeObserved = await waitUntil(async () => {
-              committedFreezeWitness = {
-                freeze: await exec(`window.CustomTabs.__shutdownFreeze()`),
-                state: __shutdown.state(),
-              };
-              return committedFreezeWitness.freeze.frozen === true &&
-                committedFreezeWitness.freeze.id === commit.id &&
-                committedFreezeWitness.state.rendererGeneration === commit.gen;
-            }, 5000);
-          } else if (commit) {
-            await exec(
-              `window.ipcRenderer.send('quit-approval-committed', { id: ${commit.id}, gen: ${commit.gen}, committed: ${committed}${fields} }); null;`,
-            );
-          }
-          if (replyCase.outcome === "refused") {
-            const refused = await waitUntil(
-              () =>
-                reissuedRequest &&
-                commit &&
-                reissuedRequest.id > commit.id &&
-                __shutdown.state().commitPendingId === 0,
-              5000,
-            );
-            const afterReply = __shutdown.state();
-            check(
-              `a phase-two ${replyCase.name} fails closed and re-asks rather than closing`,
-              armed.heldReady &&
-                !!commit &&
-                armed.close.prevented === true &&
-                refused &&
-                afterReply.pendingId === reissuedRequest.id &&
-                afterReply.commitPendingId === 0 &&
-                afterReply.commitRefusedCount === refusedBefore + 1 &&
-                afterReply.invalidRevisionCount ===
-                  beforeReply.invalidRevisionCount +
-                    (replyCase.invalidWhy ? 1 : 0) &&
-                afterReply.invalidRevisionWhy ===
-                  (replyCase.invalidWhy || beforeReply.invalidRevisionWhy) &&
-                afterReply.authorized === false &&
-                rig.closes === 0 &&
-                rig.quits === 0,
-              JSON.stringify({
-                replyCase: replyCase.name,
-                armed,
-                beforeReply,
-                afterReply,
-                reissued: reissuedRequest,
-                closes: rig.closes,
-                quits: rig.quits,
-              }),
-            );
-          } else if (replyCase.outcome === "stale") {
-            const ignored = await waitUntil(
-              () => __shutdown.state().staleCommitCount === staleBefore + 1,
-              3000,
-            );
-            const afterReply = __shutdown.state();
-            check(
-              `a phase-two ${replyCase.name} is ignored without changing the live commit`,
-              armed.heldReady &&
-                !!commit &&
-                armed.close.prevented === true &&
-                ignored &&
-                afterReply.commitPendingId === commit.id &&
-                afterReply.commitSequence === beforeReply.commitSequence &&
-                afterReply.commitRefusedCount === refusedBefore &&
-                afterReply.authorized === false &&
-                rig.closes === 0 &&
-                rig.quits === 0,
-              JSON.stringify({
-                replyCase: replyCase.name,
-                armed,
-                beforeReply,
-                afterReply,
-                closes: rig.closes,
-                quits: rig.quits,
-              }),
-            );
-          } else {
-            const committedClose = await waitUntil(() => rig.closes === 1, 5000);
-            const afterReply = __shutdown.state();
-            check(
-              "a phase-two exact revision commits and closes once",
-              armed.heldReady &&
-                !!commit &&
-                armed.close.prevented === true &&
-              committedFreezeObserved &&
-              committedClose &&
-              afterReply.commitPendingId === 0 &&
-                afterReply.commitRefusedCount === refusedBefore &&
-                afterReply.authorized === true &&
-                rig.closes === 1 &&
-                rig.quits === 0,
-              JSON.stringify({
-                armed,
-                beforeReply,
-                afterReply,
-                committedFreezeWitness,
-                closes: rig.closes,
-                quits: rig.quits,
-              }),
-            );
-          }
-        } finally {
-          if (restoreReissuedRequest) {
-            restoreReissuedRequest();
-          }
-        }
-      }
-
-      const reloadWithRestoredPhysicalSelection = async ({
-        fixtureName,
-        physicalPathSetupName,
-        selectionSetupName,
-      }) => {
-        const liveRestoration = JSON.parse(await exec(`
-          (() => {
-            const physicalPaths = window.CustomTabs.getTabs()
-              .filter(
-                tab =>
-                  typeof tab.filePath === "string" &&
-                  tab.filePath.length > 0,
-              )
-              .map(tab => tab.filePath)
-              .sort();
-            const activeTab = window.CustomTabs.getActiveTab();
-            return JSON.stringify({
-              physicalPaths,
-              activeTabPath: activeTab ? activeTab.filePath : null,
-            });
-          })()
-        `));
-        const privateLayout = __shutdown.documentSessionState();
-        const expectedRestoration = {
-          ...liveRestoration,
-          persistedPhysicalPaths: privateLayout.entries.map(entry => entry.filePath).sort(),
-          persistedActiveTabPath: privateLayout.entries.find(entry =>
-            entry.id === privateLayout.activeEntryId)?.filePath || null,
-        };
-        const physicalPaths = expectedRestoration.physicalPaths;
-        const persistedPhysicalPaths =
-          expectedRestoration.persistedPhysicalPaths;
-        const persistedActiveTabPath =
-          expectedRestoration.persistedActiveTabPath;
-        const physicalPathSetup = physicalPaths.length > 0 &&
-          JSON.stringify(physicalPaths) ===
-            JSON.stringify(persistedPhysicalPaths);
-        check(
-          physicalPathSetupName,
-          physicalPathSetup,
-          JSON.stringify(expectedRestoration),
-        );
-        if (!physicalPathSetup) {
-          throw new Error(
-            `${fixtureName} reload fixture has no restored physical paths to select`,
-          );
-        }
-
-        const trackingDescriptor = Object.getOwnPropertyDescriptor(
-          ipcMain._events,
-          "select-file-tracking",
-        );
-        if (
-          !trackingDescriptor ||
-          typeof trackingDescriptor.value !== "function"
-        ) {
-          throw new Error(
-            `${fixtureName} reload requires the synchronous tracking-selection handler`,
-          );
-        }
-
-        const trackingListener = trackingDescriptor.value;
-        const trackingSelections = [];
-        const captureTrackingSelection = function (event, selection) {
-          let decision;
-          const observedEvent = new Proxy(event, {
-            set(target, property, value) {
-              if (property === "returnValue") decision = value;
-              return Reflect.set(target, property, value);
-            },
-          });
-          const result = trackingListener.call(this, observedEvent, selection);
-          if (decision === undefined) {
-            throw new Error(
-              `${fixtureName} select-file-tracking returned without a synchronous main-process decision`,
-            );
-          }
-          const owner = selection && selection.owner;
-          trackingSelections.push({
-            filePath: selection && selection.filePath || null,
-            adoptBaseline: !!(selection && selection.adoptBaseline),
-            trackingActive: !!(selection && selection.trackingActive),
-            owner: owner && {
-              pageSession: owner.pageSession,
-              rendererGeneration: owner.rendererGeneration,
-              tabId: owner.tabId,
-              documentGeneration: owner.documentGeneration,
-              selectionGeneration: owner.selectionGeneration,
-              pathKey: owner.pathKey,
-            },
-            decision: decision && typeof decision === "object" ? {
-              accepted: decision.accepted === true,
-              mayHaveMoved: decision.mayHaveMoved === true,
-              why: decision.why || null,
-              trackingActive: decision.trackingActive === true,
-            } : decision || null,
-          });
-          return result;
-        };
-
-        let rendererReady;
-        let trackingSelectionReady;
-        let freshState = null;
-        let restoredOwner = null;
-        const captureRestoredOwner = async () =>
-          JSON.parse(await exec(`
-            (() => {
-              const activeTab = window.CustomTabs.getActiveTab();
-              const expectedPaths = ${JSON.stringify(persistedPhysicalPaths)};
-              const physicalPaths = window.CustomTabs.getTabs()
-                .filter(
-                  tab =>
-                    typeof tab.filePath === "string" &&
-                    tab.filePath.length > 0,
-                )
-                .map(tab => tab.filePath)
-                .sort();
-              const pageSession = window.getReloadRequestSession();
-              const identity = activeTab
-                ? window.CustomTabs.getDocumentIdentityForTab(
-                    activeTab.id,
-                    activeTab.filePath,
-                    pageSession,
-                  )
-                : null;
-              return JSON.stringify({
-                pageSession,
-                physicalPaths,
-                pathMultisetMatches:
-                  JSON.stringify(physicalPaths) === JSON.stringify(expectedPaths),
-                currentFilePath: window.currentFilePath,
-                activeTabId: activeTab ? activeTab.id : null,
-                activeTabPath: activeTab ? activeTab.filePath : null,
-                activeSelectionGeneration:
-                  window.getActiveFileSelectionGeneration(),
-                identity,
-              });
-            })()
-          `));
-        const isCurrentTrackingSelection = selection => {
-          const owner = selection && selection.owner;
-          const identity = restoredOwner && restoredOwner.identity;
-          return !!(
-            selection &&
-            selection.decision &&
-            selection.decision.accepted === true &&
-            owner &&
-            freshState &&
-            restoredOwner &&
-            restoredOwner.pathMultisetMatches === true &&
-            (!persistedActiveTabPath ||
-              restoredOwner.activeTabPath === persistedActiveTabPath) &&
-            physicalPaths.includes(selection.filePath) &&
-            selection.filePath === restoredOwner.currentFilePath &&
-            selection.filePath === restoredOwner.activeTabPath &&
-            owner.pageSession === freshState.rendererPageSession &&
-            owner.pageSession === restoredOwner.pageSession &&
-            owner.rendererGeneration === freshState.rendererGeneration &&
-            owner.tabId === restoredOwner.activeTabId &&
-            identity &&
-            owner.tabId === identity.tabId &&
-            owner.pathKey === identity.pathKey &&
-            owner.documentGeneration === identity.documentGeneration &&
-            Number.isSafeInteger(owner.selectionGeneration) &&
-            owner.selectionGeneration > 0 &&
-            owner.selectionGeneration === restoredOwner.activeSelectionGeneration
-          );
-        };
-
-        Object.defineProperty(ipcMain._events, "select-file-tracking", {
-          ...trackingDescriptor,
-          value: captureTrackingSelection,
-        });
-        try {
-          const reloadGeneration = __shutdown.state().rendererGeneration;
-          wc.reload();
-          rendererReady = await waitUntil(() => {
-            const state = __shutdown.state();
-            return state.renderer === "ready" &&
-              state.rendererGeneration > reloadGeneration;
-          }, 20000);
-          if (!rendererReady) {
-            throw new Error(`${fixtureName} reload fixture did not reach a new renderer generation`);
-          }
-          freshState = __shutdown.state();
-          trackingSelectionReady = await waitUntil(async () => {
-            restoredOwner = await captureRestoredOwner();
-            return trackingSelections.some(isCurrentTrackingSelection);
-          }, 10000);
-        } finally {
-          Object.defineProperty(
-            ipcMain._events,
-            "select-file-tracking",
-            trackingDescriptor,
-          );
-        }
-
-        check(
-          selectionSetupName,
-          rendererReady &&
-            trackingSelectionReady &&
-            trackingSelections.some(isCurrentTrackingSelection),
-          JSON.stringify({
-            physicalPaths,
-            persistedPhysicalPaths,
-            persistedActiveTabPath,
-            freshState,
-            restoredOwner,
-            trackingSelections,
-          }),
-        );
-        if (!trackingSelectionReady) {
-          throw new Error(
-            `${fixtureName} reload did not receive an accepted tracking selection: ` +
-              JSON.stringify({
-                physicalPaths,
-                persistedPhysicalPaths,
-                persistedActiveTabPath,
-                freshState,
-                restoredOwner,
-                trackingSelections,
-              }),
-          );
-        }
-      };
-
-      // Valid revisions retain the two-phase protocol. Capture the genuine
-      // commit event before its continuation can close the rig, then replay
-      // the old response to prove it is stale rather than a second close.
-      await reloadWithRestoredPhysicalSelection({
-        fixtureName: "valid-revision",
-        physicalPathSetupName:
-          "the valid-revision reload fixture starts with restored physical paths to select",
-        selectionSetupName:
-          "the valid-revision phase-two reload selects a restored physical owner before reset",
-      });
-      __shutdown.reset();
-      rig.reset();
-      const validClean = await holdRawApprovalRequest();
-      const validCleanRevision = await exec(`window.CustomTabs.__shutdownFreeze().revision`);
-      let cleanCommit = null;
-      let closesAtCleanCommit = null;
-      const cleanCommits = [];
-      const captureCleanCommit = (_event, data) => {
-        cleanCommits.push(data);
-        cleanCommit = data;
-        closesAtCleanCommit = rig.closes;
-      };
-      ipcMain.on("quit-approval-committed", captureCleanCommit);
-      try {
-        await exec(
-          `window.ipcRenderer.send('quit-approval-response', { id: ${validClean.request ? validClean.request.id : -1}, gen: ${validClean.request ? validClean.request.gen : -1}, revision: ${JSON.stringify(validCleanRevision)}, dirtyFiles: [] }); null;`,
-        );
-        const cleanClosed = await waitUntil(() => rig.closes === 1, 5000);
-        const firstCleanCommit = cleanCommit && {
-          id: cleanCommit.id,
-          gen: cleanCommit.gen,
-          revision: cleanCommit.revision,
-          committed: cleanCommit.committed,
-        };
-        const staleBeforeDuplicate = __shutdown.state().staleResponseCount;
-        await exec(
-          `window.ipcRenderer.send('quit-approval-response', { id: ${validClean.request ? validClean.request.id : -1}, gen: ${validClean.request ? validClean.request.gen : -1}, revision: ${JSON.stringify(validCleanRevision)}, dirtyFiles: [] }); null;`,
-        );
-        const duplicateInert = await waitUntil(
-          () => __shutdown.state().staleResponseCount === staleBeforeDuplicate + 1,
-          5000,
-        );
-        const staleCommitsBeforeExactReplay = __shutdown.state().staleCommitCount;
-        const installsBeforeExactCommitReplay = installs;
-        if (firstCleanCommit) {
-          await exec(
-            `window.ipcRenderer.send('quit-approval-committed', ${JSON.stringify({
-              id: firstCleanCommit.id,
-              gen: firstCleanCommit.gen,
-              revision: firstCleanCommit.revision,
-              committed: true,
-            })}); null;`,
-          );
-        }
-        const exactCommitReplayWasStale = await waitUntil(
-          () =>
-            __shutdown.state().staleCommitCount ===
-            staleCommitsBeforeExactReplay + 1,
-          5000,
-        );
-        const exactCommitReplayDelivered = await waitUntil(
-          () => cleanCommits.length === 2,
-          3000,
-        );
-        const afterExactCommitReplay = __shutdown.state();
-        const closesAfterExactCommitReplay = rig.closes;
-        const installsAfterExactCommitReplay = installs;
-        const staleCommitsBeforeAlteredRevisionReplay =
-          afterExactCommitReplay.staleCommitCount;
-        if (firstCleanCommit) {
-          await exec(
-            `window.ipcRenderer.send('quit-approval-committed', ${JSON.stringify({
-              id: firstCleanCommit.id,
-              gen: firstCleanCommit.gen,
-              revision: firstCleanCommit.revision + 1,
-              committed: true,
-            })}); null;`,
-          );
-        }
-        const alteredRevisionReplayWasStale = await waitUntil(
-          () =>
-            __shutdown.state().staleCommitCount ===
-            staleCommitsBeforeAlteredRevisionReplay + 1,
-          5000,
-        );
-        const alteredRevisionReplayDelivered = await waitUntil(
-          () => cleanCommits.length === 3,
-          3000,
-        );
-        const afterAlteredRevisionReplay = __shutdown.state();
-        const closesAfterAlteredRevisionReplay = rig.closes;
-        const installsAfterAlteredRevisionReplay = installs;
-        check(
-          "an exact duplicate phase-two committed replay preserves id, generation, revision, and committed",
-          exactCommitReplayDelivered &&
-            cleanCommits.length >= 2 &&
-            firstCleanCommit &&
-            cleanCommits[1] &&
-            cleanCommits[1].id === firstCleanCommit.id &&
-            cleanCommits[1].gen === firstCleanCommit.gen &&
-            cleanCommits[1].revision === firstCleanCommit.revision &&
-            cleanCommits[1].committed === firstCleanCommit.committed,
-          JSON.stringify({ firstCleanCommit, exactCommitReplay: cleanCommits[1] }),
-        );
-        check(
-          "a same-id-generation phase-two replay with an altered revision is stale and cannot rerun its continuation",
-          alteredRevisionReplayDelivered &&
-            cleanCommits[2] &&
-            firstCleanCommit &&
-            cleanCommits[2].id === firstCleanCommit.id &&
-            cleanCommits[2].gen === firstCleanCommit.gen &&
-            cleanCommits[2].revision === firstCleanCommit.revision + 1 &&
-            cleanCommits[2].committed === firstCleanCommit.committed &&
-            alteredRevisionReplayWasStale &&
-            afterAlteredRevisionReplay.staleCommitCount ===
-              staleCommitsBeforeAlteredRevisionReplay + 1 &&
-            afterAlteredRevisionReplay.commitPendingId === 0 &&
-            closesAfterAlteredRevisionReplay === closesAfterExactCommitReplay &&
-            installsAfterAlteredRevisionReplay === installsAfterExactCommitReplay,
-          JSON.stringify({
-            firstCleanCommit,
-            alteredRevisionReplay: cleanCommits[2],
-            afterExactCommitReplay,
-            afterAlteredRevisionReplay,
-            closesAfterExactCommitReplay,
-            closesAfterAlteredRevisionReplay,
-            installsAfterExactCommitReplay,
-            installsAfterAlteredRevisionReplay,
-          }),
-        );
-        const laterRequestPhysicalPaths = JSON.parse(await exec(`
-          (() => JSON.stringify(
-            window.CustomTabs.getTabs()
-              .filter(
-                tab =>
-                  typeof tab.filePath === "string" &&
-                  tab.filePath.length > 0,
-              )
-              .map(tab => tab.filePath)
-              .sort(),
-          ))()
-        `));
-        __shutdown.reset();
-        rig.reset();
-        const laterRequestReloadGeneration = __shutdown.state().rendererGeneration;
-        wc.reload();
-        const laterRequestRendererReady = await waitUntil(
-          () => {
-            const state = __shutdown.state();
-            return state.renderer === "ready" &&
-              state.rendererGeneration > laterRequestReloadGeneration;
-          },
-          20000,
-        );
-        if (!laterRequestRendererReady) {
-          throw new Error("later-request reload fixture did not reach a new renderer generation");
-        }
-        const captureLaterRequestRestoredOwner = async () =>
-          JSON.parse(await exec(`
-            (() => {
-              const tabs = window.CustomTabs.getTabs();
-              const physicalTabs = tabs.filter(
-                candidate =>
-                  typeof candidate.filePath === "string" &&
-                  candidate.filePath.length > 0,
-              );
-              const expectedPaths = ${JSON.stringify(laterRequestPhysicalPaths)};
-              const physicalPaths = physicalTabs
-                .map(candidate => candidate.filePath)
-                .sort();
-              const pageSession = window.getReloadRequestSession();
-              return JSON.stringify({
-                physicalTabCount: physicalTabs.length,
-                physicalPaths,
-                expectedPaths,
-                pathMultisetMatches:
-                  JSON.stringify(physicalPaths) === JSON.stringify(expectedPaths),
-                pageSession,
-                owners: physicalTabs.map(tab => {
-                  const documentState = window.CustomTabs.__documentState(tab);
-                  const identity = window.CustomTabs.getDocumentIdentityForTab(
-                    tab.id,
-                    tab.filePath,
-                    pageSession,
-                  );
-                  return {
-                    tabId: tab.id,
-                    filePath: tab.filePath,
-                    hasUnsavedChanges: tab.hasUnsavedChanges === true,
-                    documentState,
-                    protected:
-                      tab.hasUnsavedChanges === true ||
-                      documentState.dirty === true ||
-                      documentState.reloadConflict === true ||
-                      documentState.deletionTombstone === true,
-                    identity,
-                    deletion:
-                      identity &&
-                      typeof window.queryDocumentDeletionState === 'function'
-                        ? window.queryDocumentDeletionState(tab.filePath, identity)
-                        : null,
-                  };
-                }),
-              });
-            })()
-          `));
-        let laterRequestRestoredOwner = await captureLaterRequestRestoredOwner();
-        const laterRequestOwnerReady = await waitUntil(async () => {
-          laterRequestRestoredOwner = await captureLaterRequestRestoredOwner();
-          return laterRequestRestoredOwner.pathMultisetMatches === true &&
-            laterRequestRestoredOwner.owners.length ===
-              laterRequestPhysicalPaths.length &&
-            laterRequestRestoredOwner.owners.every(
-              ({ tabId, protected: isProtected, identity, deletion }) =>
-                isProtected ||
-                (
-                  identity?.pageSession === laterRequestRestoredOwner.pageSession &&
-                  identity?.tabId === tabId &&
-                  deletion?.known === true &&
-                  deletion?.unresolved === false
-                ),
-            );
-        }, 10000);
-        check(
-          "a later phase-two reload restores every physical tab and clean-tab authoritative owner",
-          laterRequestOwnerReady,
-          JSON.stringify({
-            laterRequestPhysicalPaths,
-            laterRequestRestoredOwner,
-          }),
-        );
-        if (!laterRequestOwnerReady) {
-          throw new Error("Later phase-two reload did not restore every physical tab's authoritative owner");
-        }
-        const laterRequestCleanSetup = laterRequestRestoredOwner.owners.every(
-          owner => owner.protected === false,
-        );
-        check(
-          "the later phase-two clean-close fixture has no protected restored physical tab",
-          laterRequestCleanSetup,
-          JSON.stringify({
-            laterRequestPhysicalPaths,
-            laterRequestRestoredOwner,
-          }),
-        );
-        if (!laterRequestCleanSetup) {
-          throw new Error("Later phase-two clean close retained a protected physical tab");
-        }
-        const laterClose = guardEvent();
-        win.emit("close", laterClose);
-        const laterRequestCompleted = await waitUntil(
-          () => rig.closes === 1,
-          5000,
-        );
-        const laterRequestState = __shutdown.state();
-        check(
-          "a valid clean revision reaches phase-two commit and a duplicate response cannot close twice",
-          validClean.seen &&
-            validClean.close.prevented === true &&
-            cleanClosed &&
-            firstCleanCommit &&
-            firstCleanCommit.id === validClean.request.id &&
-            firstCleanCommit.gen === validClean.request.gen &&
-            firstCleanCommit.revision === validCleanRevision &&
-            firstCleanCommit.committed === true &&
-            closesAtCleanCommit === 0 &&
-            duplicateInert &&
-            exactCommitReplayWasStale &&
-            afterExactCommitReplay.commitPendingId === 0 &&
-            afterExactCommitReplay.authorized === true &&
-            afterExactCommitReplay.staleCommitCount ===
-              staleCommitsBeforeExactReplay + 1 &&
-            closesAfterExactCommitReplay === 1 &&
-            installsAfterExactCommitReplay === installsBeforeExactCommitReplay &&
-            laterRequestRendererReady &&
-            laterRequestOwnerReady &&
-            laterRequestCleanSetup &&
-            laterClose.prevented === true &&
-            laterRequestCompleted &&
-            laterRequestState.lastRequestId > firstCleanCommit.id &&
-            laterRequestState.commitPendingId === 0 &&
-            rig.closes === 1 &&
-            rig.quits === 0 &&
-            installs === installsBeforeExactCommitReplay &&
-            rig.dialogs.length === 0,
-          JSON.stringify({
-            validClean,
-            validCleanRevision,
-            firstCleanCommit,
-            closesAtCleanCommit,
-            cleanClosed,
-            duplicateInert,
-            staleCommitsBeforeExactReplay,
-            installsBeforeExactCommitReplay,
-            exactCommitReplayWasStale,
-            exactCommitReplayDelivered,
-            afterExactCommitReplay,
-            closesAfterExactCommitReplay,
-            installsAfterExactCommitReplay,
-            staleCommitsBeforeAlteredRevisionReplay,
-            alteredRevisionReplayWasStale,
-            alteredRevisionReplayDelivered,
-            afterAlteredRevisionReplay,
-            closesAfterAlteredRevisionReplay,
-            installsAfterAlteredRevisionReplay,
-            laterRequestRendererReady,
-            laterRequestPhysicalPaths,
-            laterRequestRestoredOwner,
-            laterRequestOwnerReady,
-            laterRequestCleanSetup,
-            laterClosePrevented: laterClose.prevented,
-            laterRequestCompleted,
-            laterRequestState,
-            closes: rig.closes,
-            quits: rig.quits,
-            installs,
-          }),
-        );
-      } finally {
-        ipcMain.removeListener("quit-approval-committed", captureCleanCommit);
-      }
-
-      await reloadWithRestoredPhysicalSelection({
-        fixtureName: "valid-dirty",
-        physicalPathSetupName:
-          "the valid-dirty reload fixture starts with restored physical paths to select",
-        selectionSetupName:
-          "the valid-dirty phase-two reload selects a restored physical owner before reset",
-      });
-      __shutdown.reset();
-      rig.reset();
-      rig.answer = 0;
-      const validDirty = await holdRawApprovalRequest();
-      const validDirtyRevision = await exec(`window.CustomTabs.__shutdownFreeze().revision`);
-      let dirtyCommit = null;
-      const captureDirtyCommit = (_event, data) => { dirtyCommit = data; };
-      ipcMain.on("quit-approval-committed", captureDirtyCommit);
-      try {
-        await exec(
-          `window.ipcRenderer.send('quit-approval-response', { id: ${validDirty.request ? validDirty.request.id : -1}, gen: ${validDirty.request ? validDirty.request.gen : -1}, revision: ${JSON.stringify(validDirtyRevision)}, dirtyFiles: ['dirty.md'] }); null;`,
-        );
-        const dirtyClosed = await waitUntil(() => rig.closes === 1, 5000);
-        check(
-          "a valid dirty revision shows discard approval before its phase-two commit",
-          validDirty.seen &&
-            validDirty.close.prevented === true &&
-            dirtyClosed &&
-            rig.dialogs.length === 1 &&
-            /Unsaved changes/.test(String(rig.dialogs[0].options.title)) &&
-            dirtyCommit &&
-            dirtyCommit.id === validDirty.request.id &&
-            dirtyCommit.revision === validDirtyRevision &&
-            __shutdown.state().invalidRevisionCount === 0,
-          JSON.stringify({ validDirty, validDirtyRevision, dirtyCommit, dialogs: rig.dialogs, closes: rig.closes, state: __shutdown.state() }),
-        );
-      } finally {
-        ipcMain.removeListener("quit-approval-committed", captureDirtyCommit);
-      }
-
-      // Restore a held request listener for the sender-gate assertions below.
-      await reloadWithRestoredPhysicalSelection({
-        fixtureName: "sender-gate",
-        physicalPathSetupName:
-          "the sender-gate reload fixture starts with restored physical paths to select",
-        selectionSetupName:
-          "the sender-gate reload selects a restored physical owner before reset",
-      });
-      await exec(`
-        (() => {
-          const ipc = require('electron').ipcRenderer;
-          window.__quitHandlers = ipc.listeners('quit-approval-request').slice();
-          ipc.removeAllListeners('quit-approval-request');
-          window.__lastQuitRequest = null;
-          ipc.on('quit-approval-request', (_event, request) => { window.__lastQuitRequest = request; });
-          return true;
-        })()
-      `);
-
-      // A window that owns no documents is not allowed to answer for the one
-      // that does, however well-formed its message is.
-      //
-      // THE WINDOW IS BUILT BEFORE THE QUESTION IS RAISED. Constructing and
-      // loading a second BrowserWindow is expensive enough to push the main
-      // renderer past Chromium's hang threshold, and the hang net - correctly -
-      // then escalates the outstanding question to the main process and settles
-      // it. Measured: the fallback granted request #38 before the impostor had
-      // sent anything, so the assertion below was reading a request that no
-      // longer existed and blaming the sender gate for it. Doing the expensive
-      // part first, then raising a FRESH question, puts the measurement inside a
-      // few hundred milliseconds of its own request.
-      //
-      // The escalation itself is untouched - it has its own tests - and this
-      // block PROVES it did not intervene here rather than assuming it: the
-      // sample requires that no dialog had appeared at that instant, and the
-      // answer is set to Cancel so that even a late escalation could not close
-      // the window or authorise anything.
-      const impostor = new BrowserWindow({
-        show: false,
-        webPreferences: { nodeIntegration: true, contextIsolation: false },
-      });
-      await impostor.loadFile(impostorFile);
-      // Warm the impostor's own renderer, so the send below is the only work left.
-      await impostor.webContents.executeJavaScript(`null;`);
-      __shutdown.reset();
-      rig.reset();
-      rig.answer = 1;
-      const impostorClose = guardEvent();
-      win.emit("close", impostorClose);
-      const impostorRequestSeen = await waitUntil(
-        () => __shutdown.state().pendingId > 0,
-        10000,
-      );
-      const beforeImpostor = __shutdown.state();
-      const impostorId = beforeImpostor.pendingId;
-      const impostorGen = beforeImpostor.rendererGeneration;
-      await impostor.webContents.executeJavaScript(`
-        const ipc = require('electron').ipcRenderer;
-        ipc.send('quit-approval-ready', { gen: ${impostorGen} });
-        ipc.send('quit-approval-response', { id: ${impostorId}, gen: ${impostorGen}, dirtyFiles: [] });
-        null;
-      `);
-      await sleep(250);
-      const afterImpostor = __shutdown.state();
-      const dialogsAtSample = rig.dialogs.length;
-      impostor.destroy();
       check(
-        "an answer from a window that owns no documents is refused",
-        impostorRequestSeen &&
-          impostorId > 0 &&
-          // NO FALLBACK HAD INTERVENED, so what follows is a statement about the
-          // sender gate and not about the hang net.
-          dialogsAtSample === 0 &&
-          // NOTHING MOVED AT ALL. isApprovalSender() returns before any counter
-          // is touched, so an impostor cannot even register as a stale answer -
-          // which makes every one of these an exact statement rather than a
-          // tolerance.
-          afterImpostor.pendingId === impostorId &&
-          afterImpostor.lastRequestId === beforeImpostor.lastRequestId &&
-          afterImpostor.staleResponseCount === beforeImpostor.staleResponseCount &&
-          afterImpostor.staleReadyCount === beforeImpostor.staleReadyCount &&
-          afterImpostor.rendererGeneration === beforeImpostor.rendererGeneration &&
-          afterImpostor.settleWhy === beforeImpostor.settleWhy &&
-          afterImpostor.authorized === false &&
-          rig.closes === 0 &&
-          rig.quits === 0,
-        JSON.stringify({
-          impostorRequestSeen,
-          impostorId,
-          dialogsAtSample,
-          before: beforeImpostor,
-          after: afterImpostor,
-          closes: rig.closes,
-          quits: rig.quits,
-        }),
+        `an otherwise-valid ${invalid.name} shutdown revision is refused through the unreadable Main-owned fallback`,
+        exactFallback(cancelled, 1) && exactFallback(confirmed, 0),
+        JSON.stringify({ invalid, cancelled, confirmed }),
       );
-      // Back to approving for the unreadable case below, which measures the
-      // main-process question actually being answered.
-      rig.answer = 0;
-
-      // An answer the main process cannot read is not an approval either.
-      const unreadableTrackingBefore = await exec(`
-        (() => {
-          const key = "__f22UnreadableTrackingConsoleScope";
-          if (Object.prototype.hasOwnProperty.call(window, key)) {
-            throw new Error("unreadable tracking console scope is already installed");
-          }
-          const descriptor = Object.getOwnPropertyDescriptor(console, "error");
-          const original = console.error;
-          const snapshot = () => {
-            const tab = window.CustomTabs.getActiveTab() || null;
-            const filePath = window.currentFilePath || (tab && tab.filePath) || null;
-            let diskVersion = null;
-            let diskVersionError = null;
-            if (filePath) {
-              try {
-                const stat = window.fs.statSync(filePath);
-                diskVersion = {
-                  dev: stat.dev,
-                  ino: stat.ino,
-                  size: stat.size,
-                  mtimeMs: stat.mtimeMs,
-                  ctimeMs: stat.ctimeMs,
-                };
-              } catch (error) {
-                diskVersionError = String(error && error.code ? error.code : error);
-              }
-            }
-            const pageSession = window.getReloadRequestSession();
-            return {
-              active: tab ? { id: tab.id, filePath: tab.filePath } : null,
-              currentFilePath: window.currentFilePath || null,
-              diskVersion,
-              diskVersionPresent: !!diskVersion,
-              diskVersionError,
-              owner: tab && window.CustomTabs.getActiveDocumentIdentity(
-                tab.filePath,
-                pageSession,
-              ),
-            };
-          };
-          const events = [];
-          console.error = function (...args) {
-            if (
-              args[0] === "File tracking selection refused:" ||
-              args[0] === "Could not reassert the previous file tracking owner:"
-            ) {
-              const decision = args[1];
-              events.push({
-                message: args[0],
-                decision:
-                  decision && typeof decision === "object"
-                    ? {
-                      accepted: decision.accepted ?? null,
-                      trackingActive: decision.trackingActive ?? null,
-                      mayHaveMoved: decision.mayHaveMoved ?? null,
-                      why: decision.why ?? null,
-                      approvedOwner: decision.approvedOwner ?? null,
-                    }
-                    : decision ?? null,
-                renderer: snapshot(),
-              });
-            }
-            return Reflect.apply(original, this, args);
-          };
-          window[key] = { descriptor, events, snapshot };
-          return snapshot();
-        })()
-      `);
-      let unreadableTrackingAfter = null;
-      try {
-        await exec(
-          `window.ipcRenderer.send('quit-approval-response', { id: (window.__lastQuitRequest && window.__lastQuitRequest.id) || -1, gen: (window.__lastQuitRequest && window.__lastQuitRequest.gen) || -1, dirtyFiles: [null] }); null;`,
-        );
-        await waitUntil(() => rig.dialogs.length > 0);
-        await sleep(200);
-        check(
-          "an unreadable answer raises the main-process question instead of closing",
-          rig.dialogs.length === 1 &&
-            /cannot be checked/i.test(String(rig.dialogs[0].options.title)) &&
-            rig.closes === 1,
-          JSON.stringify({
-            dialogs: rig.dialogs.length,
-            title: rig.dialogs.length ? rig.dialogs[0].options.title : null,
-            closes: rig.closes,
-          }),
-        );
-
-        await exec(`
-        (() => {
-          const ipc = require('electron').ipcRenderer;
-          ipc.removeAllListeners('quit-approval-request');
-          window.__quitHandlers.forEach(fn => ipc.on('quit-approval-request', fn));
-          return ipc.listeners('quit-approval-request').length;
-        })()
-      `);
-      } finally {
-        unreadableTrackingAfter = await exec(`
-          (() => {
-            const key = "__f22UnreadableTrackingConsoleScope";
-            const scope = window[key];
-            if (!scope) {
-              throw new Error("unreadable tracking console scope was lost before restoration");
-            }
-            const result = {
-              events: scope.events,
-              finalRenderer: scope.snapshot(),
-            };
-            if (scope.descriptor) {
-              Object.defineProperty(console, "error", scope.descriptor);
-            } else {
-              delete console.error;
-            }
-            delete window[key];
-            return result;
-          })()
-        `);
-      }
-      console.log(
-        "TABS_UNREADABLE_TRACKING " +
-          JSON.stringify({
-            before: unreadableTrackingBefore,
-            after: unreadableTrackingAfter,
-          }),
-      );
-    } finally {
-      sameDocUnresponsive.forEach((listener) => win.on("unresponsive", listener));
     }
 
-    // -- the renderer's own staleness filter -------------------------------
-    __shutdown.reset();
-    rig.reset();
-    await runShutdownResponseCacheScenario(win, exec);
-    // And leave nothing open. The next block reloads this renderer again, and
-    // a restored tab whose first render has not settled can answer "dirty" for
-    // reasons that have nothing to do with what is being measured there. An
-    // empty document set must be persisted BEFORE that reload: restoreTabs()
-    // is a real renderer path and a retained freeze properly refuses creation.
-    await exec(`
-      (() => {
-        const realConfirm = window.confirm;
-        window.confirm = () => true;
-        try {
-          window.CustomTabs.getTabs().forEach(t => { t.content = t.originalContent; t.hasUnsavedChanges = false; });
-          window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-        } finally {
-          window.confirm = realConfirm;
+    const committedReplyCases = [
+      { name: "missing revision", change: { revision: undefined }, invalidWhy: "missing" },
+      { name: "null revision", change: { revision: null }, invalidWhy: "not-a-safe-integer" },
+      { name: "string revision", change: { revision: "legacy" }, invalidWhy: "not-a-safe-integer" },
+      { name: "fractional revision", change: { revision: 1.5 }, invalidWhy: "not-a-safe-integer" },
+      { name: "negative revision", change: { revision: -1 }, invalidWhy: "negative" },
+      { name: "unsafe revision", change: { revision: Number.MAX_SAFE_INTEGER + 1 },
+        invalidWhy: "not-a-safe-integer" },
+      { name: "mismatched revision", change: commit => ({ revision: commit.revision + 1 }),
+        invalidWhy: "mismatch" },
+      { name: "stale request id", change: commit => ({ id: commit.id + 1 }), outcome: "stale" },
+      { name: "stale generation", change: commit => ({ gen: commit.gen + 1 }), outcome: "stale" },
+      { name: "explicitly uncommitted exact revision", change: { committed: false } },
+      { name: "exact revision", outcome: "committed" },
+    ];
+    for (const replyCase of committedReplyCases) {
+      await restoreCleanDocuments();
+      await resetOrdinaryRig();
+      const hold = ownCommitHold();
+      let reissued = null;
+      await withOrdinaryShutdownCleanup(async () => {
+        const close = guardEvent();
+        win.emit("close", close);
+        if (!await waitUntil(() => hold.answer !== null, 10000)) {
+          throw new Error("Ordinary phase-two fixture did not hold its real committed ingress");
         }
-        localStorage.clear();
-        window.originalMarkdown = '';
-        window.isEditMode = false;
-        return window.CustomTabs.getTabs().length;
-      })()
-    `);
-  } finally {
-    await baseUpdaterBranchBorrow.restore();
-    const baseUpdaterBranchEvidence = baseUpdaterBranchBorrow.snapshot();
+        const commit = hold.packet;
+        const freeze = await exec("window.CustomTabs.__shutdownFreeze()");
+        if (!freeze.frozen || freeze.id !== commit.id ||
+            __shutdown.state().commitPendingId !== commit.id) {
+          throw new Error("Ordinary phase-two fixture never established the actual matching freeze");
+        }
+        const before = __shutdown.state();
+        const outcome = replyCase.outcome || "refused";
+        if (outcome === "refused") reissued = ownApprovalHold();
+        if (outcome !== "committed") {
+          const change = typeof replyCase.change === "function"
+            ? replyCase.change(commit) : replyCase.change;
+          await sendCommitted({ ...hold.answer, ...change });
+        }
+        if (outcome === "refused") {
+          const refused = await waitUntil(() => reissued.response !== null &&
+            reissued.request.id > commit.id &&
+            __shutdown.state().pendingId === reissued.request.id &&
+            __shutdown.state().commitPendingId === 0, 10000);
+          const after = __shutdown.state();
+          check(
+            `a phase-two ${replyCase.name} fails closed and re-asks rather than closing`,
+            refused && close.prevented && after.commitRefusedCount === before.commitRefusedCount + 1 &&
+              after.invalidRevisionCount === before.invalidRevisionCount +
+                (replyCase.invalidWhy ? 1 : 0) &&
+              after.invalidRevisionWhy === (replyCase.invalidWhy || before.invalidRevisionWhy) &&
+              after.authorized === false && rig.closes === 0 && rig.quits === 0,
+            JSON.stringify({ replyCase: replyCase.name, commit, freeze, before, after,
+              reissued: reissued.snapshot(), closes: rig.closes }),
+          );
+          if (!refused) throw new Error("Ordinary refused ACK did not reach its new genuine question");
+          reissued.release();
+        } else if (outcome === "stale") {
+          const ignored = await waitUntil(
+            () => __shutdown.state().staleCommitCount === before.staleCommitCount + 1, 5000);
+          const after = __shutdown.state();
+          check(
+            `a phase-two ${replyCase.name} is ignored without changing the live commit`,
+            ignored && close.prevented && after.commitPendingId === commit.id &&
+              after.commitSequence === before.commitSequence &&
+              after.commitRefusedCount === before.commitRefusedCount &&
+              after.authorized === false && rig.closes === 0 && rig.quits === 0,
+            JSON.stringify({ replyCase: replyCase.name, commit, freeze, before, after }),
+          );
+          hold.release();
+        } else {
+          hold.release();
+        }
+        if (!await waitUntil(() => rig.closes === 1, 10000)) {
+          throw new Error("Ordinary ACK fixture did not join its real released continuation");
+        }
+        if (outcome === "committed") {
+          const after = __shutdown.state();
+          check(
+            "a phase-two exact revision commits and closes once",
+            close.prevented && freeze.frozen && after.commitPendingId === 0 &&
+              after.commitRefusedCount === before.commitRefusedCount &&
+              after.authorized && rig.closes === 1 && rig.quits === 0,
+            JSON.stringify({ commit, freeze, before, after, hold: hold.snapshot() }),
+          );
+        }
+      }, [() => { if (reissued) reissued.dispose(); }, () => hold.dispose()]);
+    }
+
+    const reloadWithRestoredPhysicalSelection = async ({
+      fixtureName, physicalPathSetupName, selectionSetupName,
+    }) => {
+      const before = await observeOrdinaryShutdownFixtures(exec);
+      await exec("window.CustomTabs.settleSessionLayout()");
+      const layout = __shutdown.documentSessionState();
+      const physicalPaths = before.tabs.map(tab => tab.filePath).sort();
+      const persistedPaths = layout.entries.map(entry => entry.filePath).sort();
+      const physical = physicalPaths.length > 0 &&
+        JSON.stringify(physicalPaths) === JSON.stringify(persistedPaths) &&
+        physicalPaths.every(filePath => fs.statSync(filePath).isFile());
+      check(physicalPathSetupName, physical, JSON.stringify({ before, layout }));
+      if (!physical) throw new Error(`${fixtureName} has no exact physical Main layout`);
+      const selectedPath = before.currentFilePath;
+      const fixture = Object.values(cleanCloseFixtureInputs).find(
+        entry => entry.path === selectedPath);
+      if (!fixture) throw new Error(`${fixtureName} does not own its selected fixture`);
+      const generation = __shutdown.state().rendererGeneration;
+      wc.reload();
+      if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
+          __shutdown.state().rendererGeneration > generation, 20000)) {
+        throw new Error(`${fixtureName} did not reach a replacement renderer`);
+      }
+      await settleShutdownLifecycleRestore(exec, fixture.path, fixture.content,
+        fixture.path === fileQ1 ? "Q_ALPHA" : "Q_BETA");
+      const after = await observeOrdinaryShutdownFixtures(exec);
+      const restored = JSON.stringify(after.tabs.map(tab => tab.filePath).sort()) ===
+          JSON.stringify(physicalPaths) &&
+        after.currentFilePath === selectedPath &&
+        after.tabs.every(tab => tab.owner?.documentRef === tab.descriptor?.ref &&
+          __shutdown.documentAdmissionIsCurrent(tab.descriptor?.ref));
+      check(selectionSetupName, restored, JSON.stringify({ before, after, layout }));
+      if (!restored) throw new Error(`${fixtureName} did not restore its exact physical owners`);
+      return after;
+    };
+
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    await reloadWithRestoredPhysicalSelection({
+      fixtureName: "valid-revision",
+      physicalPathSetupName: "the valid-revision reload fixture starts with restored physical paths to select",
+      selectionSetupName: "the valid-revision phase-two reload selects a restored physical owner before its request",
+    });
+    const validClean = await beginHeldApproval();
+    const cleanCommits = [];
+    let closesAtCleanCommit = null;
+    const captureCleanCommit = (event, data) => {
+      if (!validClean.hold.ownsEvent(event) ||
+          data?.id !== validClean.request.id || data.gen !== validClean.request.gen) return;
+      cleanCommits.push(data);
+      if (cleanCommits.length === 1) closesAtCleanCommit = rig.closes;
+    };
+    ipcMain.on("quit-approval-committed", captureCleanCommit);
+    let firstCleanCommit;
+    let cleanPositive;
+    await withOrdinaryShutdownCleanup(async () => {
+      if (validClean.response.dirtyFiles.length !== 0) {
+        throw new Error("Valid clean protocol fixture did not produce its real clean answer");
+      }
+      validClean.hold.release();
+      if (!await waitUntil(() => rig.closes === 1 && cleanCommits.length === 1, 10000)) {
+        throw new Error("Valid clean protocol fixture did not reach its real commit and close");
+      }
+      firstCleanCommit = { ...cleanCommits[0] };
+      const staleResponseBefore = __shutdown.state().staleResponseCount;
+      await sendApproval(validClean.response);
+      const duplicateInert = await waitUntil(() =>
+        __shutdown.state().staleResponseCount === staleResponseBefore + 1, 5000);
+      const staleCommitBefore = __shutdown.state().staleCommitCount;
+      const installsBefore = installs;
+      await sendCommitted(firstCleanCommit);
+      const exactReplay = await waitUntil(() => cleanCommits.length === 2 &&
+        __shutdown.state().staleCommitCount === staleCommitBefore + 1, 5000);
+      check(
+        "an exact duplicate phase-two committed replay preserves id, generation, revision, and committed",
+        exactReplay && cleanCommits[1]?.id === firstCleanCommit.id &&
+          cleanCommits[1].gen === firstCleanCommit.gen &&
+          cleanCommits[1].revision === firstCleanCommit.revision &&
+          cleanCommits[1].committed === firstCleanCommit.committed,
+        JSON.stringify({ firstCleanCommit, replay: cleanCommits[1] }),
+      );
+      await sendCommitted({ ...firstCleanCommit, revision: firstCleanCommit.revision + 1 });
+      const alteredReplay = await waitUntil(() => cleanCommits.length === 3 &&
+        __shutdown.state().staleCommitCount === staleCommitBefore + 2, 5000);
+      check(
+        "a same-id-generation phase-two replay with an altered revision is stale and cannot rerun its continuation",
+        alteredReplay && cleanCommits[2]?.id === firstCleanCommit.id &&
+          cleanCommits[2].gen === firstCleanCommit.gen &&
+          cleanCommits[2].revision === firstCleanCommit.revision + 1 &&
+          cleanCommits[2].committed === firstCleanCommit.committed &&
+          __shutdown.state().commitPendingId === 0 && rig.closes === 1 &&
+          installs === installsBefore,
+        JSON.stringify({ firstCleanCommit, replay: cleanCommits[2], state: __shutdown.state() }),
+      );
+      cleanPositive = duplicateInert && exactReplay && alteredReplay &&
+        firstCleanCommit.id === validClean.request.id &&
+        firstCleanCommit.gen === validClean.request.gen &&
+        firstCleanCommit.revision === validClean.response.revision &&
+        firstCleanCommit.committed === true && closesAtCleanCommit === 0 &&
+        rig.closes === 1 && rig.quits === 0 && installs === installsBefore;
+    }, [
+      () => ipcMain.removeListener("quit-approval-committed", captureCleanCommit),
+      () => validClean.hold.dispose(),
+    ]);
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    const laterRestored = await reloadWithRestoredPhysicalSelection({
+      fixtureName: "later-request",
+      physicalPathSetupName: "the later phase-two reload fixture starts with restored physical paths to select",
+      selectionSetupName: "a later phase-two reload restores every physical tab and clean-tab authoritative owner",
+    });
     check(
-      "a committed update ID alone borrows Linux for the quitAndInstall stub and restores the host platform",
-      baseUpdaterBranchEvidence.updateResponseIds.some((id) =>
-        baseUpdaterBranchEvidence.armedVerificationIds.includes(id),
-      ) &&
-        baseUpdaterBranchEvidence.verifiedUpdateRequestIds.some(
-          (record) =>
-            baseUpdaterBranchEvidence.armedVerificationIds.includes(
-              record.requestId,
-            ) &&
-            record.platformBefore === actualHostPlatform &&
-            record.platformDuring ===
-              (actualHostPlatform === "win32" ? "linux" : actualHostPlatform) &&
-            record.platformAfter === actualHostPlatform,
-        ) &&
-        baseUpdaterBranchEvidence.quitAndInstallPlatforms.includes(
-          actualHostPlatform === "win32" ? "linux" : actualHostPlatform,
-        ) &&
-        baseUpdaterBranchEvidence.platform === actualHostPlatform,
-      JSON.stringify(baseUpdaterBranchEvidence),
+      "the later phase-two clean-close fixture has no protected restored physical tab",
+      laterRestored.tabs.length === 2 && laterRestored.dirty.length === 0 &&
+        laterRestored.tabs.every(tab => !tab.dirty && tab.content === tab.original),
+      JSON.stringify(laterRestored),
     );
-    if (restoreInstall) restoreInstall();
-    electronAutoUpdater.removeListener(
+    const laterClose = guardEvent();
+    win.emit("close", laterClose);
+    const laterCompleted = await waitUntil(() => rig.closes === 1, 10000);
+    check(
+      "a valid clean revision reaches phase-two commit and a duplicate response cannot close twice",
+      cleanPositive && laterClose.prevented && laterCompleted &&
+        __shutdown.state().lastRequestId > firstCleanCommit.id &&
+        __shutdown.state().commitPendingId === 0 && rig.closes === 1 &&
+        rig.quits === 0 && rig.dialogs.length === 0,
+      JSON.stringify({ cleanPositive, firstCleanCommit, laterRestored,
+        state: __shutdown.state(), closes: rig.closes }),
+    );
+
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    await reloadWithRestoredPhysicalSelection({
+      fixtureName: "valid-dirty",
+      physicalPathSetupName: "the valid-dirty reload fixture starts with restored physical paths to select",
+      selectionSetupName: "the valid-dirty phase-two reload selects a restored physical owner before its request",
+    });
+    const validDirtyEdit = await editOrdinaryShutdownFixture(exec, "VALID_DIRTY_REVISION");
+    rig.answer = 0;
+    const validDirty = await beginHeldApproval();
+    let dirtyCommit = null;
+    let dirtyDialogAtCommit = null;
+    const captureDirtyCommit = (event, data) => {
+      if (!validDirty.hold.ownsEvent(event) || data?.id !== validDirty.request.id) return;
+      dirtyCommit = data;
+      dirtyDialogAtCommit = rig.dialogs[0]?.response;
+    };
+    ipcMain.on("quit-approval-committed", captureDirtyCommit);
+    await withOrdinaryShutdownCleanup(async () => {
+      const folded = await exec("window.CustomTabs.getActiveTab().content");
+      if (validDirty.response.dirtyFiles.length !== 1 ||
+          !validDirty.response.dirtyFiles.includes(validDirtyEdit.name) ||
+          folded !== validDirtyEdit.live) {
+        throw new Error("Valid dirty protocol fixture did not produce its actual folded dirty answer");
+      }
+      validDirty.hold.release();
+      const dirtyClosed = await waitUntil(() => rig.closes === 1, 10000);
+      await joinDialogs();
+      check(
+        "a valid dirty revision shows discard approval before its phase-two commit",
+        validDirty.close.prevented && dirtyClosed && rig.dialogs.length === 1 &&
+          /Unsaved changes/.test(String(rig.dialogs[0].options.title)) &&
+          dirtyCommit?.id === validDirty.request.id &&
+          dirtyCommit.revision === validDirty.response.revision &&
+          dirtyCommit.committed === true && dirtyDialogAtCommit === 0 &&
+          validDirtyEdit.cacheAfter === validDirtyEdit.cache &&
+          validDirtyEdit.baselineAfter === validDirtyEdit.baseline &&
+          __shutdown.state().invalidRevisionCount === 0,
+        JSON.stringify({ validDirtyEdit, response: validDirty.response, folded,
+          dirtyCommit, dirtyDialogAtCommit, dialogs: rig.dialogs, state: __shutdown.state() }),
+      );
+    }, [
+      () => ipcMain.removeListener("quit-approval-committed", captureDirtyCommit),
+      () => validDirty.hold.dispose(),
+    ]);
+
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    await reloadWithRestoredPhysicalSelection({
+      fixtureName: "sender-gate",
+      physicalPathSetupName: "the sender-gate reload fixture starts with restored physical paths to select",
+      selectionSetupName: "the sender-gate reload selects a restored physical owner before its request",
+    });
+    const impostor = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, "..", "src", "main-preload.js"),
+        nodeIntegration: false, nodeIntegrationInSubFrames: false,
+        contextIsolation: true, sandbox: true,
+      },
+    });
+    let foreignApproval = null;
+    let foreignReady = 0;
+    let foreignResponse = 0;
+    const observeForeignReady = event => {
+      if (event.sender === impostor.webContents) foreignReady += 1;
+    };
+    const observeForeignResponse = event => {
+      if (event.sender === impostor.webContents) foreignResponse += 1;
+    };
+    await withOrdinaryShutdownCleanup(async () => {
+      await impostor.loadFile(impostorFile);
+      await impostor.webContents.executeJavaScript("typeof window.folia.respondToQuitApproval");
+      foreignApproval = await beginHeldApproval();
+      const before = __shutdown.state();
+      ipcMain.on("quit-approval-ready", observeForeignReady);
+      ipcMain.on("quit-approval-response", observeForeignResponse);
+      await impostor.webContents.executeJavaScript(`
+        window.folia.announceQuitApprovalReady({
+          gen: ${before.rendererGeneration},
+          pageSession: ${JSON.stringify(before.rendererPageSession)}
+        });
+        window.folia.respondToQuitApproval(${JSON.stringify(foreignApproval.response)});
+        null;
+      `);
+      const delivered = await waitUntil(() => foreignReady === 1 && foreignResponse === 1, 5000);
+      const after = __shutdown.state();
+      check(
+        "an answer from a window that owns no documents is refused",
+        delivered && foreignApproval.close.prevented &&
+          rig.dialogs.length === 0 && after.pendingId === before.pendingId &&
+          after.lastRequestId === before.lastRequestId &&
+          after.staleResponseCount === before.staleResponseCount &&
+          after.staleReadyCount === before.staleReadyCount &&
+          after.invalidRevisionCount === before.invalidRevisionCount &&
+          after.rendererGeneration === before.rendererGeneration &&
+          after.settleWhy === before.settleWhy && !after.authorized &&
+          rig.closes === 0 && rig.quits === 0,
+        JSON.stringify({ delivered, foreignReady, foreignResponse, before, after }),
+      );
+      rig.answer = 0;
+      const invalidBefore = __shutdown.state().invalidRevisionCount;
+      // Keep the genuine revision so this reaches the malformed-list branch.
+      await sendApproval({ ...foreignApproval.response, dirtyFiles: [null] });
+      const unreadableClosed = await waitUntil(() => rig.closes === 1, 10000);
+      await joinDialogs();
+      check(
+        "an unreadable answer raises the main-process question instead of closing",
+        unreadableClosed && rig.dialogs.length === 1 &&
+          /cannot be checked/i.test(String(rig.dialogs[0].options.title)) &&
+          rig.dialogs[0].response === 0 &&
+          __shutdown.state().settleWhy === "fallback-unreadable" &&
+          __shutdown.state().invalidRevisionCount === invalidBefore && rig.closes === 1,
+        JSON.stringify({ dialogs: rig.dialogs, state: __shutdown.state(), closes: rig.closes }),
+      );
+    }, [
+      () => ipcMain.removeListener("quit-approval-ready", observeForeignReady),
+      () => ipcMain.removeListener("quit-approval-response", observeForeignResponse),
+      () => { if (foreignApproval) foreignApproval.hold.dispose(); },
+      () => { if (!impostor.isDestroyed()) impostor.destroy(); },
+    ]);
+
+    // -- the renderer's own staleness filter -------------------------------
+    await restoreCleanDocuments();
+    await resetOrdinaryRig();
+    await exec(`(() => {
+      if (window.CustomTabs.__inEditMode()) document.getElementById('toggleEdit').click();
+      return true;
+    })()`);
+    if (!await waitForCondition(exec, "!window.CustomTabs.__inEditMode()", 8000)) {
+      throw new Error("Ordinary response-cache caller did not restore its clean view mode");
+    }
+    await runShutdownResponseCacheScenario(win, exec);
+    await retireOrdinaryShutdownFixtures(exec, "after ordinary shutdown response-cache scenario");
+  } catch (error) {
+    bodyError = error;
+  } finally {
+    const cleanupErrors = [];
+    const attempt = async action => {
+      try { await action(); } catch (error) { cleanupErrors.push(error); }
+    };
+    for (const held of heldDialogs) {
+      await attempt(() => { if (!held.settled) held.settle(1); });
+    }
+    await attempt(async () => {
+      const outcomes = await Promise.allSettled(rendererTails);
+      const failures = outcomes.filter(outcome => outcome.status === "rejected")
+        .map(outcome => outcome.reason);
+      if (failures.length) throw new AggregateError(failures, "Ordinary renderer work failed");
+    });
+    await attempt(async () => {
+      let joinedCount = -1;
+      const failures = [];
+      while (joinedCount !== dialogTails.length) {
+        joinedCount = dialogTails.length;
+        const outcomes = await Promise.allSettled(dialogTails.slice());
+        failures.push(...outcomes.filter(outcome => outcome.status === "rejected")
+          .map(outcome => outcome.reason));
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      if (failures.length) throw new AggregateError(failures, "Ordinary dialog producers failed");
+    });
+    for (const hold of ownedHolds.slice().reverse()) await attempt(() => hold.dispose());
+    await attempt(() => {
+      const snapshots = ownedHolds.map(hold => hold.snapshot());
+      const complete = snapshots.length > 0 && snapshots.every(snapshot =>
+        snapshot.restored && (!snapshot.captured || snapshot.released || snapshot.retired));
+      check("ordinary Main-side approval holds are restored and released or retired once",
+        complete, JSON.stringify(snapshots));
+      if (!complete) throw new Error("Ordinary approval hold cleanup remained incomplete");
+    });
+    // Reset cancels unstarted intents; it does not join asynchronous work.
+    // The original renderer and dialog promises above remain the join witnesses.
+    await attempt(() => {
+      if (__shutdown.state().shutdownPendingContinuationCount !== 0) {
+        throw new Error("Ordinary cleanup still has a started asynchronous handoff");
+      }
+    });
+    await attempt(() => __shutdown.reset());
+    // Allow already-queued callbacks to observe their cancelled epochs before
+    // releasing providers. This is cleanup, not proof that no callback queued.
+    await attempt(() => new Promise(resolve => setImmediate(resolve)));
+    await attempt(() => new Promise(resolve => setImmediate(resolve)));
+    await attempt(async () => {
+      const removed = await exec(`(() => {
+        const state = window.__ordinaryShutdownRequestCounter;
+        if (!state) return false;
+        if (state.owner !== ${JSON.stringify(requestCounterOwner)}) {
+          throw new Error('Ordinary request counter restoration ownership changed');
+        }
+        state.off();
+        delete window.__ordinaryShutdownRequestCounter;
+        return true;
+      })()`);
+      if (counterPageSession &&
+          counterPageSession === __shutdown.state().rendererPageSession && removed !== true) {
+        throw new Error("Ordinary request counter disappeared before its owned restoration");
+      }
+      if (await exec("!!window.__ordinaryShutdownRequestCounter")) {
+        throw new Error("Ordinary request counter survived restoration");
+      }
+    });
+    await attempt(async () => { if (readinessFixture) await readinessFixture.restore(); });
+    await attempt(async () => {
+      if (!baseUpdaterBranchBorrow) return;
+      await baseUpdaterBranchBorrow.restore();
+      const evidence = baseUpdaterBranchBorrow.snapshot();
+      const label =
+        "a committed update ID alone borrows Linux for the quitAndInstall stub and restores the host platform";
+      if (automaticUpdatesAvailable === true) {
+        check(label,
+          evidence.updateResponseIds.some(id => evidence.armedVerificationIds.includes(id)) &&
+            evidence.verifiedUpdateRequestIds.some(record =>
+              evidence.armedVerificationIds.includes(record.requestId) &&
+              record.platformBefore === actualHostPlatform &&
+              record.platformDuring ===
+                (actualHostPlatform === "win32" ? "linux" : actualHostPlatform) &&
+              record.platformAfter === actualHostPlatform) &&
+            evidence.quitAndInstallPlatforms.includes(
+              actualHostPlatform === "win32" ? "linux" : actualHostPlatform) &&
+            evidence.platform === actualHostPlatform,
+          JSON.stringify(evidence));
+      } else if (automaticUpdatesAvailable === false) {
+        unavailable(label, "manual-only updater; no automatic installer entry was attempted");
+        check("ordinary manual-only cleanup preserves the actual host platform",
+          evidence.platform === actualHostPlatform && evidence.quitAndInstallPlatforms.length === 0,
+          JSON.stringify(evidence));
+      }
+    });
+    await attempt(() => { if (restoreInstall) restoreInstall(); });
+    await attempt(() => electronAutoUpdater.removeListener(
       "before-quit-for-update",
       countPublicUpdateCommit,
-    );
-    if (restoreUpdaterLatch) restoreUpdaterLatch();
-    rig.restore();
+    ));
+    await attempt(() => { if (restoreUpdaterLatch) restoreUpdaterLatch(); });
+    await attempt(() => { if (ownedQuestions) ownedQuestions.restore(); });
+    await attempt(() => { if (restoreOrdinaryEmergencyGuard) restoreOrdinaryEmergencyGuard(); });
+    await attempt(() => rig.restore());
+    await attempt(() => { if (!timingWasEnabled) __shutdown.timing.disable(); });
     check(
       "the shutdown rig restores the exact app.quit property descriptor",
       sameDescriptor(
@@ -43851,7 +42502,10 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
         after: Object.getOwnPropertyDescriptor(app, "quit"),
       }),
     );
-    __shutdown.reset();
+    if (bodyError || cleanupErrors.length) {
+      throw new AggregateError([bodyError, ...cleanupErrors].filter(Boolean),
+        "Ordinary shutdown scenario or independent cleanup failed");
+    }
   }
 }
 
