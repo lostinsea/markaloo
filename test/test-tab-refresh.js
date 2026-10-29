@@ -2350,8 +2350,138 @@ async function runPortableUpdateScenarios(win) {
   const portableDirectories = new Set();
   let activeChild = null;
   let spawnMode = "park";
+  let portableQuestions = null;
+  let portableQuestionOffset = 0;
+  let restorePortableNative = null;
+  let portableRigOwners = null;
+  const portableQuestionEntries = [];
+  const portableQuestionTails = [];
+  const portableAnswerHolds = [];
+  const portableNativeFailures = [];
+  const installPortableQuestions = () => {
+    if (portableQuestions || restorePortableNative) {
+      throw new Error("Portable question actor is already installed");
+    }
+    restorePortableNative = replaceMethod(dialog, "showMessageBox", (_parent, options) => {
+      const error = new Error("Unexpected native portable question: " + options?.title);
+      portableNativeFailures.push(error);
+      return Promise.reject(error);
+    });
+    portableRigOwners = [[app, "quit"], [win, "close"], [dialog, "showMessageBox"]]
+      .map(([target, name]) => ({ target, name,
+        descriptor: Object.getOwnPropertyDescriptor(target, name) }));
+    portableQuestions = installMainOwnedShutdownQuestions(win, portableQuestionTails, {
+      policy: "cancellable",
+      onRecord(record) {
+        const entry = { record, requestId: record.requestId, signal: record.options.signal,
+          answer: rig.answer, consumer: null, consumerSettled: false };
+        portableQuestionEntries.push(entry);
+        // Main registers its original catch-chain after this synchronous callback.
+        entry.captureWork = Promise.resolve().then(() => {
+          const consumer = __shutdown.readQuestionConsumer(entry.requestId, entry.signal);
+          if (!consumer || typeof consumer.then !== "function") {
+            throw new Error("Portable question has no exact original Main consumer");
+          }
+          entry.consumer = consumer;
+          // Do not return it here: choosing must not wait for its own consumption.
+        });
+        entry.consumerWork = entry.captureWork.then(() => entry.consumer);
+        entry.consumerWork.then(
+          () => { entry.consumerSettled = true; },
+          error => { entry.consumerSettled = true; entry.consumerError = error; },
+        );
+        entry.callbackWork = (async () => {
+          await entry.captureWork;
+          const presentation = await record.presentationReady;
+          if (presentation.kind !== "displayed" || record.settled || record.retired) return;
+          const answer = typeof entry.answer === "function"
+            ? Reflect.apply(entry.answer, rig, [record.options]) : entry.answer;
+          entry.legacyReturn = answer;
+          const response = await answer;
+          if (!record.settled && !record.retired) record.choose(response);
+        })();
+        return entry.callbackWork;
+      },
+    });
+  };
+  const portableScenarioQuestions = () => portableQuestionEntries
+    .slice(portableQuestionOffset).map(entry => entry.record);
+  const portableDialogs = () => portableScenarioQuestions().filter(record => record.displayed);
+  const joinPortableQuestions = async () => {
+    const errors = [];
+    if (portableQuestions) {
+      let observed;
+      do {
+        observed = portableQuestionEntries.length;
+        const results = await Promise.allSettled([
+          portableQuestions.join(),
+          ...portableQuestionEntries.map(entry => entry.consumerWork),
+        ]);
+        errors.push(...results.filter(result => result.status === "rejected")
+          .map(result => result.reason));
+      } while (observed !== portableQuestionEntries.length);
+    }
+    errors.push(...portableNativeFailures);
+    if (errors.length) throw new AggregateError(errors, "Portable observed question work failed");
+    // This joins only observed question work, not THAW, ACK or later continuations.
+  };
+  const joinPortableChoice = async (index, reason, response) => {
+    const entry = portableQuestionEntries[portableQuestionOffset + index];
+    if (!entry || (await entry.record.presentationReady).kind !== "displayed") {
+      throw new Error("Portable scenario did not display its expected question");
+    }
+    const results = await Promise.allSettled([
+      entry.record.joined, entry.callbackWork, entry.consumerWork,
+    ]);
+    const errors = results.filter(result => result.status === "rejected")
+      .map(result => result.reason);
+    if (errors.length) throw new AggregateError(errors, "Portable question choice failed");
+    if (entry.record.pendingReason !== reason || !entry.record.choiceDelivered ||
+        entry.record.result?.cause !== "choice" || entry.record.result.response !== response) {
+      throw new Error("Portable question did not consume its expected genuine choice");
+    }
+  };
+  const holdPortableAnswer = () => {
+    let resolve;
+    let released = false;
+    const promise = new Promise(yes => { resolve = yes; });
+    const hold = { promise, get released() { return released; }, release(response) {
+      if (released || ![0, 1].includes(response)) {
+        throw new Error("Portable answer hold requires one valid release");
+      }
+      released = true;
+      resolve(response);
+    } };
+    portableAnswerHolds.push(hold);
+    return hold;
+  };
+  const requirePortableQuestionDisplays = () => {
+    if (portableScenarioQuestions().some(record => !record.displayed)) {
+      throw new Error("Portable scenario retired an undisplayed question");
+    }
+  };
+  const resetPortableQuestionCounters = async () => {
+    await joinPortableQuestions();
+    requirePortableQuestionDisplays();
+    portableQuestionOffset = portableQuestionEntries.length;
+    rig.reset();
+  };
+  const restorePortableQuestionRig = () => {
+    if (restorePortableNative) {
+      if (portableQuestionEntries.some(entry => !entry.consumerSettled) ||
+          portableRigOwners.some(({ target, name, descriptor }) =>
+            !isDeepStrictEqual(Object.getOwnPropertyDescriptor(target, name), descriptor))) {
+        throw new Error("Portable question work or borrowed rig ownership is unresolved");
+      }
+      if (portableQuestions) portableQuestions.restore();
+      restorePortableNative();
+    }
+    rig.restore();
+  };
 
   const resetCounts = async () => {
+    await joinPortableQuestions();
+    requirePortableQuestionDisplays();
     await replacePortableFixture();
     spawnCalls = 0;
     batchDirectories = 0;
@@ -2365,7 +2495,7 @@ async function runPortableUpdateScenarios(win) {
     cancelPaths.length = 0;
     spawnInvocations.length = 0;
     activeChild = null;
-    rig.reset();
+    await resetPortableQuestionCounters();
     return updaterFixture.prepare();
   };
   const startInstall = () =>
@@ -2753,6 +2883,7 @@ async function runPortableUpdateScenarios(win) {
       activeChild = child;
       return child;
     });
+    installPortableQuestions();
 
     // Re-entrant request at the hand-off boundary: one private directory,
     // one batch, and one spawn attempt even when that first attempt refuses.
@@ -3192,14 +3323,11 @@ async function runPortableUpdateScenarios(win) {
       })()
     `);
     await capturePortableDiscard(exactPostReleaseEdit, "portable post-release source-change fixture");
-    let releaseStaleAckClose;
-    rig.answer = () =>
-      new Promise((resolve) => {
-        releaseStaleAckClose = resolve;
-      });
+    const staleAckCloseHold = holdPortableAnswer();
+    rig.answer = () => staleAckCloseHold.promise;
     const closeDuringHandoff = guardEvent();
     win.emit("close", closeDuringHandoff);
-    const closeQuestionOpen = await waitUntil(() => rig.dialogs.length === 1, 10000);
+    const closeQuestionOpen = await waitUntil(() => portableDialogs().length === 1, 10000);
     if (staleAckGateReleased) {
       acknowledgedBatchDirs.add(path.resolve(portableBatchDir(batchPaths[0])));
       writePortableMarker(
@@ -3211,11 +3339,13 @@ async function runPortableUpdateScenarios(win) {
     await sleep(400);
     const quitsWhileQuestionOpen = rig.quits;
     rig.answer = 1;
-    if (releaseStaleAckClose) releaseStaleAckClose(1);
+    staleAckCloseHold.release(1);
+    await joinPortableChoice(0, "window-close", 1);
     const reAskedAfterAck = await waitUntil(
-      () => rig.dialogs.length === 2 && __shutdown.state().pendingId === 0,
+      () => portableDialogs().length === 2,
       10000,
     );
+    await joinPortableChoice(1, "update-install", 1);
     const preservedPostReleaseEdit = await exec(
       `window.CustomTabs.getActiveTab().content`,
     );
@@ -3227,8 +3357,9 @@ async function runPortableUpdateScenarios(win) {
         closeDuringHandoff.prevented === true &&
         quitsWhileQuestionOpen === 0 &&
         reAskedAfterAck &&
-        rig.dialogs[0].pendingReason === "window-close" &&
-        rig.dialogs[1].pendingReason === "update-install" &&
+        portableDialogs()[0].pendingReason === "window-close" &&
+        portableDialogs()[1].pendingReason === "update-install" &&
+        __shutdown.state().pendingId === 0 &&
         rig.quits === 0 &&
         preservedPostReleaseEdit === exactPostReleaseEdit &&
         __shutdown.state().authorized === false,
@@ -3239,7 +3370,7 @@ async function runPortableUpdateScenarios(win) {
         prevented: closeDuringHandoff.prevented,
         quitsWhileQuestionOpen,
         reAskedAfterAck,
-        dialogs: rig.dialogs.map((dialog) => dialog.pendingReason),
+        dialogs: portableDialogs().map((dialog) => dialog.pendingReason),
         quits: rig.quits,
         preservedPostReleaseEdit,
         state: __shutdown.state(),
@@ -3262,7 +3393,7 @@ async function runPortableUpdateScenarios(win) {
     const editRaceChild = activeChild;
     if (editRaceChild) editRaceChild.emit("spawn");
     const editRaceGateReleased = await waitUntil(() => releaseWrites === 1, 10000);
-    const dialogsBeforeEditRace = rig.dialogs.length;
+    const dialogsBeforeEditRace = portableScenarioQuestions().length;
     const exactPostGateEdit =
       "# Portable update fixture\nPORTABLE_POST_GATE_EDIT\n";
     await exec(`
@@ -3283,7 +3414,8 @@ async function runPortableUpdateScenarios(win) {
         portableHandoffToken(batchPaths[0]),
       );
     }
-    const editRaceAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
+    const editRaceAsked = await waitUntil(() => portableDialogs().length === 1, 10000);
+    await joinPortableChoice(0, "update-install", 1);
     await sleep(300);
     const preservedPostGateEdit = await exec(
       `window.CustomTabs.getActiveTab().content`,
@@ -3295,8 +3427,8 @@ async function runPortableUpdateScenarios(win) {
         editRaceGateReleased &&
         dialogsBeforeEditRace === 0 &&
         editRaceAsked &&
-        rig.dialogs[0].pendingReason === "update-install" &&
-        /alpha\.md/.test(String(rig.dialogs[0].options.message)) &&
+        portableDialogs()[0].pendingReason === "update-install" &&
+        /alpha\.md/.test(String(portableDialogs()[0].presentation.message)) &&
         rig.quits === 0 &&
         preservedPostGateEdit === exactPostGateEdit &&
         editRaceState.authorized === false &&
@@ -3313,7 +3445,7 @@ async function runPortableUpdateScenarios(win) {
         editRaceGateReleased,
         dialogsBeforeEditRace,
         editRaceAsked,
-        dialog: rig.dialogs[0],
+        dialog: portableDialogs()[0],
         quits: rig.quits,
         preservedPostGateEdit,
         cancelWrites,
@@ -3342,7 +3474,7 @@ async function runPortableUpdateScenarios(win) {
       releaseWrites,
       cancelWrites,
       childKills,
-      dialogs: rig.dialogs.length,
+      dialogs: portableScenarioQuestions().length,
       quits: rig.quits,
       unrefCalls: editRaceChild ? editRaceChild.unrefCalls : -1,
       lastRequestId: __shutdown.state().lastRequestId,
@@ -3441,14 +3573,15 @@ async function runPortableUpdateScenarios(win) {
       );
     }
     const approvedRaceQuit = await waitUntil(() => rig.quits === 1, 10000);
+    await joinPortableChoice(0, "update-install", 0);
     await sleep(300);
     check(
       "approving the confirmation after an acknowledged portable hand-off quits once and starts nothing further",
       approvedRaceChildParked &&
         approvedRaceGateReleased &&
         approvedRaceQuit &&
-        rig.dialogs.length === 1 &&
-        rig.dialogs[0].pendingReason === "update-install" &&
+        portableDialogs().length === 1 &&
+        portableDialogs()[0].pendingReason === "update-install" &&
         rig.quits === 1 &&
         spawnCalls === 1 &&
         batchDirectories === 1 &&
@@ -3462,7 +3595,7 @@ async function runPortableUpdateScenarios(win) {
         approvedRaceChildParked,
         approvedRaceGateReleased,
         approvedRaceQuit,
-        dialogs: rig.dialogs.map((dialog) => dialog.pendingReason),
+        dialogs: portableDialogs().map((dialog) => dialog.pendingReason),
         quits: rig.quits,
         spawnCalls,
         batchDirectories,
@@ -3499,7 +3632,8 @@ async function runPortableUpdateScenarios(win) {
     `);
     await capturePortableDiscard(exactGapEdit, "portable spawn-gap source-change fixture");
     if (gapChild) gapChild.emit("spawn");
-    const gapAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
+    const gapAsked = await waitUntil(() => portableDialogs().length === 1, 10000);
+    await joinPortableChoice(0, "update-install", 1);
     const gapCancelled = await waitUntil(
       () => cancelWrites === 1 && childKills === 1,
       10000,
@@ -3520,8 +3654,8 @@ async function runPortableUpdateScenarios(win) {
       "a portable commit re-asks about an edit made after the install approval and Cancel keeps it",
       gapChildParked &&
         gapAsked &&
-        rig.dialogs[0].pendingReason === "update-install" &&
-        /alpha\.md/.test(String(rig.dialogs[0].options.message)) &&
+        portableDialogs()[0].pendingReason === "update-install" &&
+        /alpha\.md/.test(String(portableDialogs()[0].presentation.message)) &&
         gapCancelled &&
         releaseWrites === 0 &&
         rig.quits === 0 &&
@@ -3532,7 +3666,7 @@ async function runPortableUpdateScenarios(win) {
       JSON.stringify({
         gapChildParked,
         gapAsked,
-        dialog: rig.dialogs[0],
+        dialog: portableDialogs()[0],
         gapCancelled,
         releaseWrites,
         cancelWrites,
@@ -3560,13 +3694,10 @@ async function runPortableUpdateScenarios(win) {
       })()
     `);
     await capturePortableDiscard(fixtureText + "\nPORTABLE_HELD_APPROVAL_EDIT\n", "portable held-approval fixture");
-    let releasePortableApproval;
-    rig.answer = () =>
-      new Promise((resolve) => {
-        releasePortableApproval = resolve;
-      });
+    const portableApprovalHold = holdPortableAnswer();
+    rig.answer = () => portableApprovalHold.promise;
     await startInstall();
-    const portableApprovalHeld = await waitUntil(() => rig.dialogs.length === 1);
+    const portableApprovalHeld = await waitUntil(() => portableDialogs().length === 1);
     const gatesWhileHeld = {
       batchDirectories,
       batchWrites,
@@ -3575,10 +3706,9 @@ async function runPortableUpdateScenarios(win) {
       cancelWrites,
     };
     rig.answer = 1;
-    if (releasePortableApproval) releasePortableApproval(1);
-    const portableApprovalCancelled = await waitUntil(
-      () => __shutdown.state().pendingId === 0,
-    );
+    portableApprovalHold.release(1);
+    await joinPortableChoice(0, "update-install", 1);
+    const portableApprovalCancelled = __shutdown.state().pendingId === 0;
     check(
       "a portable install held for approval creates no release gate and Cancel starts no child",
       portableApprovalHeld &&
@@ -3588,6 +3718,11 @@ async function runPortableUpdateScenarios(win) {
         gatesWhileHeld.spawnCalls === 0 &&
         gatesWhileHeld.releaseWrites === 0 &&
         gatesWhileHeld.cancelWrites === 0 &&
+        batchDirectories === 0 &&
+        batchWrites === 0 &&
+        spawnCalls === 0 &&
+        releaseWrites === 0 &&
+        cancelWrites === 0 &&
         __shutdown.state().authorized === false,
       JSON.stringify({
         portableApprovalHeld,
@@ -3652,7 +3787,7 @@ async function runPortableUpdateScenarios(win) {
     // it a separate batch and let its observed spawn event complete normally,
     // acknowledgement included.
     await resetCounts();
-    rig.reset();
+    await resetPortableQuestionCounters();
     await startInstall();
     const retryChildParked = await waitUntil(() => activeChild !== null);
     const retryChild = activeChild;
@@ -3807,7 +3942,7 @@ async function runPortableUpdateScenarios(win) {
     await waitUntil(() => !fs.existsSync(dirA), 10000);
 
     await resetCounts();
-    rig.reset();
+    await resetPortableQuestionCounters();
     rig.answer = 1;
     await startInstall();
     const tokenAttemptB = await waitUntil(() => activeChild !== null, 10000);
@@ -3868,7 +4003,7 @@ async function runPortableUpdateScenarios(win) {
     // through the ordinary approval path. A replay test that left the real path
     // unproven would have shown the check refusing everything.
     await resetCounts();
-    rig.reset();
+    await resetPortableQuestionCounters();
     rig.answer = 1;
     await startInstall();
     const tokenAttemptC = await waitUntil(() => activeChild !== null, 10000);
@@ -3919,7 +4054,7 @@ async function runPortableUpdateScenarios(win) {
     // gate is a security control - and "the suite passed" is not evidence for
     // it. A real second BrowserWindow sends the message; nothing may move.
     await resetCounts();
-    rig.reset();
+    await resetPortableQuestionCounters();
     const impostor = new BrowserWindow({
       show: false,
       webPreferences: { nodeIntegration: false, contextIsolation: true },
@@ -3949,7 +4084,7 @@ async function runPortableUpdateScenarios(win) {
           releaseWrites === 0 &&
           cancelWrites === 0 &&
           childKills === 0 &&
-          rig.dialogs.length === 0 &&
+          portableScenarioQuestions().length === 0 &&
           rig.quits === 0 &&
           afterImpostor.authorized === false,
         JSON.stringify({
@@ -3963,7 +4098,7 @@ async function runPortableUpdateScenarios(win) {
           releaseWrites,
           cancelWrites,
           childKills,
-          dialogs: rig.dialogs.length,
+          dialogs: portableScenarioQuestions().length,
           quits: rig.quits,
         }),
       );
@@ -4411,7 +4546,7 @@ async function runPortableUpdateScenarios(win) {
     );
     // The latch is clear, so a later press may try again - and does.
     await resetCounts();
-    rig.reset();
+    await resetPortableQuestionCounters();
     await startInstall();
     const earlyDeathRetryParked = await waitUntil(
       () => activeChild !== null,
@@ -4572,6 +4707,8 @@ async function runPortableUpdateScenarios(win) {
     // hand-off. The rig keeps this companion alive, so release that committed
     // renderer freeze and restore a real selected fixture before creating the
     // edit for the close-path assertion.
+    await joinPortableQuestions();
+    requirePortableQuestionDisplays();
     const errorCloseFixture = await replacePortableFixture();
     const errorCloseFixtureReady = !!(
       errorCloseFixture &&
@@ -4604,7 +4741,8 @@ async function runPortableUpdateScenarios(win) {
     rig.answer = 1;
     const closeAfterError = guardEvent();
     win.emit("close", closeAfterError);
-    const errorAsked = await waitUntil(() => rig.dialogs.length === 1);
+    const errorAsked = await waitUntil(() => portableDialogs().length === 1);
+    await joinPortableChoice(0, "window-close", 1);
     check(
       "a pre-release portable child error is handled but cannot clear its retry latch before close",
       errorIsHandled &&
@@ -4882,7 +5020,7 @@ async function runPortableUpdateScenarios(win) {
     // is the only way to observe the branch, and the sweep below and the
     // teardown afterwards need no window.
     await resetCounts();
-    rig.reset();
+    await resetPortableQuestionCounters();
     rig.answer = 1;
     // The prior fixture was retired through its exact ordinary close.
     // This clean admitted document isolates window loss from discard consent.
@@ -4898,11 +5036,11 @@ async function runPortableUpdateScenarios(win) {
       noWindowParked === true &&
         typeof noWindowBatch === "string" &&
         fs.existsSync(noWindowBatch) &&
-        rig.dialogs.length === 0,
+        portableScenarioQuestions().length === 0,
       JSON.stringify({
         noWindowParked,
         noWindowBatch: noWindowBatch || null,
-        dialogs: rig.dialogs.length,
+        dialogs: portableScenarioQuestions().length,
         state: __shutdown.state(),
       }),
     );
@@ -4920,7 +5058,7 @@ async function runPortableUpdateScenarios(win) {
     // counts. Cleared here so the assertion below measures the hand-off's own
     // decision and not the lifecycle cascade that preceded it.
     await sleep(300);
-    rig.reset();
+    await resetPortableQuestionCounters();
     const beforeNoWindowAck = __shutdown.state();
     writePortableMarker(noWindowBatch, "ack", noWindowToken);
     await sleep(1200);
@@ -4989,6 +5127,10 @@ async function runPortableUpdateScenarios(win) {
     const failures = [];
     let quiescent = !automaticStarted;
     try {
+      for (const hold of portableAnswerHolds) {
+        if (!hold.released) hold.release(1);
+      }
+      await joinPortableQuestions();
       if (automaticStarted) {
         if (documentsClaimed && !win.isDestroyed()) {
           await retirePortableFixture();
@@ -4996,6 +5138,7 @@ async function runPortableUpdateScenarios(win) {
           await settlePortableOriginalWork();
           // Without a live owned document, leave Main's evidence alone.
         }
+        await joinPortableQuestions();
         quiescent = true;
       }
     } catch (error) { failures.push(error); }
@@ -5003,7 +5146,7 @@ async function runPortableUpdateScenarios(win) {
     // settled. The terminal harness must contain that failed run.
     if (quiescent) {
       for (const restore of [restoreSpawn, restoreWrite, restoreMkdtemp,
-        () => rig.restore(), updaterFixture && (() => updaterFixture.restore())]) {
+        restorePortableQuestionRig, updaterFixture && (() => updaterFixture.restore())]) {
         if (!restore) continue;
         try { restore(); } catch (error) { failures.push(error); }
       }

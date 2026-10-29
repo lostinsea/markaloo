@@ -39,6 +39,8 @@ const installSource = between(actorSource, "  const startInstall =",
   "\n\n  try {");
 const actorPrelude = actorSource.slice(actorSource.indexOf("{") + 1,
   actorSource.indexOf("\n\n  try {"));
+const rigSource = between(source, "function replaceMethod(",
+  "\nfunction portableInstallEvent(");
 const validatorSource = between(mainSource, "  validateReady: artifact => {",
   "\n  onDownloadStart:").slice("  validateReady: ".length).trim().replace(/,$/, "");
 assert.equal(createHash("sha256").update(fixtureSource).digest("hex"),
@@ -152,8 +154,9 @@ function harness({ platform = "darwin", override = {}, rendererReady = true } = 
 
 function deferred() {
   let resolve;
-  const promise = new Promise(yes => { resolve = yes; });
-  return { promise, resolve };
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
 }
 function documents() {
   const fields = ["pageSession", "rendererGeneration", "tabId",
@@ -498,6 +501,142 @@ function automatic({ pendingTail = false, initialOwner = null } = {}) {
   };
 }
 
+// Actual portable caller/rig bodies; controlled driver records and Main lookup.
+// The separate provider suite executes the selected provider/preload bodies.
+function questionHarness() {
+  const lookups = [];
+  const consumers = new Map();
+  const records = [];
+  const trace = [];
+  const app = { quit() { throw new Error("Uncontained quit"); } };
+  const dialog = { showMessageBox() { throw new Error("Uncontained native question"); } };
+  const win = { close() { throw new Error("Uncontained close"); },
+    webContents: { executeJavaScript() { throw new Error("Unexpected renderer work"); } } };
+  const originals = { quit: app.quit, close: win.close, native: dialog.showMessageBox };
+  let onRecord;
+  let restored = false;
+  const driver = {
+    records,
+    async join(...args) {
+      assert.equal(args.length, 0, "partial ledger is never supplied as afterDispatch");
+      const results = [];
+      let observed;
+      do {
+        observed = records.length;
+        results.push(...await Promise.allSettled(records.flatMap(record =>
+          [record.joined, record.observerWork])));
+      } while (observed !== records.length);
+      const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+      if (errors.length) throw new AggregateError(errors, "Simulated question ledger failed");
+    },
+    restore() {
+      if (restored || records.some(record =>
+        !record.settled || !record.driverSettled || !record.observerSettled)) {
+        throw new Error("Simulated driver cannot restore unfinished or repeated work");
+      }
+      restored = true;
+      trace.push("restore-driver");
+    },
+  };
+  const context = vm.createContext({
+    app, dialog, win, fs, path, dir: "portable-question-control", isDeepStrictEqual,
+    AggregateError,
+    require(name) {
+      if (name === "child_process") return {};
+      if (name === "electron-updater") return { autoUpdater: {} };
+      return projectRequire(name);
+    },
+    ipcMain: { listeners: () => [] },
+    __shutdown: {
+      readQuestionConsumer(id, signal) {
+        lookups.push({ id, signal });
+        const row = consumers.get(signal);
+        return row?.id === id ? row.consumer : null;
+      },
+      reset() { throw new Error("Partial question joining cannot reset Main"); },
+    },
+    installMainOwnedShutdownQuestions(owner, tails, options) {
+      assert.equal(owner, win);
+      assert.equal(options.policy, "cancellable");
+      onRecord = options.onRecord;
+      trace.push("install-driver");
+      return driver;
+    },
+  });
+  vm.runInContext(rigSource + "\nglobalThis.actor = (() => {" + actorPrelude + `
+    return { rig, installPortableQuestions, joinPortableQuestions, joinPortableChoice,
+      portableDialogs, portableScenarioQuestions, resetPortableQuestionCounters,
+      restorePortableQuestionRig, holdPortableAnswer,
+      state: () => ({ entries: portableQuestionEntries, offset: portableQuestionOffset,
+        nativeFailures: portableNativeFailures }) };
+  })();`, context);
+  const actor = context.actor;
+  const actualReset = actor.rig.reset;
+  actor.rig.reset = () => { trace.push("reset-rig"); actualReset(); };
+  actor.installPortableQuestions();
+  function publish({ finishOnChoose = true, consumeOnChoose = true,
+    registration = "exact", consumerTail = null } = {}) {
+    const producer = deferred(), drive = deferred(), consumed = deferred(), presentation = deferred();
+    const id = records.length + 101;
+    const signal = new AbortController().signal;
+    const record = {
+      requestId: id, brokerId: id + 1000, options: { signal, title: "Unsaved changes" },
+      pendingReason: "update-install", displayed: false, retired: false, settled: false,
+      observerSettled: false, driverSettled: false, choiceDelivered: false,
+      presentationReady: presentation.promise, choices: [], result: null,
+    };
+    const consumer = consumed.promise.then(() => consumerTail?.());
+    producer.promise.then(result => {
+      record.result = result;
+      record.settled = record.retired = true;
+    }, () => { record.settled = record.retired = true; });
+    drive.promise.then(() => { record.driverSettled = true; },
+      () => { record.driverSettled = true; });
+    record.joined = Promise.allSettled([producer.promise, drive.promise]).then(results => {
+      const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+      if (errors.length) throw new AggregateError(errors, "Simulated producer/driver failed");
+      return record;
+    });
+    record.choose = index => {
+      assert.equal(record.displayed, true);
+      assert.equal(record.retired, false);
+      assert.equal(record.choices.length, 0);
+      assert.ok([0, 1].includes(index));
+      record.choices.push(index);
+      record.choiceDelivered = true;
+      if (finishOnChoose) {
+        producer.resolve({ cause: "choice", response: index });
+        drive.resolve();
+      }
+      if (consumeOnChoose) consumed.resolve();
+    };
+    records.push(record);
+    const work = onRecord(record);
+    record.observerWork = work;
+    work.then(() => { record.observerSettled = true; },
+      () => { record.observerSettled = true; });
+    if (registration !== "absent") {
+      consumers.set(registration === "wrong-signal" ? new AbortController().signal : signal,
+        { id: registration === "wrong-id" ? id + 1 : id, consumer });
+    }
+    return {
+      record, producer, drive, consumed, consumer, work,
+      display() {
+        record.displayed = true;
+        record.presentation = { message: "alpha.md" };
+        presentation.resolve({ kind: "displayed", presentation: record.presentation });
+      },
+      cancelBeforeDisplay() {
+        producer.resolve({ cause: "aborted", response: 1 });
+        drive.resolve();
+        consumed.resolve();
+        presentation.resolve({ kind: "completed" });
+      },
+    };
+  }
+  return { actor, app, dialog, win, originals, records, lookups, trace, publish };
+}
+
 async function main() {
   await check("manual-only portable callers return the actual controller capability before preparation", async () => {
     const h = harness();
@@ -840,7 +979,7 @@ async function main() {
       return () => { delete target[key]; };
     };
     const spawnObserver = between(actorSource, "    restoreSpawn = replaceMethod(",
-      "\n\n    // Re-entrant request");
+      "\n    installPortableQuestions();");
     vm.runInContext(spawnObserver + "\nglobalThis.childPort = childProcess;", h.context);
     const first = h.context.childPort.spawn("cmd.exe", ["/c", "one/update.bat"], {});
     const second = h.context.childPort.spawn("cmd.exe", ["/c", "two/update.bat"], {});
@@ -1032,6 +1171,203 @@ async function main() {
       const artifact = h.updater.downloadedUpdateHelper.file;
       assert.equal(fs.statSync(artifact).isFile(), true);
     } finally { h.cleanup(); }
+  });
+  await check("portable question captures the original registered consumer and synchronous answer plan", async () => {
+    const h = questionHarness();
+    let calls = 0;
+    let receiver;
+    let options;
+    h.actor.rig.answer = function (value) {
+      calls += 1;
+      receiver = this;
+      options = value;
+      return 1;
+    };
+    const q = h.publish();
+    const entry = h.actor.state().entries[0];
+    assert.equal(entry.consumer, null, "synchronous onRecord cannot see later registration");
+    assert.equal(h.lookups.length, 0);
+    h.actor.rig.answer = () => { throw new Error("Replacement answer must not run"); };
+    await entry.captureWork;
+    assert.equal(entry.consumer, q.consumer);
+    assert.notEqual(q.record.requestId, q.record.brokerId);
+    assert.deepEqual(h.lookups, [{ id: q.record.requestId, signal: q.record.options.signal }]);
+    assert.equal(calls, 0, "answer waits for actual presentation");
+    q.display();
+    await h.actor.joinPortableChoice(0, "update-install", 1);
+    assert.equal(calls, 1);
+    assert.equal(receiver, h.actor.rig);
+    assert.equal(options, q.record.options);
+    assert.deepEqual(q.record.choices, [1]);
+    await h.actor.joinPortableQuestions();
+    h.actor.restorePortableQuestionRig();
+  });
+  await check("portable question refuses missing or mismatched original consumer registration", async () => {
+    for (const registration of ["absent", "wrong-id", "wrong-signal"]) {
+      const h = questionHarness();
+      const q = h.publish({ registration });
+      q.cancelBeforeDisplay();
+      await assert.rejects(h.actor.joinPortableQuestions(), error =>
+        /no exact original Main consumer/.test(messages(error)));
+      assert.deepEqual(q.record.choices, []);
+      assert.equal(h.actor.state().offset, 0);
+      assert.equal(h.trace.includes("reset-rig"), false);
+    }
+  });
+  await check("portable choices require displayed genuine results, including response zero", async () => {
+    const absent = questionHarness();
+    const lost = absent.publish();
+    lost.cancelBeforeDisplay();
+    await absent.actor.joinPortableQuestions();
+    assert.equal(absent.actor.portableDialogs().length, 0);
+    assert.equal(absent.actor.portableScenarioQuestions().length, 1);
+    await assert.rejects(absent.actor.joinPortableChoice(0, "update-install", 1),
+      /did not display/);
+    await assert.rejects(absent.actor.resetPortableQuestionCounters(), /undisplayed/);
+    assert.deepEqual(lost.record.choices, []);
+    const h = questionHarness();
+    h.actor.rig.answer = 0;
+    const q = h.publish();
+    q.display();
+    await h.actor.joinPortableChoice(0, "update-install", 0);
+    assert.deepEqual(q.record.choices, [0]);
+    await assert.rejects(h.actor.joinPortableChoice(0, "window-close", 0), /expected genuine choice/);
+    q.record.result = { cause: "aborted", response: 0 };
+    await assert.rejects(h.actor.joinPortableChoice(0, "update-install", 0), /expected genuine choice/);
+  });
+  await check("portable bookkeeping independently joins producer, callback and original consumer", async () => {
+    for (const held of ["consumer", "producer"]) {
+      const h = questionHarness();
+      const q = h.publish({ consumeOnChoose: held !== "consumer",
+        finishOnChoose: held !== "producer" });
+      q.display();
+      const entry = h.actor.state().entries[0];
+      await entry.callbackWork;
+      if (held === "consumer") await q.record.joined;
+      else await entry.consumerWork;
+      let reset = false;
+      const pending = h.actor.resetPortableQuestionCounters().then(() => { reset = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(reset, false);
+      assert.equal(h.trace.includes("reset-rig"), false);
+      assert.throws(() => h.actor.restorePortableQuestionRig(), /unresolved|unfinished/);
+      q.producer.resolve({ cause: "choice", response: 1 });
+      q.drive.resolve();
+      q.consumed.resolve();
+      await pending;
+      assert.equal(reset, true);
+      assert.equal(h.actor.state().offset, 1);
+      assert.equal(h.actor.state().entries[0].consumer, q.consumer);
+      h.actor.restorePortableQuestionRig();
+    }
+  });
+  await check("a cancelled portable question retains its started answer without choosing a successor", async () => {
+    const h = questionHarness();
+    const hold = h.actor.holdPortableAnswer();
+    const entered = deferred();
+    h.actor.rig.answer = () => { entered.resolve(); return hold.promise; };
+    const old = h.publish({ finishOnChoose: false, consumeOnChoose: false });
+    old.display();
+    await entered.promise;
+    old.producer.resolve({ cause: "aborted", response: 1 });
+    old.drive.resolve();
+    old.consumed.resolve();
+    await old.record.joined;
+    h.actor.rig.answer = 0;
+    const next = h.publish();
+    next.display();
+    await h.actor.joinPortableChoice(1, "update-install", 0);
+    let joined = false;
+    const pending = h.actor.joinPortableQuestions().then(() => { joined = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(joined, false);
+    assert.equal(h.actor.state().entries[0].legacyReturn, hold.promise);
+    hold.release(1);
+    await pending;
+    assert.deepEqual(old.record.choices, []);
+    assert.deepEqual(next.record.choices, [0]);
+    assert.equal(h.actor.state().entries[0].consumer, old.consumer);
+    assert.equal(h.actor.state().entries[1].consumer, next.consumer);
+    assert.throws(() => hold.release(1), /one valid release/);
+  });
+  await check("portable partial ledger joins synchronous reroutes and retains historical entries", async () => {
+    const h = questionHarness();
+    let next;
+    const first = h.publish({ consumerTail() {
+      h.actor.rig.answer = 0;
+      next = h.publish();
+      next.display();
+    } });
+    first.display();
+    await h.actor.joinPortableQuestions();
+    assert.equal(h.records.length, 2);
+    assert.deepEqual(first.record.choices, [1]);
+    assert.deepEqual(next.record.choices, [0]);
+    await h.actor.joinPortableChoice(1, "update-install", 0);
+    await h.actor.resetPortableQuestionCounters();
+    assert.equal(h.actor.portableScenarioQuestions().length, 0);
+    assert.equal(h.actor.state().entries.length, 2);
+    assert.equal(h.actor.state().entries[0].consumer, first.consumer);
+    const laterWork = deferred();
+    let laterFinished = false;
+    laterWork.promise.then(() => { laterFinished = true; });
+    const third = h.publish();
+    third.display();
+    await h.actor.joinPortableChoice(0, "update-install", 1);
+    await h.actor.joinPortableQuestions();
+    assert.equal(laterFinished, false, "partial joining supplies no later-work completion");
+    laterWork.resolve();
+  });
+  await check("portable question preserves independent errors and rejects caught native fallback", async () => {
+    const h = questionHarness();
+    const entered = deferred();
+    h.actor.rig.answer = () => { entered.resolve(); throw new Error("CALLBACK_FAILURE"); };
+    const q = h.publish({ finishOnChoose: false, consumeOnChoose: false });
+    q.display();
+    await entered.promise;
+    q.producer.reject(new Error("PRODUCER_FAILURE"));
+    q.drive.reject(new Error("DRIVER_FAILURE"));
+    q.consumed.reject(new Error("CONSUMER_FAILURE"));
+    await assert.rejects(h.actor.joinPortableQuestions(), error =>
+      ["CALLBACK_FAILURE", "PRODUCER_FAILURE", "DRIVER_FAILURE", "CONSUMER_FAILURE"]
+        .every(message => messages(error).includes(message)));
+    await assert.rejects(h.actor.resetPortableQuestionCounters());
+    assert.equal(h.actor.state().offset, 0);
+    assert.equal(h.trace.includes("reset-rig"), false);
+    const native = questionHarness();
+    let answers = 0;
+    native.actor.rig.answer = () => { answers += 1; return 0; };
+    await assert.rejects(native.dialog.showMessageBox(native.win, { title: "UNEXPECTED" }),
+      /Unexpected native portable question/);
+    await assert.rejects(native.actor.joinPortableQuestions(), error =>
+      /Unexpected native portable question/.test(messages(error)));
+    assert.equal(answers, 0);
+    assert.equal(native.actor.portableScenarioQuestions().length, 0);
+    assert.equal(native.actor.state().nativeFailures.length, 1);
+  });
+  await check("portable restoration checks exact borrowed ownership and cannot restore unfinished work", async () => {
+    const h = questionHarness();
+    const q = h.publish({ consumeOnChoose: false });
+    q.display();
+    await q.work;
+    await q.record.joined;
+    assert.throws(() => h.actor.restorePortableQuestionRig(), /unresolved/);
+    q.consumed.resolve();
+    await h.actor.joinPortableQuestions();
+    for (const [target, name] of [[h.app, "quit"], [h.win, "close"], [h.dialog, "showMessageBox"]]) {
+      const owned = Object.getOwnPropertyDescriptor(target, name);
+      const foreign = () => { throw new Error("FOREIGN_OWNER"); };
+      Object.defineProperty(target, name, { ...owned, value: foreign });
+      assert.throws(() => h.actor.restorePortableQuestionRig(), /ownership is unresolved/);
+      assert.equal(target[name], foreign);
+      assert.equal(h.trace.includes("restore-driver"), false);
+      Object.defineProperty(target, name, owned);
+    }
+    h.actor.restorePortableQuestionRig();
+    assert.equal(h.app.quit, h.originals.quit);
+    assert.equal(h.win.close, h.originals.close);
+    assert.equal(h.dialog.showMessageBox, h.originals.native);
+    assert.throws(() => h.actor.restorePortableQuestionRig(), /unresolved|repeated/);
   });
   console.log(`=== ${passed}/${passed} portable source/VM controls passed ===`);
 }
