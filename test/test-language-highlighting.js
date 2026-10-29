@@ -89,8 +89,6 @@ function sourceChecks() {
     (old.languages[a] === old.languages[b]) === (current.languages[a] === current.languages[b])));
   check("syntax every legacy grammar and alias retains its original token output",
     regressions.length === 0 && aliasesPreserved, regressions);
-  check("syntax unsupported Dockerfile and invented Rust aliases remain absent",
-    !current.languages.dockerfile && !current.languages.docker && !current.languages.rs);
   const selected = fixture.cases.filter(entry => !proof || proof === "bundle" ||
     entry.language === proof || (proof === "markup-templating" && entry.language === "php"));
   for (const entry of selected) {

@@ -22,7 +22,7 @@
 //    section 7 asserts the diagrams are actually visible - on screen, not
 //    collapsed, not covered, not clipped. A screenshot is also written to
 //    screenshots/ every run as a debugging artifact; nothing asserts on it.
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
 const { randomUUID } = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -38,7 +38,7 @@ if (!process.argv.includes(TEST_PRELOAD_MARKER)) {
 }
 const PDF_RESTORE_TOKEN = randomUUID();
 
-require("../src/main.js");
+const main = require("../src/main.js");
 
 const dir = tempDir("mdv-mermaid-");
 const fileM = path.join(dir, "diagrams.md");
@@ -179,6 +179,148 @@ function everyMeasuredFillDark(state) {
   );
 }
 
+async function settleMermaidSession(win, label) {
+  const exec = code => win.webContents.executeJavaScript(code, true);
+  return waitFor(async code => {
+    const settled = await exec(code);
+    const owner = main.__shutdown.state();
+    return settled && owner.renderer === "ready" &&
+      owner.rendererGeneration === settled.generation &&
+      owner.rendererPageSession === settled.pageSession && settled;
+  }, label, `(async () => {
+    if (document.readyState !== 'complete' || typeof window.CustomTabs?.settleSessionLayout !== 'function')
+      return false;
+    const generation = await window.folia.getQuitApprovalGeneration();
+    const pageSession = window.getReloadRequestSession();
+    if (!Number.isSafeInteger(generation) || generation <= 0 ||
+        typeof pageSession !== 'string' || !pageSession) return false;
+    let revision;
+    try { revision = await window.CustomTabs.settleSessionLayout(); }
+    catch (error) {
+      const origin = error instanceof Error && error.stack?.split('\\n')[1]?.match(
+        /^\\s*at (?:Object\\.)?settleSessionLayout \\((.*):\\d+:\\d+\\)$/);
+      if (error instanceof Error &&
+          error.message === 'The open tabs are still awaiting document restore' &&
+          origin?.[1] === new URL('custom-tabs.js', location.href).href) return false;
+      throw error;
+    }
+    return Number.isSafeInteger(revision) && revision > 0 && { generation, pageSession, revision };
+  })()`);
+}
+
+async function closeCleanMermaidTabs(win, paths = null) {
+  await settleMermaidSession(win, "the admitted session to settle before retirement");
+  await win.webContents.executeJavaScript(`(async () => {
+    const targets = CustomTabs.getTabs().filter(tab =>
+      ${JSON.stringify(paths)} === null || ${JSON.stringify(paths)}.includes(tab.filePath));
+    if (CustomTabs.__dirtyTabNames(true).length ||
+        targets.some(tab => window.getPendingSaveStatus(tab.filePath).pending)) {
+      throw new Error('Mermaid fixture retirement requires genuinely clean owners and no pending saves');
+    }
+    for (const tab of targets) {
+      await CustomTabs.closeTab(tab.id);
+      if (CustomTabs.getTabs().some(current => current.id === tab.id))
+        throw new Error('The admitted Mermaid fixture refused to close: ' + tab.filePath);
+    }
+    await CustomTabs.settleSessionLayout();
+  })()`, true);
+  if (paths === null) {
+    const layout = main.__shutdown.documentSessionState();
+    if (!Array.isArray(layout.entries) || layout.entries.length || layout.activeEntryId !== null) {
+      throw new Error("Main retained an open document layout after Mermaid fixture retirement");
+    }
+  }
+}
+
+async function admitMermaidDocument(win, fixture, source, blocks) {
+  await admitTestDocument(win, fixture, source);
+  await win.webContents.executeJavaScript(
+    `(${admitMermaidActorFixture.toString()})(${JSON.stringify({
+      path: fixture, source, blocks, diskVersion: fs.statSync(fixture),
+    })}, false)`, true);
+}
+
+async function admitMermaidActorFixture(fixture, open = true) {
+  if (open) document.getElementById('openFile').click();
+  const end = Date.now() + 30000;
+  do {
+    const tab = CustomTabs.getActiveTab(), pageSession = window.getReloadRequestSession();
+    const descriptor = CustomTabs.getDocumentDescriptor();
+    const identity = tab && CustomTabs.getDocumentIdentityForTab(tab.id, fixture.path, pageSession);
+    const adoption = identity && window.queryDocumentDiskAdoptionState(
+      fixture.path, identity, tab.mtimeMs, tab.diskVersion);
+    const heading = /^# (.+)$/m.exec(fixture.source)?.[1];
+    const first = document.getElementById('viewer').firstElementChild;
+    if (Number.isSafeInteger(tab?.id) && tab.id > 0 &&
+        tab.filePath === fixture.path && currentFilePath === fixture.path &&
+        tab.content === fixture.source && tab.originalContent === fixture.source &&
+        originalMarkdown === fixture.source && descriptor?.logicalPath === fixture.path &&
+        typeof descriptor.ref === 'string' && /^[a-f0-9]{64}$/.test(descriptor.ref) &&
+        identity?.tabId === tab.id && identity.documentRef === descriptor.ref &&
+        identity.pageSession === pageSession && adoption?.known === true &&
+        adoption.versionMatches === true && adoption.pathKey === identity.pathKey &&
+        ['dev', 'ino', 'size', 'mtimeMs'].every(key =>
+          Number.isFinite(tab.diskVersion?.[key]) && tab.diskVersion[key] === fixture.diskVersion[key]) &&
+        Number.isFinite(tab.diskVersion?.ctimeMs) &&
+        !window.getPendingSaveStatus(fixture.path).pending &&
+        !document.getElementById('loadingScreen').classList.contains('active') &&
+        (heading ? document.querySelector('#viewer h1')?.textContent === heading :
+          first?.textContent.trim() === fixture.source.split(/\r?\n/)[0]) &&
+        document.querySelectorAll('#viewer .mermaid').length === fixture.blocks) return tab.id;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  } while (Date.now() < end);
+  throw new Error('The Mermaid fixture lacks its actual admitted owner, source or completed DOM: ' + fixture.path);
+}
+
+async function restoreMermaidActorFixture(fixture) {
+  if (CustomTabs.getActiveTab()?.filePath !== fixture.path || currentFilePath !== fixture.path)
+    throw new Error('The mutated Mermaid fixture is no longer active');
+  // Undo the real edits. A dirty flag or a replacement history is not consent
+  // to discard content, and neither restores the tab's admitted baseline.
+  while (originalMarkdown !== fixture.source) {
+    const depth = undoHistory.length;
+    if (!depth) throw new Error('The Mermaid fixture has no undo path to its admitted source');
+    historyUndo();
+    const end = Date.now() + 30000;
+    while (undoRedoRendering && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 50));
+    if (undoRedoRendering || undoHistory.length !== depth - 1)
+      throw new Error('The Mermaid fixture undo did not finish and advance its real history');
+  }
+  if (CustomTabs.__dirtyTabNames(true).length || window.getPendingSaveStatus(fixture.path).pending)
+    throw new Error('The restored Mermaid fixture is still dirty, conflicted or saving');
+}
+
+let actorFixtureSequence = 0;
+async function withMermaidActorFixtures(win, samples, actor) {
+  const fixtures = samples.map(sample => ({
+    ...sample, path: path.join(dir, "actor-" + (++actorFixtureSequence) + ".md"),
+  }));
+  for (const fixture of fixtures) {
+    fs.writeFileSync(fixture.path, fixture.source, { flag: "wx" });
+    fixture.diskVersion = fs.statSync(fixture.path);
+  }
+  let next = 0;
+  const chooser = dialog.showOpenDialog;
+  dialog.showOpenDialog = async owner => {
+    const fixture = fixtures[next++];
+    if (owner !== win || !fixture || fs.readFileSync(fixture.path, "utf8") !== fixture.source)
+      throw new Error("An unexpected chooser tried to consume a Mermaid fixture");
+    return { canceled: false, filePaths: [fixture.path] };
+  };
+  try {
+    const value = await actor(fixtures);
+    if (next !== fixtures.length) throw new Error("The Mermaid actor did not admit every selected fixture");
+    for (const fixture of fixtures) {
+      if (fs.readFileSync(fixture.path, "utf8") !== fixture.source)
+        throw new Error("The Mermaid actor unexpectedly saved its disposable source");
+    }
+    await closeCleanMermaidTabs(win, fixtures.map(fixture => fixture.path));
+    return value;
+  } finally {
+    dialog.showOpenDialog = chooser;
+  }
+}
+
 async function run(win) {
   const exec = (code) => win.webContents.executeJavaScript(code, true);
   const homeDiagramsReady = `(() => {
@@ -246,17 +388,7 @@ async function run(win) {
   fs.writeFileSync(fileSeq, DOC_SEQ, "utf8");
 
   harnessStage = "reset tabs";
-  await exec(`
-    try {
-      localStorage.clear();
-      window.CustomTabs.getTabs().forEach(t => { t.hasUnsavedChanges = false; });
-      window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-      null;
-    } catch (error) {
-      console.error("Mermaid setup reset tabs: " + String(error && (error.stack || error.message) || error));
-      throw error;
-    }
-  `);
+  await closeCleanMermaidTabs(win);
 
   // Pin the theme before anything renders.
   //
@@ -1376,13 +1508,7 @@ async function run(win) {
   // has obviously been loaded, and `window.mermaid` is sticky for the lifetime
   // of the page. Clearing the saved tabs first stops the restored session from
   // rendering a diagram during boot and loading it before we can look.
-  await exec(`
-    (() => {
-      window.CustomTabs.getTabs().forEach(t => { t.hasUnsavedChanges = false; });
-      localStorage.clear();
-      return true;
-    })()
-  `);
+  await closeCleanMermaidTabs(win);
   await new Promise((resolve) => {
     win.webContents.once("did-finish-load", resolve);
     win.webContents.reload();
@@ -1391,11 +1517,12 @@ async function run(win) {
   // here would turn any future startup slowdown into a false pass: the
   // "mermaid is not loaded" assertions below are trivially true on a page that
   // has not finished booting.
-  await waitFor(
-    exec,
-    "the reloaded window to finish booting",
-    `typeof renderMarkdown === 'function' && !!document.getElementById('viewer')`,
-  );
+  await settleMermaidSession(win, "the reloaded page and Main document session to finish booting");
+  const bootLayout = main.__shutdown.documentSessionState();
+  if (!Array.isArray(bootLayout.entries) || bootLayout.entries.length ||
+      bootLayout.activeEntryId !== null || await exec("CustomTabs.getTabs().length") !== 0) {
+    throw new Error("The fresh Mermaid realm restored a document despite the verified empty layout");
+  }
 
   const retained = await waitForExternalTrap(win);
   check(
@@ -1442,12 +1569,7 @@ async function run(win) {
   // A document with no diagrams must not drag it in either. Wait for the render
   // to actually complete before concluding mermaid stayed away - a fixed sleep
   // that expired mid-render would pass for the wrong reason.
-  await exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full')`);
-  await waitFor(
-    exec,
-    "the plain document to finish rendering",
-    `document.getElementById('viewer').textContent.trim().startsWith('Plain')`,
-  );
+  await admitMermaidDocument(win, filePlain, DOC_PLAIN, 0);
   check(
     "a document with no diagrams does not load mermaid",
     (await exec(`typeof window.mermaid !== 'undefined'`)) === false,
@@ -1455,7 +1577,7 @@ async function run(win) {
   );
 
   // A document WITH a diagram must load it, initialise it, and draw.
-  await exec(`renderMarkdown(${JSON.stringify(fs.readFileSync(fileM, "utf8"))}, 'full')`);
+  await admitMermaidDocument(win, fileM, DOC, 3);
   await waitFor(exec, "the lazily loaded mermaid to draw", DIAGRAMS_READY);
   const afterDiagram = await exec(`
     ({ loaded: typeof window.mermaid !== 'undefined',
@@ -1466,7 +1588,7 @@ async function run(win) {
     "opening a document with a diagram loads mermaid on demand and renders it",
     afterDiagram.loaded === true &&
       afterDiagram.api === "function" &&
-      afterDiagram.svgs > 0,
+      afterDiagram.svgs === 3,
     JSON.stringify(afterDiagram),
   );
 
@@ -2314,22 +2436,9 @@ async function run(win) {
   await sentinel.mute("13d: document deliberately contains an invalid diagram");
   let themed;
   try {
-    await exec(`
-      (async () => {
-        if (document.body.classList.contains('dark-mode')) {
-          document.body.classList.remove('dark-mode');
-        }
-        const src = ${JSON.stringify(fs.readFileSync(fileMixed, "utf8"))};
-        await window.renderMarkdown(src, 'full');
-        // The fallback re-render is guarded by originalMarkdown, and calling
-        // renderMarkdown() directly never sets it. Without this line the
-        // guard is falsy, the fallback cannot fire, and the assertion below
-        // passes with the defect present - measured, it did exactly that.
-        window.originalMarkdown = src;
-        return null;
-      })()
-    `).catch(() => {});
-    await exec(`whenMermaidSettled(); null`).catch(() => {});
+    await exec(`document.body.classList.remove('dark-mode'); true`);
+    await admitMermaidDocument(win, fileMixed, DOC_MIXED, 2);
+    await exec(`whenMermaidSettled(); null`);
     await sleep(800);
     themed = await exec(`
       (async () => {
@@ -2348,9 +2457,7 @@ async function run(win) {
         // tried first and counted 0 even with the defect present, so it is not
         // trustworthy here.
         //
-        // The fixture above must also seed originalMarkdown - see the comment
-        // there. Both facts were established by instrumenting the real path
-        // (console.warn fired, mermaid.run threw) rather than by reading code.
+        // The admitted fixture supplies the real source used by the fallback.
         const genBefore = renderGeneration;
         document.body.classList.add('dark-mode');
         await updateMermaidTheme(true);
@@ -2376,13 +2483,11 @@ async function run(win) {
         };
       })()
     `);
-    await exec(`
-      (async () => {
-        document.body.classList.remove('dark-mode');
-        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
-        return null;
-      })()
-    `).catch(() => {});
+    await exec(`(async () => {
+      document.body.classList.remove('dark-mode');
+      await updateMermaidTheme(false);
+    })()`);
+    await restoreSuiteDocument(fileMixed, "retiring the admitted theme-fallback fixture");
     await sleep(400);
   } finally {
     await sentinel.unmute();
@@ -2408,15 +2513,12 @@ async function run(win) {
   //     (.attr("class","actor-line") overwritten by .attr("class","200")).
   //     Whether that bug still exists on 11.16.0 decides whether the override
   //     is a fix or an unnecessary hard-coded colour fighting the theme.
-  await exec(`
-    (async () => {
-      await window.renderMarkdown(${JSON.stringify(fs.readFileSync(fileSeq, "utf8"))}, 'full');
-      return null;
-    })()
-  `);
-  await waitFor(exec, "the sequence fixture to draw", DIAGRAMS_READY);
-  await exec(`whenMermaidSettled(); null`);
-  const lifelines = await exec(`
+  const lifelinePrior = await exec(`(async () => {
+    await mermaidWorkQueue;
+    return { bodyDark: document.body.classList.contains('dark-mode'),
+      desiredDark: mermaidDesiredDark };
+  })()`);
+  const lifelineProbe = `
     (() => {
       const svg = document.querySelector('#viewer .mermaid svg');
       if (!svg) return { svg: false };
@@ -2452,42 +2554,98 @@ async function run(win) {
       }
       return { svg: true, byId: byId.length, byClass: byClass.length, geom, declaredRaw, declared };
     })()
-  `);
-  check(
-    "the sequence fixture produced actor lifelines to measure",
-    lifelines.svg === true && lifelines.byId >= 2,
-    JSON.stringify(lifelines),
-  );
-  check(
-    "mermaid 11 sets the actor-line class correctly (10.6.1 workaround not needed)",
-    lifelines.byClass === lifelines.byId && lifelines.byId >= 2,
-    JSON.stringify(lifelines),
-  );
-  check(
-    "actor lifelines are actually drawn: visible stroke and real height",
-    (lifelines.geom || []).length >= 2 &&
-      lifelines.geom.every(
-        (g) =>
-          g.height > 10 &&
-          g.opacity !== "0" &&
-          g.stroke !== "none" &&
-          parseFloat(g.strokeWidth) > 0,
-      ),
-    JSON.stringify(lifelines),
-  );
-  // This is the assertion that PINS THE REJECTION. The three above it are all
-  // satisfied by upstream's rule too - it paints the lifelines a perfectly
-  // visible grey - so on their own they record no decision at all. What the
-  // rejection actually claims is that the lifeline colour must keep tracking
-  // themeVariables.actorLineColor instead of being frozen to #888/#777, and
-  // that is only observable by comparing against what mermaid itself declared.
-  check(
-    "lifeline colour still follows the mermaid theme, not a hard-coded override",
-    !!lifelines.declared &&
-      (lifelines.geom || []).length >= 2 &&
-      lifelines.geom.every((g) => g.stroke === lifelines.declared),
-    JSON.stringify(lifelines),
-  );
+  `;
+  const lifelineCases = [
+    { name: "light", dark: false },
+    { name: "default dark", dark: true },
+    { name: "authored nondefault dark", dark: true, ink: "#505050", rgb: "rgb(80, 80, 80)" },
+    { name: "authored default-valued dark", dark: true, ink: "#404040", rgb: "rgb(64, 64, 64)" },
+  ];
+  try {
+    for (const sample of lifelineCases) {
+      const source = fs.readFileSync(fileSeq, "utf8").replace("sequenceDiagram",
+        sample.ink
+          ? '---\nconfig:\n  themeVariables:\n    actorLineColor: "' + sample.ink + '"\n---\nsequenceDiagram'
+          : "sequenceDiagram");
+      await exec(`(async () => {
+        document.body.classList.toggle('dark-mode', ${sample.dark});
+        await updateMermaidTheme(${sample.dark});
+        await window.renderMarkdown(${JSON.stringify(source)}, 'full');
+        return null;
+      })()`);
+      await waitFor(exec, "the " + sample.name + " sequence fixture to draw", DIAGRAMS_READY);
+      await exec(`whenMermaidSettled(); null`);
+      const lifelines = await exec(lifelineProbe);
+      const suffix = sample.dark ? " (" + sample.name + ")" : "";
+      check(
+        "the sequence fixture produced actor lifelines to measure" + suffix,
+        lifelines.svg === true && lifelines.byId >= 2,
+        JSON.stringify(lifelines),
+      );
+      check(
+        "mermaid 11 sets the actor-line class correctly (10.6.1 workaround not needed)" + suffix,
+        lifelines.byClass === lifelines.byId && lifelines.byId >= 2,
+        JSON.stringify(lifelines),
+      );
+      check(
+        "actor lifelines are actually drawn: visible stroke and real height" + suffix,
+        (lifelines.geom || []).length >= 2 &&
+          lifelines.geom.every(
+            (g) =>
+              g.height > 10 &&
+              g.opacity !== "0" &&
+              g.stroke !== "none" &&
+              parseFloat(g.strokeWidth) > 0,
+          ),
+        JSON.stringify(lifelines),
+      );
+      if (!sample.dark) {
+        // Light ink still follows Mermaid's declaration. This rejects the old
+        // #888/#777 !important override even though its lines remain visible.
+        check(
+          "lifeline colour still follows the mermaid theme, not a hard-coded override",
+          !!lifelines.declared &&
+            (lifelines.geom || []).length >= 2 &&
+            lifelines.geom.every((g) => g.stroke === lifelines.declared),
+          JSON.stringify(lifelines),
+        );
+      } else if (sample.ink) {
+        // Authored config owns its ink even when it equals Mermaid's default.
+        // This is the same frontmatter contract covered by test-reading.js.
+        check(
+          "authored lifeline colour keeps ownership (" + sample.ink + ")",
+          lifelines.declared === sample.rgb &&
+            (lifelines.geom || []).length >= 2 &&
+            lifelines.geom.every((g) => g.stroke === sample.rgb),
+          JSON.stringify(lifelines),
+        );
+      } else {
+        // Accepted dark-boundary policy: faint default borders use #74818f;
+        // lifelines retain 2px. Light and authored ink are separate controls.
+        const native = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(lifelines.declared || "");
+        const channels = native ? native.slice(1).map(Number) : [];
+        check(
+          "default dark lifelines use the accepted muted border and retain 2px",
+          channels.length === 3 && Math.max(...channels) < 128 &&
+            Math.max(...channels) - Math.min(...channels) < 12 &&
+            (lifelines.geom || []).length >= 2 &&
+            lifelines.geom.every((g) =>
+              g.stroke === "rgb(116, 129, 143)" && parseFloat(g.strokeWidth) === 2),
+          JSON.stringify(lifelines),
+        );
+      }
+    }
+  } finally {
+    await exec(`(async () => {
+      document.body.classList.toggle('dark-mode', ${lifelinePrior.bodyDark});
+      await updateMermaidTheme(${lifelinePrior.desiredDark});
+      await whenMermaidSettled();
+      return null;
+    })()`);
+  }
+  check("the lifeline probe restores the actual prior body and Mermaid themes",
+    await exec(`document.body.classList.contains('dark-mode') === ${lifelinePrior.bodyDark} &&
+      mermaidDesiredDark === ${lifelinePrior.desiredDark}`), JSON.stringify(lifelinePrior));
 
   // (e) The THIRD mermaid.run call site: renderMermaidInDOM(), which draws the
   //     one diagram typed into the insert/edit dialog. It keeps
@@ -2572,38 +2730,15 @@ async function run(win) {
   //      throw a message carrying markup. It is what R110 is pinned to.
   await sentinel.mute("13e2: dialog insert with mermaid.run forced to throw");
   let dialogRun;
+  const insertPath = path.join(dir, "dialog-insert.md");
   try {
+    await admitMermaidDocument(win, insertPath, DOC_PLAIN, 0);
     dialogRun = await exec(`
       (async () => {
         const plain = ${JSON.stringify(fs.readFileSync(filePlain, "utf8"))};
-        await window.renderMarkdown(plain, 'full');
         const ta = document.getElementById('mermaidTemplateCode');
         const overlay = document.getElementById('mermaidTemplateOverlay');
         if (!ta || !overlay) return { wired: false };
-        // renderMarkdown() does NOT set originalMarkdown - it only draws. So
-        // without this seed the insert below edits whatever the PREVIOUS
-        // scenario left in the store (13d assigns DOC_MIXED), and this scenario
-        // would be quietly mutating a document that is not the one on screen.
-        // Both reviewers caught that independently.
-        const beforeMd = window.originalMarkdown;
-        const beforeEditor = window.markdownEditor ? window.markdownEditor.value : null;
-        // historyPush() clears the redo stack as well as appending, so nothing
-        // short of a full snapshot puts the undo/redo state back.
-        const beforeHistory = window.historySnapshot();
-        window.originalMarkdown = plain;
-        // hasUnsavedChanges is a module-scope 'let' with NO window binding (the
-        // getter/setter pair exists for originalMarkdown and currentFilePath but
-        // not for this one), so assigning window.hasUnsavedChanges would silently
-        // write to a junk property and restore nothing. setUnsavedState() is the
-        // real setter the renderer exposes. The flag is not readable either, so
-        // capture its ONE observable - the indicator the renderer paints from it
-        // - and restore to THAT, rather than to a hard false. Forcing false on
-        // the way out would silently launder a dirty document clean for every
-        // scenario that runs after this one.
-        window.updateUnsavedIndicator();
-        const beforeDirty =
-          document.getElementById('unsavedIndicator').style.display === 'inline';
-        window.setUnsavedState(false);
         const containersBefore =
           document.querySelectorAll('#viewer .mermaid-container').length;
         // Open the dialog FOR REAL. Asserting "the dialog is now closed" without
@@ -2675,14 +2810,6 @@ async function run(win) {
           injected: !!document.getElementById('mermaid-dialog-probe'),
           textShown: !!el && el.textContent.includes('mermaid-dialog-probe')
         };
-        // Full restore, not a partial one: the insert mutates the store, the
-        // dirty flag, the undo/redo stacks and the editor mirror.
-        window.originalMarkdown = beforeMd;
-        window.historyRestore(beforeHistory);
-        window.setUnsavedState(beforeDirty);
-        if (window.markdownEditor && beforeEditor !== null) {
-          window.markdownEditor.value = beforeEditor;
-        }
         ta.value = '';
         // The dialog's preview pane still holds this scenario's error banner.
         // Leaving it there means 13f, which asserts on that same pane, could be
@@ -2693,13 +2820,10 @@ async function run(win) {
         return out;
       })()
     `);
-    await exec(`
-      (async () => {
-        if (window.__realMermaidRun) { mermaid.run = window.__realMermaidRun; delete window.__realMermaidRun; }
-        await window.renderMarkdown(${JSON.stringify(fs.readFileSync(filePlain, "utf8"))}, 'full');
-        return null;
-      })()
-    `).catch(() => {});
+    await exec(`(${restoreMermaidActorFixture.toString()})(${JSON.stringify({
+      path: insertPath, source: DOC_PLAIN,
+    })})`);
+    await closeCleanMermaidTabs(win, [insertPath]);
     await sleep(400);
   } finally {
     await sentinel.unmute();
@@ -2718,8 +2842,7 @@ async function run(win) {
   );
   check(
     // The real insert must mark the document dirty - it edited the store. This
-    // is also the only readable observable for a flag that has no window
-    // binding, so it doubles as proof that the cleanup below can restore it.
+    // is also the readable observable for a flag with no window binding.
     "a dialog insert marks the document unsaved even when the diagram fails",
     dialogRun.dirtyAfter === true,
     JSON.stringify(dialogRun),
@@ -2729,14 +2852,7 @@ async function run(win) {
     dialogRun.injected === false && dialogRun.textShown === true,
     JSON.stringify(dialogRun),
   );
-  // 13d and 13e2 both seed the document store through `window.originalMarkdown`,
-  // and R104 only proves anything because that seed reaches the module-scope
-  // binding the renderer itself reads. Both reviewers independently doubted it
-  // did - a top-level `let` in a classic script is NOT a window property - and
-  // both missed the getter/setter pair at renderer.js:9515 that bridges it.
-  // Rather than settle that by reading the code, pin the bridge: if the
-  // defineProperty is ever removed, several scenarios and R104 go vacuous, and
-  // this is the assertion that says so instead of them silently passing.
+  // Keep the accessor's own positive control separate from fixture admission.
   const bridge = await exec(`
     (() => {
       const before = window.originalMarkdown;
@@ -2809,16 +2925,18 @@ async function run(win) {
   const LF_DIAGRAM = "graph TD\n  A[Old] --> B[Source]";
   const LF_NEW_CODE = "graph TD\n  C[New] --> D[Source]";
   const LF_DOC = "light text\n\n```mermaid\n" + LF_DIAGRAM + "\n```\n";
-  const undrawn = await exec(`
+  const undrawn = await withMermaidActorFixtures(win, [
+    { source: EMPTY_FENCE_DOC, blocks: 1 }, { source: LF_DOC, blocks: 1 },
+  ], fixtures => exec(`
     (async () => {
-      const savedSource = window.originalMarkdown;
-      const savedUndo = undoHistory.slice();
-      const savedRedo = redoHistory.slice();
-      const savedDirty = hasUnsavedChanges;
+      ${admitMermaidActorFixture.toString()}
+      ${restoreMermaidActorFixture.toString()}
+      const fixtures = ${JSON.stringify(fixtures)};
+      await admitMermaidActorFixture(fixtures[0]);
+      let fixture = fixtures[0];
       const v = document.getElementById('viewer');
       const out = {};
       try {
-      await window.renderMarkdown(${JSON.stringify(EMPTY_FENCE_DOC)}, 'full');
       await new Promise(r => setTimeout(r, 500));
       const el = v.querySelector('.mermaid');
       out.found = !!el;
@@ -2845,7 +2963,6 @@ async function run(win) {
       // DELETE, through the handler's own function. The source holds exactly
       // one fence, so the product takes its single-block path and no text
       // scoring is involved.
-      window.originalMarkdown = ${JSON.stringify(EMPTY_FENCE_DOC)};
       window.deleteMermaidFromSource([], el);
       out.viewerStillAttached = v.isConnected;
       out.diagramRemoved = !v.contains(el);
@@ -2857,6 +2974,9 @@ async function run(win) {
       }
 
       // ---- leg B: the SOURCE half of Edit, on a sourced undrawn diagram ----
+      await restoreMermaidActorFixture(fixture);
+      await admitMermaidActorFixture(fixtures[1]);
+      fixture = fixtures[1];
       await window.renderMarkdown(${JSON.stringify(LF_WARM_DOC)}, 'full');
       await new Promise(r => setTimeout(r, 300));
       await window.renderMarkdown(${JSON.stringify(LF_DOC)}, 'light-format');
@@ -2867,7 +2987,6 @@ async function run(win) {
       out.lfUnwrapped = !!el2 && !el2.closest('.mermaid-container');
       out.lfSourced = !!el2 && el2.dataset.mermaidSrc === ${JSON.stringify(LF_DIAGRAM)};
       if (el2) {
-        window.originalMarkdown = ${JSON.stringify(LF_DOC)};
         rightClickTarget = el2;
         document.getElementById('ctxEditMermaid').click();
         document.getElementById('mermaidTemplateCode').value = ${JSON.stringify(LF_NEW_CODE)};
@@ -2882,18 +3001,7 @@ async function run(win) {
       }
       return out;
       } finally {
-        // Everything this probe is allowed to move, put back - it rewrites the
-        // document source, pushes undo entries and marks the page dirty.
-        window.originalMarkdown = savedSource;
-        undoHistory.length = 0;
-        for (const h of savedUndo) undoHistory.push(h);
-        redoHistory.length = 0;
-        for (const h of savedRedo) redoHistory.push(h);
-        hasUnsavedChanges = savedDirty;
-        updateUnsavedIndicator();
         closeMermaidTemplateDialog();
-        mermaidDialogMode = 'insert';
-        editingMermaidContainer = null;
         rightClickTarget = null;
         // LAST, and it covers leg B as well as the delete leg: the edit path
         // ends in renderMermaidInDOM('replace', target), so a regression in
@@ -2904,9 +3012,10 @@ async function run(win) {
           document.querySelector('.content-wrapper').appendChild(v);
           out.repairedAtExit = true;
         }
+        await restoreMermaidActorFixture(fixture);
       }
     })()
-  `);
+  `));
   // POSITIVE CONTROL. "The viewer survived" is trivially true of a fixture that
   // never produced the shape the defect needs, so the shape is asserted first
   // and separately: found, not drawn, not wrapped, sitting in #viewer.
@@ -3013,26 +3122,40 @@ async function run(win) {
   // rewritten, and an unintended insert as a third fence appearing.
   const REF_TWO_DOC =
     "two text\n\n```mermaid\n" + REF_A + "\n```\n\nbetween\n\n```mermaid\n" + REF_OTHER + "\n```\n";
-  const refuse = await exec(`
+  const refuse = await withMermaidActorFixtures(win, [
+    { source: REF_DUP_DOC, blocks: 2 }, { source: REF_DUP_DOC, blocks: 2 },
+    { source: REF_EMPTY_DOC, blocks: 2 }, { source: REF_EMOJI_DOC, blocks: 1 },
+    { source: REF_UNIQUE_DOC, blocks: 1 }, { source: REF_UNIQUE_DOC, blocks: 1 },
+    { source: REF_RAW_DOC, blocks: 2 }, { source: REF_RAW_DOC, blocks: 2 },
+    { source: REF_UNIQUE_DOC, blocks: 1 }, { source: REF_OTHER_DOC, blocks: 1 },
+    { source: REF_TWO_DOC, blocks: 2 },
+  ], fixtures => exec(`
     (async () => {
-      const savedSource = window.originalMarkdown;
-      const savedUndo = undoHistory.slice();
-      const savedRedo = redoHistory.slice();
-      const savedDirty = hasUnsavedChanges;
+      ${admitMermaidActorFixture.toString()}
+      ${restoreMermaidActorFixture.toString()}
+      const fixtures = ${JSON.stringify(fixtures)};
+      let fixtureIndex = -1;
       const v = document.getElementById('viewer');
       const out = {};
+      const activate = async () => {
+        if (fixtureIndex >= 0) await restoreMermaidActorFixture(fixtures[fixtureIndex]);
+        const next = fixtures[fixtureIndex + 1];
+        if (!next) throw new Error('The Mermaid actor exceeded its exact admitted fixtures');
+        await admitMermaidActorFixture(next);
+        fixtureIndex++;
+      };
       // One leg: render the document, click Edit on the nth diagram, type the
       // new body, and report what happened to the MARKDOWN - not to the page.
       const leg = async (doc, mode, nth, code) => {
+        await activate();
+        if (fixtures[fixtureIndex].source !== doc)
+          throw new Error('The Mermaid leg selected another admitted source');
         if (mode === 'light-format') {
           await window.renderMarkdown('warm text\\n', 'full');
           await new Promise(r => setTimeout(r, 250));
         }
         await window.renderMarkdown(doc, mode);
         await new Promise(r => setTimeout(r, mode === 'full' ? 900 : 350));
-        window.originalMarkdown = doc;
-        hasUnsavedChanges = false;
-        undoHistory.length = 0;
         const el = v.querySelectorAll('.mermaid')[nth];
         if (!el) return { found: false };
         // SETUP EVIDENCE, CAPTURED BEFORE THE CLICK. The submission can detach
@@ -3081,19 +3204,15 @@ async function run(win) {
         // rendered under it; the dialog is then submitted. Node reuse can make
         // the old target still look perfectly valid, so the document REVISION
         // is what has to be checked.
-        await window.renderMarkdown(${JSON.stringify(REF_UNIQUE_DOC)}, 'full');
+        await activate();
         await new Promise(r => setTimeout(r, 900));
-        window.originalMarkdown = ${JSON.stringify(REF_UNIQUE_DOC)};
         const staleEl = v.querySelectorAll('.mermaid')[0];
         rightClickTarget = staleEl;
         document.getElementById('ctxEditMermaid').click();
         const genAtOpen = renderGeneration;
         // The document underneath changes while the dialog is open.
-        await window.renderMarkdown(${JSON.stringify(REF_OTHER_DOC)}, 'full');
+        await activate();
         await new Promise(r => setTimeout(r, 900));
-        window.originalMarkdown = ${JSON.stringify(REF_OTHER_DOC)};
-        hasUnsavedChanges = false;
-        undoHistory.length = 0;
         out.staleGenerationMoved = renderGeneration !== genAtOpen;
         // EVERY OTHER GUARD, MEASURED BEFORE THE SUBMISSION. The point of this
         // fixture is that only the REVISION check can refuse: the same-source
@@ -3148,11 +3267,8 @@ async function run(win) {
         // submission's validation is parked and every other call is handed
         // straight to the real renderer, which is also what keeps the reopened
         // dialog behaving exactly as it does in production.
-        await window.renderMarkdown(${JSON.stringify(REF_TWO_DOC)}, 'full');
+        await activate();
         await new Promise(r => setTimeout(r, 900));
-        window.originalMarkdown = ${JSON.stringify(REF_TWO_DOC)};
-        hasUnsavedChanges = false;
-        undoHistory.length = 0;
         const nodes = v.querySelectorAll('.mermaid');
         out.raceSetup = { nodes: nodes.length };
         const realRender = window.mermaid.render;
@@ -3166,6 +3282,7 @@ async function run(win) {
         // leg's restore exists to prevent.
         let releaseValidation = null;
         let validationCalls = 0;
+        let parked = null;
         try {
           window.mermaid.render = function (id) {
             if (typeof id === 'string' && id.indexOf('mermaid-validate-') === 0) {
@@ -3190,7 +3307,7 @@ async function run(win) {
           // Never allowed to reject on its own. A rejection has to arrive as a
           // recorded outcome below, not as an unhandled rejection that skips
           // past the stub restore.
-          const parked = window.insertMermaidFromDialog().then(
+          parked = window.insertMermaidFromDialog().then(
             () => 'settled',
             (e) => 'rejected: ' + ((e && e.message) || e),
           );
@@ -3257,28 +3374,26 @@ async function run(win) {
           // call. On the normal path all three are already no-ops.
           window.mermaid.render = realRender;
           if (releaseValidation) releaseValidation();
-          mermaidDialogSubmitting = false;
+          if (parked) {
+            const outcome = await Promise.race([
+              parked, new Promise(resolve => setTimeout(() => resolve('timeout'), 4000)),
+            ]);
+            if (outcome !== 'settled' || mermaidDialogSubmitting)
+              throw new Error('The actual Mermaid submission did not finish during cleanup: ' + outcome);
+          }
         }
         return out;
       } finally {
-        window.originalMarkdown = savedSource;
-        undoHistory.length = 0;
-        for (const h of savedUndo) undoHistory.push(h);
-        redoHistory.length = 0;
-        for (const h of savedRedo) redoHistory.push(h);
-        hasUnsavedChanges = savedDirty;
-        updateUnsavedIndicator();
         closeMermaidTemplateDialog();
-        mermaidDialogMode = 'insert';
-        editingMermaidContainer = null;
         rightClickTarget = null;
         if (!v.isConnected) {
           document.querySelector('.content-wrapper').appendChild(v);
           out.repairedAtExit = true;
         }
+        if (fixtureIndex >= 0) await restoreMermaidActorFixture(fixtures[fixtureIndex]);
       }
     })()
-  `);
+  `));
   check(
     "a uniquely identified diagram is still edited, on both render paths",
     refuse.uniqueFull.found === true &&
@@ -3493,16 +3608,56 @@ async function run(win) {
   ].join("\n");
   const fitDoc = "# Label fit\n\n```mermaid\n" + fitSource + "\n```\n";
   const fitPlain = "# Before label fit\n\nNo diagrams yet.\n";
-  fs.writeFileSync(fitPath, fitPlain);
+  const fitPrior = await exec(`({
+    pageSession: window.getReloadRequestSession(),
+    tabs: CustomTabs.getTabs().map(t => ({ id: t.id, path: t.filePath }))
+  })`);
   await exec(`(async () => {
     closeMermaidTemplateDialog();
-    CustomTabs.getTabs().forEach(t => { t.hasUnsavedChanges = false; });
-    CustomTabs.getTabs().slice().forEach(t => CustomTabs.closeTab(t.id));
     document.body.classList.remove('dark-mode');
     await updateMermaidTheme(false);
     zoomLevel = 150; updateZoom();
-    CustomTabs.createTab(${JSON.stringify(fitPath)}, ${JSON.stringify(fitPlain)});
   })()`);
+  // Use the real chooser/admission path; a raw createTab has no disk authority.
+  // Keep the existing tabs, including any genuine unsaved state.
+  await admitTestDocument(win, fitPath, fitPlain);
+  const fitOwner = await exec(`(() => {
+    const tab = CustomTabs.getActiveTab();
+    const pageSession = window.getReloadRequestSession();
+    const identity = tab && CustomTabs.getDocumentIdentityForTab(tab.id,
+      ${JSON.stringify(fitPath)}, pageSession);
+    return {
+      id: tab?.id, path: tab?.filePath, current: currentFilePath,
+      content: tab?.content, original: tab?.originalContent, live: originalMarkdown,
+      descriptor: CustomTabs.getDocumentDescriptor(), identity, pageSession,
+      diskVersion: tab?.diskVersion,
+      admission: identity && window.queryDocumentDiskAdoptionState(
+        ${JSON.stringify(fitPath)}, identity, tab.mtimeMs, tab.diskVersion),
+      tabs: CustomTabs.getTabs().map(t => ({ id: t.id, path: t.filePath })),
+      zoom: zoomLevel
+    };
+  })()`);
+  const fitStat = fs.statSync(fitPath);
+  const fitAdmitted = Number.isSafeInteger(fitOwner.id) && fitOwner.id > 0 &&
+    fitOwner.path === fitPath && fitOwner.current === fitPath &&
+    fitOwner.content === fitPlain && fitOwner.original === fitPlain && fitOwner.live === fitPlain &&
+    fitOwner.descriptor?.logicalPath === fitPath &&
+    typeof fitOwner.descriptor.ref === "string" && /^[a-f0-9]{64}$/.test(fitOwner.descriptor.ref) &&
+    fitOwner.identity?.tabId === fitOwner.id &&
+    fitOwner.identity.documentRef === fitOwner.descriptor.ref &&
+    fitOwner.identity.pageSession === fitPrior.pageSession &&
+    fitOwner.pageSession === fitPrior.pageSession &&
+    fitOwner.admission?.known === true && fitOwner.admission.versionMatches === true &&
+    fitOwner.admission.pathKey === fitOwner.identity.pathKey &&
+    ["dev", "ino", "size", "mtimeMs"].every(key =>
+      Number.isFinite(fitOwner.diskVersion?.[key]) && fitOwner.diskVersion[key] === fitStat[key]) &&
+    Number.isFinite(fitOwner.diskVersion?.ctimeMs) &&
+    fs.readFileSync(fitPath, "utf8") === fitPlain && fitOwner.zoom === 150 &&
+    fitOwner.tabs.length === fitPrior.tabs.length + 1 &&
+    fitPrior.tabs.every(prior => fitOwner.tabs.some(t => t.id === prior.id && t.path === prior.path));
+  check("Mermaid label-fit fixture has a genuine admitted owner and disk version",
+    fitAdmitted, JSON.stringify(fitOwner));
+  if (!fitAdmitted) throw new Error("The label-fit fixture lacks its actual admitted owner or disk version");
   await waitFor(exec, "the diagram-free label-fit document",
     `document.querySelector('#viewer h1')?.textContent === 'Before label fit'`);
   check("Mermaid label-fit journey starts with a real diagram-free document",

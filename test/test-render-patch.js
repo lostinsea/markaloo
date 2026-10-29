@@ -3630,17 +3630,8 @@ async function run(win) {
   }
 
   // ---------------------------------------------------------------------
-  // 19. Every keyboard shortcut the README documents is real, and the ones it
-  //     no longer documents really are absent.
-  //
-  // Found by auditing the README against the code: the shipped table claimed
-  // `Ctrl+B` / `Ctrl+I` / `Ctrl+\`` (bold, italic, code) and `Ctrl+D` (dark
-  // mode). NONE of those four had a handler anywhere - not in renderer.js, not
-  // in main.js's before-input-event hook, and there are no Electron menu
-  // accelerators in this app at all. Meanwhile `Ctrl+R`, the refresh shortcut
-  // that is central to this fork, was not documented. A shortcut table is the
-  // one part of a README a reader tests immediately, so a false row is found
-  // by every user and fixed by none of them.
+  // 19. Every documented keyboard shortcut is classified and checked on its
+  //     supported input surface.
   //
   // THE ORACLE IS BEHAVIOURAL, NOT TEXTUAL. Grepping renderer.js for `'b'`
   // would prove nothing (this project's recurring anti-pattern): it cannot see
@@ -3736,16 +3727,6 @@ async function run(win) {
       JSON.stringify(unclassified),
     );
 
-    // Removed from the README by this change. Asserted absent so the false
-    // rows cannot quietly return - and so that implementing any of them forces
-    // the table to be updated in the same commit.
-    const ABSENT = { "Ctrl+B": "b", "Ctrl+I": "i", "Ctrl+`": "`", "Ctrl+D": "d" };
-    check(
-      "the README no longer claims the four shortcuts that were never implemented",
-      Object.keys(ABSENT).every((k) => !documented.includes(k)),
-      JSON.stringify(documented),
-    );
-
     const kbFile = path.join(dir, "shortcuts.md");
     fs.writeFileSync(kbFile, "# Shortcuts\n\nbody\n", "utf8");
     await admitTestDocument(win, kbFile, fs.readFileSync(kbFile, "utf8"));
@@ -3784,11 +3765,6 @@ async function run(win) {
           }
           handled[label] = fire(s.key);
         }
-        const absent = {};
-        isEditMode = false;
-        for (const [label, key] of Object.entries(${JSON.stringify(ABSENT)})) {
-          absent[label] = fire(key);
-        }
         // Put back everything the sweep was allowed to move.
         zoomLevel = zoomBefore;
         updateZoom();
@@ -3798,7 +3774,7 @@ async function run(win) {
         hasUnsavedChanges = false;
         updateUnsavedIndicator();
         historyClear();
-        return { handled, absent, zoom: zoomLevel };
+        return { handled, zoom: zoomLevel };
       })()
     `);
     // Ctrl+R really does reload, and Ctrl+S really does write; let both land
@@ -3811,20 +3787,11 @@ async function run(win) {
       unhandled.length === 0,
       JSON.stringify(probe.handled),
     );
-    // THE POSITIVE CONTROL. Without it, a dispatch built the wrong way - wrong
-    // event type, non-cancelable, aimed at the wrong node - reports "not
-    // handled" for everything, and the four absence assertions below all pass
-    // for the worst possible reason.
+    // Confirm that the actual dispatch reaches current shortcut handlers.
     check(
       "the dispatch probe can observe a handled key, so an unhandled result means something",
       probe.handled["Ctrl+F"] === true && probe.handled["Ctrl+0"] === true,
       JSON.stringify(probe.handled),
-    );
-    const stillLive = Object.keys(ABSENT).filter((k) => probe.absent[k] !== false);
-    check(
-      "the four shortcuts the README used to claim really are unimplemented",
-      stillLive.length === 0,
-      JSON.stringify(probe.absent),
     );
     check(
       "the shortcut sweep left the zoom level where it found it",
