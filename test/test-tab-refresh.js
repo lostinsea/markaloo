@@ -326,6 +326,13 @@ function unavailable(name, detail) {
   console.log(`UNAVAILABLE  ${name}  -> ${detail}`);
 }
 
+// Direct Electron and companion launches must not omit the actual-code checks.
+try {
+  require("./test-reload-transport-contract.js").run(check);
+} catch (error) {
+  failStartup("reload contract", error);
+}
+
 // This is deliberately data-only: capability scheduling must be testable
 // without Electron state, and each group remains independently reportable.
 function createDeletionEvidencePlan(capabilities, acknowledgementContract) {
@@ -14498,63 +14505,160 @@ async function runDocumentEventBoundary(win) {
     }));
 }
 
-async function runReloadTransportFailure(exec, sentinel) {
-  await sentinel.mute("controlled reload dispatch failure");
-  let result;
-  try {
-    result = await exec(`(() => {
-      const original = window.folia;
-      const requests = [];
-      let fail = false, reenter = false, nestedSequence = 0;
-      window.folia = { ...original, requestReload(request) {
-        requests.push(request);
-        if (fail) {
-          fail = false;
-          if (reenter && window.reloadCurrentFile()) {
-            nestedSequence = window.getLatestReloadRequestSequence(window.currentFilePath);
-          }
-          throw new Error('controlled reload dispatch failure');
-        }
-      } };
-      try {
-        const sent = window.reloadCurrentFile();
-        const prior = window.getLatestReloadRequestSequence(window.currentFilePath);
-        showFileUpdateNotification();
-        fail = true;
-        const refused = window.reloadCurrentFile();
-        const first = { sent, prior, refused, requests: requests.length,
-          latest: window.getLatestReloadRequestSequence(window.currentFilePath),
-          prompt: document.getElementById('fileUpdateToast').classList.contains('show'),
-          notification: document.getElementById('notificationMessage').textContent };
-        fail = true; reenter = true;
-        const reentrantRefused = window.reloadCurrentFile();
-        return { ...first, reentrantRefused, nestedSequence,
-          reentrantLatest: window.getLatestReloadRequestSequence(window.currentFilePath),
-          reentrantPrompt: document.getElementById('fileUpdateToast').classList.contains('show') };
-      } finally { window.folia = original; }
+async function runReloadTransportFailure(win, exec, sentinel) {
+  const channel = "reload-file";
+  const positive = value => Number.isSafeInteger(value) && value > 0;
+  const normalise = value => value.replace(/\r\n?/g, "\n");
+  async function reloadOnce() {
+    const witness = await exec(`(() => {
+      const session=window.getReloadRequestSession(),tab=window.CustomTabs.getActiveTab();
+      showFileUpdateNotification();
+      showNotification('Reload observation pending');
+      return {path:currentFilePath,tabId:tab?.id,session,
+        owner:window.CustomTabs.getActiveDocumentIdentity(currentFilePath,session),
+        sequence:window.getReloadRequestDiagnostics().sequence,
+        selection:window.getActiveFileSelectionGeneration(),snapshot:currentReloadSnapshot(),
+        prompt:document.getElementById('fileUpdateToast').classList.contains('show')&&fileUpdateNotificationShown};
     })()`);
-    await sentinel.drain();
-    check("SEC-08 reload dispatch failure setup reaches a real owner and observable delivery exception",
-      result.sent && result.prior > 0 && result.requests === 2 &&
-        sentinel.currentMute().suppressed.some(hit =>
-          hit.kind === "console-error" && hit.detail.includes("controlled reload dispatch failure")),
-      JSON.stringify(result));
-    check("SEC-08 an unsent reload preserves its earlier authoritative request and visible update prompt",
-      result.refused === false && result.latest === result.prior && result.prompt &&
-        result.notification.includes("controlled reload dispatch failure"), JSON.stringify(result));
-    check("SEC-08 a newer reentrant reload retains its authority and successful prompt dismissal",
-      result.reentrantRefused === false && result.nestedSequence > result.prior &&
-        result.reentrantLatest === result.nestedSequence && result.reentrantPrompt === false,
-      JSON.stringify(result));
-  } finally { await sentinel.unmute(); }
-  const sequence = await exec(`(() => {
-    if (!window.reloadCurrentFile()) return 0;
-    return window.getLatestReloadRequestSequence(window.currentFilePath);
-  })()`);
-  const settled = sequence > 0 && await waitForCondition(exec,
-    `window.CustomTabs.__reloadState().acceptedSequence === ${sequence}`, 8000);
-  check("SEC-08 ordinary reload remains usable after a refused transport dispatch",
-    settled && sequence > result.prior, JSON.stringify({ sequence, result }));
+    const owner = witness.owner;
+    if (!owner || !witness.prompt || owner.tabId !== witness.tabId ||
+        owner.pageSession !== witness.session ||
+        !Number.isSafeInteger(witness.sequence) || witness.sequence < 0 ||
+        !positive(witness.selection) || !positive(owner.rendererGeneration) ||
+        !positive(owner.documentGeneration) || !/^[a-f0-9]{64}$/.test(owner.documentRef) ||
+        typeof owner.pathKey !== "string" || !owner.pathKey ||
+        typeof witness.snapshot !== "string") {
+      throw new Error("Missing genuine reload owner/prompt setup: " + JSON.stringify(witness));
+    }
+    check("RELOAD desktop has a genuine active owner and visible production update prompt",
+      witness.prompt, JSON.stringify(witness));
+    const matchesRequest = request => !!request &&
+      request.filePath === witness.path && request.reloadRequestPath === owner.pathKey &&
+      request.reloadRequestSequence === witness.sequence + 1 &&
+      request.reloadRequestSnapshot === witness.snapshot &&
+      request.reloadRequestSession === witness.session && request.reloadRequestTabId === owner.tabId &&
+      request.reloadRequestDocumentGeneration === owner.documentGeneration &&
+      request.reloadRequestDocumentPathKey === owner.pathKey &&
+      request.reloadRequestDocumentRef === owner.documentRef &&
+      request.reloadRequestRendererGeneration === owner.rendererGeneration &&
+      request.reloadRequestSelectionGeneration === witness.selection;
+    const matchesResult = (result, request) => !!result?.reloadRequest &&
+      result.path === request.filePath && result.reloadSession?.pageSession === witness.session &&
+      result.reloadSession?.rendererGeneration === owner.rendererGeneration &&
+      result.reloadRequest.sequence === request.reloadRequestSequence &&
+      result.reloadRequest.path === request.reloadRequestPath &&
+      result.reloadRequest.snapshot === request.reloadRequestSnapshot &&
+      result.reloadRequest.session === witness.session && result.reloadRequest.tabId === owner.tabId &&
+      result.reloadRequest.documentGeneration === owner.documentGeneration &&
+      result.reloadRequest.pathKey === owner.pathKey && result.reloadRequest.documentRef === owner.documentRef &&
+      result.reloadRequest.rendererGeneration === owner.rendererGeneration &&
+      result.reloadRequest.selectionGeneration === witness.selection;
+    const listeners = ipcMain.listeners(channel);
+    if (listeners.length !== 1) throw new Error("Reload observation requires the unique original Main listener");
+    const original = listeners[0], target = win.webContents, originalSend = target.send;
+    const descriptor = Object.getOwnPropertyDescriptor(target, "send");
+    const requests = [], replies = [];
+    const forward = function (...args) {
+      if (!win.isDestroyed() && args[0].sender === target &&
+          args[0].senderFrame === target.mainFrame && matchesRequest(args[1])) {
+        const record = { request: args[1], completed: false, error: null };
+        requests.push(record);
+        const completion = Reflect.apply(original, this, args);
+        Promise.resolve(completion).then(
+          () => { record.completed = true; },
+          error => { record.error = error; record.completed = true; },
+        );
+        return completion;
+      }
+      return Reflect.apply(original, this, args);
+    };
+    const observeSend = function (...args) {
+      if (this === target && args[0] === "file-reload-result" &&
+          requests.some(record => matchesResult(args[1], record.request))) {
+        replies.push(args[1]);
+      }
+      return Reflect.apply(originalSend, this, args);
+    };
+    let sequence, sendInstalled = false, listenerInstallStarted = false, listenerInstalled = false;
+    try {
+      Object.defineProperty(target, "send", {
+        configurable: true, enumerable: descriptor?.enumerable ?? false, writable: true, value: observeSend,
+      });
+      sendInstalled = true;
+      listenerInstallStarted = true;
+      ipcMain.removeListener(channel, original);
+      ipcMain.on(channel, forward);
+      listenerInstalled = true;
+      sequence = await exec(`(() => {
+        if (!window.reloadCurrentFile()) return 0;
+        return window.getLatestReloadRequestSequence(currentFilePath);
+      })()`);
+      const arrived = await waitForCondition(async expression => {
+        const failed = requests.find(record => record.error);
+        if (failed) throw failed.error;
+        if (requests.length !== 1 || !requests[0].completed ||
+            replies.length !== 1 || typeof replies[0].content !== "string") return false;
+        const content = JSON.stringify(normalise(replies[0].content));
+        return await exec(`(${expression})&&
+          originalMarkdown.replace(/\\r\\n?/g,"\\n")===${content}&&
+          window.CustomTabs.getActiveTab().content.replace(/\\r\\n?/g,"\\n")===${content}`);
+      },
+        `window.CustomTabs.__reloadState().acceptedSequence===${sequence}&&
+        window.CustomTabs.getActiveTabId()===${witness.tabId}&&currentFilePath===${JSON.stringify(witness.path)}&&
+        window.CustomTabs.getActiveTab().content===originalMarkdown&&
+        document.getElementById('notificationMessage').textContent===i18n('notif.fileReloaded')&&
+        !document.getElementById('fileUpdateToast').classList.contains('show')&&!fileUpdateNotificationShown`, 8000);
+      const valid = arrived && sequence === witness.sequence + 1 &&
+        requests.length === 1 && replies.length === 1 && replies[0].success === true &&
+        typeof replies[0].content === "string" &&
+        normalise(replies[0].content) === normalise(witness.snapshot) &&
+        matchesResult(replies[0], requests[0].request);
+      check("RELOAD desktop observes original Main success exact owner adoption and production prompt dismissal",
+        valid, JSON.stringify({ sequence, witness, requests: requests.length, replies }));
+      if (!valid) throw new Error("Genuine reload did not settle with its exact owner");
+      await sentinel.drain();
+    } finally {
+      const failures = [];
+      const current = ipcMain.listeners(channel);
+      if (listenerInstallStarted && current.length === 1 && current[0] === forward) {
+        try {
+          ipcMain.removeListener(channel, forward);
+          ipcMain.on(channel, original);
+          if (ipcMain.listeners(channel).length !== 1 || ipcMain.listeners(channel)[0] !== original) {
+            throw new Error("Original reload listener did not restore");
+          }
+        } catch (error) { failures.push(error); }
+      } else if (listenerInstallStarted && !listenerInstalled &&
+          (current.length === 0 || current.length === 1 && current[0] === original)) {
+        try {
+          if (current.length === 0) ipcMain.on(channel, original);
+          if (ipcMain.listeners(channel).length !== 1 || ipcMain.listeners(channel)[0] !== original) {
+            throw new Error("Original reload listener did not restore after setup failure");
+          }
+        } catch (error) { failures.push(error); }
+      } else if (listenerInstallStarted) {
+        failures.push(new Error("Owned reload listener changed before restoration"));
+      }
+      if (sendInstalled && Object.getOwnPropertyDescriptor(target, "send")?.value === observeSend) {
+        try {
+          if (descriptor) Object.defineProperty(target, "send", descriptor);
+          else delete target.send;
+          const restored = Object.getOwnPropertyDescriptor(target, "send");
+          if (descriptor ? !restored || Reflect.ownKeys(descriptor).some(key => restored[key] !== descriptor[key]) : restored) {
+            throw new Error("Original reload send descriptor did not restore");
+          }
+        } catch (error) { failures.push(error); }
+      } else if (sendInstalled) {
+        failures.push(new Error("Owned reload send observer changed before restoration"));
+      }
+      if (failures.length) throw new AggregateError(failures, "Reload observer restoration failed");
+    }
+    return sequence;
+  }
+  const first = await reloadOnce();
+  const retry = await reloadOnce();
+  check("RELOAD desktop genuine post-restoration retry adopts a newer sequence",
+    retry > first, JSON.stringify({ first, retry }));
 }
 
 async function runDocumentControlCloseJourney(win, exec) {
@@ -18822,7 +18926,7 @@ async function run(win) {
   );
 
   await runDocumentControlCloseJourney(win, exec);
-  await runReloadTransportFailure(exec, sentinel);
+  await runReloadTransportFailure(win, exec, sentinel);
   if (ownedReadFocusedHarness || dialogExtraFocusedHarness) {
     if (ownedReadFocusedHarness) {
       await runCommittedAdoptionChecks(win, exec, dir);

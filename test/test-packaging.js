@@ -1053,6 +1053,28 @@ async function main() {
 
   // 2. Scripts and stylesheets loaded by the renderer document.
   const indexHtml = read("src/index.html");
+  const reloadScript = '<script src="reload-request.js"></script>';
+  const reloadScriptAt = indexHtml.indexOf(reloadScript);
+  const reloadRenderer = read("src/renderer.js");
+  const reloadHarness = stripJsComments(read("test/test-tab-refresh.js"));
+  check("the shipping reload contract loads exactly once before its renderer consumer",
+    isPackaged(files, "src/reload-request.js") && reloadScriptAt >= 0 &&
+      indexHtml.indexOf(reloadScript, reloadScriptAt + reloadScript.length) === -1 &&
+      indexHtml.indexOf('<script src="renderer.js"></script>') > reloadScriptAt &&
+      reloadRenderer.includes("throw new Error('The reload request module must load before the renderer');") &&
+      (reloadRenderer.match(/FoliaReloadRequest\.create\(/g) || []).length === 1 &&
+      reloadRenderer.includes("latestByPath: latestReloadRequestByPath,") &&
+      reloadRenderer.includes("return reloadRequests.dispatch({"));
+  check("ordinary tabs runs actual-code contract checks before Electron with failure propagation",
+    pkg.scripts["test:tabs"] ===
+      "node test/test-reload-transport-contract.js && electron test/test-tab-refresh.js" &&
+      pkg.scripts.test.split(" && ").includes("npm run test:tabs"));
+  const reloadPreflight = 'require("./test-reload-transport-contract.js").run(check);';
+  check("direct focused and companion tabs launches cannot omit the actual-code contract preflight",
+    /^try \{\r?\n  require\("\.\/test-reload-transport-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("reload contract", error\);\r?\n\}/m.test(reloadHarness) &&
+      reloadHarness.indexOf(reloadPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
+      reloadHarness.indexOf(reloadPreflight) > reloadHarness.indexOf("function check(") &&
+      reloadHarness.indexOf(reloadPreflight, reloadHarness.indexOf(reloadPreflight) + reloadPreflight.length) === -1);
   const inlineScript = '<script src="inline-formatting.js"></script>';
   const tableScript = '<script src="table-cell-editor.js"></script>';
   const inlineSource = read("src/inline-formatting.js");
@@ -5710,6 +5732,7 @@ async function main() {
               "libs/prismjs/prism-bundle.js",
               "src/file-helpers-core.js",
               "src/file-helpers.js",
+              "src/reload-request.js",
             ]) {
               check(
                 `${rel} is really inside the built app.asar`,

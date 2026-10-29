@@ -1411,6 +1411,24 @@ let previewDebounceTimer = null;
 let reloadRequestSequence = 0;
 const latestReloadRequestByPath = new Map();
 const reloadRequestSession = window.crypto.randomUUID();
+if (typeof window.FoliaReloadRequest?.create !== 'function') {
+  throw new Error('The reload request module must load before the renderer');
+}
+// Keep the existing renderer bindings and result validators on the same state.
+const reloadRequests = window.FoliaReloadRequest.create({
+  state: {
+    get sequence() { return reloadRequestSequence; },
+    set sequence(value) { reloadRequestSequence = value; },
+    latestByPath: latestReloadRequestByPath,
+    get promptShown() { return fileUpdateNotificationShown; },
+    set promptShown(value) { fileUpdateNotificationShown = value; },
+  },
+  session: reloadRequestSession,
+  document,
+  readSnapshot: currentReloadSnapshot,
+  requestReload: request => window.folia.requestReload(request),
+  i18n, console, setTimeout,
+});
 let latestReloadMainEpoch = 0;
 let foreignReloadResultCount = 0;
 let reloadConflictResultCount = 0;
@@ -3539,15 +3557,7 @@ async function setExportTheme(dark) {
 
 // Show notification toast
 function showNotification(message, duration = 3000) {
-  const toast = document.getElementById('notificationToast');
-  const messageEl = document.getElementById('notificationMessage');
-
-  messageEl.textContent = message;
-  toast.classList.add('show');
-
-  setTimeout(() => {
-    toast.classList.remove('show');
-  }, duration);
+  reloadRequests.showNotification(message, duration);
 }
 
 // Loading screen functions
@@ -3584,26 +3594,11 @@ function hideLoadingScreenFor(generation) {
 
 // File update notification functions
 function showFileUpdateNotification() {
-  if (fileUpdateNotificationShown) {
-    return; // Don't show multiple notifications
-  }
-
-  const toast = document.getElementById('fileUpdateToast');
-  if (!toast) {
-    console.error('File update toast element not found');
-    return;
-  }
-
-  toast.classList.add('show');
-  fileUpdateNotificationShown = true;
+  reloadRequests.showFileUpdateNotification();
 }
 
 function dismissFileUpdateNotification() {
-  const toast = document.getElementById('fileUpdateToast');
-  if (toast) {
-    toast.classList.remove('show');
-  }
-  fileUpdateNotificationShown = false;
+  reloadRequests.dismissFileUpdateNotification();
 }
 
 function reloadCurrentFile() {
@@ -3650,36 +3645,16 @@ function reloadCurrentFile() {
   documentPathKey = identity.pathKey;
   const requestPath = canonicalReloadPath(currentFilePath);
   if (!requestPath) return false;
-  const sequence = ++reloadRequestSequence;
-  const snapshot = currentReloadSnapshot();
-  const previousSequence = latestReloadRequestByPath.get(requestPath);
-  latestReloadRequestByPath.set(requestPath, sequence);
-  try {
-    window.folia.requestReload({
-      filePath: currentFilePath,
-      reloadRequestSequence: sequence,
-      reloadRequestPath: requestPath,
-      reloadRequestSnapshot: snapshot,
-      reloadRequestSession,
-      reloadRequestTabId: tabId,
-      reloadRequestDocumentGeneration: documentGeneration,
-      reloadRequestDocumentPathKey: documentPathKey,
-      reloadRequestDocumentRef: identity.documentRef,
-      reloadRequestRendererGeneration: identity.rendererGeneration,
-      reloadRequestSelectionGeneration: activeFileSelectionGeneration,
-    });
-  } catch (error) {
-    // An unsent request must not supersede the earlier in-flight reload.
-    if (latestReloadRequestByPath.get(requestPath) === sequence) {
-      if (previousSequence === undefined) latestReloadRequestByPath.delete(requestPath);
-      else latestReloadRequestByPath.set(requestPath, previousSequence);
-    }
-    console.error('Reload request delivery failed:', error);
-    showNotification(i18n('notif.reloadFailed') + error.message, 4000);
-    return false;
-  }
-  dismissFileUpdateNotification();
-  return true;
+  return reloadRequests.dispatch({
+    filePath: currentFilePath,
+    requestPath,
+    tabId,
+    documentGeneration,
+    documentPathKey,
+    documentRef: identity.documentRef,
+    rendererGeneration: identity.rendererGeneration,
+    selectionGeneration: activeFileSelectionGeneration,
+  });
 }
 
 // Before printToPDF: main signals renderer to drop dark mode for a clean light export
