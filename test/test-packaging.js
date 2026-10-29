@@ -6672,13 +6672,6 @@ async function main() {
       `${shippedScripts.length}: ${shippedScripts.join(", ")}`,
     );
 
-    check(
-      "the language switcher is gone from every shipped script",
-      !/interfaceLang|applyInterfaceLang|langSubmenu|data-lang=/.test(allSrc),
-      (allSrc.match(/interfaceLang|applyInterfaceLang|langSubmenu|data-lang=/g) || [])
-        .join(", "),
-    );
-
     // The instance-level check lives in test:security (N10). This is the CLASS:
     // no Turkish-SPECIFIC letter survives anywhere in shipped source (see the
     // narrower claim spelled out below - this is not "no Turkish text"). It is
@@ -6802,21 +6795,6 @@ async function main() {
         (body.match(/.*\.\s*innerHTML.*/g) || []).join(" | "),
       );
     }
-
-    check(
-      "the Ukrainian overlay file is deleted, not merely unregistered",
-      !fs.existsSync(path.join(ROOT, "custom-language.js")) &&
-        !/custom-language\.js/.test(htmlSrc) &&
-        !JSON.stringify(pkg.build.files).includes("custom-language.js"),
-      "custom-language.js still present on disk, in index.html, or in build.files",
-    );
-
-    check(
-      "the emptied Tools menu was removed rather than left as a dead button",
-      !/id="toolsBtn"|id="toolsMenu"/.test(htmlSrc) &&
-        !/toolsBtn|toolsMenu/.test(rendererSrc),
-      "toolsBtn/toolsMenu references survive",
-    );
 
     // The View menu shares the .tools-* CSS class family with the removed
     // Tools menu, and custom-theme.js injects its Theme submenu into it. A

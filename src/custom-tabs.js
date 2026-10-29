@@ -4752,7 +4752,7 @@
       };
 
       const dispatchFileOpened = (event, data) => {
-        handleFileOpened(event, data).catch((error) => {
+        return handleFileOpened(event, data).catch((error) => {
           console.error("[CustomTabs] File open failed:", error);
           notify("The file could not be opened.", 6000);
         });
