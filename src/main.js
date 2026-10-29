@@ -10926,6 +10926,9 @@ let shutdownRequestSeq = 0;
 // { id, reason, continuation, dispatchedTo, dispatchToken } while a question
 // is outstanding.
 let pendingShutdown = null;
+// A question can settle after its request retires. Retain its original consumer
+// only while a source-test observer retains that exact question signal.
+const shutdownQuestionConsumers = app.isPackaged ? null : new WeakMap();
 // At most one superseded intent, held until the pending one settles.
 let queuedShutdown = null;
 // A user-origin close/quit absorbed by a pending updater is not weaker forever:
@@ -12798,7 +12801,8 @@ function askShutdownQuestion(record, options) {
   const askedBeforeSavesBlocked = !deletionEvidenceCapacityLatched;
   const abortController = new AbortController();
   record.dialogAbortController = abortController;
-  showOwnedMessage(win, {
+  const questionRequestId = record.id;
+  const questionConsumer = showOwnedMessage(win, {
       type: "warning",
       buttons: [options.confirmLabel, "Cancel"],
       defaultId: 1,
@@ -12847,6 +12851,11 @@ function askShutdownQuestion(record, options) {
       log("Shutdown dialog failed:", error.message);
       settleShutdown(record, false, "dialog-failed");
     });
+  if (shutdownQuestionConsumers) {
+    shutdownQuestionConsumers.set(abortController.signal, {
+      requestId: questionRequestId, record, consumer: questionConsumer,
+    });
+  }
 }
 
 function askDiscardApproval(record, files) {
@@ -14802,6 +14811,13 @@ module.exports = {
     ? {}
     : {
         __shutdown: {
+          readQuestionConsumer: (requestId, signal) => {
+            if (!Number.isSafeInteger(requestId) || requestId <= 0 ||
+                !signal || typeof signal !== "object") return null;
+            const question = shutdownQuestionConsumers?.get(signal);
+            return question && question.requestId === requestId &&
+              question.record.id === requestId ? question.consumer : null;
+          },
           documentAdmissionIsCurrent: ref => !!admittedDocumentReference(ref),
           documentOwnerGuards: (owner, filePath) => ({
             identity: !!normaliseDocumentIdentity(owner, filePath),
