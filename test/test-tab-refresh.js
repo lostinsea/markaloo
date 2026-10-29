@@ -18241,6 +18241,30 @@ async function run(win) {
 
   await switchToTabAndWait(ids.a);
   write(fileB, "# Beta\n\nSEC08_STABLE_READ_ONE\n");
+  const [stableReadRequest, stableSupersedingRequest] = await exec(`
+    [${ids.b}, ${ids.a}].map(id => {
+      const tab = window.CustomTabs.getTabs().find(candidate => candidate.id === id);
+      const owner = window.CustomTabs.getDocumentIdentityForTab(
+        id, tab.filePath, window.getReloadRequestSession(),
+      );
+      return {
+        filePath: tab.filePath, pageSession: owner.pageSession,
+        rendererGeneration: owner.rendererGeneration,
+        owner: Object.fromEntries(['pageSession', 'rendererGeneration', 'tabId',
+          'documentGeneration', 'pathKey', 'documentRef'].map(key => [key, owner[key]])),
+        diskVersion: Object.fromEntries(['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs']
+          .map(key => [key, tab.diskVersion[key]])),
+      };
+    })
+  `);
+  const stableReadChannel = "refresh-owned-tab-disk-snapshot";
+  const stableReadObservation = {
+    target: win.webContents, frame: win.webContents.mainFrame,
+    pageSession: stableReadRequest.pageSession,
+    generation: stableReadRequest.rendererGeneration,
+    channels: new Set([stableReadChannel]), records: [], fault: null,
+  };
+  if (tabDiskObservation) throw new Error("Overlapping stable-read Main observers");
   const ownedReaderPath = fileB;
   const originalStableReadOpen = fs.promises.open;
   let stableReadOpenCalls = 0;
@@ -18270,29 +18294,14 @@ async function run(win) {
     return handle;
   });
   let midReadRefresh;
+  tabDiskObservation = stableReadObservation;
   try {
     await exec(`
       (() => {
-        const ipc = window.ipcRenderer;
-        const realInvoke = ipc.invoke;
         const realPrepare = window.prepareDocumentDiskAdoption;
         window.__sec08SupersededPreparation = {
-          realInvoke,
           realPrepare,
           calls: 0,
-          snapshot: null,
-        };
-        ipc.invoke = function (channel, data) {
-          const result = realInvoke.apply(this, arguments);
-          if (channel !== 'refresh-owned-tab-disk-snapshot' ||
-              !data || data.filePath !== ${jsB}) return result;
-          return Promise.resolve(result).then((snapshot) => {
-            window.__sec08SupersededPreparation.snapshot = snapshot && {
-              content: snapshot.content,
-              diskVersion: snapshot.diskVersion,
-            };
-            return snapshot;
-          });
         };
         window.prepareDocumentDiskAdoption = async function (preparation) {
           if (preparation && preparation.filePath === ${jsB}) {
@@ -18316,9 +18325,16 @@ async function run(win) {
     const preHold = secondStatHeld && await exec(`
       (() => {
         const probe = window.__sec08SupersededPreparation;
-        return probe && { calls: probe.calls, snapshot: probe.snapshot };
+        return probe && { calls: probe.calls };
       })()
     `);
+    if (preHold) {
+      const receipt = stableReadObservation.records[0];
+      preHold.exactReceipt = stableReadObservation.records.length === 1 &&
+        exactTabDiskReceipt(receipt, stableReadObservation, stableReadChannel, stableReadRequest);
+      preHold.settled = receipt?.settled;
+      preHold.snapshot = receipt?.actualReply ?? null;
+    }
     let superseded = false;
     const stableOneMtime = fs.statSync(fileB).mtimeMs;
     let stableTwoMtime = null;
@@ -18340,7 +18356,6 @@ async function run(win) {
         delete window.__sec08MidReadRefresh;
         const preparation = window.__sec08SupersededPreparation;
         if (preparation) {
-          window.ipcRenderer.invoke = preparation.realInvoke;
           window.prepareDocumentDiskAdoption = preparation.realPrepare;
           delete window.__sec08SupersededPreparation;
         }
@@ -18353,7 +18368,6 @@ async function run(win) {
           dirty: tab && tab.hasUnsavedChanges,
           viewer: document.getElementById('viewer').textContent,
           preparationCalls: preparation && preparation.calls,
-          snapshot: preparation && preparation.snapshot,
         };
       })()
       `),
@@ -18366,15 +18380,42 @@ async function run(win) {
     midReadRefresh.lateHold = stableReadLateHold;
     midReadRefresh.stableMtimeAdvanced =
       stableTwoMtime !== null && stableTwoMtime > stableOneMtime;
+    const stableReceipts = stableReadObservation.records.filter(
+      record => record.request?.filePath === fileB,
+    );
+    const stableReceipt = stableReceipts[0];
+    // Superseding with A can also inspect A's metadata through this channel.
+    // Account for that receipt without mistaking it for B's held body read.
+    const supersedingReceipts = stableReadObservation.records.filter(
+      record => record.request?.filePath !== fileB,
+    );
+    midReadRefresh.mainRead = {
+      records: stableReadObservation.records,
+      exactReceipt: stableReceipts.length === 1 &&
+        exactTabDiskReceipt(
+          stableReceipt, stableReadObservation, stableReadChannel, stableReadRequest,
+        ),
+      supersedingReceiptsExact: supersedingReceipts.length <= 1 &&
+        supersedingReceipts.every(record => exactTabDiskReceipt(
+          record, stableReadObservation, stableReadChannel, stableSupersedingRequest,
+        )),
+      settled: stableReceipt?.settled,
+      error: stableReceipt?.error,
+      fault: stableReceipt?.fault,
+      replyUnmodified: isDeepStrictEqual(
+        stableReceipt?.actualReply, stableReceipt?.deliveredReply,
+      ),
+    };
+    midReadRefresh.snapshot = stableReceipt?.actualReply;
     supersededPreparationCalls = midReadRefresh.preparationCalls;
   } finally {
     if (releaseStableReadSecondStat) releaseStableReadSecondStat();
     restoreStableReadOpen();
+    tabDiskObservation = null;
     await exec(`
       (() => {
         const preparation = window.__sec08SupersededPreparation;
         if (preparation) {
-          window.ipcRenderer.invoke = preparation.realInvoke;
           window.prepareDocumentDiskAdoption = preparation.realPrepare;
           delete window.__sec08SupersededPreparation;
         }
@@ -18390,6 +18431,8 @@ async function run(win) {
     midReadRefresh.completionTimedOut !== true &&
     midReadRefresh.lateHold === false &&
     midReadRefresh.preHold &&
+    midReadRefresh.preHold.exactReceipt === true &&
+    midReadRefresh.preHold.settled === false &&
     midReadRefresh.preHold.calls === 0 &&
     midReadRefresh.preHold.snapshot === null &&
     midReadRefresh.stableMtimeAdvanced === true &&
@@ -18397,9 +18440,20 @@ async function run(win) {
     midReadRefresh.superseded === true &&
     midReadRefresh.completion &&
     midReadRefresh.completion.settled === true &&
+    midReadRefresh.mainRead.exactReceipt === true &&
+    midReadRefresh.mainRead.supersedingReceiptsExact === true &&
+    midReadRefresh.mainRead.settled === true &&
+    !midReadRefresh.mainRead.error &&
+    !midReadRefresh.mainRead.fault &&
+    midReadRefresh.mainRead.replyUnmodified === true &&
     midReadRefresh.snapshot &&
+    midReadRefresh.snapshot.status === "changed" &&
+    midReadRefresh.snapshot.pathKey === stableReadRequest.owner.pathKey &&
     String(midReadRefresh.snapshot.content).includes("SEC08_STABLE_READ_TWO") &&
-    midReadRefresh.snapshot.diskVersion,
+    ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(
+      key => Number.isFinite(midReadRefresh.snapshot.diskVersion?.[key]),
+    ) &&
+    midReadRefresh.snapshot.modifiedTime === midReadRefresh.snapshot.diskVersion.mtimeMs,
     JSON.stringify(midReadRefresh),
   );
   check(
@@ -18408,7 +18462,8 @@ async function run(win) {
     midReadRefresh.active === ids.a &&
     supersededPreparationCalls === 0 &&
     midReadRefresh.dirty === false &&
-    String(midReadRefresh.content).includes("SEC08_MAIN_OWNED_READ") &&
+    midReadRefresh.content === changedBody &&
+    midReadRefresh.original === changedBody &&
     String(midReadRefresh.viewer).includes("ALPHA_V2") &&
     !String(midReadRefresh.original).includes("SEC08_STABLE_READ_TWO"),
     JSON.stringify(midReadRefresh),
