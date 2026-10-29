@@ -17003,7 +17003,27 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
   }
   const repeatedLogicalPath = spellings[spellings.length - 1].filePath;
   // Keep deduplication's control independent of successful alias admission.
-  await clearFixtureTabs("repeat logical spelling setup");
+  const nativeOriginalDiscard = await exec(`(() => {
+    const expected = ${JSON.stringify(nativeOriginal.owner)};
+    const tab = window.CustomTabs.getTabs().find(item => item.id === expected.tabId);
+    const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+      tab.id, tab.filePath, window.getReloadRequestSession());
+    const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
+    const state = tab && window.CustomTabs.__documentState(tab);
+    if (!tab || tab.filePath !== ${JSON.stringify(source)} ||
+        tab.content !== '# Admitted source\\n\\nNATIVE_ALIAS_KEEP_EDIT\\n' ||
+        !tab.hasUnsavedChanges || state?.dirty !== true ||
+        descriptor?.ref !== ${JSON.stringify(nativeOriginal.document.ref)} ||
+        !['pageSession', 'rendererGeneration', 'tabId', 'documentGeneration',
+          'pathKey', 'documentRef'].every(field => owner?.[field] === expected[field])) {
+      throw new Error('Native spelling cleanup lost its exact retained original edit');
+    }
+    return {
+      tabId: tab.id, filePath: tab.filePath, owner, content: tab.content,
+      reason: 'Discard only the original edit retained by native spelling assertions',
+    };
+  })()`);
+  await clearFixtureTabs("repeat logical spelling setup", [nativeOriginalDiscard]);
   selectNativePath(repeatedLogicalPath);
   await exec("window.ipcRenderer.send('open-file-dialog'); null");
   const repeatSetup = await waitForCondition(exec,
@@ -17689,6 +17709,278 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
   }
 }
 
+async function closeOwnedFixtureTabs(exec, phase,
+  { tabIds = null, expectedDiscards = [] } = {}) {
+  const closeFixtureTabsSource = `
+    async function closeFixtureTabs(expectedDiscards, target, key) {
+      if (Object.prototype.hasOwnProperty.call(window, '__fixtureTabCleanup')) {
+        throw new Error('An earlier fixture close still owns its evidence');
+      }
+      const evidence = window.__fixtureTabCleanup = { key, records: [], remaining: [] };
+      const fields = ['pageSession', 'rendererGeneration', 'tabId',
+        'documentGeneration', 'pathKey', 'documentRef'];
+      const sameOwner = (left, right) => !!left && !!right &&
+        fields.every(field => left[field] === right[field]);
+      const dialog = () => document.getElementById('appMessageDialog');
+      const originalTabs = window.CustomTabs.getTabs().slice();
+      const tabs = originalTabs.filter(tab => tab.id === target.tabId);
+      if (tabs.length !== 1) throw new Error('The captured fixture close target disappeared');
+      const unrelatedIds = originalTabs.filter(tab => !tabs.includes(tab)).map(tab => tab.id);
+      const activeId = window.CustomTabs.getActiveTabId();
+      const ordered = tabs.filter(tab => tab.id !== activeId)
+        .concat(tabs.filter(tab => tab.id === activeId));
+      try {
+        for (const tab of ordered) {
+          if (dialog()?.open) throw new Error('A question was already open before fixture close');
+          const identity = window.CustomTabs.getDocumentIdentityForTab(
+            tab.id, tab.filePath, window.getReloadRequestSession());
+          const descriptor = window.CustomTabs.getDocumentDescriptor(tab.id);
+          const state = window.CustomTabs.__documentState(tab);
+          const deletion = identity && window.folia.queryDocumentDeletionState({
+            ...identity, filePath: tab.filePath,
+          });
+          const permissions = expectedDiscards.filter(item => item.tabId === tab.id);
+          if (!sameOwner(identity, target.owner) || !descriptor ||
+              descriptor.ref !== target.descriptor.ref ||
+              tab.filePath !== target.path || identity.documentRef !== descriptor.ref ||
+              deletion?.known !== true || deletion.unresolved !== false ||
+              state.deletionTombstone || permissions.length > 1) {
+            throw new Error('Fixture close has no ordinary authenticated owner: ' +
+              JSON.stringify({ identity, descriptor, state, deletion, permissions }));
+          }
+          const permission = permissions[0];
+          const selected = window.CustomTabs.getActiveTabId();
+          const liveText = () => selected === tab.id && window.CustomTabs.__inEditMode()
+            ? window.markdownEditor.value
+            : selected === tab.id ? window.originalMarkdown : tab.content;
+          const initialLive = liveText();
+          const initialCache = tab.content;
+          const sameText = (left, right) => typeof left === 'string' &&
+            typeof right === 'string' &&
+            left.replace(/\\r\\n?/g, '\\n') === right.replace(/\\r\\n?/g, '\\n');
+          const needsDiscard = state.dirty || !sameText(initialLive, tab.originalContent);
+          if (needsDiscard && (!permission || !permission.reason ||
+              permission.filePath !== tab.filePath || !sameOwner(permission.owner, identity) ||
+              permission.content !== initialLive)) {
+            throw new Error('No exact permission for the captured dirty fixture');
+          }
+          const intent = window.CustomTabs.__shutdownFreeze().dialogDecisionIntent;
+          const record = {
+            tabId: tab.id, path: tab.filePath, identity, descriptor, deletion,
+            selected, initialLive, initialCache, needsDiscard,
+            settled: false, error: null, questions: [], answered: false,
+          };
+          evidence.records.push(record);
+          let presentations = 0;
+          const collect = records => {
+            presentations += records.filter(change =>
+              change.target === dialog() && change.oldValue === null).length;
+          };
+          const observer = new MutationObserver(collect);
+          observer.observe(document.documentElement, {
+            subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true,
+          });
+          try {
+            record.done = window.CustomTabs.closeTab(tab.id);
+            if (!record.done || typeof record.done.then !== 'function') {
+              throw new Error('Fixture close did not return its original Promise');
+            }
+            record.done.then(
+              () => { record.settled = true; },
+              error => { record.error = String(error.stack || error); record.settled = true; },
+            );
+            const startedState = window.CustomTabs.__documentState(tab);
+            // closeTab folds an active live edit before asking. Accept that
+            // one synchronous fold, not later changes while the question is open.
+            const folded = selected === tab.id && !sameText(initialLive, initialCache) &&
+              sameText(tab.content, initialLive);
+            record.mutationRevision = state.mutationRevision + (folded ? 1 : 0);
+            if (needsDiscard && (!window.CustomTabs.getTabs().includes(tab) ||
+                startedState.dirty !== true || liveText() !== initialLive ||
+                startedState.mutationRevision !== record.mutationRevision)) {
+              throw new Error('Fixture close changed its captured live edit before asking');
+            }
+            const deadline = Date.now() + 8000;
+            while (!record.settled && Date.now() < deadline) {
+              await new Promise(resolve => setTimeout(resolve, 25));
+              collect(observer.takeRecords());
+              if (!dialog()?.open) continue;
+              const current = window.CustomTabs.getTabs().find(item => item.id === tab.id);
+              const owner = current && window.CustomTabs.getDocumentIdentityForTab(
+                current.id, current.filePath, window.getReloadRequestSession());
+              const currentState = current && window.CustomTabs.__documentState(current);
+              const currentDeletion = current && window.folia.queryDocumentDeletionState({
+                ...identity, filePath: tab.filePath,
+              });
+              const question = {
+                title: document.getElementById('appMessageTitle').textContent,
+                message: document.getElementById('appMessageText').textContent,
+                fileName: document.getElementById('appMessageName').textContent,
+                buttons: Array.from(document.querySelectorAll(
+                  '#appMessageButtons [data-dialog-choice]'),
+                  button => ({ id: button.dataset.dialogChoice, label: button.textContent })),
+                owner, state: currentState, deletion: currentDeletion,
+                presentations, intent: window.CustomTabs.__shutdownFreeze().dialogDecisionIntent,
+              };
+              record.questions.push(question);
+              const live = liveText();
+              const expectedButtons = [
+                { id: 'cancel', label: 'Cancel' },
+                { id: 'proceed', label: 'Discard and close' },
+              ];
+              const expectedName = String(tab.filename).split(/[\\\\/]/).pop()
+                .replace(/\\s+/g, ' ').slice(0, 120);
+              if (!needsDiscard || !permission || !permission.reason ||
+                  permission.filePath !== tab.filePath ||
+                  !sameOwner(permission.owner, identity) || !sameOwner(owner, identity) ||
+                  current !== tab || window.CustomTabs.getActiveTabId() !== selected ||
+                  !sameText(current.content, permission.content) || live !== permission.content ||
+                  currentState?.dirty !== true || currentState.deletionTombstone ||
+                  currentState.mutationRevision !== record.mutationRevision ||
+                  currentDeletion?.known !== true || currentDeletion.unresolved !== false ||
+                  currentDeletion.revision !== deletion.revision ||
+                  record.settled || record.answered || presentations !== 1 ||
+                  question.intent !== intent + 1 ||
+                  window.CustomTabs.__shutdownFreeze().frozen !== false ||
+                  window.getPendingSaveStatus(tab.filePath).count !== 0 ||
+                  question.title !== 'Close without saving?' ||
+                  question.message !== 'This tab has unsaved changes. Close it and discard them?' ||
+                  question.fileName !== expectedName ||
+                  JSON.stringify(question.buttons) !== JSON.stringify(expectedButtons)) {
+                throw new Error('Unexpected or stale fixture-close question: ' + JSON.stringify(question));
+              }
+              const button = document.querySelector(
+                '#appMessageDialog [data-dialog-choice="proceed"]');
+              if (!button || !dialog().open ||
+                  window.CustomTabs.__documentState(tab).mutationRevision !== currentState.mutationRevision ||
+                  window.CustomTabs.__shutdownFreeze().dialogDecisionIntent !== question.intent) {
+                throw new Error('Fixture-close question changed before its answer');
+              }
+              record.answered = true;
+              button.click();
+            }
+            if (!record.settled) throw new Error('Fixture close remained incomplete');
+            await record.done;
+            collect(observer.takeRecords());
+            if (record.error || dialog()?.open ||
+                window.CustomTabs.getTabs().includes(tab) ||
+                (needsDiscard ? !record.answered || record.questions.length !== 1 ||
+                  presentations !== 1 :
+                  record.answered || record.questions.length !== 0 || presentations !== 0)) {
+              throw new Error('Fixture close resolved without removing its exact owner');
+            }
+            record.closed = true;
+          } finally {
+            collect(observer.takeRecords());
+            observer.disconnect();
+            record.presentations = presentations;
+          }
+        }
+        evidence.remaining = window.CustomTabs.getTabs().map(tab => ({ id: tab.id, path: tab.filePath }));
+        return {
+          records: evidence.records.map(({ done, ...record }) => record),
+          remaining: evidence.remaining,
+          unrelatedIds,
+        };
+      } catch (error) {
+        evidence.failure = String(error.stack || error);
+        evidence.remaining = window.CustomTabs.getTabs().map(tab => ({ id: tab.id, path: tab.filePath }));
+        throw new Error(evidence.failure + ' evidence=' +
+          JSON.stringify({ ...evidence, records: evidence.records.map(({ done, ...record }) => record) }));
+      }
+    }
+  `;
+  const plan = await exec(`(() => {
+    const requested = ${JSON.stringify(tabIds)};
+    const tabs = window.CustomTabs.getTabs().slice();
+    if (requested !== null && (!Array.isArray(requested) ||
+        new Set(requested).size !== requested.length ||
+        requested.some(id => !tabs.some(tab => tab.id === id)))) {
+      throw new Error('Fixture close requires exact existing target IDs');
+    }
+    const selected = window.CustomTabs.getActiveTabId();
+    const targets = requested === null ? tabs :
+      tabs.filter(tab => requested.includes(tab.id));
+    const ordered = targets.filter(tab => tab.id !== selected)
+      .concat(targets.filter(tab => tab.id === selected));
+    return {
+      targets: ordered.map(tab => ({
+        tabId: tab.id, path: tab.filePath,
+        descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
+        owner: window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, window.getReloadRequestSession()),
+      })),
+      unrelatedIds: tabs.filter(tab => !targets.includes(tab)).map(tab => tab.id),
+    };
+  })()`);
+  const records = [];
+  for (const target of plan.targets) {
+    if (!target.owner || !target.descriptor ||
+        !__shutdown.documentAdmissionIsCurrent(target.descriptor.ref)) {
+      throw new Error(`${phase} fixture target has no current Main admission: ` +
+        JSON.stringify(target));
+    }
+    const cleanupKey = require("crypto").randomBytes(12).toString("hex");
+    let outcome;
+    try {
+      outcome = await exec(`${closeFixtureTabsSource}
+        closeFixtureTabs(${JSON.stringify(expectedDiscards)},
+          ${JSON.stringify(target)}, ${JSON.stringify(cleanupKey)})`);
+      await exec("window.folia.getVersion()");
+    } catch (error) {
+      const failures = [error];
+      let cleanupEvidence;
+      try {
+        const owns = await exec(`window.__fixtureTabCleanup?.key === ${JSON.stringify(cleanupKey)}`);
+        if (owns) {
+          const settled = await waitForCondition(exec,
+            `window.__fixtureTabCleanup.records.every(record => record.settled)`, 8000);
+          cleanupEvidence = await exec(`({
+            known: true,
+            settled: ${JSON.stringify(settled)},
+            failure: window.__fixtureTabCleanup.failure,
+            records: window.__fixtureTabCleanup.records.map(({ done, ...record }) => record),
+            remaining: window.CustomTabs.getTabs().map(tab => ({ id: tab.id, path: tab.filePath })),
+          })`);
+        } else {
+          cleanupEvidence = { known: false, reason: "cleanup evidence ownership unavailable" };
+        }
+      } catch (cleanupError) {
+        failures.push(cleanupError);
+        cleanupEvidence = { known: false, reason: String(cleanupError.stack || cleanupError) };
+      }
+      check(`${phase} closes every fixture tab before continuing`, false,
+        JSON.stringify({ failure: String(error.stack || error), cleanupEvidence }));
+      throw new AggregateError(failures, `${phase} fixture cleanup failed`);
+    }
+    const retired = outcome.records.length === 1 && outcome.records.every(record =>
+      record.closed === true && record.settled === true && !record.error &&
+      __shutdown.documentAdmissionIsCurrent(record.descriptor.ref) === false);
+    const remainingIds = outcome.remaining.map(tab => tab.id);
+    if (!retired || remainingIds.includes(target.tabId) ||
+        !isDeepStrictEqual(remainingIds, outcome.unrelatedIds)) {
+      check(`${phase} closes every fixture tab before continuing`, false, JSON.stringify(outcome));
+      throw new Error(`${phase} left its captured fixture owner live`);
+    }
+    records.push(...outcome.records);
+    await exec(`(() => {
+      if (window.__fixtureTabCleanup?.key !== ${JSON.stringify(cleanupKey)}) {
+        throw new Error('Fixture cleanup evidence ownership changed');
+      }
+      delete window.__fixtureTabCleanup;
+      return true;
+    })()`);
+  }
+  const remaining = await exec(`window.CustomTabs.getTabs().map(
+    tab => ({ id: tab.id, path: tab.filePath }))`);
+  const complete = records.length === plan.targets.length &&
+    isDeepStrictEqual(remaining.map(tab => tab.id), plan.unrelatedIds);
+  const outcome = { records, remaining };
+  check(`${phase} closes every fixture tab before continuing`, complete, JSON.stringify(outcome));
+  if (!complete) throw new Error(`${phase} fixture cleanup left unexpected tabs`);
+  return outcome;
+}
+
 async function run(win) {
   const exec = (code) => win.webContents.executeJavaScript(code, true);
   if (focusedRendererDialogGuard) {
@@ -17707,32 +17999,8 @@ async function run(win) {
     earlyRefreshFixtureGuard.sentinel = sentinel;
     earlyRefreshFixtureGuard.consoleAttribution = consoleAttribution;
   }
-  const closeFixtureTabsSource = `
-    async function closeFixtureTabs() {
-      const realConfirm = window.confirm;
-      window.confirm = () => true;
-      try {
-        const tabs = window.CustomTabs.getTabs().slice();
-        const activeId = window.CustomTabs.getActiveTabId();
-        for (const tab of tabs.filter(t => t.id !== activeId)
-          .concat(tabs.filter(t => t.id === activeId))) {
-          await window.CustomTabs.closeTab(tab.id);
-        }
-      } finally {
-        window.confirm = realConfirm;
-      }
-      return window.CustomTabs.getTabs().map(t => ({ id: t.id, path: t.filePath }));
-    }
-  `;
-  const clearFixtureTabs = async (phase) => {
-    const remaining = await exec(`${closeFixtureTabsSource} closeFixtureTabs()`);
-    check(
-      `${phase} closes every fixture tab before continuing`,
-      remaining.length === 0,
-      JSON.stringify(remaining),
-    );
-    if (remaining.length) throw new Error(`${phase} left tabs open`);
-  };
+  const clearFixtureTabs = (phase, expectedDiscards = []) =>
+    closeOwnedFixtureTabs(exec, phase, { expectedDiscards });
   // No suite may reach the user's browser. See trapExternalOpens().
   await trapExternalOpens(win);
   const bridgeExposure = await exec(`(async () => {
@@ -20668,14 +20936,146 @@ async function run(win) {
   // The preceding scenario deliberately closes every tab, so a tab has to be
   // reopened here - otherwise saveMarkdownFile() takes its no-file-open branch
   // and raises a blocking alert instead of saving.
-  const tabC = await exec(`
-    (() => {
-      const t = window.CustomTabs.createTab(${jsA}, window.fs.readFileSync(${jsA}, 'utf8'));
-      window.CustomTabs.switchToTab(t.id);
-      return t.id;
-    })()
-  `);
-  await sleep(600);
+  const defaultMainOwns = async (snapshot) => {
+    const identityFields = ["pageSession", "rendererGeneration", "tabId",
+      "documentGeneration", "pathKey", "documentRef"];
+    const retained = !!snapshot.owner && !!snapshot.descriptor &&
+      snapshot.owner.documentRef === snapshot.descriptor.ref &&
+      snapshot.owner.pathKey === snapshot.descriptor.pathKey &&
+      typeof snapshot.descriptor.readTarget === "string" &&
+      __shutdown.documentAdmissionIsCurrent(snapshot.descriptor.ref) &&
+      __shutdown.documentSessionState().owners.some(owner =>
+        identityFields.every(field => owner[field] === snapshot.owner[field]) &&
+        owner.readTarget === snapshot.descriptor.readTarget);
+    if (!retained) return false;
+    const current = await exec(`window.folia.queryDocumentDeletionState(
+      ${JSON.stringify({ ...snapshot.owner, filePath: snapshot.path })})`);
+    return current.known === true && current.unresolved === false;
+  };
+  async function joinDefaultFileOpenWork(expected, phase) {
+    const state = window.__dialogBatchNative;
+    if (state.processors.length !== expected.length ||
+        state.processors.some((record, index) =>
+          record.packet.path !== expected[index].path ||
+          record.eventUndefined !== true || record.phase !== phase)) {
+      throw new Error("Unexpected original file-open processor work");
+    }
+    await Promise.all(state.processors.map(record => record.promise));
+    if (state.renders.length !== expected.length ||
+        state.renders.some((record, index) =>
+          record.prefix !== expected[index].prefix || record.phase !== phase)) {
+      throw new Error("Unexpected original file-open render work");
+    }
+    await Promise.all(state.renders.map(record => record.promise));
+    if (state.processors.length !== expected.length ||
+        state.renders.length !== expected.length ||
+        [...state.processors, ...state.renders].some(record =>
+        record.error || !record.settled)) {
+      throw new Error("Original file-open processor/render work did not settle successfully");
+    }
+    return {
+      processors: state.processors.map(record => ({
+        path: record.packet.path, settled: record.settled,
+        eventUndefined: record.eventUndefined,
+      })),
+      renders: state.renders.map(record => ({
+        prefix: record.prefix, settled: record.settled,
+      })),
+    };
+  }
+  const openDefaultFixture = async (filePath, body, marker) => {
+    const failures = [];
+    let installed = false;
+    let snapshot;
+    let chooserCalls = 0;
+    let chooserFailure;
+    const chooseFixture = async function (owner, options) {
+      if (arguments.length !== 2 || owner !== win || chooserCalls++ !== 0 ||
+          !isDeepStrictEqual(options, expectedChooserOptions)) {
+        chooserFailure = new Error("Unexpected default-fixture chooser");
+        throw chooserFailure;
+      }
+      return { canceled: false, filePaths: [filePath] };
+    };
+    let restoreChooser;
+    try {
+      if (await exec(`Object.prototype.hasOwnProperty.call(window, '__dialogBatchNative')`)) {
+        throw new Error("Default-fixture observation is already occupied");
+      }
+      installed = true;
+      await installDialogBatchPageObservation(exec);
+      await exec(`window.__dialogBatchNative.phase = 'default fixture'; true`);
+      restoreChooser = replaceMethod(dialog, "showOpenDialog", chooseFixture);
+      await exec("window.folia.openFileDialog()");
+      const reached = await waitUntil(async () => {
+        if (chooserFailure) throw chooserFailure;
+        return exec(`window.__dialogBatchNative.processors.length > 0`);
+      }, 8000);
+      if (!reached || chooserCalls !== 1) {
+        throw new Error("Default fixture did not reach its actual file-open processor");
+      }
+      await boundedDialogWork(exec(`(${joinDefaultFileOpenWork.toString()})(
+        ${JSON.stringify([{ path: filePath, prefix: body.slice(0, 24) }])},
+        'default fixture')`), "default-fixture original processor and rendering", 8000);
+      snapshot = await exec(`(() => {
+        const tab = window.CustomTabs.getActiveTab();
+        return {
+          path: window.currentFilePath,
+          original: window.originalMarkdown,
+          tab: tab && { id: tab.id, path: tab.filePath, content: tab.content,
+            original: tab.originalContent, dirty: tab.hasUnsavedChanges },
+          descriptor: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
+          owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+            tab.id, tab.filePath, window.getReloadRequestSession()),
+          pending: window.getPendingSaveStatus(),
+          unsaved: window.hasUnsavedWorkForReload(),
+          frozen: window.CustomTabs.isDocumentFrozen(),
+          viewer: document.getElementById('viewer').textContent,
+        };
+      })()`);
+      await exec("window.CustomTabs.settleSessionLayout()");
+      await exec("window.folia.getVersion()");
+      if (snapshot.path !== filePath || snapshot.original !== body ||
+          snapshot.tab?.path !== filePath || snapshot.tab.content !== body ||
+          snapshot.tab.original !== body || snapshot.tab.dirty !== false ||
+          snapshot.owner?.tabId !== snapshot.tab.id ||
+          snapshot.owner?.documentRef !== snapshot.descriptor?.ref ||
+          snapshot.descriptor?.logicalPath !== filePath ||
+          snapshot.pending.count !== 0 || snapshot.unsaved !== false ||
+          snapshot.frozen !== false || !snapshot.viewer.includes(marker) ||
+          !(await defaultMainOwns(snapshot))) {
+        throw new Error("Default fixture has no clean rendered Main owner: " +
+          JSON.stringify(snapshot));
+      }
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      if (restoreChooser) {
+        try {
+          if (dialog.showOpenDialog !== chooseFixture) {
+            throw new Error("Default-fixture chooser ownership changed");
+          }
+          restoreChooser();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (installed) {
+        try {
+          if (await restoreDialogBatchPageObservation(exec) !== true) {
+            throw new Error("Default-fixture observation cleanup was not confirmed");
+          }
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    }
+    if (failures.length) throw new AggregateError(failures, "Default fixture admission failed");
+    return snapshot;
+  };
+  const tabCAdmission = await openDefaultFixture(
+    fileA, fs.readFileSync(fileA, "utf8"), "Alpha");
+  const tabC = tabCAdmission.tab.id;
   const undoSave = await exec(`
     (async () => {
       if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
@@ -20716,8 +21116,24 @@ async function run(win) {
     undoSave,
   );
 
-  await exec(`saveMarkdownFile(); null;`);
-  await sleep(900);
+  const viewSaveDispatch = await exec(`(() => {
+    const before = window.getPendingSaveStatus();
+    saveMarkdownFile();
+    return { before, dispatched: window.getPendingSaveStatus() };
+  })()`);
+  const viewSaveAdmitted = viewSaveDispatch.before.count === 0 &&
+    viewSaveDispatch.dispatched.count === 1 &&
+    viewSaveDispatch.dispatched.revision > viewSaveDispatch.before.revision;
+  check("the view-mode Save really entered the pending-save ledger",
+    viewSaveAdmitted, JSON.stringify(viewSaveDispatch));
+  if (!viewSaveAdmitted) throw new Error("View-mode Save was not dispatched");
+  const viewSaveSettled = await waitUntil(async () => {
+    const status = await exec("window.getPendingSaveStatus()");
+    return status.count === 0 &&
+      status.revision > viewSaveDispatch.dispatched.revision &&
+      fs.readFileSync(fileA, "utf8") === "# Alpha\n\nV_ONSCREEN\n";
+  }, 8000);
+  if (!viewSaveSettled) throw new Error("View-mode Save did not settle to its physical bytes");
   const onDisk = fs.readFileSync(fileA, "utf8");
   check(
     "saving in view mode writes the content on screen, not a stale editor buffer",
@@ -20734,6 +21150,301 @@ async function run(win) {
     afterSave,
   );
 
+  let scenario8bDiscardPermission = null;
+  const saveIdentityFields = ["pageSession", "rendererGeneration", "tabId",
+    "documentGeneration", "pathKey", "documentRef"];
+  const readDefaultSaveDocument = () => exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    const dialog = document.getElementById('appMessageDialog');
+    return {
+      path: window.currentFilePath,
+      tab: tab && { id: tab.id, path: tab.filePath, content: tab.content,
+        original: tab.originalContent, dirty: tab.hasUnsavedChanges,
+        diskVersion: tab.diskVersion },
+      owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession()),
+      descriptor: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
+      state: tab && window.CustomTabs.__documentState(tab),
+      original: window.originalMarkdown, editor: markdownEditor.value,
+      dirty: hasUnsavedChanges, editMode: isEditMode,
+      pending: window.getPendingSaveStatus(),
+      selection: window.getActiveFileSelectionGeneration(),
+      frozen: window.CustomTabs.isDocumentFrozen(),
+      intent: window.CustomTabs.__shutdownFreeze().dialogDecisionIntent,
+      viewer: viewer.textContent,
+      question: {
+        open: dialog.open,
+        title: document.getElementById('appMessageTitle').textContent,
+        message: document.getElementById('appMessageText').textContent,
+        fileName: document.getElementById('appMessageName').textContent,
+        buttons: Array.from(document.querySelectorAll(
+          '#appMessageButtons [data-dialog-choice]'),
+          button => [button.dataset.dialogChoice, button.textContent]),
+      },
+      otherTabs: window.CustomTabs.getTabs().filter(other => other !== tab)
+        .map(other => ({ id: other.id, path: other.filePath,
+          content: other.content, original: other.originalContent,
+          dirty: other.hasUnsavedChanges })),
+    };
+  })()`);
+  const editDefaultSaveDocument = async (content, marker) => {
+    await exec("if (!isEditMode) toggleEditBtn.click(); null;");
+    if (!await waitForCondition(exec, "isEditMode === true", 8000)) {
+      throw new Error("Save fixture editor did not open");
+    }
+    const before = await readDefaultSaveDocument();
+    if (!before.tab || !before.editMode || before.pending.count !== 0 ||
+        before.frozen || before.question.open || before.state.deletionTombstone ||
+        before.state.reloadConflict || !(await defaultMainOwns(before))) {
+      throw new Error("Save fixture has no current owned editor: " + JSON.stringify(before));
+    }
+    await exec(`(() => {
+      const before = ${JSON.stringify(before)}, tab = window.CustomTabs.getActiveTab();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const query = owner && window.folia.queryDocumentDeletionState({
+        ...owner, filePath: tab.filePath });
+      const pending = window.getPendingSaveStatus();
+      if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
+          window.currentFilePath !== before.path || !isEditMode ||
+          !${JSON.stringify(saveIdentityFields)}.every(field => owner?.[field] === before.owner[field]) ||
+          tab.content !== before.tab.content || tab.originalContent !== before.tab.original ||
+          tab.hasUnsavedChanges !== before.tab.dirty || window.originalMarkdown !== before.original ||
+          JSON.stringify(tab.diskVersion) !== JSON.stringify(before.tab.diskVersion) ||
+          JSON.stringify(window.CustomTabs.getDocumentDescriptor(tab.id)) !==
+            JSON.stringify(before.descriptor) ||
+          JSON.stringify(window.CustomTabs.__documentState(tab)) !== JSON.stringify(before.state) ||
+          pending.count !== 0 || pending.revision !== before.pending.revision ||
+          window.getActiveFileSelectionGeneration() !== before.selection ||
+          window.CustomTabs.isDocumentFrozen() ||
+          !query || query.known !== true || query.unresolved !== false)
+        throw new Error('Save fixture changed before its ordinary input');
+      markdownEditor.value = ${JSON.stringify(content)};
+      markdownEditor.dispatchEvent(new Event('input'));
+      return true;
+    })()`);
+    const painted = await waitForCondition(exec, `(() => {
+      const before = ${JSON.stringify(before)};
+      const tab = window.CustomTabs.getActiveTab();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const state = tab && window.CustomTabs.__documentState(tab);
+      const { mutationRevision: previousMutation, ...oldWitness } = before.state;
+      const { mutationRevision: currentMutation, ...newWitness } = state || {};
+      const pending = window.getPendingSaveStatus();
+      return tab && tab.id === before.tab.id && tab.filePath === before.path &&
+        window.currentFilePath === before.path && isEditMode && hasUnsavedChanges &&
+        markdownEditor.value === ${JSON.stringify(content)} &&
+        window.originalMarkdown === before.original &&
+        tab.originalContent === before.tab.original &&
+        tab.content === before.tab.content && tab.hasUnsavedChanges === before.tab.dirty &&
+        JSON.stringify(tab.diskVersion) === JSON.stringify(before.tab.diskVersion) &&
+        ${JSON.stringify(saveIdentityFields)}.every(field =>
+          owner?.[field] === before.owner[field]) &&
+        JSON.stringify(window.CustomTabs.getDocumentDescriptor(tab.id)) ===
+          JSON.stringify(before.descriptor) &&
+        state.maintained && currentMutation > previousMutation &&
+        JSON.stringify(newWitness) === JSON.stringify(oldWitness) &&
+        !state.deletionTombstone && !state.reloadConflict &&
+        !window.CustomTabs.isDocumentFrozen() &&
+        pending.count === 0 && pending.revision === before.pending.revision &&
+        window.getActiveFileSelectionGeneration() === before.selection &&
+        viewer.textContent.includes(${JSON.stringify(marker)});
+    })()`, 8000);
+    if (!painted) throw new Error("Save fixture edit did not reach its actual preview");
+    const after = await readDefaultSaveDocument();
+    if (after.path !== before.path || after.tab.id !== before.tab.id ||
+        after.editor !== content || !after.editMode || !after.dirty ||
+        after.tab.content !== before.tab.content || after.tab.original !== before.tab.original ||
+        after.tab.dirty !== before.tab.dirty ||
+        !saveIdentityFields.every(field => after.owner?.[field] === before.owner[field]) ||
+        !(await defaultMainOwns(after))) throw new Error("Save fixture edit lost its Main owner");
+    // Input changes the live editor and mutation witness, not the lazy cache.
+    // Return the independent old cache so Save/switch can prove their real fold.
+    return before;
+  };
+  const saveDefaultSaveDocument = async (filePath, content) => {
+    const dispatch = await exec(`(() => {
+      const before = window.getPendingSaveStatus();
+      saveMarkdownFile();
+      return { before, after: window.getPendingSaveStatus() };
+    })()`);
+    if (dispatch.before.count !== 0 || dispatch.after.count !== 1 ||
+        dispatch.after.revision <= dispatch.before.revision) {
+      throw new Error("Save fixture has no real pending write: " + JSON.stringify(dispatch));
+    }
+    if (!await waitUntil(async () => {
+      const pending = await exec("window.getPendingSaveStatus()");
+      return pending.count === 0 && pending.revision > dispatch.after.revision &&
+        fs.readFileSync(filePath, "utf8") === content;
+    }, 8000)) throw new Error("Save fixture did not settle to disk");
+    const saved = await readDefaultSaveDocument();
+    if (saved.path !== filePath || saved.original !== content ||
+        saved.tab.content !== content || saved.tab.original !== content ||
+        saved.dirty !== false || saved.tab.dirty !== false ||
+        !(await defaultMainOwns(saved))) {
+      throw new Error("Save fixture is not the clean Main-owned written document: " +
+        JSON.stringify(saved));
+    }
+    return saved;
+  };
+  const exitCleanDefaultSaveEditor = async () => {
+    await exec(`(() => {
+      if (hasUnsavedChanges || window.getPendingSaveStatus().count !== 0)
+        throw new Error('Clean editor exit was not clean');
+      if (isEditMode) exitEditBtn.click();
+      return true;
+    })()`);
+    if (!await waitForCondition(exec, "isEditMode === false", 8000)) {
+      throw new Error("Clean Save fixture editor did not close");
+    }
+  };
+  const discardDefaultSaveEdit = async (content, phase, savedPreview) => {
+    const before = await readDefaultSaveDocument();
+    if (!before.editMode || !before.dirty || before.editor !== content ||
+        before.original !== before.tab.original || before.editor === before.tab.original ||
+        typeof before.tab.content !== "string" || typeof before.tab.dirty !== "boolean" ||
+        before.pending.count !== 0 || before.frozen || before.question.open ||
+        !before.state.maintained || before.state.deletionTombstone || before.state.reloadConflict ||
+        typeof savedPreview !== "string" ||
+        fs.readFileSync(before.path, "utf8") !== before.tab.original ||
+        !(await defaultMainOwns(before))) {
+      throw new Error(phase + " has no ordinary owned dirty editor: " + JSON.stringify(before));
+    }
+    await exec("exitEditBtn.click(); null;");
+    if (!await waitForCondition(exec,
+      "document.getElementById('appMessageDialog').open === true", 8000)) {
+      throw new Error(phase + " did not ask the actual discard question");
+    }
+    const question = await readDefaultSaveDocument();
+    // Read-only state checks must not captureDialogContext: that would retire
+    // the consent which the production exit operation is awaiting.
+    await exec(`(() => {
+      const expected = ${JSON.stringify(question)}, before = ${JSON.stringify(before)};
+      const tab = window.CustomTabs.getActiveTab();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
+      const state = tab && window.CustomTabs.__documentState(tab);
+      const pending = window.getPendingSaveStatus();
+      const dialog = document.getElementById('appMessageDialog');
+      const buttons = Array.from(document.querySelectorAll(
+        '#appMessageButtons [data-dialog-choice]'),
+        button => [button.dataset.dialogChoice, button.textContent]);
+      const query = owner && window.folia.queryDocumentDeletionState({
+        ...owner, filePath: tab.filePath });
+      if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
+          window.currentFilePath !== before.path ||
+          !${JSON.stringify(saveIdentityFields)}.every(field =>
+            owner?.[field] === before.owner[field] &&
+            owner?.[field] === expected.owner[field]) ||
+          JSON.stringify(descriptor) !== JSON.stringify(before.descriptor) ||
+          JSON.stringify(state) !== JSON.stringify(before.state) ||
+          state.deletionTombstone || state.reloadConflict ||
+          window.CustomTabs.isDocumentFrozen() ||
+          !query || query.known !== true || query.unresolved !== false ||
+          markdownEditor.value !== before.editor || tab.content !== before.tab.content ||
+          tab.originalContent !== before.tab.original ||
+          window.originalMarkdown !== before.original ||
+          !isEditMode || !hasUnsavedChanges ||
+          tab.hasUnsavedChanges !== before.tab.dirty ||
+          window.getActiveFileSelectionGeneration() !== before.selection ||
+          pending.count !== 0 || pending.revision !== before.pending.revision ||
+          window.CustomTabs.__shutdownFreeze().dialogDecisionIntent !== before.intent + 1 ||
+          expected.intent !== before.intent + 1 ||
+          !dialog.open || !expected.question.open ||
+          document.getElementById('appMessageTitle').textContent !== 'Discard unsaved changes?' ||
+          document.getElementById('appMessageText').textContent !==
+            'You have unsaved changes. Leave edit mode and discard them?' ||
+          document.getElementById('appMessageName').textContent !== '' ||
+          JSON.stringify(buttons) !== JSON.stringify([
+            ['cancel', 'Cancel'], ['proceed', 'Discard and leave edit mode']]) ||
+          JSON.stringify(expected.question.buttons) !== JSON.stringify(buttons) ||
+          expected.question.title !== document.getElementById('appMessageTitle').textContent ||
+          expected.question.message !== document.getElementById('appMessageText').textContent ||
+          expected.question.fileName !== '') {
+        throw new Error('Discard question or its exact owner/content changed');
+      }
+      const proceed = document.querySelector(
+        '#appMessageDialog [data-dialog-choice="proceed"]');
+      if (!proceed || proceed.disabled) throw new Error('Discard choice is unavailable');
+      proceed.click();
+      return true;
+    })()`);
+    if (!await waitForCondition(exec, `!isEditMode &&
+      !document.getElementById('appMessageDialog').open &&
+      window.originalMarkdown === ${JSON.stringify(before.tab.original)} &&
+      markdownEditor.value === window.originalMarkdown &&
+      window.CustomTabs.getActiveTab().content === window.originalMarkdown &&
+      window.CustomTabs.getActiveTab().originalContent === window.originalMarkdown &&
+      window.CustomTabs.getActiveTab().hasUnsavedChanges === false &&
+      hasUnsavedChanges === false &&
+      viewer.textContent === ${JSON.stringify(savedPreview)}`, 8000)) {
+      throw new Error(phase + " did not complete its owned discard");
+    }
+    const restored = await readDefaultSaveDocument();
+    if (!saveIdentityFields.every(field => restored.owner?.[field] === before.owner[field]) ||
+        restored.state.deletionTombstone || restored.state.reloadConflict ||
+        !(await defaultMainOwns(restored))) {
+      throw new Error(phase + " discard did not retain its restored document owner");
+    }
+    return question;
+  };
+  await exec(`
+    let __defaultSaveQuestionInstallation = (() => {
+    if (Object.prototype.hasOwnProperty.call(window, '__defaultSaveQuestions'))
+      throw new Error('Save question observation is occupied');
+    const dialog = document.getElementById('appMessageDialog');
+    if (dialog.open) throw new Error('Save slice starts with an unanswered question');
+    const probe = { questions: [] };
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        // An absent old attribute is a genuine open, even if a close already
+        // happened before this observer delivery. Absence oracles count both.
+        if (record.target === dialog && record.attributeName === 'open' &&
+            record.oldValue === null) {
+          probe.questions.push({
+            title: document.getElementById('appMessageTitle').textContent,
+            message: document.getElementById('appMessageText').textContent,
+            fileName: document.getElementById('appMessageName').textContent,
+            buttons: Array.from(document.querySelectorAll(
+              '#appMessageButtons [data-dialog-choice]'),
+              button => [button.dataset.dialogChoice, button.textContent]),
+            intent: window.CustomTabs.__shutdownFreeze().dialogDecisionIntent,
+          });
+        }
+      }
+    });
+    probe.observer = observer;
+    const owner = Object.freeze({
+      cleanup() {
+        const failures = [];
+        const installed = Object.getOwnPropertyDescriptor(window, '__defaultSaveQuestions');
+        const retained = Object.getOwnPropertyDescriptor(probe, 'observer');
+        if (this !== owner || __defaultSaveQuestionInstallation !== owner ||
+            installed?.value !== probe ||
+            Object.getOwnPropertyDescriptor(probe, 'owner')?.value !== owner)
+          failures.push(new Error('Save question observation ownership was lost'));
+        if (retained?.value !== observer)
+          failures.push(new Error('Save question observer identity was lost'));
+        try { observer.disconnect(); } catch (error) { failures.push(error); }
+        if (failures.length)
+          throw new AggregateError(failures, 'Save question observation cleanup failed');
+        delete window.__defaultSaveQuestions;
+        return true;
+      },
+    });
+    Object.defineProperty(probe, 'owner', { value: owner });
+    window.__defaultSaveQuestions = probe;
+    observer.observe(dialog, { attributes: true,
+      attributeFilter: ['open'], attributeOldValue: true });
+    return owner;
+    })();
+    true;
+  `);
+  let defaultSaveFailure = null;
+  let defaultSaveFailed = false;
+  try {
   // ---- Scenario 7: exiting edit mode discards, and warns that it will ----
   // Measured bug, three clicks, silent: type in edit mode, click Exit, accept
   // the confirm, and the app left the editor buffer holding the typing, the
@@ -20750,39 +21461,16 @@ async function run(win) {
   //
   // Deliberately checked here: the rollback is SURGICAL. An undo point made
   // before the edit session must survive it.
-  const discardOut = await exec(`
+  await editDefaultSaveDocument("# Alpha\n\nS7_SAVED\n", "S7_SAVED");
+  await saveDefaultSaveDocument(fileA, "# Alpha\n\nS7_SAVED\n");
+  await exitCleanDefaultSaveEditor();
+  const discardCleanBaseline = await readDefaultSaveDocument();
+  const discardBefore = await exec(`
     (async () => {
-      const seen = [];
-      const realConfirm = window.confirm;
-      window.confirm = (msg) => { seen.push(String(msg)); return true; };
-      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 600));
       historyClear();
+      // Only the older history point is synthetic; S7_SAVED was really saved.
       historyPush('# Alpha\\n\\nS7_OLD_UNDO_POINT\\n');
-      const saved = '# Alpha\\n\\nS7_SAVED\\n';
-      window.originalMarkdown = saved;
-      markdownEditor.value = saved;
-      window.CustomTabs.updateTabContent(saved, false);
-      window.setUnsavedState(false);
-      await renderMarkdown(saved);
-      const tab = window.CustomTabs.getActiveTab();
-      const pageSession = window.getReloadRequestSession();
-      const owner = window.CustomTabs.getActiveDocumentIdentity(
-        currentFilePath,
-        pageSession,
-      );
-      const cleanBaseline = {
-        editMode: isEditMode,
-        rendererClean: hasUnsavedChanges === false,
-        original: window.originalMarkdown,
-        editor: markdownEditor.value,
-        activeTabId: tab && tab.id,
-        tabContent: tab && tab.content,
-        tabOriginal: tab && tab.originalContent,
-        tabDirty: tab && tab.hasUnsavedChanges,
-        ownerTabId: owner && owner.tabId,
-      };
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
+      toggleEditBtn.click();
       await new Promise(r => setTimeout(r, 800));
       markdownEditor.value = '# Alpha\\n\\nS7_EARLY\\n';
       markdownEditor.dispatchEvent(new Event('input'));
@@ -20801,14 +21489,19 @@ async function run(win) {
       await new Promise(r => setTimeout(r, 400));
       historyRedo();
       await new Promise(r => setTimeout(r, 600));
-      const before = {
+      return {
         editMode: isEditMode,
         dirty: hasUnsavedChanges,
         viewerShowsTyped: viewer.textContent.includes('S7_TYPED'),
         undoDepth: undoHistory.length,
+        content: markdownEditor.value,
       };
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 1800));
+    })()
+  `);
+  const s7Question = await discardDefaultSaveEdit(
+    discardBefore.content, "Scenario 7", discardCleanBaseline.viewer);
+  const discardAfter = await exec(`
+    (async () => {
       const after = {
         editMode: isEditMode,
         dirty: hasUnsavedChanges,
@@ -20824,19 +21517,33 @@ async function run(win) {
           window.originalMarkdown.includes('S7_EARLY'),
         olderPointReached: window.originalMarkdown.includes('S7_OLD_UNDO_POINT'),
       };
-      window.confirm = realConfirm;
-      return JSON.stringify({
-        cleanBaseline,
-        warned: seen,
-        before: before,
-        after: after,
-        undone: undone,
-      });
+      return { after, undone };
     })()
   `);
-  const discard = JSON.parse(discardOut);
+  const s7Questions = await exec("window.__defaultSaveQuestions.questions.slice()");
+  const discard = {
+    cleanBaseline: {
+      editMode: discardCleanBaseline.editMode,
+      rendererClean: discardCleanBaseline.dirty === false,
+      original: discardCleanBaseline.original,
+      editor: discardCleanBaseline.editor,
+      activeTabId: discardCleanBaseline.tab.id,
+      tabContent: discardCleanBaseline.tab.content,
+      tabOriginal: discardCleanBaseline.tab.original,
+      tabDirty: discardCleanBaseline.tab.dirty,
+      ownerTabId: discardCleanBaseline.owner.tabId,
+    },
+    before: discardBefore, ...discardAfter, warned: s7Questions,
+  };
+  const discardOut = JSON.stringify(discard);
+  const saveQuestionObserverAlive = discard.warned.length === 1 &&
+    discard.warned[0].title === s7Question.question.title &&
+    discard.warned[0].message === s7Question.question.message &&
+    discard.warned[0].intent === s7Question.intent &&
+    discard.warned[0].fileName === s7Question.question.fileName &&
+    isDeepStrictEqual(discard.warned[0].buttons, s7Question.question.buttons);
   check(
-    "the Scenario 7 synthetic saved document starts clean in the renderer and active tab",
+    "the Scenario 7 saved document starts clean in the renderer and active tab",
     discard.cleanBaseline &&
       discard.cleanBaseline.editMode === false &&
       discard.cleanBaseline.rendererClean === true &&
@@ -20846,7 +21553,8 @@ async function run(win) {
       discard.cleanBaseline.tabContent === discard.cleanBaseline.original &&
       discard.cleanBaseline.tabOriginal === discard.cleanBaseline.original &&
       discard.cleanBaseline.tabDirty === false &&
-      discard.cleanBaseline.ownerTabId === tabC,
+      discard.cleanBaseline.ownerTabId === tabC &&
+      fs.readFileSync(fileA, "utf8") === "# Alpha\n\nS7_SAVED\n",
     discardOut,
   );
   // Vacuity guard: an edit-mode session that never diverged would make every
@@ -20861,9 +21569,12 @@ async function run(win) {
   );
   check(
     "the exit warning states that the changes will be discarded",
-    discard.warned.length === 1 && /discard/i.test(discard.warned[0]),
+    saveQuestionObserverAlive,
     JSON.stringify(discard.warned),
   );
+  if (!saveQuestionObserverAlive) {
+    throw new Error("Save question observation was not proven alive by the actual owned discard");
+  }
   check(
     "exiting edit mode discards the unsaved edit from every store",
     discard.after.editMode === false &&
@@ -20886,205 +21597,150 @@ async function run(win) {
   if (shotDiscard) console.log("discard screenshot: " + shotDiscard);
 
   // ---- Scenario 8: the discard survives a tab round trip ----------------
-  // Both reviewers found this independently, from opposite directions.
-  // switchToTab seeds `window.originalMarkdown` from `tab.content`, and
-  // snapshotActiveTab folds the dirty textarea INTO `tab.content` while edit
-  // mode is on. So editing tab A, visiting tab B and coming back leaves the
-  // session's own unsaved text sitting in `originalMarkdown` - which means a
-  // discard that restores "from originalMarkdown" restores the very edit it
-  // was asked to throw away, and then marks it clean.
-  //
-  // The fix is to restore from a baseline captured when the session began, and
-  // to re-capture that baseline whenever the active document changes while edit
-  // mode stays on, so the discard can never write another tab's text here.
-  //
-  // The final round trip is the part that matters most: the tab record keeps
-  // its own copy, so a discard that fixes only the renderer's globals still
-  // lets the next tab switch replay the discarded text.
-  const s8 = await exec(`
-    (async () => {
-      const seen = [];
-      const realConfirm = window.confirm;
-      window.confirm = (m) => { seen.push(String(m)); return true; };
-      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 600));
-      const findOrMake = (p) => {
-        const found = window.CustomTabs.getTabs().find(t => t.filePath === p);
-        return found || window.CustomTabs.createTab(p, window.fs.readFileSync(p, 'utf8'));
-      };
-      const tA = findOrMake(${jsA});
-      const tB = findOrMake(${jsB});
-      window.CustomTabs.switchToTab(tA.id);
-      await new Promise(r => setTimeout(r, 800));
-      // Make tab A GENUINELY clean: content === originalContent. Otherwise
-      // snapshotActiveTab's view-mode branch (which only folds originalMarkdown
-      // back into tab.content when the two DIFFER) papers over the replay hole
-      // and this scenario stops testing it.
-      window.CustomTabs.updateTabContent(window.originalMarkdown, false);
-      await new Promise(r => setTimeout(r, 300));
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 800));
-      markdownEditor.value = '# Alpha\\n\\nS8_TYPED\\n';
-      markdownEditor.dispatchEvent(new Event('input'));
-      await new Promise(r => setTimeout(r, 1200));
-      window.CustomTabs.switchToTab(tB.id);
-      await new Promise(r => setTimeout(r, 900));
-      window.CustomTabs.switchToTab(tA.id);
-      await new Promise(r => setTimeout(r, 900));
-      const contaminated = {
-        editMode: isEditMode,
-        storeHasTyped: window.originalMarkdown.includes('S8_TYPED'),
-      };
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 2000));
-      const after = {
-        editMode: isEditMode,
-        storeHasTyped: window.originalMarkdown.includes('S8_TYPED'),
-        viewerHasTyped: viewer.textContent.includes('S8_TYPED'),
-      };
-      window.CustomTabs.switchToTab(tB.id);
-      await new Promise(r => setTimeout(r, 900));
-      window.CustomTabs.switchToTab(tA.id);
-      await new Promise(r => setTimeout(r, 1000));
-      const replay = {
-        storeHasTyped: window.originalMarkdown.includes('S8_TYPED'),
-        viewerHasTyped: viewer.textContent.includes('S8_TYPED'),
-      };
-      window.confirm = realConfirm;
-      return JSON.stringify({ warned: seen.length, contaminated: contaminated, after: after, replay: replay });
-    })()
-  `);
-  const tabDiscard = JSON.parse(s8);
-  // Vacuity guard, and it is the whole point of this scenario: if the tab round
-  // trip did NOT push the session's text into the document store, every
-  // assertion below would pass without exercising the bug at all.
+  // History Undo above really changed A. Save it before chooser admission:
+  // another tab's file bytes alone cannot confer Main document authority.
+  await saveDefaultSaveDocument(fileA, "# Alpha\n\nS7_OLD_UNDO_POINT\n");
+  const tabBAdmission = await openDefaultFixture(
+    fileB, fs.readFileSync(fileB, "utf8"), "Beta");
+  const saveTabB = tabBAdmission.tab.id;
+  await switchToTabAndWait(tabC);
+  const s8Baseline = await readDefaultSaveDocument();
+  await editDefaultSaveDocument("# Alpha\n\nS8_TYPED\n", "S8_TYPED");
+  await switchToTabAndWait(saveTabB);
+  const s8Other = await readDefaultSaveDocument();
+  await switchToTabAndWait(tabC);
+  const s8Retained = await readDefaultSaveDocument();
+  const s8Question = await discardDefaultSaveEdit(
+    "# Alpha\n\nS8_TYPED\n", "Scenario 8", s8Baseline.viewer);
+  const s8After = await readDefaultSaveDocument();
+  await switchToTabAndWait(saveTabB);
+  const s8OtherAfter = await readDefaultSaveDocument();
+  await switchToTabAndWait(tabC);
+  const s8Replay = await readDefaultSaveDocument();
+  const s8 = JSON.stringify({ s8Baseline, s8Other, s8Retained, s8Question,
+    s8After, s8OtherAfter, s8Replay });
+  // Editor presentation and saved renderer Markdown belong to each tab now;
+  // dirty cache/editor retention, not global-store contamination, is the guard.
   check(
-    "a tab round trip in edit mode really does put the session's text into the document store",
-    tabDiscard.contaminated.editMode === true &&
-      tabDiscard.contaminated.storeHasTyped === true &&
-      tabDiscard.warned === 1,
+    "a tab round trip retains the dirty editor and that tab's own saved baseline",
+    s8Retained.tab.id === tabC && s8Retained.editMode === true &&
+      s8Retained.editor === "# Alpha\n\nS8_TYPED\n" &&
+      s8Retained.tab.content === s8Retained.editor &&
+      s8Retained.dirty === true && s8Retained.tab.dirty === true &&
+      s8Retained.original === s8Baseline.original &&
+      s8Retained.tab.original === s8Baseline.tab.original &&
+      s8Other.tab.id === saveTabB && s8Other.editMode === false &&
+      s8Other.dirty === false && s8Other.tab.dirty === false &&
+      s8Other.original === tabBAdmission.original,
     s8,
   );
   check(
     "discarding after a tab round trip does not restore the discarded text",
-    tabDiscard.after.editMode === false &&
-      tabDiscard.after.storeHasTyped === false &&
-      tabDiscard.after.viewerHasTyped === false,
+    s8After.editMode === false && s8After.dirty === false &&
+      s8After.original === s8Baseline.original &&
+      s8After.tab.content === s8Baseline.original &&
+      !s8After.viewer.includes("S8_TYPED") &&
+      isDeepStrictEqual(s8After.otherTabs, s8Baseline.otherTabs),
     s8,
   );
   check(
     "a later tab switch cannot replay the discarded text from the tab record",
-    tabDiscard.replay.storeHasTyped === false && tabDiscard.replay.viewerHasTyped === false,
+    s8Replay.original === s8Baseline.original &&
+      s8Replay.tab.content === s8Baseline.original &&
+      !s8Replay.viewer.includes("S8_TYPED") &&
+      s8Replay.dirty === false && s8Replay.editMode === false &&
+      isDeepStrictEqual(s8OtherAfter.tab, s8Other.tab),
     s8,
   );
 
   // ---- Scenario 8b: discarding on a tab the session did not start on -----
-  // The case that makes the switchToTab hook load-bearing. The session begins
-  // on tab A, so only A has a baseline; if the user then types on tab B and
-  // discards there, a lookup for B finds nothing and the discard silently
-  // degrades into "keep the text, mark it clean" - the original bug, on the
-  // other tab. The hook gives B a baseline of its own on arrival.
-  const s8b = await exec(`
-    (async () => {
-      const realConfirm = window.confirm;
-      window.confirm = () => true;
-      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 600));
-      const tabsNow = window.CustomTabs.getTabs();
-      const tA = tabsNow.find(t => t.filePath === ${jsA});
-      const tB = tabsNow.find(t => t.filePath === ${jsB});
-      window.CustomTabs.switchToTab(tA.id);
-      await new Promise(r => setTimeout(r, 800));
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 800));
-      markdownEditor.value = '# Alpha\\n\\nS8B_ON_A\\n';
-      markdownEditor.dispatchEvent(new Event('input'));
-      await new Promise(r => setTimeout(r, 1200));
-      const firstTabDirty = window.CustomTabs.getActiveTabId() === tA.id &&
-        hasUnsavedChanges === true;
-      window.CustomTabs.switchToTab(tB.id);
-      await new Promise(r => setTimeout(r, 900));
-      const bBefore = window.originalMarkdown;
-      const secondTabArrival = {
-        activeId: window.CustomTabs.getActiveTabId(),
-        targetId: tB.id,
-        dirty: hasUnsavedChanges,
-        tabDirty: tB.hasUnsavedChanges,
-        content: bBefore,
-        original: tB.originalContent,
-      };
-      markdownEditor.value = '# Beta\\n\\nS8B_ON_B\\n';
-      markdownEditor.dispatchEvent(new Event('input'));
-      await new Promise(r => setTimeout(r, 1200));
-      const diverged = {
-        activeId: window.CustomTabs.getActiveTabId(),
-        targetId: tB.id,
-        editMode: isEditMode,
-        dirty: hasUnsavedChanges,
-        viewerHasB: viewer.textContent.includes('S8B_ON_B'),
-      };
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 2000));
-      // Capture BEFORE the undo below. Building this object inside the return
-      // statement would evaluate it after historyUndo() had already moved the
-      // document, which reads as a discard failure that never happened.
-      const after = {
-        editMode: isEditMode,
-        storeHasB: window.originalMarkdown.includes('S8B_ON_B'),
-        viewerHasB: viewer.textContent.includes('S8B_ON_B'),
-        restoredToArrival: window.originalMarkdown === bBefore,
-        dirty: hasUnsavedChanges,
-        arrival: bBefore.slice(0, 80),
-        final: window.originalMarkdown.slice(0, 80),
-      };
-      // The hook's real payload on this tab: without a baseline of its own the
-      // discard cannot roll the history back, so one Ctrl+Z hands the
-      // discarded text straight back - the R89 defect, on the other tab.
-      historyUndo();
-      await new Promise(r => setTimeout(r, 1000));
-      const undoAfter = {
-        resurrectedB: window.originalMarkdown.includes('S8B_ON_B'),
-        viewerHasB: viewer.textContent.includes('S8B_ON_B'),
-      };
-      window.confirm = realConfirm;
-      return JSON.stringify({
-        firstTabDirty, secondTabArrival, diverged, undoAfter, after,
-      });
-    })()
-  `);
-  const otherTab = JSON.parse(s8b);
+  // B arrives with its editor closed, independently of A's dirty open editor.
+  const s8bCachedA = await editDefaultSaveDocument("# Alpha\n\nS8B_ON_A\n", "S8B_ON_A");
+  const s8bDirtyA = await readDefaultSaveDocument();
+  if (s8bDirtyA.tab.id !== tabC || s8bDirtyA.path !== fileA ||
+      s8bDirtyA.tab.path !== fileA || !s8bDirtyA.dirty ||
+      s8bDirtyA.editor !== "# Alpha\n\nS8B_ON_A\n" ||
+      !s8bDirtyA.editMode ||
+      s8bDirtyA.tab.content !== s8bCachedA.tab.content ||
+      s8bDirtyA.tab.original !== s8bCachedA.tab.original ||
+      s8bDirtyA.tab.dirty !== s8bCachedA.tab.dirty ||
+      !saveIdentityFields.every(field => s8bDirtyA.owner?.[field] === s8bCachedA.owner[field]) ||
+      !(await defaultMainOwns(s8bDirtyA))) {
+    throw new Error("Scenario 8b did not establish its exact dirty Alpha owner");
+  }
+  scenario8bDiscardPermission = {
+    tabId: s8bDirtyA.tab.id, filePath: fileA, owner: s8bDirtyA.owner,
+    content: "# Alpha\n\nS8B_ON_A\n",
+    reason: "Discard only Scenario 8b's retained Alpha edit during owned layout preflight",
+  };
+  await switchToTabAndWait(saveTabB);
+  const s8bFoldedA = await exec(`(() => {
+    const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${tabC});
+    return tab && {
+      path: tab.filePath,
+      tab: { id: tab.id, content: tab.content, original: tab.originalContent,
+        dirty: tab.hasUnsavedChanges },
+      owner: window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession()),
+      descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
+      state: window.CustomTabs.__documentState(tab),
+    };
+  })()`);
+  const s8bSwitchFolded = s8bFoldedA?.path === fileA &&
+    s8bFoldedA.tab.content === scenario8bDiscardPermission.content &&
+    s8bFoldedA.tab.original === s8bCachedA.tab.original && s8bFoldedA.tab.dirty === true &&
+    s8bFoldedA.state.dirty === true &&
+    saveIdentityFields.every(field => s8bFoldedA.owner?.[field] === s8bDirtyA.owner[field]) &&
+    await defaultMainOwns(s8bFoldedA);
+  check("Scenario 8b's actual switch folds the retained Alpha edit into its own dirty cache",
+    s8bSwitchFolded, JSON.stringify({ s8bCachedA, s8bDirtyA, s8bFoldedA }));
+  if (!s8bSwitchFolded) throw new Error("Scenario 8b switch did not fold its genuine Alpha edit");
+  const secondTabArrival = await readDefaultSaveDocument();
+  await editDefaultSaveDocument("# Beta\n\nS8B_ON_B\n", "S8B_ON_B");
+  const s8bDiverged = await readDefaultSaveDocument();
+  await discardDefaultSaveEdit(
+    "# Beta\n\nS8B_ON_B\n", "Scenario 8b", secondTabArrival.viewer);
+  // Preserve the discard observation BEFORE testing its history rollback.
+  const s8bAfter = await readDefaultSaveDocument();
+  await exec(`(async () => {
+    historyUndo();
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return true;
+  })()`);
+  const s8bUndoAfter = await readDefaultSaveDocument();
+  const s8b = JSON.stringify({ s8bCachedA, s8bDirtyA, s8bFoldedA, secondTabArrival, s8bDiverged,
+    s8bAfter, s8bUndoAfter });
   check(
     "the second tab arrives clean after a dirty first tab before its edit baseline is captured",
-    otherTab.firstTabDirty === true &&
-      otherTab.secondTabArrival.activeId === otherTab.secondTabArrival.targetId &&
-      otherTab.secondTabArrival.dirty === false &&
-      otherTab.secondTabArrival.tabDirty === false &&
-      otherTab.secondTabArrival.content === otherTab.secondTabArrival.original,
-    JSON.stringify({
-      firstTabDirty: otherTab.firstTabDirty,
-      arrival: otherTab.secondTabArrival,
-    }),
+    s8bDirtyA.editMode === true && s8bDirtyA.dirty === true &&
+      secondTabArrival.tab.id === saveTabB && secondTabArrival.editMode === false &&
+      secondTabArrival.dirty === false && secondTabArrival.tab.dirty === false &&
+      secondTabArrival.original === secondTabArrival.tab.original &&
+      secondTabArrival.tab.content === secondTabArrival.tab.original,
+    s8b,
   );
   check(
     "the edit really diverged on the second tab, so the discard there can fail",
-    otherTab.diverged.activeId === otherTab.diverged.targetId &&
-      otherTab.diverged.editMode === true &&
-      otherTab.diverged.dirty === true &&
-      otherTab.diverged.viewerHasB === true,
+    s8bDiverged.tab.id === saveTabB && s8bDiverged.editMode === true &&
+      s8bDiverged.dirty === true && s8bDiverged.viewer.includes("S8B_ON_B"),
     s8b,
   );
   check(
     "discarding on a tab the session did not start on restores that tab's own content",
-    otherTab.after.editMode === false &&
-      otherTab.after.storeHasB === false &&
-      otherTab.after.viewerHasB === false &&
-      otherTab.after.restoredToArrival === true,
+    s8bAfter.editMode === false &&
+      s8bAfter.original === secondTabArrival.original &&
+      s8bAfter.tab.content === secondTabArrival.original &&
+      !s8bAfter.viewer.includes("S8B_ON_B") &&
+      isDeepStrictEqual(s8bAfter.otherTabs, secondTabArrival.otherTabs),
     s8b,
   );
   check(
     "undo cannot resurrect content discarded on a tab the session did not start on",
-    otherTab.undoAfter.resurrectedB === false && otherTab.undoAfter.viewerHasB === false,
-    JSON.stringify(otherTab.undoAfter),
+    !s8bUndoAfter.original.includes("S8B_ON_B") &&
+      !s8bUndoAfter.viewer.includes("S8B_ON_B") &&
+      s8bUndoAfter.original === secondTabArrival.original &&
+      isDeepStrictEqual(s8bUndoAfter.otherTabs, secondTabArrival.otherTabs),
+    s8b,
   );
   // The baseline records the dirty flag as well as the document. It is captured
   // on arrival, and used to be captured BEFORE switchToTab moved the flag to
@@ -21093,7 +21749,7 @@ async function run(win) {
   // unsaved in it. Tab B arrives clean, so the flag must be clean afterwards.
   check(
     "discarding on a clean tab does not inherit the previous tab's unsaved state",
-    otherTab.after.dirty === false,
+    s8bAfter.dirty === false && s8bAfter.tab.dirty === false,
     s8b,
   );
 
@@ -21109,66 +21765,57 @@ async function run(win) {
   // The race is made deterministic rather than hoped for: Save and Exit are
   // issued in one synchronous task, and an IPC reply cannot be delivered before
   // that task yields.
-  const raceOut = await exec(`
-    (async () => {
-      const seen = [];
-      const realConfirm = window.confirm;
-      window.confirm = (msg) => { seen.push(String(msg)); return true; };
-      if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 800));
-      window.originalMarkdown = '# Beta\\n\\nS9_SAVED\\n';
-      markdownEditor.value = window.originalMarkdown;
-      await renderMarkdown(window.originalMarkdown);
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 800));
-      markdownEditor.value = '# Beta\\n\\nS9_TYPED\\n';
-      markdownEditor.dispatchEvent(new Event('input'));
-      await new Promise(r => setTimeout(r, 1600));
-      const before = { editMode: isEditMode, dirty: hasUnsavedChanges };
+  await editDefaultSaveDocument("# Beta\n\nS9_SAVED\n", "S9_SAVED");
+  await saveDefaultSaveDocument(fileB, "# Beta\n\nS9_SAVED\n");
+  await exitCleanDefaultSaveEditor();
+  await editDefaultSaveDocument("# Beta\n\nS9_TYPED\n", "S9_TYPED");
+  const raceBefore = await readDefaultSaveDocument();
+  const raceQuestionStart = await exec("window.__defaultSaveQuestions.questions.length");
+  const raceDispatch = await exec(`
+    (() => {
+      const before = window.getPendingSaveStatus();
       // One synchronous task: the save reply cannot land between these two.
       saveButton.click();
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 2500));
-      const after = {
-        editMode: isEditMode,
-        dirty: hasUnsavedChanges,
-        storeHasTyped: window.originalMarkdown.includes('S9_TYPED'),
-        viewerHasTyped: viewer.textContent.includes('S9_TYPED'),
-      };
-      // The user's ORIGINAL complaint, in a new disguise: a save that leaves
-      // the tab record on the pre-save document means the next tab switch
-      // repaints the file as it was before the save, from memory.
-      const tabs = window.CustomTabs.getTabs();
-      const other = tabs.find(t => t.filePath !== window.currentFilePath);
-      let replay = null;
-      if (other) {
-        const mine = window.CustomTabs.getActiveTab().id;
-        window.CustomTabs.switchToTab(other.id);
-        await new Promise(r => setTimeout(r, 900));
-        window.CustomTabs.switchToTab(mine);
-        await new Promise(r => setTimeout(r, 1000));
-        replay = {
-          storeHasTyped: window.originalMarkdown.includes('S9_TYPED'),
-          viewerHasTyped: viewer.textContent.includes('S9_TYPED'),
-        };
-      }
-      window.confirm = realConfirm;
-      return JSON.stringify({
-        warned: seen,
-        before: before,
-        path: window.currentFilePath,
-        after: after,
-        replay: replay,
-      });
+      exitEditBtn.click();
+      return { before, after: window.getPendingSaveStatus(), editMode: isEditMode };
     })()
   `);
-  const race = JSON.parse(raceOut);
+  const raceSettled = await waitUntil(async () => {
+    const status = await exec("window.getPendingSaveStatus()");
+    return status.count === 0 && status.revision > raceDispatch.after.revision &&
+      await exec("isEditMode === false") &&
+      fs.readFileSync(fileB, "utf8") === "# Beta\n\nS9_TYPED\n";
+  }, 8000);
+  if (!raceSettled) throw new Error("Scenario 9 Save/Exit did not actually settle");
+  const raceAfter = await readDefaultSaveDocument();
+  await switchToTabAndWait(tabC);
+  await switchToTabAndWait(saveTabB);
+  const raceReplay = await readDefaultSaveDocument();
+  const race = {
+    before: { editMode: raceBefore.editMode, dirty: raceBefore.dirty },
+    path: raceAfter.path,
+    warned: await exec(`window.__defaultSaveQuestions.questions.slice(${raceQuestionStart})`),
+    after: {
+      editMode: raceAfter.editMode, dirty: raceAfter.dirty,
+      storeHasTyped: raceAfter.original.includes("S9_TYPED"),
+      viewerHasTyped: raceAfter.viewer.includes("S9_TYPED"),
+    },
+    replay: {
+      storeHasTyped: raceReplay.original.includes("S9_TYPED"),
+      viewerHasTyped: raceReplay.viewer.includes("S9_TYPED"),
+    },
+  };
+  const raceOut = JSON.stringify({ ...race, raceDispatch, raceBefore, raceAfter, raceReplay });
   const diskAfterRace = fs.readFileSync(race.path, "utf8");
   check(
     "the save-then-exit race really was set up: dirty edit-mode content and a real write",
     race.before.editMode === true &&
       race.before.dirty === true &&
-      diskAfterRace.includes("S9_TYPED"),
+      raceDispatch.before.count === 0 && raceDispatch.after.count === 1 &&
+      raceDispatch.after.revision > raceDispatch.before.revision &&
+      raceDispatch.editMode === true &&
+      diskAfterRace === "# Beta\n\nS9_TYPED\n" &&
+      isDeepStrictEqual(raceAfter.otherTabs, raceBefore.otherTabs),
     raceOut + " disk=" + JSON.stringify(diskAfterRace.slice(0, 60)),
   );
   check(
@@ -21180,7 +21827,9 @@ async function run(win) {
     "the document the app shows after a save-then-exit is the document on disk",
     race.after.storeHasTyped === true &&
       race.after.viewerHasTyped === true &&
-      race.after.dirty === false,
+      race.after.dirty === false && race.after.editMode === false &&
+      raceAfter.tab.content === diskAfterRace &&
+      raceAfter.tab.original === diskAfterRace && raceAfter.tab.dirty === false,
     raceOut + " disk=" + JSON.stringify(diskAfterRace.slice(0, 60)),
   );
   const shotRace = await captureScreenshot(win, "tabs-save-then-exit");
@@ -21189,7 +21838,8 @@ async function run(win) {
     "a saved document survives a tab round trip instead of reverting to the pre-save text",
     race.replay !== null &&
       race.replay.storeHasTyped === true &&
-      race.replay.viewerHasTyped === true,
+      race.replay.viewerHasTyped === true &&
+      isDeepStrictEqual(raceReplay.otherTabs, raceBefore.otherTabs),
     raceOut,
   );
 
@@ -21238,21 +21888,28 @@ async function run(win) {
   );
   if (!duringBaselineClean) throw new Error("Scenario 9b requires a clean on-disk Save baseline");
 
-  const duringOut = await exec(`
-    (async () => {
-      const realConfirm = window.confirm;
-      window.confirm = () => true;
-      (isEditMode ? exitEditBtn : toggleEditBtn).click();
-      await new Promise(r => setTimeout(r, 800));
-      markdownEditor.value = '# Beta\\n\\nS9B_SENT\\n';
-      markdownEditor.dispatchEvent(new Event('input'));
-      await new Promise(r => setTimeout(r, 1400));
+  await editDefaultSaveDocument("# Beta\n\nS9B_SENT\n", "S9B_SENT");
+  const duringSentPreview = (await readDefaultSaveDocument()).viewer;
+  const duringDispatch = await exec(`
+    (() => {
+      const before = window.getPendingSaveStatus();
       // One synchronous task again: the keystroke lands after the write was
       // dispatched and before its reply can possibly arrive.
       saveButton.click();
       markdownEditor.value = '# Beta\\n\\nS9B_AFTER\\n';
       markdownEditor.dispatchEvent(new Event('input'));
-      await new Promise(r => setTimeout(r, 2500));
+      return { before, after: window.getPendingSaveStatus(),
+        editor: markdownEditor.value, dirty: hasUnsavedChanges };
+    })()
+  `);
+  if (!await waitUntil(async () => {
+    const pending = await exec("window.getPendingSaveStatus()");
+    return pending.count === 0 && pending.revision > duringDispatch.after.revision &&
+      fs.readFileSync(fileB, "utf8") === "# Beta\n\nS9B_SENT\n" &&
+      await exec("viewer.textContent.includes('S9B_AFTER')");
+  }, 8000)) throw new Error("Scenario 9b Save did not settle with its later edit");
+  const duringOut = await exec(`
+    (() => {
       const tab = window.CustomTabs.getActiveTab();
       const out = {
         editMode: isEditMode,
@@ -21272,7 +21929,6 @@ async function run(win) {
             original: t.originalContent, dirty: t.hasUnsavedChanges,
           })),
       };
-      window.confirm = realConfirm;
       return JSON.stringify(out);
     })()
   `);
@@ -21282,7 +21938,11 @@ async function run(win) {
     "the type-during-save race really was set up: the write and the buffer diverged",
     during.editMode === true &&
       during.textarea === true &&
-      diskDuring.includes("S9B_SENT") &&
+      duringDispatch.before.count === 0 && duringDispatch.after.count === 1 &&
+      duringDispatch.after.revision > duringDispatch.before.revision &&
+      duringDispatch.editor === "# Beta\n\nS9B_AFTER\n" &&
+      duringDispatch.dirty === true &&
+      diskDuring === "# Beta\n\nS9B_SENT\n" &&
       !diskDuring.includes("S9B_AFTER"),
     duringOut + " disk=" + JSON.stringify(diskDuring.slice(0, 60)),
   );
@@ -21320,243 +21980,34 @@ async function run(win) {
   // was stranded, `originalMarkdown` for A never adopted the write, and coming
   // back to A and clicking Exit sat on a 5s timeout and then offered to
   // DISCARD a save that had already succeeded.
-  // 9b leaves a dirty edit buffer behind while beta.md holds S9B_SENT. The
-  // session's discard baseline predates that save, and a dirty cached document
-  // cannot be adopted by the reload verifier. Undo the later keystrokes back
-  // to the independently verified physical bytes, then request a real reload
-  // so main and the renderer must both accept the new clean owner.
+  // Save advanced the edit baseline to S9B_SENT. Discard only the later
+  // keystrokes, with the actual owned question, before the background Save.
   const bgPhysicalPath = path.normalize(fs.realpathSync.native(path.resolve(fileB)));
   const bgPhysicalPathKey = process.platform === "win32"
     ? bgPhysicalPath.toLowerCase() : bgPhysicalPath;
-  const bgBaselineOut = await exec(`
-    (async () => {
-      const ipc = require('electron').ipcRenderer;
-      const before = window.getReloadRequestDiagnostics();
-      const startingTab = window.CustomTabs.getActiveTab();
-      const startingOwner = startingTab && window.CustomTabs.getActiveDocumentIdentity(
-        startingTab.filePath, before.session);
-      const savedBytes = ${JSON.stringify(diskDuring)};
-      const expectedPath = ${JSON.stringify(fileB)};
-      const expectedPathKey = ${JSON.stringify(bgPhysicalPathKey)};
-      const physicalBeforeReset = startingTab
-        ? window.fs.readFileSync(startingTab.filePath, 'utf8')
-        : null;
-      const resetEligible = isEditMode && startingTab &&
-        currentFilePath === expectedPath &&
-        startingTab.filePath === expectedPath &&
-        startingOwner &&
-        startingOwner.pageSession === before.session &&
-        startingOwner.tabId === startingTab.id &&
-        startingOwner.pathKey === expectedPathKey &&
-        startingTab.originalContent === physicalBeforeReset &&
-        physicalBeforeReset === savedBytes &&
-        typeof hasPendingSaveFor === 'function' &&
-        !hasPendingSaveFor(startingTab.filePath);
-      let resetApplied = false;
-      if (resetEligible) {
-        window.originalMarkdown = physicalBeforeReset;
-        markdownEditor.value = physicalBeforeReset;
-        markdownEditor.dispatchEvent(new Event('input'));
-        window.CustomTabs.updateTabContent(physicalBeforeReset, false);
-        (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(r => setTimeout(r, 800));
-        resetApplied = true;
-      }
-      const baselineTab = window.CustomTabs.getActiveTab();
-      const baselineOwner = baselineTab && window.CustomTabs.getActiveDocumentIdentity(
-        baselineTab.filePath, before.session);
-      const physicalAfterReset = baselineTab
-        ? window.fs.readFileSync(baselineTab.filePath, 'utf8')
-        : null;
-      const baselineOwnerCorrect = !!baselineTab &&
-        currentFilePath === expectedPath &&
-        baselineTab.filePath === expectedPath &&
-        baselineOwner &&
-        baselineOwner.pageSession === before.session &&
-        baselineOwner.tabId === baselineTab.id &&
-        baselineOwner.pathKey === expectedPathKey;
-      const baselineNoPendingSave = typeof hasPendingSaveFor === 'function' &&
-        !!baselineTab &&
-        !hasPendingSaveFor(baselineTab.filePath);
-      const independentBaselineClean = resetApplied &&
-        baselineOwnerCorrect &&
-        physicalAfterReset === savedBytes &&
-        baselineTab.originalContent === physicalAfterReset &&
-        baselineTab.content === physicalAfterReset &&
-        window.originalMarkdown === physicalAfterReset &&
-        markdownEditor.value === physicalAfterReset &&
-        baselineNoPendingSave &&
-        hasUnsavedChanges === false &&
-        isEditMode === false;
-      const expected = {
-        path: baselineTab && baselineTab.filePath,
-        session: before.session,
-        sequence: before.sequence + 1,
-        tabId: baselineTab && baselineTab.id,
-        documentGeneration: baselineOwner && baselineOwner.documentGeneration,
-        pathKey: baselineOwner && baselineOwner.pathKey,
-        rendererGeneration: baselineOwner && baselineOwner.rendererGeneration,
-        selectionGeneration: window.getActiveFileSelectionGeneration(),
-        snapshot: isEditMode ? markdownEditor.value : window.originalMarkdown,
-      };
-      const matchesRequest = (data) => {
-        const request = data && data.reloadRequest;
-        return request &&
-          data.path === expected.path &&
-          request.path === expected.pathKey &&
-          request.session === expected.session &&
-          request.sequence === expected.sequence &&
-          request.tabId === expected.tabId &&
-          request.documentGeneration === expected.documentGeneration &&
-          request.pathKey === expected.pathKey &&
-          request.rendererGeneration === expected.rendererGeneration &&
-          request.selectionGeneration === expected.selectionGeneration &&
-          request.snapshot === expected.snapshot &&
-          data.reloadSession &&
-          data.reloadSession.pageSession === expected.session &&
-          data.reloadSession.rendererGeneration === expected.rendererGeneration;
-      };
-      let reply = null;
-      let selection = null;
-      const onReply = (_event, data) => {
-        if (matchesRequest(data)) reply = data;
-      };
-      const select = window.selectStagedFileReload;
-      window.selectStagedFileReload = function (...args) {
-        const decision = select.apply(this, args);
-        if (matchesRequest(args[0])) selection = decision;
-        return decision;
-      };
-      const notice = document.getElementById('notificationMessage');
-      const successMessage = typeof window.i18n === 'function'
-        ? window.i18n('notif.fileReloaded')
-        : 'File reloaded successfully';
-      let renderSettled = false;
-      const noticeObserver = new MutationObserver(() => {
-        if (notice && notice.textContent === successMessage &&
-            window.CustomTabs.__reloadState().acceptedSequence === expected.sequence) {
-          renderSettled = true;
-        }
-      });
-      if (notice) noticeObserver.observe(notice, {
-        childList: true, characterData: true, subtree: true,
-      });
-      ipc.on('file-reload-result', onReply);
-      let reloadRequested;
-      let settled = false;
-      try {
-        reloadRequested = reloadCurrentFile();
-        const deadline = Date.now() + 8000;
-        while (reloadRequested && Date.now() < deadline) {
-          const tab = window.CustomTabs.getActiveTab();
-          if (reply && selection && renderSettled && reply.success === true &&
-              selection.accepted === true &&
-              window.CustomTabs.__reloadState().acceptedSequence === expected.sequence &&
-              tab && tab.originalContent === reply.content &&
-              window.originalMarkdown === reply.content &&
-              viewer.textContent.includes('S9B_SENT')) {
-            await new Promise(r => setTimeout(r, 300));
-            settled = true;
-            break;
-          }
-          if (reply && reply.success !== true) break;
-          await new Promise(r => setTimeout(r, 100));
-        }
-      } finally {
-        noticeObserver.disconnect();
-        ipc.removeListener('file-reload-result', onReply);
-        window.selectStagedFileReload = select;
-      }
-      const tab = window.CustomTabs.getActiveTab();
-      return JSON.stringify({
-        reloadRequested: reloadRequested,
-        ownBaseline: {
-          resetEligible: resetEligible,
-          resetApplied: resetApplied,
-          ownerCorrect: baselineOwnerCorrect,
-          noPendingSave: baselineNoPendingSave,
-          physicalMatchesSaved: physicalAfterReset === savedBytes,
-          clean: independentBaselineClean,
-        },
-        expected: expected,
-        reply: reply && {
-          success: reply.success,
-          path: reply.path,
-          request: reply.reloadRequest,
-          session: reply.reloadSession,
-          content: reply.content,
-        },
-        selection: selection && {
-          accepted: selection.accepted,
-          trackingActive: selection.trackingActive,
-          unresolvedEvidence: selection.unresolvedEvidence,
-          trackingConflict: selection.trackingConflict,
-          pathKey: selection.pathKey,
-          owner: selection.owner,
-        },
-        settled: settled,
-        renderSettled: renderSettled,
-        reloadState: window.CustomTabs.__reloadState(),
-        tracking: window.getReloadRequestDiagnostics(),
-        activeSelectionGeneration: window.getActiveFileSelectionGeneration(),
-        owner: tab && window.CustomTabs.getActiveDocumentIdentity(
-          tab.filePath, expected.session),
-        documentState: tab && window.CustomTabs.__documentState(tab),
-        viewerShowsSaved: viewer.textContent.includes('S9B_SENT'),
-        path: tab && tab.filePath,
-        original: tab && tab.originalContent,
-        content: tab && tab.content,
-        tabDirty: tab && tab.hasUnsavedChanges,
-        renderer: window.originalMarkdown,
-        dirty: hasUnsavedChanges,
-        editMode: isEditMode,
-      });
-    })()
-  `);
-  const bgBaseline = JSON.parse(bgBaselineOut);
+  const bgDiscardQuestion = await discardDefaultSaveEdit(
+    "# Beta\n\nS9B_AFTER\n", "Scenario 9c later-keystroke preamble", duringSentPreview);
+  const bgBaseline = await readDefaultSaveDocument();
+  const bgBaselineOut = JSON.stringify({ bgBaseline, bgDiscardQuestion });
   const diskBgBaseline = fs.readFileSync(fileB, "utf8");
   const bgBaselineClean =
-    bgBaseline.ownBaseline?.resetEligible === true &&
-    bgBaseline.ownBaseline.resetApplied === true &&
-    bgBaseline.ownBaseline.ownerCorrect === true &&
-    bgBaseline.ownBaseline.noPendingSave === true &&
-    bgBaseline.ownBaseline.physicalMatchesSaved === true &&
-    bgBaseline.ownBaseline.clean === true &&
-    bgBaseline.reloadRequested === true &&
-    bgBaseline.reply?.success === true &&
-    bgBaseline.reply.request?.sequence === bgBaseline.expected.sequence &&
-    bgBaseline.expected.pathKey === bgPhysicalPathKey &&
-    bgBaseline.reply.request?.path === bgPhysicalPathKey &&
-    bgBaseline.reply.path === fileB &&
-    bgBaseline.reply.session?.epoch > 0 &&
-    bgBaseline.reply.session.pageSession === bgBaseline.expected.session &&
-    bgBaseline.selection?.accepted === true &&
-    bgBaseline.selection.trackingActive === true &&
-    bgBaseline.selection.unresolvedEvidence === false &&
-    bgBaseline.selection.trackingConflict === false &&
-    bgBaseline.selection.pathKey === bgBaseline.expected.pathKey &&
-    bgBaseline.selection.owner?.pageSession === bgBaseline.expected.session &&
-    bgBaseline.selection.owner.tabId === bgBaseline.expected.tabId &&
-    bgBaseline.selection.owner.rendererGeneration === bgBaseline.expected.rendererGeneration &&
-    bgBaseline.selection.owner.pathKey === bgBaseline.expected.pathKey &&
-    bgBaseline.selection.owner.documentGeneration === bgBaseline.owner?.documentGeneration &&
-    bgBaseline.selection.owner.selectionGeneration === bgBaseline.activeSelectionGeneration &&
-    bgBaseline.reloadState?.acceptedSequence === bgBaseline.expected.sequence &&
-    bgBaseline.tracking?.latestMainEpoch === bgBaseline.reply.session.epoch &&
-    bgBaseline.tracking?.isFileTrackingActive === true &&
-    bgBaseline.documentState?.reloadConflict === false &&
-    bgBaseline.settled === true &&
-    bgBaseline.renderSettled === true &&
-    bgBaseline.viewerShowsSaved === true &&
+    bgBaseline.owner?.pathKey === bgPhysicalPathKey &&
+    bgBaseline.owner.tabId === saveTabB &&
+    bgBaseline.state.reloadConflict === false &&
+    bgBaseline.state.deletionTombstone === false &&
+    bgBaseline.pending.count === 0 &&
+    bgBaseline.viewer.includes("S9B_SENT") &&
+    !bgBaseline.viewer.includes("S9B_AFTER") &&
     bgBaseline.path === fileB &&
     diskBgBaseline === diskDuring &&
     diskBgBaseline === "# Beta\n\nS9B_SENT\n" &&
-    bgBaseline.original === diskBgBaseline &&
-    bgBaseline.content === diskBgBaseline &&
-    bgBaseline.renderer === diskBgBaseline &&
-    bgBaseline.tabDirty === false &&
+    bgBaseline.tab.original === diskBgBaseline &&
+    bgBaseline.tab.content === diskBgBaseline &&
+    bgBaseline.original === diskBgBaseline && bgBaseline.editor === diskBgBaseline &&
+    bgBaseline.tab.dirty === false &&
     bgBaseline.dirty === false &&
-    bgBaseline.editMode === false;
+    bgBaseline.editMode === false && await defaultMainOwns(bgBaseline) &&
+    isDeepStrictEqual(bgBaseline.otherTabs, duringBaseline.otherTabs);
   check(
     "the background-save fixture starts with a clean tab whose originalContent matches beta.md on disk",
     bgBaselineClean,
@@ -21564,22 +22015,14 @@ async function run(win) {
   );
   if (!bgBaselineClean) throw new Error("Scenario 9c requires a clean on-disk Save baseline");
 
-  const bgVersionOut = await exec(`
-    (() => {
-      const tab = window.CustomTabs.getActiveTab();
-      const before = window.fs.statSync(tab.filePath);
-      const content = window.fs.readFileSync(tab.filePath, 'utf8');
-      const after = window.fs.statSync(tab.filePath);
-      return JSON.stringify({
-        path: tab.filePath,
-        tabVersion: tab.diskVersion,
-        before: before,
-        after: after,
-        content: content,
-      });
-    })()
-  `);
-  const bgVersion = JSON.parse(bgVersionOut);
+  const bgVersionBefore = fs.statSync(fileB);
+  const bgVersionContent = fs.readFileSync(fileB, "utf8");
+  const bgVersionAfter = fs.statSync(fileB);
+  const bgVersion = {
+    path: bgBaseline.path, tabVersion: bgBaseline.tab.diskVersion,
+    before: bgVersionBefore, after: bgVersionAfter, content: bgVersionContent,
+  };
+  const bgVersionOut = JSON.stringify(bgVersion);
   const bgVersionFields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];
   const bgVersionClean =
     bgVersion.path === fileB &&
@@ -21597,6 +22040,25 @@ async function run(win) {
   if (!bgVersionClean) throw new Error("Scenario 9c disk-version baseline diverged before Save");
 
   const bgSavedContent = "# Beta\n\nS9C_TYPED\n";
+  const bgRequests = [];
+  let bgRequestFailure = null;
+  const observeBgSaveRequest = (event, request) => {
+    if (event.sender !== win.webContents ||
+        request?.filePath !== fileB || request.content !== bgSavedContent) return;
+    if (event.senderFrame !== win.webContents.mainFrame ||
+        !saveIdentityFields.every(field =>
+          request.saveRequest?.[field] === bgBaseline.owner[field]) ||
+        request.saveRequest?.selectionGeneration !== bgBaseline.selection ||
+        request.saveRequest?.requestId !== request.requestId ||
+        !Number.isSafeInteger(request.requestId) || request.requestId <= 0) {
+      bgRequestFailure = new Error("Scenario 9c observed a Save with the wrong frame/owner");
+      return;
+    }
+    bgRequests.push({
+      requestId: request.requestId, path: request.filePath,
+      content: request.content, saveRequest: { ...request.saveRequest },
+    });
+  };
   const heldBgSaveResults = [];
   const releasedBgSaveAttempts = new Set();
   let bgSaveRequestId = null;
@@ -21646,6 +22108,7 @@ async function run(win) {
   let bgFirstDeliverySettled = null;
   let bgNaturalRetry = null;
   let bgOtherStoreAfterFirst = null;
+  let bgOtherStoreBeforeFirst = null;
   let bgPrimaryFailure = null;
   let bgFirstResultReleaseElapsedMs = null;
   const bgMainBaseline = __shutdown.state();
@@ -21723,24 +22186,43 @@ async function run(win) {
     `);
   };
   try {
+    ipcMain.on("save-markdown-file", observeBgSaveRequest);
+    const bgInputBaseline = await editDefaultSaveDocument(bgSavedContent, "S9C_TYPED");
+    const bgPreSaveDocument = await readDefaultSaveDocument();
+    const bgPreSaveBefore = fs.statSync(fileB);
+    const bgPreSaveContent = fs.readFileSync(fileB, "utf8");
+    const bgPreSaveAfter = fs.statSync(fileB);
+    if (bgPreSaveDocument.path !== fileB ||
+        !bgPreSaveDocument.editMode || !bgPreSaveDocument.dirty ||
+        bgPreSaveDocument.editor !== bgSavedContent ||
+        bgPreSaveDocument.original !== diskBgBaseline ||
+        bgPreSaveDocument.tab.original !== diskBgBaseline ||
+        bgPreSaveDocument.tab.content !== bgInputBaseline.tab.content ||
+        bgPreSaveDocument.tab.dirty !== bgInputBaseline.tab.dirty ||
+        bgPreSaveDocument.pending.count !== 0 ||
+        bgPreSaveContent !== diskBgBaseline ||
+        !bgVersionFields.every(field =>
+          bgPreSaveDocument.tab.diskVersion?.[field] === bgPreSaveBefore[field] &&
+          bgPreSaveBefore[field] === bgPreSaveAfter[field]) ||
+        !saveIdentityFields.every(field =>
+          bgPreSaveDocument.owner?.[field] === bgBaseline.owner[field]) ||
+        !(await defaultMainOwns(bgPreSaveDocument))) {
+      throw new Error("Scenario 9c fixture disk-version/content diverged immediately before Save: " +
+        JSON.stringify({ bgPreSaveDocument, bgPreSaveBefore, bgPreSaveAfter,
+          content: bgPreSaveContent }));
+    }
     const bgStageOut = await exec(`
       (async () => {
-        const ipc = require('electron').ipcRenderer;
-        const seen = [];
-        const realConfirm = window.confirm;
-        const ownSendDescriptor = Object.getOwnPropertyDescriptor(ipc, 'send');
-        const realSend = ipc.send;
-        const expectedContent = ${JSON.stringify(bgSavedContent)};
+        if (Object.prototype.hasOwnProperty.call(window, '__s9cFirstDeliveryProbe'))
+          throw new Error('Scenario 9c observation is occupied');
         const probe = {
           request: null,
           duplicateRequests: [],
           deliveries: [],
-          seen,
-          realConfirm,
-          ownSendDescriptor,
-          realSend,
+          questionStart: window.__defaultSaveQuestions.questions.length,
         };
-        const onSaveResult = (_event, result) => {
+        // The typed preload subscription supplies ONE projected payload.
+        const onSaveResult = result => {
           if (
             probe.request &&
             result &&
@@ -21768,76 +22250,60 @@ async function run(win) {
           }
         };
         probe.cleanup = () => {
-          window.confirm = probe.realConfirm;
-          window.ipcRenderer.removeListener('save-markdown-result', onSaveResult);
-          if (probe.ownSendDescriptor) {
-            Object.defineProperty(ipc, 'send', probe.ownSendDescriptor);
-          } else {
-            delete ipc.send;
-          }
+          if (window.__s9cFirstDeliveryProbe !== probe)
+            throw new Error('Scenario 9c observation ownership changed');
+          probe.off();
           delete window.__s9cFirstDeliveryProbe;
           return true;
         };
         window.__s9cFirstDeliveryProbe = probe;
-        window.confirm = message => { seen.push(String(message)); return true; };
-        ipc.on('save-markdown-result', onSaveResult);
-        ipc.send = function(channel, ...args) {
-          const request = args[0];
-          if (
-            channel === 'save-markdown-file' &&
-            request &&
-            request.filePath === ${JSON.stringify(fileB)} &&
-            request.content === expectedContent
-          ) {
-            const captured = {
-              requestId: request.requestId,
-              path: request.filePath,
-              content: request.content,
-              saveRequest: request.saveRequest,
-            };
-            if (probe.request) probe.duplicateRequests.push(captured);
-            else probe.request = captured;
-          }
-          return probe.realSend.call(this, channel, ...args);
-        };
+        probe.off = window.folia.onSaveMarkdownResult(onSaveResult);
         const tabs = window.CustomTabs.getTabs();
         const mine = window.CustomTabs.getActiveTab();
-        const other = tabs.find(tab => tab.filePath !== mine.filePath);
+        const other = mine && tabs.find(tab => tab.filePath !== mine.filePath);
         if (!mine || !other) {
           throw new Error('Scenario 9c requires two distinct tabs before Save');
         }
         probe.savedTabId = mine.id;
         probe.otherTabId = other.id;
-        (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(resolve => setTimeout(resolve, 800));
-        markdownEditor.value = expectedContent;
-        markdownEditor.dispatchEvent(new Event('input'));
-        await new Promise(resolve => setTimeout(resolve, 1600));
-        const preSaveBefore = window.fs.statSync(mine.filePath);
-        const preSaveContent = window.fs.readFileSync(mine.filePath, 'utf8');
-        const preSaveAfter = window.fs.statSync(mine.filePath);
-        const preSaveClean =
-          mine.filePath === ${JSON.stringify(fileB)} &&
-          preSaveContent === ${JSON.stringify(diskBgBaseline)} &&
-          ['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs'].every(
-            field => mine.diskVersion?.[field] === preSaveBefore[field] &&
-              preSaveBefore[field] === preSaveAfter[field]
-          );
-        if (!preSaveClean) {
-          throw new Error('Scenario 9c fixture disk-version/content diverged immediately before Save: ' +
-            JSON.stringify({
-              path: mine.filePath, tabVersion: mine.diskVersion,
-              before: preSaveBefore, after: preSaveAfter,
-              content: preSaveContent,
-            }));
+        const expected = ${JSON.stringify(bgPreSaveDocument)};
+        const owner = window.CustomTabs.getDocumentIdentityForTab(
+          mine.id, mine.filePath, window.getReloadRequestSession());
+        const query = owner && window.folia.queryDocumentDeletionState({
+          ...owner, filePath: mine.filePath });
+        if (mine.id !== ${saveTabB} || mine.filePath !== ${JSON.stringify(fileB)} ||
+            window.currentFilePath !== mine.filePath || !isEditMode ||
+            markdownEditor.value !== ${JSON.stringify(bgSavedContent)} ||
+            !hasUnsavedChanges || mine.content !== expected.tab.content ||
+            mine.originalContent !== expected.tab.original ||
+            mine.hasUnsavedChanges !== expected.tab.dirty ||
+            window.originalMarkdown !== expected.original ||
+            JSON.stringify(mine.diskVersion) !== JSON.stringify(expected.tab.diskVersion) ||
+            JSON.stringify(window.CustomTabs.__documentState(mine)) !== JSON.stringify(expected.state) ||
+            JSON.stringify(window.CustomTabs.getDocumentDescriptor(mine.id)) !==
+              JSON.stringify(expected.descriptor) ||
+            !${JSON.stringify(saveIdentityFields)}.every(field => owner?.[field] === expected.owner[field]) ||
+            window.getActiveFileSelectionGeneration() !== expected.selection ||
+            window.CustomTabs.isDocumentFrozen() || !query ||
+            query.known !== true || query.unresolved !== false ||
+            window.getPendingSaveStatus().count !== 0 ||
+            window.getPendingSaveStatus().revision !== expected.pending.revision) {
+          throw new Error('Scenario 9c Save editor/owner changed before dispatch');
         }
+        const before = window.getPendingSaveStatus();
         saveButton.click();
+        const dispatched = window.getPendingSaveStatus();
+        const prepared = {
+          content: mine.content, original: mine.originalContent, dirty: mine.hasUnsavedChanges,
+        };
+        if (prepared.content !== ${JSON.stringify(bgSavedContent)} ||
+            prepared.original !== expected.tab.original || prepared.dirty !== true) {
+          throw new Error('Scenario 9c real Save preparation did not fold its live editor');
+        }
         await window.CustomTabs.switchToTab(other.id);
         const active = window.CustomTabs.getActiveTab();
         return JSON.stringify({
-          seen,
-          request: probe.request,
-          duplicateRequests: probe.duplicateRequests,
+          before, dispatched, prepared,
           savedTabId: probe.savedTabId,
           otherTabId: probe.otherTabId,
           otherSelected:
@@ -21849,7 +22315,26 @@ async function run(win) {
       })()
     `);
     bgStage = JSON.parse(bgStageOut);
-    bgSaveRequestId = bgStage?.request?.requestId || null;
+    const bgRequestObserved = await waitUntil(() => {
+      if (bgRequestFailure) throw bgRequestFailure;
+      return bgRequests.length > 0;
+    }, 5000);
+    if (!bgRequestObserved || bgRequests.length !== 1 ||
+        bgStage.before.count !== 0 || bgStage.dispatched.count !== 1 ||
+        bgStage.dispatched.revision <= bgStage.before.revision) {
+      throw new Error("Scenario 9c did not observe exactly one genuine Main Save: " +
+        JSON.stringify({ bgStage, bgRequests }));
+    }
+    bgStage.request = bgRequests[0];
+    bgStage.duplicateRequests = bgRequests.slice(1);
+    bgSaveRequestId = bgStage.request.requestId;
+    // Populate observation only after Main has seen the real transport.
+    await exec(`(() => {
+      const probe = window.__s9cFirstDeliveryProbe;
+      if (probe.request) throw new Error('Scenario 9c request observation was already populated');
+      probe.request = ${JSON.stringify(bgStage.request)};
+      return true;
+    })()`);
     const bgHeld = await waitUntil(
       () =>
         heldBgSaveResults.some(
@@ -21905,7 +22390,9 @@ async function run(win) {
       held.path === bgStage.request.path &&
       held.saveResultAttempt === 1 &&
       held.success === true &&
-      held.savedContent === bgSavedContent;
+      held.savedContent === bgSavedContent &&
+      saveIdentityFields.every(field =>
+        held.saveRequest?.[field] === bgStage.request.saveRequest[field]);
     const otherPhysicallySelected =
       bgStage &&
       bgStage.otherSelected === true &&
@@ -21916,6 +22403,7 @@ async function run(win) {
       !heldMatchesRequest ||
       !otherPhysicallySelected ||
       bgStage.duplicateRequests.length !== 0 ||
+      bgRequests.length !== 1 || bgRequestFailure ||
       bgHeldBeforeRelease.pending !== 1
     ) {
       throw new Error(
@@ -21935,6 +22423,11 @@ async function run(win) {
     }
     // Returning the original sender before releasing is intentional: main owns
     // the ACK/retry protocol, so later attempts must take the production path.
+    bgOtherStoreBeforeFirst = await readDefaultSaveDocument();
+    if (bgOtherStoreBeforeFirst.tab.id !== bgStage.otherTabId ||
+        !(await defaultMainOwns(bgOtherStoreBeforeFirst))) {
+      throw new Error("Scenario 9c background selection has no retained Main owner");
+    }
     restoreBgSaveSendOnce();
     releaseBgSaveResult(held, "first delivery");
     bgDeliveryObserved = await waitUntil(
@@ -21951,13 +22444,7 @@ async function run(win) {
         `)) === true,
       1500,
     );
-    bgOtherStoreAfterFirst = await exec(`
-      (() => ({
-        activePath: window.currentFilePath,
-        clean: !window.originalMarkdown.includes('S9C_TYPED'),
-        viewerClean: !viewer.textContent.includes('S9C_TYPED'),
-      }))()
-    `);
+    bgOtherStoreAfterFirst = await readDefaultSaveDocument();
     const firstSettlement = await waitForBgSettlement(1200);
     bgFirstDeliverySettled = firstSettlement;
     if (!firstSettlement.settled) {
@@ -22053,13 +22540,13 @@ async function run(win) {
             'Scenario 9c exit did not complete before its observable deadline: ' +
               JSON.stringify({
                 pending: window.getPendingSaveStatus(probe.request.path).count,
-                warned: probe.seen,
+                warned: window.__defaultSaveQuestions.questions.slice(probe.questionStart),
                 editMode: isEditMode,
               }),
           );
         }
         return JSON.stringify({
-          warned: probe.seen,
+          warned: window.__defaultSaveQuestions.questions.slice(probe.questionStart),
           exitCompleted: exitCompleted,
           exitWaitMs: Date.now() - exitStartedAt,
           path: mine.filePath,
@@ -22144,6 +22631,19 @@ async function run(win) {
       if (!bgCleanupFailure) bgCleanupFailure = error;
       else console.error("Scenario 9c probe cleanup also failed:", error);
     }
+    try {
+      if (!ipcMain.listeners("save-markdown-file").includes(observeBgSaveRequest)) {
+        throw new Error("Scenario 9c Main request observer ownership changed");
+      }
+      ipcMain.removeListener("save-markdown-file", observeBgSaveRequest);
+      if (bgRequestFailure) throw bgRequestFailure;
+      if (bgRequests.length !== 1) {
+        throw new Error("Scenario 9c observed duplicate or missing genuine requests");
+      }
+    } catch (error) {
+      if (!bgCleanupFailure) bgCleanupFailure = error;
+      else console.error("Scenario 9c Main observer cleanup also failed:", error);
+    }
     if (bgCleanupFailure) {
       if (bgPrimaryFailure) {
         console.error(
@@ -22207,9 +22707,14 @@ async function run(win) {
   );
   check(
     "a save that completes for a background document is not applied to the document on screen",
-    bgOtherStoreAfterFirst?.clean === true &&
-      bgOtherStoreAfterFirst.viewerClean === true &&
-      bgOtherStoreAfterFirst.activePath !== fileB,
+    bgOtherStoreAfterFirst?.path !== fileB &&
+      !bgOtherStoreAfterFirst.original.includes("S9C_TYPED") &&
+      !bgOtherStoreAfterFirst.viewer.includes("S9C_TYPED") &&
+      ["path", "original", "editor", "viewer", "editMode", "dirty"].every(field =>
+        bgOtherStoreAfterFirst[field] === bgOtherStoreBeforeFirst[field]) &&
+      isDeepStrictEqual(bgOtherStoreAfterFirst.tab, bgOtherStoreBeforeFirst.tab) &&
+      saveIdentityFields.every(field =>
+        bgOtherStoreAfterFirst.owner[field] === bgOtherStoreBeforeFirst.owner[field]),
     bgOutText + " firstOtherStore=" + JSON.stringify(bgOtherStoreAfterFirst),
   );
   // ---- Scenario 9d: two writes in flight at once -------------------------
@@ -22228,76 +22733,63 @@ async function run(win) {
   // queueSave exposes monotonic main-process diagnostics. They are the real
   // queue's observation point, so unlike the old fs.writeFile monkeypatch this
   // remains valid when production writes through FileHandle.writeFile().
+  await editDefaultSaveDocument("# Beta\n\nS9D_BASE\n", "S9D_BASE");
+  await saveDefaultSaveDocument(fileB, "# Beta\n\nS9D_BASE\n");
+  await exitCleanDefaultSaveEditor();
+  await editDefaultSaveDocument("# Beta\n\nS9D_FIRST\n", "S9D_FIRST");
+  const twoBefore = await readDefaultSaveDocument();
+  const twoQuestionStart = await exec("window.__defaultSaveQuestions.questions.length");
   const saveQueueBefore = __shutdown.state();
   const twoOut = await exec(`
     (async () => {
-      const realConfirm = window.confirm;
-      const realAlert = window.alert;
-      const alerts = [];
-      const alertSentinel = "__scenario9d_alert_sentinel__";
-      window.confirm = () => true;
-      window.alert = (message) => {
-        alerts.push(String(message));
-      };
-      try {
-        window.alert(alertSentinel);
-        const alertSentinelObserved =
-          alerts.length === 1 && alerts[0] === alertSentinel;
-        alerts.length = 0;
-        if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(r => setTimeout(r, 800));
-        window.originalMarkdown = '# Beta\\n\\nS9D_BASE\\n';
-        markdownEditor.value = window.originalMarkdown;
-        await renderMarkdown(window.originalMarkdown);
-        (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(r => setTimeout(r, 800));
-        markdownEditor.value = '# Beta\\n\\nS9D_FIRST\\n';
-        markdownEditor.dispatchEvent(new Event('input'));
-        await new Promise(r => setTimeout(r, 1400));
-        // Both writes dispatched in one synchronous task, so both are in flight
-        // before either reply can be delivered.
-        saveButton.click();
-        markdownEditor.value = '# Beta\\n\\nS9D_SECOND\\n';
-        saveButton.click();
-        const dispatchedPending = window.getPendingSaveStatus().count;
-        // The full-chain sample still had both writes pending after 2.8s.
-        // Wait for completion, not for the desired disk/store contents.
-        let completionTimer;
-        const settled = await Promise.race([
-          window.waitForPendingSaves(window.currentFilePath).then(() => true),
-          new Promise(resolve => {
-            completionTimer = setTimeout(() => resolve(false), 8000);
-          }),
-        ]);
-        clearTimeout(completionTimer);
-        return JSON.stringify({
-          dispatchedPending,
-          settled,
-          editMode: isEditMode,
-          storeIsSecond: window.originalMarkdown.includes('S9D_SECOND'),
-          storeIsFirst: window.originalMarkdown.includes('S9D_FIRST'),
-          dirty: hasUnsavedChanges,
-          path: window.currentFilePath,
-          alertSentinelObserved,
-          alerts,
-        });
-      } finally {
-        window.alert = realAlert;
-        window.confirm = realConfirm;
-      }
+      const before = window.getPendingSaveStatus();
+      // Both writes dispatched in one synchronous task, so both are in flight
+      // before either reply can be delivered.
+      saveButton.click();
+      markdownEditor.value = '# Beta\\n\\nS9D_SECOND\\n';
+      saveButton.click();
+      const dispatchedPending = window.getPendingSaveStatus().count;
+      const dispatchedRevision = window.getPendingSaveStatus().revision;
+      // The full-chain sample still had both writes pending after 2.8s.
+      // Wait for completion, not for the desired disk/store contents.
+      let completionTimer;
+      const settled = await Promise.race([
+        window.waitForPendingSaves(window.currentFilePath).then(() => true),
+        new Promise(resolve => {
+          completionTimer = setTimeout(() => resolve(false), 8000);
+        }),
+      ]);
+      clearTimeout(completionTimer);
+      return JSON.stringify({
+        dispatchedPending,
+        before, dispatchedRevision, finalPending: window.getPendingSaveStatus(),
+        settled,
+        editMode: isEditMode,
+        storeIsSecond: window.originalMarkdown.includes('S9D_SECOND'),
+        storeIsFirst: window.originalMarkdown.includes('S9D_FIRST'),
+        dirty: hasUnsavedChanges,
+        path: window.currentFilePath,
+        editor: markdownEditor.value,
+        questions: window.__defaultSaveQuestions.questions.slice(${twoQuestionStart}),
+        dialogOpen: document.getElementById('appMessageDialog').open,
+      });
     })()
   `);
   const two = JSON.parse(twoOut);
   const saveQueueAfter = __shutdown.state();
   const diskTwo = fs.readFileSync(two.path, "utf8");
+  const twoAfter = await readDefaultSaveDocument();
   check(
-    "Scenario 9d alert capture was proven live before concurrent saves",
-    two.alertSentinelObserved === true,
+    "Scenario 9d application-question observation was proven live by the owned Scenario 7 discard",
+    saveQuestionObserverAlive === true,
     twoOut,
   );
   check(
     "Scenario 9d concurrent Saves did not trigger a renderer Save refusal",
-    two.dispatchedPending === 2 && Array.isArray(two.alerts) && two.alerts.length === 0,
+    two.dispatchedPending === 2 &&
+      two.before.count === 0 && two.dispatchedRevision > two.before.revision &&
+      two.finalPending.count === 0 && two.finalPending.revision > two.dispatchedRevision &&
+      Array.isArray(two.questions) && two.questions.length === 0 && !two.dialogOpen,
     twoOut,
   );
   check(
@@ -22314,12 +22806,16 @@ async function run(win) {
   );
   check(
     "the two-writes-in-flight case really was set up: the last write won on disk",
-    two.editMode === true && diskTwo.includes("S9D_SECOND"),
+    two.editMode === true && diskTwo === "# Beta\n\nS9D_SECOND\n" &&
+      two.editor === diskTwo,
     twoOut + " disk=" + JSON.stringify(diskTwo.slice(0, 60)),
   );
   check(
     "with two writes in flight the document store ends on the bytes that are actually on disk",
-    two.storeIsSecond === true && two.storeIsFirst === false && two.dirty === false,
+    two.storeIsSecond === true && two.storeIsFirst === false && two.dirty === false &&
+      twoAfter.tab.content === diskTwo && twoAfter.tab.original === diskTwo &&
+      twoAfter.tab.dirty === false &&
+      isDeepStrictEqual(twoAfter.otherTabs, twoBefore.otherTabs),
     twoOut + " disk=" + JSON.stringify(diskTwo.slice(0, 60)),
   );
 
@@ -22335,51 +22831,55 @@ async function run(win) {
   // user's own original complaint (a refresh reverting a file) reappearing
   // through the discard path.
   if (scenario9dSucceeded) {
-    const reloadOut = await exec(`
-      (async () => {
-        const realConfirm = window.confirm;
-        window.confirm = () => true;
-        if (isEditMode) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(r => setTimeout(r, 800));
-        window.originalMarkdown = '# Beta\\n\\nS9E_STALE\\n';
-        markdownEditor.value = window.originalMarkdown;
-        await renderMarkdown(window.originalMarkdown);
-        (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(r => setTimeout(r, 800));
-        // The file on disk still holds whatever the previous scenario wrote, so
-        // reloading brings in content the session never saw.
-        reloadCurrentFile();
-        await new Promise(r => setTimeout(r, 2000));
-        const reloaded = markdownEditor.value;
-        markdownEditor.value = reloaded + '\\nS9E_TYPED\\n';
-        markdownEditor.dispatchEvent(new Event('input'));
-        await new Promise(r => setTimeout(r, 1600));
-        (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        await new Promise(r => setTimeout(r, 2000));
-        window.confirm = realConfirm;
-        return JSON.stringify({
-          reloadedWasDifferent: !reloaded.includes('S9E_STALE'),
-          reloaded: reloaded.slice(0, 60),
-          editMode: isEditMode,
-          restoredToReloaded: window.originalMarkdown === reloaded,
-          wentBackToStale: window.originalMarkdown.includes('S9E_STALE'),
-          keptTyping: window.originalMarkdown.includes('S9E_TYPED'),
-          final: window.originalMarkdown.slice(0, 60),
-        });
-      })()
-    `);
-    const reload = JSON.parse(reloadOut);
+    const reloadBefore = await readDefaultSaveDocument();
+    const reloadedContent = "# Beta\n\nS9E_RELOADED\n";
+    if (!reloadBefore.editMode || reloadBefore.dirty ||
+        reloadBefore.editor !== diskTwo || reloadBefore.tab.original !== diskTwo ||
+        !(await defaultMainOwns(reloadBefore))) {
+      throw new Error("Scenario 9e needs the real clean saved document with its editor still open");
+    }
+    // This existing actor changes disk only after pinning the selected old
+    // document, and joins the real reply, success notice and accepted DOM.
+    const reloadCompletion = await reloadSelectedAndWait(
+      saveTabB, fileB, "S9D_SECOND", "S9E_RELOADED", reloadedContent);
+    const reloaded = await readDefaultSaveDocument();
+    const reloadAccepted = reloadCompletion.dispatched === true &&
+      reloadCompletion.landed === true && reloaded.editMode === true &&
+      reloaded.editor === reloadedContent && reloaded.original === reloadedContent &&
+      reloaded.tab.content === reloadedContent && reloaded.tab.original === reloadedContent &&
+      reloaded.tab.dirty === false && reloaded.dirty === false &&
+      reloaded.pending.count === 0 && !reloaded.state.reloadConflict &&
+      fs.readFileSync(fileB, "utf8") === reloadedContent &&
+      await defaultMainOwns(reloaded);
+    if (!reloadAccepted) {
+      throw new Error("Scenario 9e real reload did not adopt an open-editor baseline: " +
+        JSON.stringify({ reloadBefore, reloadCompletion, reloaded }));
+    }
+    await editDefaultSaveDocument(reloadedContent + "\nS9E_TYPED\n", "S9E_TYPED");
+    const reloadQuestion = await discardDefaultSaveEdit(
+      reloadedContent + "\nS9E_TYPED\n", "Scenario 9e", reloaded.viewer);
+    const reloadAfter = await readDefaultSaveDocument();
+    const reloadOut = JSON.stringify({ reloadBefore, reloadCompletion,
+      reloaded, reloadQuestion, reloadAfter });
     check(
       "the reload case really was set up: the reload brought in content the session had not seen",
-      reload.reloadedWasDifferent === true,
+      reloadAccepted && reloadBefore.original !== reloaded.original &&
+        reloadBefore.viewer.includes("S9D_SECOND") &&
+        !reloadBefore.viewer.includes("S9E_RELOADED") &&
+        reloaded.viewer.includes("S9E_RELOADED"),
       reloadOut,
     );
     check(
       "discarding after a reload restores the reloaded document, not the pre-reload text",
-      reload.editMode === false &&
-        reload.restoredToReloaded === true &&
-        reload.wentBackToStale === false &&
-        reload.keptTyping === false,
+      reloadAfter.editMode === false && reloadAfter.dirty === false &&
+        reloadAfter.original === reloadedContent && reloadAfter.editor === reloadedContent &&
+        reloadAfter.tab.content === reloadedContent &&
+        reloadAfter.tab.original === reloadedContent && reloadAfter.tab.dirty === false &&
+        reloadAfter.viewer.includes("S9E_RELOADED") &&
+        !reloadAfter.viewer.includes("S9D_SECOND") &&
+        !reloadAfter.viewer.includes("S9E_TYPED") &&
+        fs.readFileSync(fileB, "utf8") === reloadedContent &&
+        isDeepStrictEqual(reloadAfter.otherTabs, reloadBefore.otherTabs),
       reloadOut,
     );
   } else {
@@ -22389,6 +22889,29 @@ async function run(win) {
     console.log(
       "SKIP  discarding after a reload restores the reloaded document, not the pre-reload text - BLOCKED scenario 9e due to failed scenario 9d precondition",
     );
+  }
+
+  } catch (error) {
+    defaultSaveFailure = error;
+    defaultSaveFailed = true;
+    throw error;
+  } finally {
+    try {
+      await exec(`(() => {
+      const owner = typeof __defaultSaveQuestionInstallation === 'undefined'
+        ? null : __defaultSaveQuestionInstallation;
+      if (!owner || !Object.isFrozen(owner) || typeof owner.cleanup !== 'function')
+        throw new Error('Save question observation ownership was lost');
+      const cleaned = owner.cleanup();
+      __defaultSaveQuestionInstallation = null;
+      return cleaned;
+      })()`);
+    } catch (error) {
+      if (defaultSaveFailed)
+        throw new AggregateError([defaultSaveFailure, error],
+          "Save slice failed and its question observation cleanup also failed");
+      throw error;
+    }
   }
 
   const errors = await exec(`window.__e2eErrors || []`);
@@ -22556,7 +23079,10 @@ async function run(win) {
 
     // Clean slate: earlier scenarios leave tabs behind and the strip's overflow
     // state is the thing under test.
-    await clearFixtureTabs("layout preflight");
+    if (!scenario8bDiscardPermission) {
+      throw new Error("Layout preflight has no captured Scenario 8b discard permission");
+    }
+    await clearFixtureTabs("layout preflight", [scenario8bDiscardPermission]);
 
     const layoutFiles = [];
     for (let i = 0; i < 8; i++) {
@@ -22565,12 +23091,16 @@ async function run(win) {
       layoutFiles.push(p);
     }
 
+    const layoutAdmissions = [];
+    const openLayoutFixture = async (index) => {
+      const admission = await openDefaultFixture(
+        layoutFiles[index], `# Bar ${index}\n\nBAR_BODY_${index}\n`, `BAR_BODY_${index}`);
+      layoutAdmissions.push(admission);
+      return admission;
+    };
+
     // --- one document ---
-    await exec(
-      `window.CustomTabs.createTab(${JSON.stringify(layoutFiles[0])},
-        window.fs.readFileSync(${JSON.stringify(layoutFiles[0])}, 'utf8')); null`,
-    );
-    await sleep(500);
+    await openLayoutFixture(0);
 
     const one = await exec(`(() => {
       const px = (el) => { const r = el.getBoundingClientRect();
@@ -22583,10 +23113,6 @@ async function run(win) {
         stripInsideHeader: !!(header && strip && header.contains(strip)),
         reloadInsideHeader: !!(header && header.contains(document.getElementById('refreshBtn'))),
         menuInsideHeader: !!(header && header.contains(document.getElementById('menuBtn'))),
-        // The deleted surfaces. Their absence is the redesign.
-        fileInfoBar: !!document.getElementById('fileInfoBar'),
-        appTitle: !!document.querySelector('.app-title'),
-        logoLink: !!document.getElementById('logoLink'),
         tabCount: document.querySelectorAll('.tab').length,
         // Counting elements is NOT enough: the old two-tab minimum hid the
         // whole strip with display:none, which leaves every tab element in the
@@ -22613,16 +23139,6 @@ async function run(win) {
         one.menuInsideHeader === true,
       JSON.stringify(one),
     );
-    // Each of these three elements was removed, and each left a live reference
-    // behind. The logo's was the expensive one: a surviving
-    // `logoLink.addEventListener` threw at renderer.js top level, which aborts
-    // the REST of that script, so every handler registered after it silently
-    // never registered. The visible symptom was "the tab strip does not work".
-    check(
-      "the removed header surfaces are really gone from the DOM",
-      one.fileInfoBar === false && one.appTitle === false && one.logoLink === false,
-      JSON.stringify(one),
-    );
     // The old strip swapped itself out below 2 tabs and showed the file-info
     // bar instead. That bar no longer exists, so a lone document would have had
     // no tab and no location shown anywhere.
@@ -22644,13 +23160,21 @@ async function run(win) {
 
     // --- many documents: the strip must scroll, not push the buttons off ---
     for (let i = 1; i < layoutFiles.length; i++) {
-      await exec(
-        `window.CustomTabs.createTab(${JSON.stringify(layoutFiles[i])},
-          window.fs.readFileSync(${JSON.stringify(layoutFiles[i])}, 'utf8')); null`,
-      );
-      await sleep(150);
+      await openLayoutFixture(i);
     }
-    await sleep(500);
+    const layoutSetup = await exec(`({
+      paths: window.CustomTabs.getTabs().map(tab => tab.filePath),
+      active: window.CustomTabs.getActiveTab()?.filePath,
+    })`);
+    check(
+      "the layout fixtures are eight distinct admitted documents in opening order",
+      isDeepStrictEqual(layoutSetup.paths, layoutFiles) &&
+        layoutSetup.active === layoutFiles[7] &&
+        new Set(layoutAdmissions.map(proof => proof.tab.id)).size === 8 &&
+        new Set(layoutAdmissions.map(proof => proof.descriptor.ref)).size === 8 &&
+        (await Promise.all(layoutAdmissions.map(defaultMainOwns))).every(Boolean),
+      JSON.stringify({ layoutSetup, layoutAdmissions }),
+    );
 
     const many = await exec(`(() => {
       const px = (el) => { const r = el.getBoundingClientRect();
@@ -22900,6 +23424,14 @@ async function run(win) {
     await runTabPathCopyScenario(exec, layoutFiles[layoutFiles.length - 1]);
 
     await clearFixtureTabs("layout teardown");
+    await exec("window.CustomTabs.settleSessionLayout()");
+    await exec("window.folia.getVersion()");
+    check(
+      "layout teardown retires every captured Main admission",
+      layoutAdmissions.every(proof =>
+        !__shutdown.documentAdmissionIsCurrent(proof.descriptor.ref)),
+      JSON.stringify(layoutAdmissions.map(proof => proof.descriptor.ref)),
+    );
   }
 
   await runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
@@ -23425,85 +23957,262 @@ async function run(win) {
     JSON.stringify(reloadOwnership),
   );
 
-  // Hold both real main-process file opens at their render boundary, then
-  // finish them in reverse order; the old continuation cannot reclaim B.
+  // Hold successful real-render returns, not their bodies or earlier paints.
+  // A's late return exercises the stale tab continuation after B has painted.
   const fileOpenRaceA = path.join(dir, "race-open-a.md");
   const fileOpenRaceB = path.join(dir, "race-open-b.md");
   write(fileOpenRaceA, "RACE_OPEN_A");
   write(fileOpenRaceB, "RACE_OPEN_B");
-  const fileOpenRace = await exec(`
-    (async () => {
-      const ipc = require("electron").ipcRenderer;
-      const a = ${JSON.stringify(fileOpenRaceA)};
-      const b = ${JSON.stringify(fileOpenRaceB)};
-      const realRender = window.renderMarkdown;
-      const gates = [];
-      window.renderMarkdown = text => new Promise(resolve => gates.push({ text, resolve }));
-      const waitFor = async predicate => {
-        const deadline = Date.now() + 8000;
-        while (Date.now() < deadline) {
-          if (predicate()) return true;
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        return predicate();
-      };
-      const snapshot = () => ({
+  function installDefaultFileOpenRaceObserver(key, fixtures) {
+    if (Object.prototype.hasOwnProperty.call(window, key) ||
+        fixtures.length !== 2 ||
+        new Set(fixtures.map(fixture => fixture.path)).size !== 2 ||
+        new Set(fixtures.map(fixture => fixture.text)).size !== 2) {
+      throw new Error("Invalid or occupied file-open race observer");
+    }
+    if (window.CustomTabs.__dirtyTabNames().length) {
+      throw new Error("File-open race requires clean incoming documents");
+    }
+    if (window.hasUnsavedWorkForReload() ||
+        window.getPendingSaveStatus().count !== 0 ||
+        window.CustomTabs.isDocumentFrozen()) {
+      throw new Error("File-open race requires settled incoming documents");
+    }
+    const realRender = window.renderMarkdown;
+    const gates = [];
+    const releases = [];
+    const snapshot = () => {
+      const tab = window.CustomTabs.getActiveTab();
+      return {
         path: window.currentFilePath, original: window.originalMarkdown,
+        owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, window.getReloadRequestSession()),
+        descriptor: window.CustomTabs.getDocumentDescriptor(),
+        tab: tab && {
+          id: tab.id, path: tab.filePath, content: tab.content,
+          original: tab.originalContent, dirty: tab.hasUnsavedChanges,
+        },
+        viewer: document.getElementById("viewer")?.textContent.trim(),
         diagnostics: window.getReloadRequestDiagnostics(),
-      });
-      try {
-        ipc.send("open-file-path", { filePath: a });
-        const firstReached = await waitFor(() => gates.length >= 1);
-        const afterA = snapshot();
-        if (firstReached) ipc.send("open-file-path", { filePath: b });
-        const secondReached = firstReached && await waitFor(() => gates.length >= 2);
-        const afterB = snapshot();
-        let staleCompletionObserved = false;
-        if (secondReached) {
-          // No gate is indexed until both authenticated opens actually render.
-          const supersededBefore =
-            window.getFileOpenDiagnostics().supersededCompletionCount;
-          gates[1].resolve();
-          await new Promise(resolve => setTimeout(resolve, 0));
-          gates[0].resolve();
-          staleCompletionObserved = await waitFor(() =>
-            window.getFileOpenDiagnostics().supersededCompletionCount > supersededBefore);
-        }
-        return {
-          firstReached, secondReached, staleCompletionObserved, afterA, afterB,
-          gates: gates.map(g => g.text),
-          final: {
-            path: window.currentFilePath, original: window.originalMarkdown,
-            diagnostics: window.getReloadRequestDiagnostics(),
-            recents: JSON.parse(localStorage.getItem("recentFiles") || "[]"),
-          },
-        };
-      } finally {
-        gates.forEach(g => g.resolve());
-        window.renderMarkdown = realRender;
+      };
+    };
+    const oneGate = (filePath) => {
+      const matches = gates.filter(gate => gate.path === filePath);
+      if (matches.length !== 1) throw new Error("Missing or repeated race render");
+      return matches[0];
+    };
+    function render(...args) {
+      const fixture = fixtures.find(candidate =>
+        candidate.path === window.currentFilePath && candidate.text === args[0]);
+      if (!fixture || gates.some(gate => gate.path === fixture.path)) {
+        throw new Error("Unexpected or repeated file-open race render");
       }
-    })()
-  `);
+      const gate = { path: fixture.path, text: fixture.text, rendered: false,
+        completed: false, released: false, error: null };
+      gate.wait = new Promise(resolve => { gate.resolve = resolve; });
+      gates.push(gate);
+      // Paint through the product renderer; hold only its successful return.
+      try {
+        const original = Reflect.apply(realRender, this, args);
+        if (!original || typeof original.then !== "function") {
+          throw new Error("The product renderer did not return its Promise");
+        }
+        gate.completion = original.then(async value => {
+          gate.rendered = true;
+          await gate.wait;
+          gate.completed = true;
+          return value;
+        }, error => {
+          gate.error = String(error);
+          throw error;
+        });
+        return gate.completion;
+      } catch (error) {
+        gate.error = String(error);
+        throw error;
+      }
+    }
+    const observer = {
+      snapshot,
+      reached(filePath) {
+        const gate = gates.find(candidate => candidate.path === filePath);
+        if (gate?.error) throw new Error(gate.error);
+        return !!gate?.rendered;
+      },
+      release(filePath) {
+        const gate = oneGate(filePath);
+        if (!gate.rendered || gate.released || gate.error) {
+          throw new Error("Cannot release an incomplete race render");
+        }
+        gate.released = true;
+        releases.push(filePath);
+        gate.resolve();
+      },
+      async finish(filePath) {
+        await oneGate(filePath).completion;
+        await new Promise(resolve => setTimeout(resolve, 0));
+      },
+      evidence() {
+        return {
+          gates: gates.map(({ path, text, rendered, completed, error }) =>
+            ({ path, text, rendered, completed, error })),
+          releases: releases.slice(),
+        };
+      },
+      async dispose() {
+        for (const gate of gates) gate.resolve();
+        let timer;
+        let settled = false;
+        try {
+          settled = await Promise.race([
+            Promise.allSettled(gates.map(gate => gate.completion))
+              .then(() => true),
+            new Promise(resolve => { timer = setTimeout(() => resolve(false), 8000); }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        const owned = window.renderMarkdown === render && window[key] === observer;
+        if (window.renderMarkdown === render) window.renderMarkdown = realRender;
+        if (window[key] === observer) delete window[key];
+        return {
+          owned, settled,
+          errors: gates.filter(gate => gate.error).map(gate => gate.error),
+          evidence: observer.evidence(),
+        };
+      },
+    };
+    window[key] = observer;
+    window.renderMarkdown = render;
+    return snapshot();
+  }
+  const fileOpenRaceKey =
+    "__defaultFileOpenRace_" + require("crypto").randomBytes(12).toString("hex");
+  const racePage = `window[${JSON.stringify(fileOpenRaceKey)}]`;
+  const raceFixtures = [
+    { path: fileOpenRaceA, text: "RACE_OPEN_A" },
+    { path: fileOpenRaceB, text: "RACE_OPEN_B" },
+  ];
+  const raceFailures = [];
+  let raceInstalled = false;
+  let raceBatchInstalled = false;
+  let fileOpenRace;
+  let raceCleanup;
+  try {
+    if (await exec(`Object.prototype.hasOwnProperty.call(window, '__dialogBatchNative')`)) {
+      throw new Error("File-open race processor observation is occupied");
+    }
+    raceBatchInstalled = true;
+    await installDialogBatchPageObservation(exec);
+    await exec("window.__dialogBatchNative.phase = 'file-open race'; true");
+    await exec(`(${installDefaultFileOpenRaceObserver.toString()})(
+      ${JSON.stringify(fileOpenRaceKey)}, ${JSON.stringify(raceFixtures)})`);
+    raceInstalled = true;
+    const openRaceFixture = async (fixture) => {
+      let chooserCalls = 0;
+      let chooserFailure;
+      const chooseFixture = async function (owner, options) {
+        if (arguments.length !== 2 || owner !== win || chooserCalls++ !== 0 ||
+            !isDeepStrictEqual(options, expectedChooserOptions)) {
+          chooserFailure = new Error("Unexpected file-open race chooser");
+          throw chooserFailure;
+        }
+        return { canceled: false, filePaths: [fixture] };
+      };
+      const restoreChooser = replaceMethod(dialog, "showOpenDialog", chooseFixture);
+      try {
+        await exec("window.folia.openFileDialog()");
+        const reached = await waitUntil(() => {
+          if (chooserFailure) throw chooserFailure;
+          return exec(`${racePage}.reached(${JSON.stringify(fixture)})`);
+        }, 8000);
+        if (!reached || chooserCalls !== 1) {
+          throw new Error("Admitted race document did not finish its real render");
+        }
+        const snapshot = await exec(`${racePage}.snapshot()`);
+        await exec("window.folia.getVersion()");
+        if (!(await defaultMainOwns(snapshot))) {
+          throw new Error("File-open race document has no current Main owner: " +
+            JSON.stringify(snapshot));
+        }
+        return snapshot;
+      } finally {
+        if (dialog.showOpenDialog !== chooseFixture) {
+          throw new Error("File-open race chooser ownership changed");
+        }
+        restoreChooser();
+      }
+    };
+    const afterA = await openRaceFixture(fileOpenRaceA);
+    const afterB = await openRaceFixture(fileOpenRaceB);
+    await exec(`${racePage}.release(${JSON.stringify(fileOpenRaceB)});
+      ${racePage}.finish(${JSON.stringify(fileOpenRaceB)})`);
+    await exec(`${racePage}.release(${JSON.stringify(fileOpenRaceA)});
+      ${racePage}.finish(${JSON.stringify(fileOpenRaceA)})`);
+    const originalWork = await boundedDialogWork(exec(
+      `(${joinDefaultFileOpenWork.toString()})(
+        ${JSON.stringify(raceFixtures.map(fixture =>
+          ({ path: fixture.path, prefix: fixture.text })))}, 'file-open race')`),
+    "file-open race original processor and renderer join", 8000);
+    fileOpenRace = await exec(`({
+      afterA: ${JSON.stringify(afterA)}, afterB: ${JSON.stringify(afterB)},
+      originalWork: ${JSON.stringify(originalWork)},
+      ...${racePage}.evidence(), final: ${racePage}.snapshot(),
+    })`);
+    fileOpenRace.finalMainOwned = await defaultMainOwns(fileOpenRace.final);
+  } catch (error) {
+    raceFailures.push(error);
+  } finally {
+    if (raceInstalled) {
+      try {
+        raceCleanup = await exec(`${racePage}.dispose()`);
+        if (!raceCleanup.owned || !raceCleanup.settled || raceCleanup.errors.length) {
+          throw new Error("File-open race cleanup was not confirmed: " +
+            JSON.stringify(raceCleanup));
+        }
+      } catch (error) {
+        raceFailures.push(error);
+      }
+    }
+    if (raceBatchInstalled) {
+      try {
+        if (await restoreDialogBatchPageObservation(exec) !== true) {
+          throw new Error("File-open race original observer cleanup was not confirmed");
+        }
+      } catch (error) {
+        raceFailures.push(error);
+      }
+    }
+  }
+  if (raceFailures.length) throw new AggregateError(raceFailures, "File-open race failed");
+  const raceOwns = (snapshot, fixture, text) =>
+    snapshot.path === fixture && snapshot.original === text &&
+    snapshot.tab?.path === fixture && snapshot.tab.content === text &&
+    snapshot.tab.original === text && snapshot.tab.dirty === false &&
+    snapshot.owner?.tabId === snapshot.tab.id &&
+    snapshot.owner?.documentRef === snapshot.descriptor?.ref &&
+    typeof snapshot.descriptor?.ref === "string" &&
+    snapshot.descriptor.logicalPath === fixture && snapshot.viewer === text;
   check(
     "both authenticated file opens reach their render gates before testing supersession",
-    fileOpenRace.firstReached === true &&
-      fileOpenRace.secondReached === true &&
-      fileOpenRace.gates.length === 2,
+    fileOpenRace.gates.length === 2 &&
+      fileOpenRace.gates.every(gate => gate.rendered && gate.completed && !gate.error) &&
+      raceOwns(fileOpenRace.afterA, fileOpenRaceA, "RACE_OPEN_A") &&
+      raceOwns(fileOpenRace.afterB, fileOpenRaceB, "RACE_OPEN_B") &&
+      fileOpenRace.afterA.descriptor.ref !== fileOpenRace.afterB.descriptor.ref &&
+      fileOpenRace.originalWork.processors.every(record =>
+        record.settled && record.eventUndefined) &&
+      fileOpenRace.originalWork.renders.every(record => record.settled) &&
+      isDeepStrictEqual(fileOpenRace.releases, [fileOpenRaceB, fileOpenRaceA]),
     JSON.stringify(fileOpenRace),
   );
   check(
     "a superseded file-open render cannot reclaim the newer document",
-    fileOpenRace &&
-      fileOpenRace.firstReached === true &&
-      fileOpenRace.secondReached === true &&
-      fileOpenRace.staleCompletionObserved === true &&
-      fileOpenRace.gates.length === 2 &&
-      fileOpenRace.afterA.path.endsWith("race-open-a.md") &&
-      fileOpenRace.afterA.original === "RACE_OPEN_A" &&
-      fileOpenRace.afterB.path.endsWith("race-open-b.md") &&
-      fileOpenRace.afterB.original === "RACE_OPEN_B" &&
-      fileOpenRace.final.path.endsWith("race-open-b.md") &&
-      fileOpenRace.final.original === "RACE_OPEN_B" &&
+    raceOwns(fileOpenRace.final, fileOpenRaceB, "RACE_OPEN_B") &&
+      fileOpenRace.finalMainOwned === true &&
+      ["pageSession", "rendererGeneration", "tabId", "documentGeneration",
+        "pathKey", "documentRef"].every(field =>
+        fileOpenRace.final.owner[field] === fileOpenRace.afterB.owner[field]) &&
       fileOpenRace.final.diagnostics.fileOpenSequence ===
         fileOpenRace.afterB.diagnostics.fileOpenSequence,
     JSON.stringify(fileOpenRace),
