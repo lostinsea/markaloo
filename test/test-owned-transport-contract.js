@@ -240,6 +240,92 @@ function run(report = (name, ok, detail) => {
       committedCheck('restores the exact sync transport descriptor and remains usable',
         Reflect.ownKeys(syncDescriptor).every(key => restoredSync[key] === syncDescriptor[key]) &&
         normalCommittedSends.length === 1 && afterRestore.valid === true && Object.isFrozen(api));
+
+      const dialogCheck = (name, ok, detail = '') => outcome.results.push({
+        name: 'DIALOG contract ' + name, ok: !!ok, detail: String(detail),
+      });
+      const dialogRequest = {
+        grant: '1'.repeat(64), pageSession: 'dialog-bridge-probe', rendererGeneration: 1,
+      };
+      const dialogSnapshot = {
+        path: 'C:\\\\dialog-contract.md', content: '# Bridge snapshot', modifiedTime: 123,
+        diskVersion: { dev: 1, ino: 2, size: 17, mtimeMs: 123, ctimeMs: 124 },
+      };
+      response = dialogSnapshot;
+      const dialogDescriptor = Object.getOwnPropertyDescriptor(transport, 'invoke');
+      const normalBeforeDialog = normalRequests.length;
+      const dialogCalls = [];
+      let dialogResponse = dialogSnapshot;
+      let rejectDialog = false;
+      const dialogFailure = new Error('controlled authorized read failure');
+      const dialogTransport = function (channel, payload) {
+        dialogCalls.push({ channel, payload });
+        return rejectDialog ? Promise.reject(dialogFailure) : Promise.resolve(dialogResponse);
+      };
+      Object.defineProperty(transport, 'invoke', { ...dialogDescriptor, value: dialogTransport });
+      try {
+        const rejected = [];
+        for (const input of [
+          null, [], { ...dialogRequest, grant: '' },
+          { ...dialogRequest, grant: 'bad\\0grant' },
+          { ...dialogRequest, grant: 'x'.repeat(129) },
+          { ...dialogRequest, pageSession: '' },
+          { ...dialogRequest, pageSession: 'x'.repeat(129) },
+          { ...dialogRequest, rendererGeneration: 0 },
+          { ...dialogRequest, rendererGeneration: 1.5 },
+        ]) {
+          try { await api.readDialogExtra(input); rejected.push(false); }
+          catch (error) { rejected.push(error.message.includes('Invalid dialog extra request')); }
+        }
+        dialogCheck('rejects all nine malformed envelopes before transport',
+          rejected.length === 9 && rejected.every(Boolean) && dialogCalls.length === 0,
+          JSON.stringify({ rejected, dialogCalls }));
+        const positive = await api.readDialogExtra({
+          ...dialogRequest, path: 'unapproved-path', ignored: true,
+        });
+        dialogCheck('forwards only the grant envelope and preserves the valid snapshot',
+          dialogCalls.length === 1 && dialogCalls[0].channel === 'read-dialog-extra' &&
+          Object.keys(dialogCalls[0].payload).sort().join(',') === 'grant,pageSession,rendererGeneration' &&
+          Object.keys(dialogRequest).every(key =>
+            dialogCalls[0].payload[key] === dialogRequest[key]) &&
+          positive.path === dialogSnapshot.path && positive.content === dialogSnapshot.content &&
+          positive.modifiedTime === dialogSnapshot.modifiedTime &&
+          JSON.stringify(positive.diskVersion) === JSON.stringify(dialogSnapshot.diskVersion) &&
+          Object.isFrozen(positive) && Object.isFrozen(positive.diskVersion),
+          JSON.stringify({ dialogCalls, positive }));
+        const rejectedResponses = [];
+        for (const candidate of [
+          null, undefined, { ...dialogSnapshot, path: '' },
+          { ...dialogSnapshot, path: 'bad\\0path' }, { ...dialogSnapshot, content: 3 },
+          { ...dialogSnapshot, diskVersion: { ...dialogSnapshot.diskVersion, size: Infinity } },
+        ]) {
+          dialogResponse = candidate;
+          try { await api.readDialogExtra(dialogRequest); rejectedResponses.push(false); }
+          catch (error) {
+            rejectedResponses.push(error.message.includes('Invalid dialog extra snapshot response'));
+          }
+        }
+        dialogCheck('rejects all six malformed snapshot responses',
+          rejectedResponses.length === 6 && rejectedResponses.every(Boolean),
+          JSON.stringify(rejectedResponses));
+        rejectDialog = true;
+        let receivedFailure = null;
+        try { await api.readDialogExtra(dialogRequest); }
+        catch (error) { receivedFailure = error; }
+        dialogCheck('preserves the original authorized-read transport rejection',
+          receivedFailure === dialogFailure &&
+          receivedFailure.message === 'controlled authorized read failure');
+      } finally {
+        if (transport.invoke !== dialogTransport) throw new Error('Dialog contract lost transport ownership');
+        Object.defineProperty(transport, 'invoke', dialogDescriptor);
+      }
+      const restoredDialog = await api.readDialogExtra(dialogRequest);
+      const restoredInvoke = Object.getOwnPropertyDescriptor(transport, 'invoke');
+      dialogCheck('restores the exact invoke descriptor and remains usable',
+        Reflect.ownKeys(dialogDescriptor).every(key => restoredInvoke[key] === dialogDescriptor[key]) &&
+        normalRequests.length === normalBeforeDialog + 1 &&
+        restoredDialog.path === dialogSnapshot.path && restoredDialog.content === dialogSnapshot.content &&
+        Object.isFrozen(api));
     })().then(
       () => { outcome.completed = true; },
       error => { outcome.error = String(error.stack || error); outcome.completed = true; },
@@ -247,8 +333,8 @@ function run(report = (name, ok, detail) => {
     void 0;
   `, context, { filename: __filename, timeout: 1000 });
   const outcome = JSON.parse(vm.runInContext("JSON.stringify(outcome)", context, { timeout: 1000 }));
-  if (outcome.completed !== true || outcome.error || outcome.results.length !== 14) {
-    throw new Error("Owned preload contract did not complete all fourteen checks: " + JSON.stringify(outcome));
+  if (outcome.completed !== true || outcome.error || outcome.results.length !== 19) {
+    throw new Error("Owned preload contract did not complete all nineteen checks: " + JSON.stringify(outcome));
   }
   for (const result of outcome.results) report(result.name, result.ok, result.detail);
   const failures = outcome.results.filter(result => !result.ok);
