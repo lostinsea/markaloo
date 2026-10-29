@@ -251,28 +251,7 @@ const {
   admitTestDocument,
 } = require("./test-visual-utils");
 
-// THE SUITE-LEVEL half of the renderer's state, extracted so that a document
-// rebuilt mid-run is equivalent to the one the bootstrap established - not
-// merely to the one the current section established.
-//
-// MEASURED, and the diagnosis it corrects was mine. n11EnsureAlive's recovery
-// reload restored S12_INSTALL, N11_TRAP and the section's fixture, so the N11
-// section itself ran to completion and its teardown passed. The suite then
-// aborted 20 lines later, inside SEC-13, on `window.__e2eErrors.length = 0` -
-// a global installed ONCE before run() and destroyed by the reload. It
-// surfaced as `harness threw: Error: Script failed to execute` with no line
-// information, and I twice attributed it to the N11 teardown's
-// `__n11SavedExternal` restore by reading rather than by running. What settled
-// it was hand-applying R463 and reading the suite's own PASS/FAIL stream: the
-// last line before the throw is SEC-13's control assertion, and the teardown's
-// own assertion passes above it.
-//
-// The accumulated entries are NOT recoverable across the reload - the document
-// holding them is already gone when the recovery notices - so this reinstalls
-// an EMPTY array. That is honest rather than lossy: every reader of the
-// sentinel in this file clears it immediately before the action it describes
-// (SEC-13:2313 and SEC-30 both do), so no assertion depends on entries
-// recorded in an earlier section.
+// Page-local errors cannot be reconstructed after navigation destroys the page.
 const E2E_SENTINEL = `
   window.__e2eErrors = [];
   window.addEventListener('error', e => window.__e2eErrors.push(String(e.message)));
@@ -1309,20 +1288,7 @@ async function run(win) {
   );
 
   // ==========================================================================
-  // SEC-03 - an image alt breaking out of its src/alt attribute
-  //
-  // This was found in the image-slider feature, which built `<img src=... alt=...>`
-  // by hand and injected it AFTER DOMPurify. That feature is gone (8c2), and with
-  // it the sink: nothing assembles image markup by hand after sanitisation any
-  // more, so this is no longer a regression test for a live SEC-03 sink and a
-  // revert reintroducing that sink cannot be constructed.
-  //
-  // It is retained deliberately, relabelled for what it now measures: that the
-  // ordinary marked -> DOMPurify composition still escapes an alt containing a
-  // quote, so the same payload cannot be revived by a future change that goes
-  // back to assembling image markup by hand. The second assertion drives the
-  // payload still wrapped in the legacy `<!-- slider-start -->` markers, which is
-  // the stronger of the two: it is the regression guard for the removal itself.
+  // SEC-03 - Markdown image alt text must not escape its attribute.
   // ==========================================================================
   const altBreakoutPayload =
     "# Doc\n\n" +
@@ -1335,33 +1301,16 @@ async function run(win) {
     "window.__pwned was set from an image alt attribute",
   );
 
-  const sliderPayload =
-    "# Doc\n\n<!-- slider-start -->\n" +
-    "![\" onerror=\"window.__pwned='slider'](a.png)\n" +
-    "![second](b.png)\n" +
-    "<!-- slider-end -->\n";
+  // ==========================================================================
+  // SEC-04 - Unknown-language code fences must escape HTML.
+  // ==========================================================================
+  const unknownFencePayload =
+    "# Doc\n\n```unknown-test-language\n<img src=x onerror=window.__pwned='fence'>\n```\n";
 
   check(
-    "SEC-03 the same payload in legacy slider markers does not execute",
-    (await render(sliderPayload, "full")) === null,
-    "window.__pwned was set from a legacy slider block",
-  );
-
-  // ==========================================================================
-  // SEC-04 - removed OmniWare renderer injected its output raw after DOMPurify
-  //
-  // The feature is gone. This is kept as a REMOVAL PIN rather than deleted:
-  // the fence is now an ordinary unknown language, so marked must escape it.
-  // If anything ever re-introduces a raw-HTML renderer keyed on a code fence,
-  // this fails before it ships.
-  // ==========================================================================
-  const omniwarePayload =
-    "# Doc\n\n```omniware\n@nav\n  <img src=x onerror=window.__pwned='omniware'> | Home\n```\n";
-
-  check(
-    "SEC-04 removed-feature fence payload does not execute",
-    (await render(omniwarePayload, "full")) === null,
-    "window.__pwned was set from a removed-feature code fence",
+    "SEC-04 unknown-language code does not execute HTML",
+    (await render(unknownFencePayload, "full")) === null,
+    "window.__pwned was set from a code fence",
   );
 
   // ==========================================================================
@@ -1553,100 +1502,54 @@ async function run(win) {
     JSON.stringify(mermaidAngle),
   );
 
-  // REMOVAL PIN: the image slider was removed from the fork (8c2). Its markers
-  // were HTML comments wrapping ordinary markdown images, so a document authored
-  // against the old syntax must DEGRADE, not break: the images still render, and
-  // the markers stay invisible rather than surfacing as literal text. Asserting
-  // the absence of `.image-slider` alone would pass on a blank page.
-  await render(
-    "# Doc\n\n<!-- slider-start -->\n![one](a.png)\n![two](b.png)\n<!-- slider-end -->\n",
-    "full",
-  );
-  const legacySlider = await exec(`
-    (() => {
-      const v = document.getElementById('viewer');
-      const imgs = [...v.querySelectorAll('img')];
-      return {
-        sliderEl: !!v.querySelector('.image-slider, .slider-slide, .slider-dot'),
-        imgCount: imgs.length,
-        srcs: imgs.map(i => i.getAttribute('src')),
-        alts: imgs.map(i => i.getAttribute('alt')),
-        markerText: v.textContent.includes('slider-start') ||
-                    v.textContent.includes('slider-end')
-      };
-    })()
-  `);
-  check(
-    "REMOVAL a legacy slider document degrades to plain images",
-    legacySlider.imgCount === 2 &&
-      legacySlider.srcs.join(",").includes("a.png") &&
-      legacySlider.alts.join(",") === "one,two" &&
-      legacySlider.sliderEl === false &&
-      legacySlider.markerText === false,
-    JSON.stringify(legacySlider),
-  );
+  for (const mode of ["full", "light-format"]) {
+    await render(
+      "# Doc\n\n<!-- images-start -->\n![one](a.png)\n![two](b.png)\n<!-- images-end -->\n",
+      mode,
+    );
+    const images = await exec(`
+      (() => {
+        const viewer = document.getElementById('viewer');
+        const imgs = [...viewer.querySelectorAll('img')];
+        return {
+          imgCount: imgs.length,
+          srcs: imgs.map(i => i.getAttribute('src')),
+          alts: imgs.map(i => i.getAttribute('alt')),
+          markerText: viewer.textContent.includes('images-start') ||
+                      viewer.textContent.includes('images-end')
+        };
+      })()
+    `);
+    check(
+      `FEATURE HTML comments preserve their neighboring images (${mode})`,
+      images.imgCount === 2 &&
+        images.srcs.length === 2 &&
+        images.srcs[0] === "a.png" && images.srcs[1] === "b.png" &&
+        images.alts.join(",") === "one,two" &&
+        images.markerText === false,
+      JSON.stringify(images),
+    );
 
-  // The same claim on the OTHER render path. Removing `hasSlider` from
-  // detectRenderMode is what makes this necessary: a legacy document used to be
-  // forced onto 'full', and is now eligible for 'light-format' too.
-  //
-  // The SEC-26 light-format assertion below does NOT cover this. It checks only
-  // that window.__pwned stayed null, which a blank page satisfies just as well
-  // as a correctly rendered one. Non-execution and degradation are different
-  // properties and need different oracles. R171 makes that concrete: it breaks
-  // light-format degradation only, and SEC-26 keeps passing while this fails.
-  await render(
-    "# Doc\n\n<!-- slider-start -->\n![one](a.png)\n![two](b.png)\n<!-- slider-end -->\n",
-    "light-format",
-  );
-  const legacySliderLF = await exec(`
-    (() => {
-      const v = document.getElementById('viewer');
-      const imgs = [...v.querySelectorAll('img')];
-      return {
-        sliderEl: !!v.querySelector('.image-slider, .slider-slide, .slider-dot'),
-        imgCount: imgs.length,
-        srcs: imgs.map(i => i.getAttribute('src')),
-        alts: imgs.map(i => i.getAttribute('alt')),
-        markerText: v.textContent.includes('slider-start') ||
-                    v.textContent.includes('slider-end')
-      };
-    })()
-  `);
-  check(
-    "REMOVAL a legacy slider document degrades on the light-format path too",
-    legacySliderLF.imgCount === 2 &&
-      legacySliderLF.srcs.join(",").includes("a.png") &&
-      legacySliderLF.alts.join(",") === "one,two" &&
-      legacySliderLF.sliderEl === false &&
-      legacySliderLF.markerText === false,
-    JSON.stringify(legacySliderLF),
-  );
-
-  // REMOVAL PIN: the OmniWare wireframe renderer was removed from the fork.
-  // Its fence must now degrade to an inert, escaped code block - no wireframe
-  // container, and the angle brackets rendered as text rather than markup.
-  await render("# Doc\n\n```omniware\n@nav\n  <b>Brand</b> | Home\n```\n", "full");
-  const omni = await exec(`
-    (() => {
-      const viewer = document.getElementById('viewer');
-      const code = viewer.querySelector('pre code');
-      return {
-        container: !!viewer.querySelector('.omniware-rendered, .omniware-container'),
-        codeBlock: !!code,
-        boldInjected: !!viewer.querySelector('pre code b'),
-        text: code ? code.textContent.replace(/\\s+/g, ' ').trim().slice(0, 60) : null
-      };
-    })()
-  `);
-  check(
-    "REMOVED OmniWare fence renders as inert escaped code, not a wireframe",
-    omni.container === false &&
-      omni.codeBlock === true &&
-      omni.boldInjected === false &&
-      omni.text.includes("<b>Brand</b>"),
-    JSON.stringify(omni),
-  );
+    await render("# Doc\n\n```unknown-test-language\n<b>literal code</b>\n```\n", mode);
+    const code = await exec(`
+      (() => {
+        const viewer = document.getElementById('viewer');
+        const code = viewer.querySelector('pre code');
+        return {
+          codeBlock: !!code,
+          boldInjected: !!viewer.querySelector('pre code b'),
+          text: code ? code.textContent : null
+        };
+      })()
+    `);
+    check(
+      `FEATURE unknown-language fences preserve escaped code (${mode})`,
+      code.codeBlock === true &&
+        code.boldInjected === false &&
+        code.text.includes("<b>literal code</b>"),
+      JSON.stringify(code),
+    );
+  }
 
   // @@@html still displays its content (sandboxed, but not blank).
   await render(
@@ -2431,15 +2334,11 @@ async function run(win) {
     "SEC-26 image alt payload is blocked on the light-format path too",
     (await render(altBreakoutPayload, "light-format")) === null,
     "light-format path executed the image alt payload",
-  );  check(
-    "SEC-26 legacy slider payload is blocked on the light-format path too",
-    (await render(sliderPayload, "light-format")) === null,
-    "light-format path executed the legacy slider payload",
   );
   check(
-    "SEC-26 removed-feature fence is blocked on the light-format path too",
-    (await render(omniwarePayload, "light-format")) === null,
-    "light-format path executed the removed-feature fence payload",
+    "SEC-26 unknown-language code does not execute HTML on the light-format path",
+    (await render(unknownFencePayload, "light-format")) === null,
+    "light-format path executed a code fence payload",
   );
 
   // ==========================================================================
@@ -3159,59 +3058,6 @@ async function run(win) {
     "[docm](./report.docm)", "", "[txt](./notes.txt)", "", "[svg](./diagram.svg)", "",
     "[md](./linked.md)", "", "[unc](//attacker.invalid/share/payload.txt)", "",
   ].join("\n"));
-
-  // Deferred N11 recovery still references this legacy string and s12Reset.
-  // Neither is used by the local actor. Their renderer-Node assumptions remain
-  // incompatible and unqualified; do not emulate their globals to hide that.
-  const S12_INSTALL = `
-    (() => {
-      const { shell, ipcRenderer } = require('electron');
-      const nodeFs = require('fs');
-      window.__s12 = { openPath: [], ipc: [], notes: [], confirms: [], exists: [] };
-      window.__s12ConfirmAnswer = false;
-      window.__s12Restore = {
-        openPath: shell.openPath,
-        send: ipcRenderer.send,
-        confirm: window.confirm,
-        notify: window.showNotification,
-        existsSync: nodeFs.existsSync,
-      };
-      shell.openPath = (p) => { window.__s12.openPath.push(String(p)); return Promise.resolve(''); };
-      ipcRenderer.send = function (channel, ...args) {
-        if (channel === 'open-file-path') { window.__s12.ipc.push(String(args[0])); return; }
-        return window.__s12Restore.send.call(ipcRenderer, channel, ...args);
-      };
-      // Recorded, then delegated - the handler still needs a truthful answer.
-      nodeFs.existsSync = function (p) {
-        window.__s12.exists.push(String(p));
-        return window.__s12Restore.existsSync.call(nodeFs, p);
-      };
-      window.showNotification = (m) => { window.__s12.notes.push(String(m)); };
-      window.confirm = (m) => {
-        window.__s12.confirms.push(String(m));
-        return window.__s12ConfirmAnswer === true;
-      };
-      window.currentFilePath = ${JSON.stringify(s12doc)};
-      return null;
-    })()
-  `;
-
-  // Wipe-safe on purpose. This used to dereference window.__s12 unconditionally
-  // and it is the FIRST thing n11Click() does, so when a click below replaced
-  // the top frame the reset threw before any recovery could run - and the throw
-  // aborted the whole suite from inside a helper whose name says "reset". A
-  // helper that cannot survive the condition its caller exists to detect turns
-  // a measurable finding into a harness crash.
-  const s12Reset = () =>
-    exec(`
-      (() => {
-        const s = window.__s12;
-        if (!s) return null;
-        s.openPath.length = 0; s.ipc.length = 0;
-        s.notes.length = 0; s.confirms.length = 0; s.exists.length = 0;
-        return null;
-      })()
-    `);
 
   {
     function securityLocalProjection(event, data, contents, frame) {
@@ -4169,34 +4015,18 @@ async function run(win) {
   // ever swallowed external URLs, the first observable symptom would be
   // fs.existsSync() being called on "http://probe.invalid/page".
   //
-  // The measurements and recovery obligation below are retained, not rerun or
-  // requalified by this source port. Ordinary input now crosses the unchanged
-  // isolated preload into actual Main. Bounded synchronous native realpath/stat
+  // Ordinary input crosses the unchanged isolated preload into actual Main.
+  // Bounded synchronous native realpath/stat
   // and exists/read observations replace the old renderer exists counter; they
   // do not claim to intercept every filesystem API. Shared histories, document
   // offers and real notification DOM replace the old renderer effect stubs.
-  // The separately pending recovery still receives the caller's Markdown string.
+  // Loss of the original page stops this actor; missing observations stay unknown.
   // ==========================================================================
   {
   fs.writeFileSync(path.join(s12dir, "https-notes.txt"), "placeholder");
   fs.writeFileSync(path.join(s12dir, "httpd.md"), "# httpd\n");
 
-  // Retained only for the separately pending lost-page continuation. Ordinary
-  // N11 uses the actual Main trap; it never installs renderer-Node substitutes.
-  const N11_TRAP = `
-    (() => {
-      const { shell } = require('electron');
-      window.__n11External = [];
-      window.__n11SavedExternal = shell.openExternal;
-      shell.openExternal = (u) => { window.__n11External.push(String(u)); return Promise.resolve(); };
-      return null;
-    })()
-  `;
-
-  // The document every carrier below is clicked in. Held in a const because
-  // n11Click() re-renders it after a context wipe; a second literal would be
-  // free to drift from this one and the recovery would silently start clicking
-  // a different document.
+  // Every carrier begins in an exact, genuinely admitted source document.
   const N11_DOC = [
     "# Totality",
     "",
@@ -4225,13 +4055,7 @@ async function run(win) {
     "",
   ].join("\n");
 
-  // The fixture currently in the viewer. The recovery inside n11Click() has to
-  // rebuild whatever the CALLER rendered, and this section renders three
-  // different documents; tracking it here rather than hard-coding N11_DOC in
-  // the recovery is what keeps the two in step when a fixture is added later.
-  let n11Fixture = N11_DOC;
   const n11Render = async (md) => {
-    n11Fixture = md;
     await n11NoLate();
     if (n11Owner) {
       await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
@@ -4298,7 +4122,7 @@ async function run(win) {
 
   // Reloads performed by the recovery below. Counted so the terminal
   // reconciliation can account for every event the listener saw.
-  let n11RecoveryLoads = 0;
+  const n11RecoveryLoads = 0;
 
   const n11Contents = win.webContents, n11Frame = n11Contents.mainFrame;
   const n11PageUrl = n11Contents.getURL();
@@ -4331,8 +4155,7 @@ async function run(win) {
   let n11Owner = null, n11SourcePath = null, n11FixtureBody = null, n11Heading = null;
   let n11SourcePaths = null;
   let n11Active = null, n11Sealed = null, n11PageInstalled = false;
-  let n11Installed = false, n11LegacyInstalled = false, n11LegacyCompleted = 0;
-  let n11LegacyRestoredLoads = -1;
+  let n11Installed = false;
   let n11Failure = null;
   let n11FSDrainDepth = 0, n11PageAttempted = false;
   const n11PageKey = require("node:crypto").randomUUID();
@@ -4584,63 +4407,10 @@ async function run(win) {
         isDeepStrictEqual(owner.descriptor, n11Owner.descriptor) &&
         n11ReadFile.call(fs, n11SourcePath, "utf8") === n11FixtureBody;
     } catch (error) {
-      // Lost-context reads must reach the existing recovery continuation, not
-      // throw before it. This does not qualify that pending continuation.
+      // The caller reports unreadable ownership as a failed boundary.
       n11ReadinessErrors.push(String(error.message || error));
       return false;
     }
-  }
-  async function n11ObserveLegacy(completed) {
-    if (!n11RecoveryLoads || n11RecoveryLoads === n11LegacyRestoredLoads) return;
-    const installed = await exec(`(() => {
-      const base = window.__s12Restore, saved = window.__n11SavedExternal;
-      if (!base && typeof saved === 'undefined') return false;
-      if (typeof require !== 'function') throw new Error('Installed legacy state has no owner');
-      if (window.__securityN11Legacy) return true;
-      const { shell, ipcRenderer } = require('electron'), nodeFs = require('fs');
-      window.__securityN11Legacy = {
-        base, saved, shell, ipcRenderer, nodeFs, local: window.__n11External,
-        external: shell.openExternal, path: shell.openPath, send: ipcRenderer.send,
-        exists: nodeFs.existsSync, confirm: window.confirm, notify: window.showNotification,
-      };
-      return true;
-    })()`);
-    n11LegacyInstalled ||= installed === true;
-    if (completed && installed === true) n11LegacyCompleted = n11RecoveryLoads;
-  }
-  async function n11RestoreLegacy() {
-    await n11ObserveLegacy(false);
-    if (!n11LegacyInstalled) return { installed: false, savedGone: true, localUntouched: true };
-    const restored = await exec(`(() => {
-      const o = window.__securityN11Legacy, errors = [];
-      if (!o || o.base !== window.__s12Restore || o.local !== window.__n11External ||
-          o.saved !== window.__n11SavedExternal) throw new Error('Legacy cleanup lost its installation');
-      const localBefore = o.local?.length;
-      const restore = (object, key, active, original) => {
-        try {
-          if (object[key] !== active || typeof original !== 'function') throw new Error('ownership');
-          object[key] = original;
-          if (object[key] !== original) throw new Error('identity');
-        } catch { errors.push(key); }
-      };
-      if (typeof o.saved !== 'undefined') restore(o.shell, 'openExternal', o.external, o.saved);
-      if (o.base) {
-        restore(o.shell, 'openPath', o.path, o.base.openPath);
-        restore(o.ipcRenderer, 'send', o.send, o.base.send);
-        restore(o.nodeFs, 'existsSync', o.exists, o.base.existsSync);
-        restore(window, 'confirm', o.confirm, o.base.confirm);
-        restore(window, 'showNotification', o.notify, o.base.notify);
-      }
-      if (errors.length) throw new Error('Legacy cleanup ownership failure: ' + errors.join(','));
-      delete window.__n11SavedExternal;
-      const result = { installed: true, savedGone: typeof window.__n11SavedExternal === 'undefined',
-        localUntouched: o.local?.length === localBefore };
-      delete window.__securityN11Legacy;
-      return result;
-    })()`);
-    n11LegacyRestoredLoads = n11RecoveryLoads;
-    n11LegacyInstalled = false;
-    return restored;
   }
   async function n11Install() {
     if (securityGestureRegistration.count !== 1 || typeof n11Registration.handler !== "function" ||
@@ -4667,8 +4437,7 @@ async function run(win) {
     const initial = await exec(`(() => {
       const toast = document.getElementById('notificationToast');
       const message = document.getElementById('notificationMessage');
-      if (window.__securityN11 || window.__s12 || window.__s12Restore ||
-          window.__n11External || typeof window.__n11SavedExternal !== 'undefined' ||
+      if (window.__securityN11 ||
           !Array.isArray(window.__e2eErrors) ||
           !toast || !message ||
           typeof window.MarkalooDialogs?.show !== 'function') throw new Error('N11 page setup is not empty');
@@ -4957,7 +4726,6 @@ async function run(win) {
   }
 
   async function n11LostResult(action, before, point, error) {
-    // Keep the existing caller guards reachable after an observed context loss.
     // Unknown page evidence is UNKNOWN, not synthetic empty effect arrays or a
     // successful cancellation. Main histories remain genuine and unsealed.
     const openPath = n11Slice(await visualUtils.readShellOpens(win), before.shell);
@@ -4977,95 +4745,15 @@ async function run(win) {
     };
   }
 
-  // RECOVERY, EXTRACTED FROM n11Click BECAUSE ITS COVERAGE WAS EXACTLY AS WIDE
-  // AS THE CALLS THAT WENT THROUGH THAT HELPER. The section also reads the DOM
-  // directly - the SVG shape premise, the empty-href probe, the blank-href
-  // probe and the teardown - and every one of those ran against a destroyed
-  // document whenever a preceding click had torn the page down. Measured: under
-  // R463 the SVG premise `exec` returned [] and broke a mustPass; under R465
-  // the same gap surfaced as "harness threw: Error: Script failed to execute".
-  // Neither is a product defect. The recovery simply was not reachable from the
-  // probe that needed it.
   const n11EnsureAlive = async (why) => {
-    // MEASURED, not anticipated: clicking the `caps` carrier with the external
-    // arm removed leaves the top frame at `about:blank#blocked` with
-    // performance navigation type "navigate". Chromium's URL parser rejects
-    // `HTTPS://api.example.invalid:PORT/v1`, so it commits its own blocked page
-    // rather than following the link - and that page REPLACES the app's
-    // document. Every stub, every observation array and every product global
-    // goes with it.
-    // Healthy ordinary entry means the current Main generation, its admitted
-    // source, the exact clean DOM owner and the live page/suite observations
-    // agree. Missing or destroyed context falls through to the held recovery;
-    // that continuation still needs its separate actual-Main qualification.
     const alive0 = await n11Healthy();
     if (alive0 === true) return;
-
-    // THE RELOAD IS THE RECOVERY, and its absence was a real defect rather
-    // than a missing nicety. The first draft of this branch polled for
-    // `renderMarkdown` to reappear - but nothing in this app or this suite
-    // ever navigates the main window back: main.js loads index.html exactly
-    // once at startup, and its did-fail-load handler (added with the F22
-    // shutdown protocol) only records that the renderer can no longer answer a
-    // close - it does not reload. Once Chromium commits
-    // `about:blank#blocked` in this webContents it STAYS there, so the poll
-    // could only ever time out. Measured consequence before the fix: R465
-    // reported COLLATERAL with "the renderer was destroyed by a link click
-    // and did not come back within 6s", and R463 lost its three trailing
-    // assertions because the SVG premise ran against the blocked page and
-    // returned []. Both read as harness crashes rather than as the finding.
-    await win.loadFile(path.join(__dirname, "..", "src", "index.html"));
-    n11RecoveryLoads += 1;
-
-    // Wait for the reloaded renderer to finish booting before reinstalling -
-    // renderMarkdown is what the render helper drives, and it is defined late.
-    // Polled rather than slept: a fixed sleep here is a bet on machine load,
-    // and this suite has lost that bet before.
-    let booted = false;
-    for (let i = 0; i < 120 && !booted; i++) {
-      booted = (await exec(`typeof window.renderMarkdown === 'function'`)) === true;
-      if (!booted) await sleep(50);
-    }
-    if (!booted) {
-      // THROWN, NOT check()ed, deliberately. An assertion that only exists when
-      // a revert is applied makes the suite's assertion COUNT depend on tree
-      // state, which breaks the name-set reconciliation this project relies on.
-      //
-      // The witness is detached HERE rather than in a finally around the whole
-      // section. This is the only live measured path that leaves the section
-      // early - every other statement between the attach and the removal is a
-      // check() or an exec whose failure aborts the process anyway - so a
-      // 500-line reindent would buy nothing except rotted revert anchors. What
-      // it does buy is real: the listener's lifetime never outlives the claims
-      // it supports, even on the path a revert actually takes.
-      win.webContents.removeListener("did-start-navigation", onN11Nav);
-      throw new Error(
-        "N11: the renderer was destroyed by a link click and did not come back within 6s" +
-          ` (${why})`,
-      );
-    }
-    // The shared trap re-arms itself from a did-finish-load listener, which
-    // is ASYNCHRONOUS to the loadFile above. Installing N11_TRAP first would
-    // be a race whose loser decides what teardown restores: if our stub lands
-    // before the rearm, the rearm overwrites it; if the rearm lands after our
-    // stub captured `shell.openExternal`, teardown reinstalls the REAL
-    // opener into a suite that is still firing hostile links at it. Waiting
-    // for the rearm makes the stub layer on top of the trap here exactly as
-    // it does on the non-recovery path.
-    await waitForExternalTrap(win);
-    // Reinstalled BEFORE the section stubs, in the same order the bootstrap
-    // established it, so a throw inside S12_INSTALL or N11_TRAP is still
-    // recorded by the sentinel rather than lost.
-    await exec(E2E_SENTINEL);
-    await exec(S12_INSTALL);
-    await exec(N11_TRAP);
-    // Restore what the CALLER last rendered, not the section's first
-    // document. The placeholder and whitespace assertions each render their
-    // own fixture, and re-rendering N11_DOC here would silently swap the
-    // fixture out from under them - the click would then look for an anchor
-    // that is no longer in the DOM and report `found: false`, which reads as
-    // "the link vanished" rather than "the recovery rebuilt the wrong page".
-    await render(n11Fixture, "full");
+    const report = { why, owner: n11Owner, sealed: n11Sealed,
+      readinessErrors: n11ReadinessErrors.slice(), oldPageHistories: "UNKNOWN",
+      main: { entries: n11Entries.length, sends: n11Sends.length,
+        work: n11Work.length, navigation: n11Navs.length, faults: n11Faults.slice() } };
+    throw new Error("N11 continuation refused: original page/owner observation was lost; " +
+      "no reload or substitute admission attempted. " + JSON.stringify(report));
   };
 
   const n11Click = async (text) => {
@@ -5084,7 +4772,6 @@ async function run(win) {
     n11Actions.push(action);
     let point = null;
     try {
-    await n11ObserveLegacy(true);
     await n11NoLate();
     point = await exec(`(async () => {
       const links = Array.from(document.querySelectorAll('#viewer a'))
@@ -5198,7 +4885,8 @@ async function run(win) {
       const report = await n11LostResult(action, before, point, error);
       check("N11 genuine trusted route has exact Main, lifecycle and terminal effects: " + text,
         false, JSON.stringify(report));
-      return report;
+      throw new Error("N11 lost its original page observations; later carriers were not run. " +
+        JSON.stringify(report), { cause: error });
     }
   };
 
@@ -5330,7 +5018,6 @@ async function run(win) {
   // immediately above destroys the document, leaving this probe to return []
   // against about:blank#blocked and break its own mustPass.
   await n11EnsureAlive("about to read the SVG shape premise");
-  await n11ObserveLegacy(true);
   const n11SvgShape = await exec(`
     (() => {
       return Array.from(document.querySelectorAll('#viewer svg a')).map((a) => ({
@@ -5426,7 +5113,6 @@ async function run(win) {
   // handler deliberately did nothing or was never reached at all, so without
   // reading the cancelled flag the assertion passed with the fix deleted.
   await n11EnsureAlive("about to render the placeholder fixture");
-  await n11ObserveLegacy(true);
   await n11Render("# Placeholder\n\n[empty]()\n");
   const n11Empty = await n11Click("empty");
   const n11EmptyNav = await exec(`
@@ -5488,7 +5174,6 @@ async function run(win) {
   // URL_BLANK for a bare trim() was withdrawn as vacuous rather than recorded
   // as proven: the property is real, but it is unobservable from the DOM.
   await n11EnsureAlive("about to render the whitespace fixture");
-  await n11ObserveLegacy(true);
   await n11Render(
     "# Whitespace\n\n" +
       '<a href="&#160;">nbsp</a>\n\n' +
@@ -5654,49 +5339,9 @@ async function run(win) {
     }),
   );
 
-  // Keep the witness armed through ordinary owner/page disposal too. Its
-  // immutable terminal comparison below cannot silently adopt a later event.
-  // The held recovery still reports its real reload count; its larger
-  // restore/admission composition is separately PENDING, not qualified here.
-
-  // THE TEARDOWN NEEDS A LIVE DOCUMENT, AND THAT WAS NOT GUARDED - but the
-  // stated reason below was WRONG, and the retraction is kept visible because
-  // this project treats a wrong record as worse than no record.
-  //
-  // WHAT THIS COMMENT ORIGINALLY CLAIMED: "R463 and R465 both leave the top
-  // frame at `about:blank#blocked` after the LAST carrier click, so the exec
-  // below ran against Chromium's blocked page, where neither `require` nor
-  // `window.__n11SavedExternal` exists, and threw."
-  //
-  // REFUTED BY MEASUREMENT. Under R463 the frame is destroyed by the `caps`
-  // carrier, which is the SECOND of four that navigate - the two SVG carriers
-  // follow it and both report `alive:true`, because n11Click calls
-  // n11EnsureAlive first and the recovery had already rebuilt the document. So
-  // `alive0` is true by the time this line runs, this guard returns
-  // immediately, and the restore exec below has always succeeded: its own
-  // assertion, `the local openExternal stub is fully removed and the shared
-  // trap answers again`, PASSES under R463. The abort was twenty lines further
-  // on, in SEC-13, on `window.__e2eErrors.length = 0` - a SUITE-level global
-  // the recovery reload destroyed and did not reinstall. See E2E_SENTINEL at
-  // the top of this file.
-  //
-  // THE GUARD STAYS ANYWAY, on the R202 precedent that an unreachable guard is
-  // still a contract: no carrier is currently last-and-fatal, but that is a
-  // property of which reverts exist today, not of the teardown.
-  //
-  // WHAT REMAINS TRUE, AND IS THE REASON ANY OF THIS MATTERED: aborting
-  // anywhere in this file means every later block simply never runs, so its
-  // assertions cannot fail - they cease to exist. That is exactly what the
-  // long-standing R463 anomaly was: `SEC-11 an <area href> is routed through
-  // the link policy, not Chromium` was reported as `missing=` and read as a
-  // wrong guard about <area> handling, when in fact the assertion had never
-  // been reached. An aborted suite is indistinguishable from a passing one for
-  // every assertion after the abort point. With the sentinel reinstalled the
-  // suite runs all 161 assertions under R463 and that <area> assertion fails
-  // on its own merits - measured, not predicted.
-  await n11EnsureAlive("about to restore the external opener");
-  await n11ObserveLegacy(true);
-  const legacyRestored = await n11RestoreLegacy();
+  // Keep the original page and cumulative witness through the positive trap
+  // probe and owner disposal. A replacement page cannot supply missing history.
+  await n11EnsureAlive("about to verify the shared Main trap");
   await n11NoLate();
   const probeBefore = n11Sealed;
   if (expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
@@ -5717,28 +5362,23 @@ async function run(win) {
   if (expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
     throw new Error("N11 shared trap authority changed during its restoration probe");
   }
-  const savedGone = await exec(`typeof window.__n11SavedExternal === 'undefined'`);
   const n11Restored = {
-    savedGone: savedGone === true && legacyRestored.savedGone === true,
     trapInstalled: trapReady && expectedSecurityQuestion === null && n11AuthorityIntact(),
     grew: probeExternal.length === 1,
     last: probeExternal.at(-1),
-    localUntouched: n11Entries.length === probeBefore.entries && legacyRestored.localUntouched === true,
-    legacyInstalled: legacyRestored.installed, completedRecoveryLoads: n11LegacyCompleted,
+    localUntouched: n11Entries.length === probeBefore.entries,
   };
   check(
-    "N11 the local openExternal stub is fully removed and the shared trap answers again",
-    n11Restored.savedGone === true &&
-      n11Restored.trapInstalled === true &&
+    "N11 the unchanged shared Main trap records a real positive probe",
+    n11Restored.trapInstalled === true &&
       n11Restored.grew === true &&
       n11Restored.last === "https://n11-restore-probe.invalid/" &&
-      // The probe must land in the shared history, never either actual local
-      // observer (including legacy state if the held continuation installed it).
+      // The probe must land in shared history, not private gesture observations.
       n11Restored.localUntouched === true,
     JSON.stringify(n11Restored),
   );
 
-  if (!n11Restored.savedGone || !n11Restored.trapInstalled || !n11Restored.grew ||
+  if (!n11Restored.trapInstalled || !n11Restored.grew ||
       n11Restored.last !== "https://n11-restore-probe.invalid/" || !n11Restored.localUntouched) {
     throw new Error("N11 shared-trap restoration probe failed");
   }
@@ -5771,9 +5411,9 @@ async function run(win) {
       catch (error) { restorationErrors.push(label + ": " + String(error.message || error)); }
     };
     let retiredPage = null, trapReady = false, finalOpens = null;
-    // Both resource families retain their independent cleanup. A partially or
-    // fully installed legacy continuation is not forgotten on an ordinary fault.
-    await restore("legacy installed resources", () => n11RestoreLegacy());
+    await restore("actual Main settlements", () => n11Wait(() =>
+      n11Actions.every(action => !action.entry || action.settled),
+    "captured Main actions settle before owned observations are released"));
     await restore("known ordinary source", async () => {
       if (!n11Owner) return;
       if (!await n11Healthy()) throw new Error("Cannot close an uncertain N11 source; fixtures retained");
@@ -5862,7 +5502,7 @@ async function run(win) {
       item.label + ": " + String(item.error.message || item.error));
     check("N11 final immutable accounting covers asynchronous owner/page disposal", accounted,
       JSON.stringify({ sealed: n11Sealed, finalCounts, faults: n11Faults,
-        recoveryLoads: n11RecoveryLoads, completedLegacyLoads: n11LegacyCompleted,
+        recoveryLoads: n11RecoveryLoads,
         readinessErrors: n11ReadinessErrors }));
     check("N11 owned Main observations restore exact identities and retain the shared trap",
       restored && restorationErrors.length === 0, JSON.stringify(restorationMessages));
@@ -5888,17 +5528,72 @@ async function run(win) {
   const htmlAttr = (s) =>
     s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  await render(
-    [
-      "# Notes chrome",
-      "",
-      `Here is <span class="noted-text" data-note-id="${htmlAttr(NOTE_PAYLOAD_ID)}" ` +
-        `data-note-color="${htmlAttr(NOTE_PAYLOAD_COLOR)}" ` +
-        `data-note-title="Title" data-note-content="Body">noted</span> text.`,
-      "",
-    ].join("\n"),
-    "full",
+  const SEC13_NOTE_DOCUMENT = [
+    "# Notes chrome",
+    "",
+    `Here is <span class="noted-text" data-note-id="${htmlAttr(NOTE_PAYLOAD_ID)}" ` +
+      `data-note-color="${htmlAttr(NOTE_PAYLOAD_COLOR)}" ` +
+      `data-note-title="Title" data-note-content="Body">noted</span> text.`,
+    "",
+  ].join("\n");
+  const sec13NoteFile = path.join(dir, "sec13-notes.md");
+  const sec13Contents = win.webContents;
+  const sec13Frame = sec13Contents.mainFrame;
+  const sec13Url = sec13Contents.getURL();
+  const sec13AuthorityIntact = () =>
+    win === observedMain && !win.isDestroyed() && win.webContents === sec13Contents &&
+    !sec13Contents.isDestroyed() && sec13Contents.mainFrame === sec13Frame &&
+    !sec13Frame.isDestroyed() && sec13Contents.getURL() === sec13Url &&
+    sec13Frame.url === sec13Url && securityDialogGuardsIntact() &&
+    expectedSecurityQuestion === null && chooserAllowance === null;
+  if (!sec13AuthorityIntact()) throw new Error("SEC-13 has no current guarded Main owner");
+  await exec(`(() => {
+    if (window.__securitySec13 || !Array.isArray(window.__e2eErrors)) {
+      throw new Error('SEC-13 requires the existing current-page sentinel');
+    }
+    window.__securitySec13 = Object.freeze({
+      errors: window.__e2eErrors, tabs: window.CustomTabs, folia: window.folia,
+      session: window.getReloadRequestSession()
+    });
+    window.__pwned = null;
+    window.__lastRenderError = null;
+    window.__e2eErrors.length = 0;
+    return true;
+  })()`);
+  const sec13NoteOwner = await admitSecurityImageFixture(
+    sec13NoteFile, SEC13_NOTE_DOCUMENT, "Notes chrome", [], [],
   );
+  const sec13Observe = async label => {
+    const owner = await readSecurityImageOwner(sec13NoteFile);
+    const observation = await exec(`(() => {
+      const p = window.__securitySec13;
+      if (!p || p.errors !== window.__e2eErrors || p.tabs !== window.CustomTabs ||
+          p.folia !== window.folia || p.session !== window.getReloadRequestSession()) {
+        throw new Error('SEC-13 observation lost its original page or sentinel');
+      }
+      return {pwned:window.__pwned,renderError:window.__lastRenderError,errors:p.errors.slice()};
+    })()`);
+    const current = sec13AuthorityIntact() &&
+      securityImageOwnerMatches(owner, sec13NoteFile, SEC13_NOTE_DOCUMENT, "Notes chrome") &&
+      owner.id === sec13NoteOwner.id && owner.pageSession === sec13NoteOwner.pageSession &&
+      owner.descriptor.ref === sec13NoteOwner.descriptor.ref &&
+      isDeepStrictEqual(owner.identity, sec13NoteOwner.identity);
+    const safe = observation.pwned === null && observation.renderError === null &&
+      observation.errors.length === 0;
+    check("SEC-13 retains its admitted note owner and cumulative observations: " + label,
+      current && safe, JSON.stringify({owner,observation}));
+    if (!current || !safe) throw new Error("SEC-13 note admission or observation failed: " + label);
+  };
+  // Admission renders first; never erase its evidence before the forced-full case.
+  await sleep(900);
+  await sec13Observe("native admission");
+  await exec(`(async () => {
+    try { await window.renderMarkdown(${JSON.stringify(SEC13_NOTE_DOCUMENT)}, "full"); }
+    catch (error) { window.__lastRenderError = String(error && error.message || error); }
+    return null;
+  })()`);
+  await sleep(900);
+  await sec13Observe("forced-full rendering");
 
   const attrsSurvived = await exec(`
     (() => {
@@ -5923,8 +5618,6 @@ async function run(win) {
 
   const panel = await exec(`
     (() => {
-      window.__pwned = null;
-      window.__e2eErrors.length = 0;
       updateNotesList();
       const list = document.getElementById('notesList');
       const idSpan = list.querySelector('.notes-item-id');
@@ -5965,7 +5658,6 @@ async function run(win) {
 
   const tip = await exec(`
     (() => {
-      window.__pwned = null;
       const el = document.querySelector('#viewer .noted-text');
       showNoteTooltip(el, true);
       const t = document.getElementById('noteTooltip');
@@ -5990,6 +5682,30 @@ async function run(win) {
     JSON.stringify(tip),
   );
   await exec(`closeNoteTooltip(); null`);
+  await sec13Observe("panel and tooltip checks");
+  await exec(`document.getElementById('noteTooltip').replaceChildren(); true`);
+  await closeSecurityImageFixture(
+    sec13NoteOwner, sec13NoteFile, SEC13_NOTE_DOCUMENT, "Notes chrome",
+  );
+  const sec13Retired = await exec(`(() => {
+    const p = window.__securitySec13;
+    if (!p || p.errors !== window.__e2eErrors || p.tabs !== window.CustomTabs ||
+        p.folia !== window.folia || p.session !== window.getReloadRequestSession()) {
+      throw new Error('SEC-13 cleanup lost its original page or sentinel');
+    }
+    updateNotesList();
+    updateShowNotesToggleVisibility();
+    const clean = window.__pwned === null && window.__lastRenderError === null &&
+      p.errors.length === 0 && !document.querySelector('#notesList .notes-item') &&
+      document.getElementById('noteTooltip').childElementCount === 0;
+    delete window.__securitySec13;
+    return clean;
+  })()`);
+  check("SEC-13 retires its note owner and stale chrome before later actors",
+    sec13AuthorityIntact() && sec13Retired);
+  if (!sec13AuthorityIntact() || !sec13Retired) {
+    throw new Error("SEC-13 note owner or chrome cleanup did not complete");
+  }
 
   // SEC-14: `<`, `>`, `"` and `&` are all legal in filenames on the Linux and
   // macOS release targets, and recent files are persisted, so a hostile name
@@ -6246,6 +5962,10 @@ async function run(win) {
     "full",
     900,
   );
+  const styledZoomFactor = win.webContents.getZoomFactor();
+  if (!Number.isFinite(styledZoomFactor) || styledZoomFactor <= 0) {
+    throw new Error("Styled-border probe has no valid Main-owned page zoom");
+  }
   const styledLook = await exec(`
     (() => {
       const ps = [...document.querySelectorAll('#viewer p')];
@@ -6262,17 +5982,12 @@ async function run(win) {
       //
       // THE SCALE IS DERIVED FROM THE PLATFORM, NOT GUESSED. Chromium's
       // window.devicePixelRatio is deviceScaleFactor x pageZoomFactor when
-      // zoom-for-DSF is on (the Windows default), and webFrame.getZoomFactor()
+      // zoom-for-DSF is on (the Windows default), and Main's getZoomFactor()
       // is the page zoom alone - so multiplying them together DOUBLE-COUNTS the
       // zoom on that configuration and is correct on the other. Rather than
       // assume which build this is, both compositions are enumerated and the
       // observation must match one of them EXACTLY.
-      let zoomFactor = null;
-      try {
-        zoomFactor = require('electron').webFrame.getZoomFactor();
-      } catch (error) {
-        zoomFactor = null;
-      }
+      const zoomFactor = ${JSON.stringify(styledZoomFactor)};
       const dpr = window.devicePixelRatio || 1;
       const candidates = [];
       if (Number.isFinite(dpr) && dpr > 0) candidates.push({ how: "devicePixelRatio", scale: dpr });
@@ -7128,54 +6843,385 @@ async function run(win) {
   // not an <a>. The renderer's click handler now matches it, so it obeys the
   // same external/local policy as every other link instead of falling through
   // to Chromium's default follow.
-  await render(
+  const sec11AreaBody =
     '# Nav\n\n<img src="x.png" usemap="#m" alt="m">\n' +
       '<map name="m"><area shape="rect" coords="0,0,20,20" ' +
-      'href="https://probe.invalid/area" alt="AreaProbe"></map>\n',
-    "full",
-    1000,
-  );
-  const areaState = await exec(`
-    (() => {
-      const a = document.querySelector('#viewer area');
-      return a ? { present: true, href: a.getAttribute('href') } : { present: false };
-    })()
-  `);
-  // Stub the external opener *inside the renderer* - test-render-security.js
-  // runs in the main process, and patching its own require('electron') would
-  // leave the renderer's copy untouched and the assertion vacuous.
-  await exec(`
-    window.__externalUrl = null;
-    window.__savedOpenExternal = require('electron').shell.openExternal;
-    require('electron').shell.openExternal = (u) => {
-      window.__externalUrl = u;
-      return Promise.resolve();
+      'href="https://probe.invalid/area" alt="AreaProbe"></map>\n';
+  const sec11AreaFile = path.join(dir, "sec11-image-map.md");
+  const sec11Contents = win.webContents, sec11Frame = sec11Contents.mainFrame;
+  const sec11PageUrl = sec11Contents.getURL();
+  const sec11Shutdown = require("../src/main.js").__shutdown;
+  const sec11Shell = require("electron").shell;
+  const sec11Openers = { external: sec11Shell.openExternal, path: sec11Shell.openPath };
+  const sec11Registration = {
+    handler: securityGestureRegistration.handler, installed: securityGestureRegistration.installed,
+  };
+  const sec11Send = sec11Contents.send;
+  const sec11Slots = {
+    observer: Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer"),
+    send: Object.getOwnPropertyDescriptor(sec11Contents, "send"),
+  };
+  const sec11ReadFile = fs.readFileSync;
+  const sec11RealPathHost = fs.realpathSync;
+  const sec11Key = require("node:crypto").randomUUID();
+  const sec11Entries = [], sec11Sends = [], sec11Navigation = [], sec11Faults = [], sec11Work = [];
+  let sec11Phase = "admission";
+  let sec11Owner = null, sec11Active = false, sec11Installed = false, sec11PageAttempted = false;
+  let areaState, urlBeforeArea, urlAfterArea, externalUrl, sec11Failure = null;
+  const sec11SamePage = () => win === observedMain && !win.isDestroyed() &&
+    win.webContents === sec11Contents && !sec11Contents.isDestroyed() &&
+    sec11Contents.mainFrame === sec11Frame && !sec11Frame.isDestroyed() &&
+    sec11Contents.getURL() === sec11PageUrl && sec11Frame.url === sec11PageUrl;
+  const sec11Observer = {
+    enter(event, data) {
+      const entry = {
+        kind: data?.kind, href: data?.href, ref: data?.documentRef,
+        owner: event.sender === sec11Contents && BrowserWindow.fromWebContents(event.sender) === win,
+        frame: event.senderFrame === sec11Frame, settled: false,
+      };
+      sec11Entries.push(entry);
+      if (!sec11Active || sec11Entries.length !== 1 || !entry.owner || !entry.frame ||
+          entry.kind !== "link" || entry.href !== "https://probe.invalid/area" ||
+          entry.ref !== sec11Owner?.descriptor.ref) sec11Faults.push("Unexpected actual Main area gesture");
+      return entry;
+    },
+    finish(entry, result, error) {
+      if (entry !== sec11Entries[0] || entry.settled) sec11Faults.push("Unexpected area settlement");
+      entry.result = result; entry.error = error ? String(error.message || error) : null;
+      entry.settled = true;
+    },
+  };
+  const sec11ObservedSend = function(channel, value) {
+    if (channel === "external-file-open-request" || channel === "show-error") {
+      sec11Sends.push({ channel, value });
+    }
+    return sec11Send.apply(this, arguments);
+  };
+  const sec11OnNavigation = (details, url, _inPlace, mainFrame) => {
+    const main = typeof details?.isMainFrame === "boolean" ? details.isMainFrame : mainFrame;
+    if (main) sec11Navigation.push({ url: details?.url || url, sameDoc: details?.isSameDocument });
+  };
+  const sec11FsSlots = [
+    [fs,"statSync","stat"], [fs,"existsSync","exists"],
+    [fs,"readFileSync","read"], [sec11RealPathHost,"native","realpath"],
+  ].map(([object,key,kind]) => {
+    const original = object[key], slot = Object.getOwnPropertyDescriptor(object,key);
+    if (typeof original !== "function" || !slot || !Object.hasOwn(slot,"value")) {
+      throw new Error("SEC-11 image-map filesystem observation has no data owner: " + kind);
+    }
+    const installed = function(...args) {
+      const file = String(args[0]);
+      const forbidden = /^(\\\\|\/\/)|:\/\/|(?:probe|api\.example|svg|xlink)\.invalid/i.test(file);
+      const record = sec11Active || forbidden ?
+        {kind,file,phase:sec11Phase,forbidden,terminal:false} : null;
+      if (record) sec11Work.push(record);
+      try {
+        if (forbidden) throw new Error("SEC-11 refuses recorded remote filesystem work");
+        const result = original.apply(this,args);
+        if (record) {
+          if (kind === "stat") Object.assign(record,{regular:result.isFile(),directory:result.isDirectory()});
+          else if (kind === "exists") record.exists = result;
+          else if (kind === "realpath") record.resolved = result;
+          else record.exactBody = typeof result === "string" ? result === sec11AreaBody :
+            Buffer.isBuffer(result) && result.equals(Buffer.from(sec11AreaBody,"utf8"));
+        }
+        return result;
+      } catch (error) {
+        if (record) record.error = String(error.message || error);
+        throw error;
+      } finally { if (record) record.terminal = true; }
     };
-    null;
-  `);
-  const urlBeforeArea = win.webContents.getURL();
-  // A synthetic .click() is a faithful stand-in for a real pointer HERE, and
-  // that was MEASURED rather than assumed - the question "does this assertion
-  // validate real image-map input, or only a hand-dispatched event?" is exactly
-  // the shape that has produced vacuous passes elsewhere in this project.
-  // Probed with a trusted CDP Input.dispatchMouseEvent at a point proven by
-  // elementFromPoint to be topmost-AREA, with a plain <a> as a positive control:
-  // the delivered event had target=AREA and isTrusted=true, closest('a, area')
-  // found the AREA, shell.openExternal received https://probe.invalid/area and
-  // the top frame did not move - i.e. byte-identical routing to the line below.
-  // Chromium hit-tests the <area>, not the <img>; the app's image pop-out
-  // overlay (button.img-zoom-btn) occludes only the centre band of the image,
-  // which is why the aim point matters and why the first probe run measured the
-  // overlay and reported a convincing false negative.
-  await exec(`document.querySelector('#viewer area').click(); null`);
-  await sleep(700);
-  const urlAfterArea = win.webContents.getURL();
-  const externalUrl = await exec(`window.__externalUrl`);
-  await exec(`
-    require('electron').shell.openExternal = window.__savedOpenExternal;
-    delete window.__savedOpenExternal;
-    null;
-  `);
+    return {object,key,kind,original,slot,installed};
+  });
+  // The external route has no FS work; only closing its known fixture may read it.
+  const sec11RetirementWork = record => record.phase === "retirement" &&
+    record.terminal && !record.forbidden && !record.error &&
+    [sec11AreaFile,sec11Owner.descriptor.readTarget].includes(record.file) &&
+    (record.kind === "read" && record.exactBody === true ||
+     record.kind === "exists" && record.exists === true ||
+     record.kind === "stat" && record.regular === true && record.directory === false ||
+     record.kind === "realpath" && record.resolved === sec11Owner.descriptor.readTarget);
+  const sec11Authority = () => sec11SamePage() && securityDialogGuardsIntact() &&
+    expectedSecurityQuestion === null && chooserAllowance === null &&
+    securityGestureRegistration.count === 1 &&
+    securityGestureRegistration.handler === sec11Registration.handler &&
+    securityGestureRegistration.installed === sec11Registration.installed &&
+    securityGestureRegistration.observer === (sec11Installed ? sec11Observer : null) &&
+    sec11Contents.send === (sec11Installed ? sec11ObservedSend : sec11Send) &&
+    Object.getOwnPropertyDescriptor(fs,"realpathSync")?.value === sec11RealPathHost &&
+    sec11FsSlots.every(item => Object.getOwnPropertyDescriptor(item.object,item.key)?.value ===
+      (sec11Installed ? item.installed : item.original)) &&
+    sec11Shell.openExternal === sec11Openers.external && sec11Shell.openPath === sec11Openers.path;
+  if (!sec11Authority() || typeof sec11Registration.handler !== "function" ||
+      typeof sec11Registration.installed !== "function" ||
+      Object.values(sec11Slots).some(slot => slot && !Object.hasOwn(slot, "value")) ||
+      !await waitForExternalTrap(win)) {
+    throw new Error("SEC-11 image-map requires current Main authority and the shared recording trap");
+  }
+  const sec11BeforeExternal = await visualUtils.readExternalOpens(win);
+  const sec11BeforeShell = await visualUtils.readShellOpens(win);
+  const sec11Read = async () => {
+    if (!sec11Authority()) throw new Error("SEC-11 image-map lost its current Main authority");
+    const before = sec11Shutdown.state();
+    const generation = await exec("window.folia.getQuitApprovalGeneration()");
+    const owner = await readSecurityImageOwner(sec11AreaFile);
+    const page = await exec(`(() => {
+      const p = window.__securityArea;
+      if (!p || p.owner !== ${JSON.stringify(sec11Key)} || p.errors !== window.__e2eErrors ||
+          p.tabs !== window.CustomTabs || p.folia !== window.folia ||
+          p.session !== window.getReloadRequestSession() ||
+          p.toast !== document.getElementById('notificationToast') ||
+          p.message !== document.getElementById('notificationMessage') ||
+          window.MarkalooDialogs !== p.observedDialogs || window.confirm !== p.observedConfirm) {
+        throw new Error('SEC-11 image-map lost its live page observations');
+      }
+      return { clicks:p.clicks.map(c => ({ selected:c.selected,href:c.href,
+        trusted:c.event.isTrusted,prevented:c.event.defaultPrevented })),
+        errors:p.errors.slice(),notices:p.notices.slice(),dialogs:p.dialogCalls.slice(),
+        confirms:p.confirms.slice(),opened:p.opened,notifications:p.notifications.slice(),
+        renderError:window.__lastRenderError,pwned:window.__pwned };
+    })()`);
+    const after = sec11Shutdown.state();
+    const current = sec11Authority() && before.renderer === "ready" && after.renderer === "ready" &&
+      before.rendererGeneration === after.rendererGeneration && generation === after.rendererGeneration &&
+      generation === sec11Owner.identity.rendererGeneration &&
+      after.rendererPageSession === sec11Owner.pageSession &&
+      sec11Shutdown.documentAdmissionIsCurrent(sec11Owner.descriptor.ref) === true &&
+      securityImageOwnerMatches(owner, sec11AreaFile, sec11AreaBody, "Nav") &&
+      owner.id === sec11Owner.id && isDeepStrictEqual(owner.identity, sec11Owner.identity) &&
+      isDeepStrictEqual(owner.descriptor, sec11Owner.descriptor) &&
+      sec11ReadFile.call(fs,sec11AreaFile,"utf8") === sec11AreaBody;
+    const quiet = page.errors.length === 0 && page.notices.length === 0 && page.dialogs.length === 0 &&
+      page.confirms.length === 0 && page.notifications.length === 0 && !page.opened &&
+      page.renderError === null && page.pwned === null;
+    if (!current || !quiet) throw new Error("SEC-11 image-map owner/observations changed: " +
+      JSON.stringify({ owner, page, before, after }));
+    return page;
+  };
+  try {
+    sec11Installed = true;
+    securityGestureRegistration.observer = sec11Observer;
+    sec11Contents.send = sec11ObservedSend;
+    for (const item of sec11FsSlots) item.object[item.key] = item.installed;
+    sec11Contents.on("did-start-navigation", sec11OnNavigation);
+    sec11PageAttempted = true;
+    await exec(`(() => {
+      if (window.__securityArea || !Array.isArray(window.__e2eErrors) ||
+          window.__e2eErrors.length || document.querySelector('#appMessageDialog[open]')) {
+        throw new Error('SEC-11 image-map observation starts in an unexpected state');
+      }
+      const p = window.__securityArea = {
+        owner:${JSON.stringify(sec11Key)},errors:window.__e2eErrors,tabs:window.CustomTabs,
+        folia:window.folia,session:window.getReloadRequestSession(),clicks:[],notices:[],
+        dialogCalls:[],confirms:[],notifications:[],opened:false,target:null,
+        dialogs:window.MarkalooDialogs,confirm:window.confirm,
+        toast:document.getElementById('notificationToast'),
+        message:document.getElementById('notificationMessage')
+      };
+      if (!p.toast || !p.message || typeof p.dialogs?.show !== 'function') {
+        throw new Error('SEC-11 image-map has no current observation targets');
+      }
+      p.capture = event => {
+        const area = event.target?.closest?.('#viewer area');
+        if (area) p.clicks.push({event,selected:area===p.target,href:area.getAttribute('href')});
+      };
+      window.addEventListener('click', p.capture, true);
+      p.unsubscribe = window.folia.onError(message => p.notices.push(String(message)));
+      if (typeof p.unsubscribe !== 'function') throw new Error('SEC-11 error subscription has no cleanup');
+      p.observedDialogs = Object.freeze({...p.dialogs,show(...args) {
+        p.dialogCalls.push(String(args[0]?.title || 'untitled')); return p.dialogs.show(...args);
+      }});
+      p.observedConfirm = message => {
+        p.confirms.push(String(message)); throw new Error('Unexpected image-map confirmation');
+      };
+      window.MarkalooDialogs = p.observedDialogs; window.confirm = p.observedConfirm;
+      p.observer = new MutationObserver(records => {
+        if (document.querySelector('#appMessageDialog[open]') ||
+            records.some(r => r.target.id === 'appMessageDialog' &&
+              r.attributeName === 'open' && r.oldValue !== null)) p.opened = true;
+        const changed = records.some(r => (r.type === 'childList' || r.type === 'characterData') &&
+          (r.target === p.message || p.message.contains(r.target)));
+        const showing = records.filter(r => r.target === p.toast && r.attributeName === 'class')
+          .map(r => (r.oldValue || '').split(/\\s+/).includes('show'));
+        showing.push(p.toast.classList.contains('show'));
+        if (changed || showing.some((shown,i) => !shown && showing[i+1])) {
+          p.notifications.push(p.message.textContent);
+        }
+      });
+      p.observer.observe(document.body, {subtree:true,childList:true,characterData:true,
+        attributes:true,attributeFilter:['open','class'],attributeOldValue:true});
+      return true;
+    })()`);
+    sec11Owner = await admitSecurityImageFixture(sec11AreaFile, sec11AreaBody, "Nav", ["m"], []);
+    // Keep the original forced-full case and settle, without clearing admission observations.
+    await exec(`window.renderMarkdown(${JSON.stringify(sec11AreaBody)}, "full")`);
+    await sleep(1000);
+    areaState = await exec(`(() => {
+      const a = document.querySelector('#viewer area');
+      return a ? {present:true,href:a.getAttribute('href')} : {present:false};
+    })()`);
+    const sec11Point = await exec(`(async () => {
+      const p = window.__securityArea, areas = document.querySelectorAll('#viewer area');
+      const images = document.querySelectorAll('#viewer img[usemap="#m"]');
+      if (areas.length !== 1 || images.length !== 1 ||
+          areas[0].getAttribute('href') !== 'https://probe.invalid/area' ||
+          areas[0].getAttribute('shape') !== 'rect' || areas[0].getAttribute('coords') !== '0,0,20,20' ||
+          areas[0].getAttribute('alt') !== 'AreaProbe' || areas[0].closest('map')?.name !== 'm' ||
+          images[0].getAttribute('alt') !== 'm') throw new Error('SEC-11 original image-map carrier changed');
+      const a = areas[0], image = images[0];
+      image.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const r = image.getBoundingClientRect(), points = [];
+      for (const fx of [0.5,0.2,0.8]) for (const fy of [0.5,0.2,0.8]) {
+        points.push({x:Math.round(r.left+Math.min(r.width,20)*fx),
+          y:Math.round(r.top+Math.min(r.height,20)*fy)});
+      }
+      const point = points.find(p => document.elementFromPoint(p.x,p.y) === a);
+      if (!point) throw new Error('SEC-11 original AREA has no verified visible pointer hit');
+      p.target = a;
+      return {...point,hit:document.elementFromPoint(point.x,point.y)===a,
+        href:a.getAttribute('href'),width:r.width,height:r.height};
+    })()`);
+    check("SETUP SEC-11 original AREA is the actual visible native-input target",
+      sec11Point.hit && sec11Point.width > 0 && sec11Point.height > 0 &&
+        sec11Point.href === "https://probe.invalid/area", JSON.stringify(sec11Point));
+    const sec11Initial = await sec11Read();
+    const sec11BeforeInputExternal = await visualUtils.readExternalOpens(win);
+    const sec11BeforeInputShell = await visualUtils.readShellOpens(win);
+    if (!sec11Point.hit || sec11Initial.clicks.length || sec11Entries.length ||
+        sec11Sends.length || sec11Navigation.length || sec11Faults.length || sec11Work.length ||
+        !isDeepStrictEqual(sec11BeforeInputExternal,sec11BeforeExternal) ||
+        !isDeepStrictEqual(sec11BeforeInputShell,sec11BeforeShell)) {
+      throw new Error("SEC-11 image-map received effects before its native input");
+    }
+    urlBeforeArea = sec11Contents.getURL();
+    sec11Phase = "route";
+    sec11Active = true;
+    sec11Contents.sendInputEvent({type:"mouseDown",x:sec11Point.x,y:sec11Point.y,button:"left",clickCount:1});
+    sec11Contents.sendInputEvent({type:"mouseUp",x:sec11Point.x,y:sec11Point.y,button:"left",clickCount:1});
+    await sleep(700);
+    await exec("window.folia.getVersion()");
+    const sec11Page = await sec11Read();
+    const sec11External = await visualUtils.readExternalOpens(win);
+    const sec11ShellPaths = await visualUtils.readShellOpens(win);
+    const sec11Delta = sec11External.slice(sec11BeforeExternal.length);
+    externalUrl = sec11Delta.length === 1 ? sec11Delta[0] : null;
+    urlAfterArea = sec11Contents.getURL();
+    const sec11Entry = sec11Entries[0], sec11Click = sec11Page.clicks[0];
+    const sec11Routed = sec11Entries.length === 1 && sec11Entry.owner && sec11Entry.frame &&
+      sec11Entry.kind === "link" && sec11Entry.href === "https://probe.invalid/area" &&
+      sec11Entry.ref === sec11Owner.descriptor.ref && sec11Entry.settled &&
+      sec11Entry.result === true && sec11Entry.error === null &&
+      sec11Page.clicks.length === 1 && sec11Click.selected && sec11Click.trusted &&
+      sec11Click.prevented && sec11Click.href === "https://probe.invalid/area" &&
+      isDeepStrictEqual(sec11External.slice(0,sec11BeforeExternal.length),sec11BeforeExternal) &&
+      isDeepStrictEqual(sec11ShellPaths,sec11BeforeShell) &&
+      externalUrl === "https://probe.invalid/area" && sec11Sends.length === 0 &&
+      sec11Navigation.length === 0 && sec11Faults.length === 0 && sec11Work.length === 0 &&
+      await waitForExternalTrap(win);
+    check("SEC-11 trusted AREA input has exact Main, owner and recorded shell effects",
+      sec11Routed, JSON.stringify({sec11Entry,sec11Click,sec11External,sec11ShellPaths,
+        sends:sec11Sends,navigation:sec11Navigation,faults:sec11Faults,work:sec11Work}));
+    if (!sec11Routed) throw new Error("SEC-11 image-map refuses unvalidated route evidence");
+    sec11Phase = "retirement";
+    await closeSecurityImageFixture(sec11Owner,sec11AreaFile,sec11AreaBody,"Nav");
+    await exec("window.folia.getVersion()");
+    if (sec11Shutdown.documentAdmissionIsCurrent(sec11Owner.descriptor.ref) !== false ||
+        !sec11Authority()) throw new Error("SEC-11 image-map Main admission did not actually retire");
+    const sec11FinalExternal = await visualUtils.readExternalOpens(win);
+    const sec11FinalShell = await visualUtils.readShellOpens(win);
+    if (!isDeepStrictEqual(sec11FinalExternal,sec11External) ||
+        !isDeepStrictEqual(sec11FinalShell,sec11ShellPaths) || sec11Entries.length !== 1 ||
+        sec11Sends.length || sec11Navigation.length || sec11Faults.length ||
+        !sec11Work.every(sec11RetirementWork)) {
+      throw new Error("SEC-11 image-map received late or unattributed effects during retirement");
+    }
+  } catch (error) {
+    sec11Failure = error;
+  } finally {
+    sec11Phase = "disposal";
+    const errors = [];
+    if (sec11PageAttempted) {
+      try {
+        if (!sec11SamePage()) throw new Error("Original image-map page is unavailable");
+        await exec(`(() => {
+          const p = window.__securityArea;
+          if (!p) return true;
+          if (p.owner !== ${JSON.stringify(sec11Key)}) throw new Error('Image-map cleanup has no observation owner');
+          const releaseErrors = [];
+          const release = (label,action) => {
+            try { action(); } catch (error) { releaseErrors.push(label+': '+String(error.message||error)); }
+          };
+          release('subscription',() => { if (typeof p.unsubscribe === 'function') p.unsubscribe(); });
+          release('click',() => window.removeEventListener('click',p.capture,true));
+          release('mutations',() => p.observer?.disconnect());
+          release('dialogs',() => {
+            if (!p.observedDialogs) return;
+            if (window.MarkalooDialogs !== p.observedDialogs) throw new Error('Observation changed');
+            window.MarkalooDialogs = p.dialogs;
+          });
+          release('confirmation',() => {
+            if (!p.observedConfirm) return;
+            if (window.confirm !== p.observedConfirm) throw new Error('Observation changed');
+            window.confirm = p.confirm;
+          });
+          const quiet = p.errors === window.__e2eErrors && p.errors.length === 0 &&
+            p.tabs === window.CustomTabs && p.folia === window.folia &&
+            p.session === window.getReloadRequestSession() &&
+            p.toast === document.getElementById('notificationToast') &&
+            p.message === document.getElementById('notificationMessage') &&
+            p.notices.length === 0 && p.dialogCalls.length === 0 && p.confirms.length === 0 &&
+            p.notifications.length === 0 && !p.opened &&
+            window.__lastRenderError === null && window.__pwned === null &&
+            p.clicks.length === 1 && p.clicks[0].selected &&
+            p.clicks[0].event.isTrusted && p.clicks[0].event.defaultPrevented;
+          if (!quiet || releaseErrors.length) throw new Error('Image-map cleanup retains failed observations: '+
+            JSON.stringify({releaseErrors,errors:p.errors,notices:p.notices,dialogs:p.dialogCalls,
+              confirms:p.confirms,notifications:p.notifications,opened:p.opened,clicks:p.clicks.length}));
+          delete window.__securityArea;
+          return true;
+        })()`);
+      } catch (error) { errors.push("page: " + String(error.message || error)); }
+    }
+    try { sec11Contents.removeListener("did-start-navigation",sec11OnNavigation); }
+    catch (error) { errors.push("navigation: " + String(error.message || error)); }
+    if (!sec11Failure) {
+      try {
+        const external = await visualUtils.readExternalOpens(win);
+        const shell = await visualUtils.readShellOpens(win);
+        if (!isDeepStrictEqual(external,[...sec11BeforeExternal,"https://probe.invalid/area"]) ||
+            !isDeepStrictEqual(shell,sec11BeforeShell) || sec11Entries.length !== 1 ||
+            sec11Sends.length || sec11Navigation.length || sec11Faults.length ||
+            !sec11Work.every(sec11RetirementWork) ||
+            sec11Shutdown.documentAdmissionIsCurrent(sec11Owner.descriptor.ref) !== false) {
+          throw new Error("Unaccounted effects during image-map observation disposal");
+        }
+      } catch (error) { errors.push("terminal effects: " + String(error.message || error)); }
+    }
+    if (sec11Installed) {
+      for (const [object,key,installed,slot] of [
+        [sec11Contents,"send",sec11ObservedSend,sec11Slots.send],
+        [securityGestureRegistration,"observer",sec11Observer,sec11Slots.observer],
+        ...sec11FsSlots.map(item => [item.object,item.key,item.installed,item.slot]),
+      ]) {
+        try {
+          if (Object.getOwnPropertyDescriptor(object,key)?.value !== installed) {
+            throw new Error("Observation lost ownership");
+          }
+          if (slot) Object.defineProperty(object,key,slot); else delete object[key];
+          if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(object,key),slot)) {
+            throw new Error("Original observation descriptor was not restored");
+          }
+        } catch (error) { errors.push(key + ": " + String(error.message || error)); }
+      }
+      sec11Installed = false;
+    }
+    sec11Active = false;
+    if (!sec11Authority() || !await waitForExternalTrap(win)) errors.push("Main authority/shared trap");
+    if (errors.length) throw new Error("SEC-11 image-map observation cleanup failed: " +
+      errors.join("; ") + (sec11Failure ? "\nOriginal failure: " + String(sec11Failure.stack || sec11Failure) : ""));
+  }
+  if (sec11Failure) throw sec11Failure;
   check(
     "SEC-11 an <area href> is routed through the link policy, not Chromium",
     areaState.present === true &&
@@ -7282,57 +7328,6 @@ async function run(win) {
     "SEC-09 an outbound fetch to an unlisted host is refused by connect-src",
     (await waitForCsp("probe.invalid", "connect-src")) === true,
     JSON.stringify(await exec(`window.__csp`)),
-  );
-
-  // SEC-09 is now resolved by REMOVAL rather than by relocation. The feature
-  // that sent the reader's document to translate.googleapis.com is gone, so
-  // the property to defend is no longer "the renderer cannot reach it while
-  // the main process can" but "nothing in this app reaches it at all".
-  //
-  // Two independent oracles, because either alone is weak: the renderer's CSP
-  // (a live refusal, but blind to the main process, which has no CSP), and the
-  // shipped main-process source (blind to runtime, but the only place an
-  // outbound request could now be built).
-  await exec(`
-    fetch('https://translate.googleapis.com/translate_a/single?client=gtx')
-      .then(() => {}, () => {});
-    null;
-  `);
-  check(
-    "SEC-09 the former translation endpoint is refused (connect-src 'none')",
-    (await waitForCsp("translate.googleapis.com", "connect-src")) === true,
-    JSON.stringify(await exec(`window.__csp`)),
-  );
-
-  // The IPC route must be gone, not merely unused: while the handler exists,
-  // any script in the Node-privileged renderer can invoke it and exfiltrate
-  // document text through the main process, where connect-src does not apply.
-  const gone = await exec(`
-    require('electron').ipcRenderer.invoke('translate-text',
-      { text: 'hello', targetLang: 'fr' })
-      .then(() => 'resolved', (e) => String(e && e.message))
-  `);
-  const mainSrc = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
-  // Deliberately matches the host in code, not the word "translation": the
-  // comment recording this removal names the endpoint in prose, and an oracle
-  // that its own documentation can break is not an oracle. A live reference
-  // would be inside a string literal or a template.
-  //
-  // KNOWN SCOPE, so nobody over-trusts it: this half is a change-detector, not
-  // a network policy. It matches an unbroken URL inside one literal, so a
-  // concatenated ("https://translate." + "googleapis.com"), base64-decoded, or
-  // externally-configured endpoint would slip past it, and it reads only
-  // main.js. The half that actually defends the property is the runtime probe
-  // above - a route that answers is a route that can exfiltrate, however its
-  // URL was spelled. The two are ANDed so the assertion is as strong as the
-  // stronger of them.
-  const liveEndpoint = /["'`]https?:\/\/[^"'`]*translate\.googleapis\.com/.test(
-    mainSrc,
-  );
-  check(
-    "SEC-09 the translate-text IPC route and its endpoint are removed from main.js",
-    /No handler registered/.test(gone) && liveEndpoint === false,
-    JSON.stringify({ gone, liveEndpoint }),
   );
 
   // <base> rewrites the resolution of every relative URL already in the
@@ -7481,35 +7476,272 @@ async function run(win) {
     JSON.stringify({ errs, errsAfter }),
   );
 
-  // ── Drag-and-drop file open ────────────────────────────────────────────
-  // Ported from upstream ef81474. It reuses the open-file-path IPC that
-  // markdown links already use (section 12), so it grants nothing new - the
-  // renderer runs with nodeIntegration and could read any file itself. What is
-  // new is the ease of pointing it at something that is not a document:
-  // openFile() applies no extension or size check, so without a guard here a
-  // dropped video is read into memory as UTF-8 and rendered.
+  // Drag overlays use DOM events. File admission must use a real browser drop.
   {
+    const contents = win.webContents, frame = contents.mainFrame;
+    const pageUrl = contents.getURL(), shutdown = require("../src/main.js").__shutdown;
+    const generation = shutdown.state().rendererGeneration;
+    const dropPageKey = require("node:crypto").randomUUID();
+    const fixtureNames = ["notes.md", "a.markdown", "a.mdown", "a.mkd",
+      "a.mkdn", "a.mmd", "a.mermaid", "upper.MD", "dirty.md", "other.md",
+      "payload.exe", "holiday.mp4", "Makefile", "notes.md.exe", "a$'$&x.exe"];
+    const fixtures = new Map(fixtureNames.map(name => {
+      const filePath = path.join(dir, "drop-" + name), heading = "Security drop " + name;
+      const body = (/\.m(?:md|ermaid)$/i.test(name)
+        ? "```mermaid\ngraph TD\n  A[Drop] --> B[Ready]\n```\n\n" : "") +
+        "# " + heading + "\n\nExact dropped document: " + name + "\n";
+      fs.writeFileSync(filePath, body);
+      return [name, { filePath, heading, body }];
+    }));
+    const fixturePaths = new Set([...fixtures.values()].map(item => item.filePath));
+    const entries = [], sends = [], reads = [], faults = [];
+    let active = null, ownsDebugger = false, dragPending = false, failure = null;
+    let pageAttempted = false;
+    const originalSend = contents.send, originalOpen = fs.promises.open;
+    const empty = await readSecurityImageOwner(null);
+    if (empty.tabs.length || empty.id !== null || empty.current !== null ||
+        empty.descriptor !== null || empty.identity !== null ||
+        empty.pending.pending || empty.pending.count ||
+        securityGestureRegistration.observer !== null) {
+      throw new Error("Drop actor requires an empty admitted owner and its own Main observation slot");
+    }
+    const samePage = () => win === observedMain && !win.isDestroyed() &&
+      !contents.isDestroyed() && win.webContents === contents &&
+      contents.mainFrame === frame && !frame.isDestroyed() &&
+      contents.getURL() === pageUrl && frame.url === pageUrl &&
+      shutdown.state().renderer === "ready" &&
+      shutdown.state().rendererGeneration === generation && securityDialogGuardsIntact();
+    const observer = {
+      enter(event, data) {
+        const record = { filePath: data?.filePath, kind: data?.kind,
+          sender: event.sender === contents, frame: event.senderFrame === frame,
+          url: event.senderFrame?.url, action: active };
+        entries.push(record);
+        if (!samePage() || !active?.pending || data?.kind !== "drop" ||
+            data.filePath !== active.fixture.filePath || !record.sender ||
+            !record.frame || record.url !== pageUrl) {
+          faults.push("Unexpected, stale or unattributed Main drop entry");
+        }
+        return record;
+      },
+      finish(record, result, error) {
+        if (!record?.action || record.action !== active || !active.pending ||
+            active.settled) {
+          faults.push("Main drop settlement lost its action");
+          return;
+        }
+        active.result = result;
+        active.error = error ? String(error.message || error) : null;
+        active.settled = true;
+      },
+    };
+    const observedSend = function(channel, value) {
+      if (["external-file-open-request", "file-opened", "show-error"].includes(channel)) {
+        sends.push({ channel, value, action: active });
+        if (!active?.pending) faults.push("Unattributed late Main drop delivery");
+      }
+      return originalSend.apply(this, arguments);
+    };
+    const observedOpen = function(filePath) {
+      if (fixturePaths.has(String(filePath))) {
+        reads.push({ filePath: String(filePath), action: active });
+        if (!active?.pending) faults.push("Unattributed dropped-file read");
+      }
+      return originalOpen.apply(this, arguments);
+    };
+    const dropSlots = [
+      [contents, "send", observedSend, originalSend],
+      [fs.promises, "open", observedOpen, originalOpen],
+      [securityGestureRegistration, "observer", observer, null],
+    ].map(([object, key, installed, original]) => ({
+      object, key, installed, original, descriptor: Object.getOwnPropertyDescriptor(object, key),
+    }));
+    async function dropWait(predicate, label) {
+      const deadline = Date.now() + 12000;
+      for (;;) {
+        if (!samePage() || faults.length || contents.send !== observedSend ||
+            fs.promises.open !== observedOpen ||
+            securityGestureRegistration.observer !== observer) {
+          throw new Error("Drop authority failed during " + label + ": " + faults.join("; "));
+        }
+        const result = await predicate();
+        if (result) return result;
+        if (Date.now() >= deadline) throw new Error("Drop actor timed out: " + label);
+        await sleep(40);
+      }
+    }
+    const pageState = () => exec(`(() => {
+      const p = window.__securityDrop;
+      if (!p || p.ownerKey !== ${JSON.stringify(dropPageKey)} ||
+          p.listener !== window.__securityDropListener ||
+          p.fireDrag !== window.__fireDrag) {
+        throw new Error('Drop page observation lost ownership');
+      }
+      const dialog = document.querySelector('#appMessageDialog[open]');
+      return {
+        events: p.events.map(item => ({ trusted: item.event.isTrusted,
+          prevented: item.event.defaultPrevented, count: item.count, name: item.name })),
+        overlay: document.body.classList.contains('drop-active'),
+        notification: { text: document.getElementById('notificationMessage')?.textContent,
+          visible: !!document.getElementById('notificationToast')?.classList.contains('show') },
+        dialog: dialog ? { text: dialog.textContent,
+          choices: Array.from(dialog.querySelectorAll('[data-dialog-choice]'),
+            button => button.dataset.dialogChoice) } : null,
+      };
+    })()`);
+    async function disposeDropPage() {
+      if (!samePage()) throw new Error("Original drop page was lost; page disposal is unconfirmed");
+      await exec(`(() => {
+        const p = window.__securityDrop;
+        if (!p || p.ownerKey !== ${JSON.stringify(dropPageKey)} ||
+            p.listener !== window.__securityDropListener ||
+            p.fireDrag !== window.__fireDrag) throw new Error('Drop disposal lost its owned probe');
+        window.removeEventListener('drop', p.listener);
+        window.__fireDrag('dragend', []);
+        delete window.__fireDrag; delete window.__securityDropListener; delete window.__securityDrop;
+        return true;
+      })()`);
+    }
+    async function dropBarrier() {
+      await exec(`new Promise(resolve => requestAnimationFrame(() =>
+        requestAnimationFrame(() => resolve(true))))`);
+      await exec("window.folia.getVersion()");
+    }
+    function securityDropIngressMatches(action, event) {
+      const own = entries.slice(action.start.entries);
+      return own.length === 1 && own[0].action === action && own[0].kind === "drop" &&
+        own[0].sender && own[0].frame && own[0].url === pageUrl &&
+        own[0].filePath === action.fixture.filePath &&
+        action.settled === true && action.error === null &&
+        event?.trusted === true && event.prevented === true && event.count === 1 &&
+        event.name === path.basename(action.fixture.filePath);
+    }
+    function dropDocumentMatches(owner, fixture, count) {
+      return owner.tabs.length === count && owner.tabs.some(tab =>
+        tab.id === owner.id && tab.path === fixture.filePath) &&
+        owner.path === fixture.filePath && owner.current === fixture.filePath &&
+        owner.content === fixture.body && owner.original === fixture.body &&
+        owner.live === fixture.body && owner.descriptor?.logicalPath === fixture.filePath &&
+        owner.descriptor.documentUrl === pathToFileURL(fixture.filePath).href &&
+        /^[a-f0-9]{64}$/.test(owner.descriptor.ref) &&
+        owner.identity?.tabId === owner.id &&
+        owner.identity.documentRef === owner.descriptor.ref &&
+        owner.identity.rendererGeneration === generation &&
+        owner.identity.pageSession === owner.pageSession &&
+        owner.state?.maintained === true && owner.state.dirty === false &&
+        owner.state.liveWitnessMatchesContent === true && owner.markedDirty === false &&
+        !owner.pending.pending && owner.pending.count === 0 &&
+        owner.heading === fixture.heading && owner.loading === false && !owner.welcome;
+    }
+    async function dispatchDrop(fixture, choice = null) {
+      if (active) throw new Error("Drop actions must not overlap");
+      const before = await pageState();
+      const action = { fixture, pending: true, settled: false,
+        start: { entries: entries.length, sends: sends.length, reads: reads.length,
+          events: before.events.length } };
+      active = action;
+      const point = await exec(`(() => {
+        const viewer = document.getElementById('viewer'), r = viewer.getBoundingClientRect();
+        const x = Math.round(r.left + Math.min(r.width / 2, 80));
+        const y = Math.round(r.top + Math.min(r.height / 2, 80));
+        if (r.width <= 0 || r.height <= 0 || !viewer.contains(document.elementFromPoint(x, y))) {
+          throw new Error('Drop target has no verified visible viewport point');
+        }
+        return { x, y };
+      })()`);
+      const data = { items: [], files: [fixture.filePath], dragOperationsMask: 1 };
+      dragPending = true;
+      for (const type of ["dragEnter", "dragOver", "drop"]) {
+        await dropWait(() => true, "browser dispatch ownership");
+        await contents.debugger.sendCommand("Input.dispatchDragEvent", { type, ...point, data });
+      }
+      dragPending = false;
+      await dropWait(async () => (await pageState()).events.length > action.start.events &&
+        action.settled, "trusted browser delivery and actual Main settlement");
+      if (choice) {
+        const dialog = await dropWait(async () => (await pageState()).dialog,
+          "the actual unsaved-document dialog");
+        if (!dialog.text.includes(path.basename(fixture.filePath)) ||
+            !isDeepStrictEqual(dialog.choices, ["cancel", "proceed"])) {
+          throw new Error("Drop consent is not the expected exact document question");
+        }
+        const button = await exec(`(() => {
+          const button = document.querySelector(
+            '#appMessageDialog[open] [data-dialog-choice="${choice}"]');
+          const r = button?.getBoundingClientRect();
+          if (!r || r.width <= 0 || r.height <= 0) throw new Error('Drop consent has no visible choice');
+          const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+          if (!button.contains(document.elementFromPoint(x, y))) throw new Error('Drop consent choice is obscured');
+          return { x, y };
+        })()`);
+        contents.sendInputEvent({ type: "mouseDown", ...button, button: "left", clickCount: 1 });
+        contents.sendInputEvent({ type: "mouseUp", ...button, button: "left", clickCount: 1 });
+        await dropWait(async () => !(await pageState()).dialog, "actual document choice completion");
+      }
+      return action;
+    }
+    async function finishDrop(action, accepted) {
+      await dropBarrier();
+      const page = await pageState(), events = page.events.slice(action.start.events);
+      const ownSends = sends.slice(action.start.sends), ownReads = reads.slice(action.start.reads);
+      const offers = ownSends.filter(item => item.channel === "external-file-open-request");
+      const opens = ownSends.filter(item => item.channel === "file-opened");
+      const errors = ownSends.filter(item => item.channel === "show-error");
+      const ingress = events.length === 1 && securityDropIngressMatches(action, events[0]);
+      const attributed = ownSends.every(item => item.action === action) &&
+        ownReads.every(item => item.action === action && item.filePath === action.fixture.filePath);
+      check("drop has exact trusted browser, sender/frame, path and terminal Main evidence: " +
+        path.basename(action.fixture.filePath), ingress && attributed && !page.overlay &&
+          !page.dialog && faults.length === 0, JSON.stringify({
+          events, result: action.result, error: action.error, attributed, faults }));
+      if (!ingress || !attributed || page.overlay || page.dialog || faults.length) {
+        throw new Error("Drop ingress/effect ownership was not established");
+      }
+      const result = { page, offers, opens, errors, reads: ownReads, accepted };
+      action.pending = false;
+      active = null;
+      return result;
+    }
+    function requireDroppedAdmissionRetired(owner) {
+      if (shutdown.documentAdmissionIsCurrent(owner.descriptor.ref) !== false) {
+        throw new Error("Dropped owner admission did not actually retire");
+      }
+    }
+    async function admitDroppedFixture(fixture) {
+      const action = await dispatchDrop(fixture);
+      let owner;
+      await dropWait(async () => {
+        owner = await readSecurityImageOwner(fixture.filePath);
+        return dropDocumentMatches(owner, fixture, 1);
+      }, "exact admitted dropped document and current DOM");
+      const effects = await finishDrop(action, true);
+      const accepted = action.result === true && effects.offers.length === 1 &&
+        effects.offers[0].value.filePath === fixture.filePath && effects.opens.length === 1 &&
+        effects.opens[0].value.path === fixture.filePath &&
+        effects.opens[0].value.content === fixture.body && effects.errors.length === 0 &&
+        effects.reads.length > 0 && fs.readFileSync(fixture.filePath, "utf8") === fixture.body &&
+        shutdown.documentAdmissionIsCurrent(owner.descriptor.ref) === true;
+      check("a supported extension reaches exact Main admission and clean document DOM: " +
+        path.basename(fixture.filePath), accepted, JSON.stringify({ accepted, owner }));
+      if (!accepted) throw new Error("Accepted drop lacks actual read/admission evidence");
+      return owner;
+    }
+    try {
+    securityGestureRegistration.observer = observer;
+    contents.send = observedSend;
+    fs.promises.open = observedOpen;
+    pageAttempted = true;
     await exec(`
       (() => {
-        const { ipcRenderer, webUtils } = require('electron');
-        window.__drop = { ipc: [], notes: [] };
-        window.__dropRestore = {
-          send: ipcRenderer.send,
-          notify: window.showNotification,
-          getPath: webUtils.getPathForFile,
+        if (Object.hasOwn(window, '__securityDrop') || Object.hasOwn(window, '__fireDrag') ||
+            Object.hasOwn(window, '__securityDropListener')) throw new Error('Drop probe already exists');
+        const p = window.__securityDrop = { ownerKey: ${JSON.stringify(dropPageKey)}, events: [] };
+        p.listener = window.__securityDropListener = event => {
+          p.events.push({ event, count: event.dataTransfer?.files?.length,
+            name: event.dataTransfer?.files?.[0]?.name });
         };
-        window.__dropConfirm = true;
-        ipcRenderer.send = function (channel, ...args) {
-          if (channel === 'open-file-path') { window.__drop.ipc.push(String(args[0])); return; }
-          return window.__dropRestore.send.call(ipcRenderer, channel, ...args);
-        };
-        window.showNotification = (m) => { window.__drop.notes.push(String(m)); };
-        window.confirm = () => window.__dropConfirm === true;
-        // A synthetic File never came from a real drag, so the real resolver
-        // returns an empty string. Stubbing it is what makes the ACCEPT path
-        // observable at all; the reject path is decided before it is reached.
-        webUtils.getPathForFile = (f) => 'C:\\\\dropped\\\\' + f.name;
-        window.__fireDrag = (type, names) => {
+        window.addEventListener('drop', p.listener);
+        p.fireDrag = window.__fireDrag = (type, names) => {
           const dt = new DataTransfer();
           (names || []).forEach((n) => dt.items.add(new File(['# hi'], n)));
           const ev = new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true });
@@ -7520,7 +7752,7 @@ async function run(win) {
       })()
     `);
 
-    const dropReset = () => exec(`(() => { window.__drop.ipc.length = 0; window.__drop.notes.length = 0; document.body.classList.remove('drop-active'); return null; })()`);
+    const dropReset = () => exec(`(() => { window.__fireDrag('dragend', []); return null; })()`);
 
     // The overlay, and where its text comes from.
     const enter = await exec(`(() => {
@@ -7569,115 +7801,25 @@ async function run(win) {
     );
 
     await dropReset();
-    const accepted = await exec(`(() => {
-      window.__fireDrag('drop', ['notes.md']);
-      return { ipc: window.__drop.ipc.slice(), notes: window.__drop.notes.slice(),
-               overlay: document.body.classList.contains('drop-active') };
-    })()`);
+    await exec(`window.__fireDrag('drop', ['notes.md']); null`);
+    await dropBarrier();
+    const synthetic = await pageState();
     check(
-      "dropping a markdown file asks the main process to open exactly that path",
-      accepted.ipc.length === 1 && /notes\.md$/.test(accepted.ipc[0]),
-      JSON.stringify(accepted),
+      "a synthetic DOM drop cannot manufacture Main file admission",
+      synthetic.events.length === 1 && synthetic.events[0].trusted === false &&
+        entries.length === 0 && sends.length === 0 && reads.length === 0 &&
+        (await readSecurityImageOwner(null)).tabs.length === 0,
+      JSON.stringify(synthetic),
     );
-    check(
-      "dropping a file clears the overlay",
-      accepted.overlay === false,
-      JSON.stringify(accepted),
-    );
-
-    // The guard. Each of these would otherwise be read whole into a string and
-    // handed to the markdown renderer.
-    for (const [label, name] of [
-      ["an executable", "payload.exe"],
-      ["a video", "holiday.mp4"],
-      ["a file with no extension at all", "Makefile"],
-      ["something merely markdown-ish", "notes.md.exe"],
-    ]) {
-      await dropReset();
-      const rejected = await exec(`(() => {
-        window.__fireDrag('drop', [${JSON.stringify(name)}]);
-        return { ipc: window.__drop.ipc.slice(), notes: window.__drop.notes.slice() };
-      })()`);
-      check(
-        `dropping ${label} is refused rather than opened`,
-        rejected.ipc.length === 0,
-        JSON.stringify(rejected),
-      );
-      check(
-        `dropping ${label} tells the reader why`,
-        rejected.notes.length === 1 && rejected.notes[0].includes(name),
-        JSON.stringify(rejected),
-      );
-    }
-
-    // A file name is not a safe replacement string. `String.prototype.replace`
-    // expands `$&`, "$`", `$'` and `$$` found in the REPLACEMENT, so a file the
-    // reader did not name themselves can garble its own error message.
-    await dropReset();
-    const dollarName = "a$'$&x.exe";
-    const dollar = await exec(`(() => {
-      window.__fireDrag('drop', [${JSON.stringify(dollarName)}]);
-      return { ipc: window.__drop.ipc.slice(), notes: window.__drop.notes.slice() };
-    })()`);
-    check(
-      "a rejected file name is reported literally, not as a replacement pattern",
-      dollar.ipc.length === 0 &&
-        dollar.notes.length === 1 &&
-        dollar.notes[0].includes(dollarName),
-      JSON.stringify(dollar),
-    );
-
-    // Synthetic dispatch bypasses the browser's default-action gate, so no
-    // amount of drop testing proves a REAL drop is ever delivered. Only
-    // dragover being cancelled does: uncancelled, the window navigates to the
-    // dropped file instead of opening it.
     await dropReset();
     const overCancelled = await exec(`(() => {
       const ev = window.__fireDrag('dragover', ['a.md']);
       return { cancelable: ev.cancelable, prevented: ev.defaultPrevented };
     })()`);
     check(
-      "a drag over the window is cancelled, so a real drop is delivered to us",
+      "a DOM dragover is cancelable and cancelled by the current overlay handler",
       overCancelled.cancelable === true && overCancelled.prevented === true,
       JSON.stringify(overCancelled),
-    );
-
-    // Every extension the Open File dialog offers must also be droppable, or
-    // the two routes into the same function disagree about what a document is.
-    await dropReset();
-    const allAccepted = await exec(`(() => {
-      ['a.md','a.markdown','a.mdown','a.mkd','a.mkdn','a.mmd','a.mermaid','A.MD'].forEach(n => window.__fireDrag('drop', [n]));
-      return window.__drop.ipc.length;
-    })()`);
-    check(
-      "every extension the Open File dialog accepts can also be dropped, case-insensitively",
-      allAccepted === 8,
-      `${allAccepted} of 8 accepted`,
-    );
-
-    // Unsaved work must not be discarded by a hand movement.
-    await dropReset();
-    const guarded = await exec(`(() => {
-      const wasEdit = isEditMode, wasDirty = hasUnsavedChanges;
-      isEditMode = true; hasUnsavedChanges = true;
-      window.__dropConfirm = false;
-      window.__fireDrag('drop', ['other.md']);
-      const declined = window.__drop.ipc.length;
-      window.__dropConfirm = true;
-      window.__fireDrag('drop', ['other.md']);
-      const accepted = window.__drop.ipc.length;
-      isEditMode = wasEdit; hasUnsavedChanges = wasDirty;
-      return { declined, accepted };
-    })()`);
-    check(
-      "dropping a file onto unsaved work does nothing if the reader says no",
-      guarded.declined === 0,
-      JSON.stringify(guarded),
-    );
-    check(
-      "dropping a file onto unsaved work proceeds once the reader agrees",
-      guarded.accepted === 1,
-      JSON.stringify(guarded),
     );
 
     // A drag that leaves the window entirely can fire no drop and, on some
@@ -7695,16 +7837,161 @@ async function run(win) {
       JSON.stringify(stranded),
     );
 
-    await exec(`
-      (() => {
-        const { ipcRenderer, webUtils } = require('electron');
-        ipcRenderer.send = window.__dropRestore.send;
-        window.showNotification = window.__dropRestore.notify;
-        webUtils.getPathForFile = window.__dropRestore.getPath;
-        document.body.classList.remove('drop-active');
-        return true;
-      })()
-    `);
+    if (contents.debugger.isAttached()) throw new Error("Drop actor refuses an unowned debugger");
+    contents.debugger.attach("1.3");
+    ownsDebugger = true;
+    for (const name of fixtureNames.slice(0, 8)) {
+      const fixture = fixtures.get(name), owner = await admitDroppedFixture(fixture);
+      if (name === "notes.md") {
+        for (const rejectedName of fixtureNames.slice(10)) {
+          const rejected = fixtures.get(rejectedName);
+          const denied = await dispatchDrop(rejected);
+          const expected = "Dropped file type is not supported: " + path.basename(rejected.filePath);
+          await dropWait(async () => {
+            const state = await pageState();
+            return state.notification.visible && state.notification.text === expected;
+          }, "exact visible Main refusal notification");
+          const refusal = await finishDrop(denied, false);
+          const after = await readSecurityImageOwner(fixture.filePath);
+          const unchanged = isDeepStrictEqual(after, owner);
+          const refused = denied.result === false && refusal.offers.length === 0 &&
+            refusal.opens.length === 0 && refusal.reads.length === 0 &&
+            refusal.errors.length === 1 && refusal.errors[0].value === expected &&
+            !shutdown.documentSessionState().history.some(item => item.filePath === rejected.filePath) &&
+            unchanged;
+          check("unsupported drop is refused before read/admission and reports its literal filename: " +
+            rejectedName, refused, JSON.stringify({ refused, unchanged, message: refusal.page.notification }));
+          if (!refused) throw new Error("Unsupported drop changed ownership or escaped refusal accounting");
+        }
+      }
+      await closeSecurityImageFixture(owner, fixture.filePath, fixture.body, fixture.heading);
+      requireDroppedAdmissionRetired(owner);
+    }
+
+    const dirty = fixtures.get("dirty.md"), other = fixtures.get("other.md");
+    const dirtyOwner = await admitDroppedFixture(dirty);
+    await exec("changeCurrentDocumentEditor(true)");
+    await exec(`(() => {
+      const editor = document.getElementById('markdownEditor');
+      editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length);
+      return true;
+    })()`);
+    await contents.insertText("\nUNSAVED DROP WORK\n");
+    const dirtyText = dirty.body + "\nUNSAVED DROP WORK\n";
+    await dropWait(() => exec(`isEditMode && hasUnsavedChanges &&
+      document.getElementById('markdownEditor').value === ${JSON.stringify(dirtyText)} &&
+      window.CustomTabs.__documentState(window.CustomTabs.getActiveTab()).dirty === true`),
+    "real unsaved editor work");
+    const beforeCancel = await readSecurityImageOwner(dirty.filePath);
+    const declined = await dispatchDrop(other, "cancel");
+    const cancellation = await finishDrop(declined, false);
+    const afterCancel = await readSecurityImageOwner(dirty.filePath);
+    const canceled = declined.result === true && cancellation.offers.length === 1 &&
+      cancellation.offers[0].value.filePath === other.filePath &&
+      cancellation.opens.length === 0 && cancellation.reads.length === 0 &&
+      cancellation.errors.length === 0 && isDeepStrictEqual(afterCancel, beforeCancel) &&
+      await exec(`document.getElementById('markdownEditor').value === ${JSON.stringify(dirtyText)}`);
+    check("canceling the actual unsaved-work dialog preserves source and refuses target admission",
+      canceled, JSON.stringify({ canceled, beforeCancel, afterCancel }));
+    if (!canceled) throw new Error("Canceled drop lost work or admitted its target");
+    const proceeded = await dispatchDrop(other, "proceed");
+    let target;
+    await dropWait(async () => {
+      target = await readSecurityImageOwner(other.filePath);
+      return dropDocumentMatches(target, other, 2) &&
+        target.tabs.some(tab => tab.id === dirtyOwner.id && tab.path === dirty.filePath);
+    }, "approved exact target admission with the known source tab");
+    const approval = await finishDrop(proceeded, true);
+    const approved = proceeded.result === true && approval.offers.length === 1 &&
+      approval.opens.length === 1 && approval.opens[0].value.path === other.filePath &&
+      approval.opens[0].value.content === other.body && approval.reads.length > 0 &&
+      approval.errors.length === 0 && fs.readFileSync(dirty.filePath, "utf8") === dirty.body &&
+      fs.readFileSync(other.filePath, "utf8") === other.body;
+    check("agreeing to the actual unsaved-work dialog admits the exact dropped target",
+      approved, JSON.stringify({ approved, target }));
+    if (!approved) throw new Error("Approved drop has no exact target evidence");
+    await exec(`(() => {
+      const state = window.__securityDrop;
+      state.closed = false; state.closeError = null;
+      Promise.resolve(window.CustomTabs.closeTab(${target.id})).then(
+        () => { state.closed = true; },
+        error => { state.closeError = String(error); });
+      return true;
+    })()`);
+    await dropWait(async () => {
+      const state = await pageState();
+      const closed = await exec("({ done: window.__securityDrop.closed, error: window.__securityDrop.closeError })");
+      if (state.dialog || closed.error) throw new Error("Known clean drop-target retirement requested consent or failed");
+      return closed.done;
+    }, "known clean drop target retirement");
+    await dropBarrier();
+    requireDroppedAdmissionRetired(target);
+    const sourceBeforeUndo = await readSecurityImageOwner(dirty.filePath);
+    if (sourceBeforeUndo.id !== dirtyOwner.id ||
+        sourceBeforeUndo.descriptor?.ref !== dirtyOwner.descriptor.ref ||
+        sourceBeforeUndo.tabs.length !== 1 || sourceBeforeUndo.state?.dirty !== true ||
+        !await exec(`isEditMode && document.getElementById('markdownEditor').value ===
+          ${JSON.stringify(dirtyText)}`)) {
+      throw new Error("Drop target retirement did not restore the exact dirty source for Undo");
+    }
+    await exec("historyUndo(); null");
+    let restored;
+    await dropWait(async () => {
+      restored = await readSecurityImageOwner(dirty.filePath);
+      return dropDocumentMatches(restored, dirty, 1) &&
+        restored.id === dirtyOwner.id && restored.descriptor.ref === dirtyOwner.descriptor.ref;
+    }, "real Undo restores the original admitted source");
+    await closeSecurityImageFixture(restored, dirty.filePath, dirty.body, dirty.heading);
+    await dropBarrier();
+    requireDroppedAdmissionRetired(restored);
+    check("drop actors retire their exact owners without saving or leaving a dialog",
+      (await readSecurityImageOwner(null)).tabs.length === 0 &&
+        !active && !dragPending && !(await pageState()).dialog && faults.length === 0);
+    } catch (error) {
+      failure = error;
+      throw error;
+    } finally {
+      const cleanup = [];
+      if (active && !active.settled) {
+        const deadline = Date.now() + 12000;
+        while (!active.settled && Date.now() < deadline) await sleep(40);
+        if (!active.settled) cleanup.push(new Error("Main drop action settlement is unconfirmed"));
+      }
+      if (active) {
+        // Gesture settlement precedes renderer admission; finishDrop seals the lifecycle.
+        active.pending = false;
+        cleanup.push(new Error("Drop lifecycle completion is unconfirmed"));
+      }
+      if (ownsDebugger && dragPending && !contents.isDestroyed()) {
+        try { await contents.debugger.sendCommand("Input.cancelDragging"); }
+        catch (error) { cleanup.push(error); }
+      }
+      try {
+        if (pageAttempted) {
+          await disposeDropPage();
+        }
+      } catch (error) { cleanup.push(error); }
+      if (faults.length) cleanup.push(new Error("Drop terminal accounting: " + faults.join("; ")));
+      for (const { object, key, installed, original, descriptor } of dropSlots) {
+        try {
+          if (object[key] !== installed) throw new Error("Drop disposal lost ownership of " + key);
+          if (descriptor) Object.defineProperty(object, key, descriptor);
+          else delete object[key];
+          if (object[key] !== original ||
+              !isDeepStrictEqual(Object.getOwnPropertyDescriptor(object, key), descriptor)) {
+            throw new Error("Drop disposal did not restore the exact descriptor of " + key);
+          }
+        } catch (error) { cleanup.push(error); }
+      }
+      if (ownsDebugger) {
+        try { contents.debugger.detach(); }
+        catch (error) { cleanup.push(error); }
+      }
+      check("drop observation resources have confirmed owned disposal",
+        cleanup.length === 0, JSON.stringify(cleanup.map(error => String(error))));
+      if (cleanup.length) throw new AggregateError(
+        [...(failure ? [failure] : []), ...cleanup], "Drop cleanup is unconfirmed; fixtures remain retained");
+    }
   }
 
   // __e2eErrors only sees what window.onerror sees. The sentinel additionally
