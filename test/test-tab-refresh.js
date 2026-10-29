@@ -36755,13 +36755,154 @@ async function runShutdownGenerationScenarios(win, exec) {
   }
 }
 
+function createInstalledUpdaterFixture(exec, updater, artifactPath) {
+  const semver = require("semver");
+  const packagedDescriptor = Object.getOwnPropertyDescriptor(app, "isPackaged");
+  const helperDescriptor = Object.getOwnPropertyDescriptor(updater, "downloadedUpdateHelper");
+  let candidate = null;
+  let heldDownload = null;
+  let checkCalls = 0;
+  let downloadCalls = 0;
+  const checkProvider = async () => {
+    if (!candidate) throw new Error("Updater fixture has no checked candidate");
+    checkCalls += 1;
+    updater.emit("update-available", { version: candidate });
+    return { updateInfo: { version: candidate } };
+  };
+  const downloadProvider = () => {
+    if (!candidate) throw new Error("Updater fixture has no download candidate");
+    downloadCalls += 1;
+    Object.defineProperty(updater, "downloadedUpdateHelper", {
+      value: {
+        file: artifactPath,
+        versionInfo: { version: candidate },
+        downloadedFileInfo: { isAdminRightsRequired: false },
+      },
+      writable: true, configurable: true,
+    });
+    updater.emit("update-downloaded", { version: candidate, downloadedFile: artifactPath });
+    return heldDownload ? heldDownload.promise : Promise.resolve([artifactPath]);
+  };
+  let restoreCheck;
+  let restoreDownload;
+  try {
+    restoreCheck = replaceMethod(updater, "checkForUpdates", checkProvider);
+    restoreDownload = replaceMethod(updater, "downloadUpdate", downloadProvider);
+    Object.defineProperty(app, "isPackaged", { value: true, configurable: true });
+  } catch (error) {
+    const failures = [error];
+    for (const restore of [restoreDownload, restoreCheck]) {
+      if (!restore) continue;
+      try { restore(); } catch (cleanupError) { failures.push(cleanupError); }
+    }
+    throw new AggregateError(failures, "Updater fixture installation failed");
+  }
+  const packagedBorrow = Object.getOwnPropertyDescriptor(app, "isPackaged");
+  const read = () => exec("window.folia.getUpdateState()");
+  return {
+    read,
+    async prepare({ holdDownload = false } = {}) {
+      const before = await read();
+      if (before.manualOnly === true) {
+        throw new Error("Automatic-install fixtures are unavailable for manual-only updates");
+      }
+      if (!before.canCheck || heldDownload) {
+        throw new Error("Updater fixture cannot begin a distinct settled candidate: " + JSON.stringify(before));
+      }
+      const versions = [before.installedVersion, before.availableVersion].filter(value => value !== null);
+      if (!versions.every(value => typeof value === "string" && semver.valid(value))) {
+        throw new Error("Updater fixture received invalid current versions: " + JSON.stringify(before));
+      }
+      const maximum = versions.reduce((left, right) => semver.gt(left, right) ? left : right);
+      candidate = semver.inc(maximum, "patch");
+      if (!candidate || !versions.every(value => semver.gt(candidate, value))) {
+        throw new Error("Updater fixture could not derive a strictly newer candidate");
+      }
+      const checksBefore = checkCalls;
+      await exec("window.folia.checkForUpdates()");
+      if (!await waitUntil(async () => {
+        const state = await read();
+        return checkCalls === checksBefore + 1 && state.availableVersion === candidate &&
+          state.lastCheck === "available" && state.canCheck === true;
+      }, 8000)) throw new Error("Updater fixture did not receive its matching checked offer");
+      const downloadsBefore = downloadCalls;
+      if (holdDownload) {
+        let resolve;
+        let reject;
+        const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+        heldDownload = { promise, resolve, reject };
+      }
+      await exec("window.folia.downloadUpdate()");
+      if (!await waitUntil(async () => {
+        const state = await read();
+        return downloadCalls === downloadsBefore + 1 &&
+          state.availableVersion === candidate &&
+          (holdDownload ? state.status === "finalizing" && state.canInstall === false :
+            state.readyVersion === candidate && state.canInstall === true);
+      }, 8000)) throw new Error("Updater fixture did not enter its matching download boundary");
+      if (!holdDownload) return { candidate, state: await read() };
+      const held = heldDownload;
+      return {
+        candidate, state: await read(),
+        reject(error) {
+          if (heldDownload !== held) throw new Error("Held updater download ownership changed");
+          heldDownload = null;
+          held.reject(error);
+        },
+      };
+    },
+    restore() {
+      const failures = [];
+      if (heldDownload) {
+        heldDownload.reject(new Error("Updater fixture cleanup rejected its outstanding download"));
+        heldDownload = null;
+        failures.push(new Error("Updater fixture retained an unfinished download"));
+      }
+      for (const [label, name, expected, restore] of [
+        ["check provider", "checkForUpdates", checkProvider, restoreCheck],
+        ["download provider", "downloadUpdate", downloadProvider, restoreDownload],
+      ]) {
+        try {
+          if (updater[name] !== expected) throw new Error(label + " ownership changed");
+          restore();
+        } catch (error) { failures.push(error); }
+      }
+      try {
+        if (helperDescriptor) Object.defineProperty(updater, "downloadedUpdateHelper", helperDescriptor);
+        else delete updater.downloadedUpdateHelper;
+      } catch (error) { failures.push(error); }
+      try {
+        if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(app, "isPackaged"), packagedBorrow)) {
+          throw new Error("Updater fixture packaged-check ownership changed");
+        }
+        if (packagedDescriptor) Object.defineProperty(app, "isPackaged", packagedDescriptor);
+        else delete app.isPackaged;
+      } catch (error) { failures.push(error); }
+      if (failures.length) throw new AggregateError(failures, "Updater fixture cleanup failed");
+    },
+  };
+}
+
 async function runInstalledUpdateCommitScenarios(win, exec) {
+  const updateMode = await exec("window.folia.getUpdateState()");
+  if (actualHostPlatform === "darwin") {
+    const manualOnly = updateMode.manualOnly === true &&
+      updateMode.canDownload === false && updateMode.canInstall === false;
+    check("macOS installed updates expose the manual-only boundary, not an automatic-install matrix",
+      manualOnly, JSON.stringify(updateMode));
+    if (!manualOnly) throw new Error("macOS updater lost its manual-only boundary");
+    return;
+  }
+  if (updateMode.manualOnly !== false) {
+    throw new Error("Automatic installed-update scenarios have no supported platform mode");
+  }
   const baseUpdaterBranchBorrow = createBaseUpdaterBranchBorrow();
   const updater = require("electron-updater").autoUpdater;
   const wc = win.webContents;
   const indexFile = path.join(__dirname, "..", "src", "index.html");
   const commitFile = path.join(dir, "f22-installed-commit.md");
   const jsCommitFile = JSON.stringify(commitFile);
+  let updaterFixture;
   const rig = shutdownRig(win);
   const latchDescriptor = Object.getOwnPropertyDescriptor(
     updater,
@@ -36862,113 +37003,239 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       }
     },
   );
-  const clearDocuments = async () => {
-    const teardown = await exec(`
-      (async () => {
-        const confirm = window.confirm;
-        const pageSession = window.getReloadRequestSession();
-        const notification = () => {
-          const toast = document.getElementById('notificationToast');
-          const message = document.getElementById('notificationMessage');
-          return {
-            visible: !!toast && toast.style.display !== 'none',
-            text: message ? message.textContent : null,
-          };
-        };
-        const describe = () => window.CustomTabs.getTabs().map(tab => {
-          const active = window.CustomTabs.getActiveTabId() === tab.id;
-          const owner = window.CustomTabs.getDocumentIdentityForTab(
-            tab.id,
-            tab.filePath,
-            pageSession,
-          );
-          return {
-            id: tab.id,
-            filePath: tab.filePath,
-            dirty: tab.hasUnsavedChanges,
-            diskVersion: tab.diskVersion,
-            mtimeMs: tab.mtimeMs,
-            active,
-            owner,
-            pendingSave: typeof window.getPendingSaveStatus === 'function'
-              ? window.getPendingSaveStatus(tab.filePath)
-              : null,
-            deletion: owner && typeof window.queryDocumentDeletionState === 'function'
-              ? window.queryDocumentDeletionState(tab.filePath, owner)
-              : null,
-          };
-        });
-        const before = describe();
-        const closeOutcomes = [];
-        window.confirm = () => true;
-        try {
-          window.CustomTabs.getTabs().forEach(t => {
-            t.content = t.originalContent;
-            t.hasUnsavedChanges = false;
-          });
-          for (const tab of window.CustomTabs.getTabs().slice()) {
-            const beforeClose = describe().find(current => current.id === tab.id);
-            const freezeBefore = window.CustomTabs.__shutdownFreeze();
-            const notificationBefore = notification();
-            let result;
-            let error = null;
-            try {
-              result = await window.CustomTabs.closeTab(tab.id);
-            } catch (closeError) {
-              error = String(closeError && closeError.stack ? closeError.stack : closeError);
-            }
-            closeOutcomes.push({
-              tabId: tab.id,
-              beforeClose,
-              freezeBefore,
-              notificationBefore,
-              result: result === undefined ? "undefined" : result,
-              error,
-              stillOpen: window.CustomTabs.getTabs().some(current => current.id === tab.id),
-              freezeAfter: window.CustomTabs.__shutdownFreeze(),
-              notificationAfter: notification(),
-            });
-          }
-        } finally {
-          window.confirm = confirm;
-        }
-        localStorage.clear();
-        window.originalMarkdown = '';
-        window.isEditMode = false;
-        const after = describe();
+  const identityFields = ["pageSession", "rendererGeneration", "tabId",
+    "documentGeneration", "pathKey", "documentRef"];
+  const expectedDiscards = new Map();
+  const readInstalledDocument = () => exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    return {
+      path: window.currentFilePath,
+      original: window.originalMarkdown,
+      editor: markdownEditor.value,
+      editMode: isEditMode,
+      dirty: hasUnsavedChanges,
+      tab: tab && { id: tab.id, path: tab.filePath, content: tab.content,
+        original: tab.originalContent, dirty: tab.hasUnsavedChanges,
+        diskVersion: tab.diskVersion },
+      state: tab && window.CustomTabs.__documentState(tab),
+      owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession()),
+      descriptor: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
+      pending: window.getPendingSaveStatus(),
+      selection: window.getActiveFileSelectionGeneration(),
+      frozen: window.CustomTabs.isDocumentFrozen(),
+      question: document.getElementById('appMessageDialog').open,
+      viewer: viewer.textContent,
+    };
+  })()`);
+  const installedMainOwns = async (snapshot) => {
+    if (!snapshot.owner || !snapshot.descriptor ||
+        snapshot.owner.documentRef !== snapshot.descriptor.ref ||
+        snapshot.descriptor.logicalPath !== snapshot.path ||
+        !__shutdown.documentAdmissionIsCurrent(snapshot.descriptor.ref) ||
+        !__shutdown.documentSessionState().owners.some(owner =>
+          identityFields.every(field => owner[field] === snapshot.owner[field]) &&
+          owner.readTarget === snapshot.descriptor.readTarget)) return false;
+    const deletion = await exec(`window.folia.queryDocumentDeletionState(
+      ${JSON.stringify({ ...snapshot.owner, filePath: snapshot.path })})`);
+    return deletion.known === true && deletion.unresolved === false;
+  };
+  const describeInstalledTabs = () => exec(`(() => {
+    const pageSession = window.getReloadRequestSession();
+    return {
+      pageSession,
+      freeze: window.CustomTabs.__shutdownFreeze(),
+      tabs: window.CustomTabs.getTabs().map(tab => {
+        const active = window.CustomTabs.getActiveTabId() === tab.id;
+        const owner = window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, pageSession);
+        const state = window.CustomTabs.__documentState(tab);
         return {
-          before,
-          remaining: after.length,
-          remainingTabs: after,
-          dirtyBefore: before.filter(tab => tab.dirty),
-          dirtyAfter: after.filter(tab => tab.dirty),
-          closeOutcomes,
+          id: tab.id, filePath: tab.filePath, owner, state, active,
+          content: active ? isEditMode ? markdownEditor.value : window.originalMarkdown : tab.content,
+          cachedContent: tab.content, original: tab.originalContent,
+          dirty: state.dirty || active && hasUnsavedChanges,
+          pendingSave: window.getPendingSaveStatus(tab.filePath),
+          deletion: owner && window.folia.queryDocumentDeletionState({
+            ...owner, filePath: tab.filePath }),
         };
-      })()
-    `);
-    const cleared =
-      teardown.closeOutcomes.length === teardown.before.length &&
-      teardown.closeOutcomes.every(outcome => outcome.stillOpen === false) &&
-      teardown.remaining === 0;
-    if (!cleared) {
-      throw new Error("Installed scenario cleanup retained a tab: " + JSON.stringify(teardown));
+      }),
+    };
+  })()`);
+  const clearDocuments = async () => {
+    const before = await describeInstalledTabs();
+    const closed = await closeOwnedFixtureTabs(exec, "installed updater fixture cleanup", {
+      tabIds: before.tabs.map(tab => tab.id),
+      expectedDiscards: [...expectedDiscards.values()],
+    });
+    const after = await describeInstalledTabs();
+    const teardown = {
+      before: before.tabs,
+      remaining: after.tabs.length,
+      remainingTabs: after.tabs,
+      dirtyBefore: before.tabs.filter(tab => tab.dirty),
+      dirtyAfter: after.tabs.filter(tab => tab.dirty),
+      closeOutcomes: closed.records.map(record => ({
+        ...record,
+        freezeBefore: before.freeze,
+        stillOpen: after.tabs.some(tab => tab.id === record.tabId),
+      })),
+    };
+    if (closed.records.length !== before.tabs.length || after.tabs.length !== 0 ||
+        closed.records.some(record => !record.closed || !record.settled || record.error)) {
+      throw new Error("Installed scenario cleanup retained an owner: " + JSON.stringify(teardown));
     }
+    for (const record of closed.records) expectedDiscards.delete(record.tabId);
+    await exec("window.CustomTabs.settleSessionLayout()");
     return teardown;
   };
   const admitInstalledFixture = async () => {
-    const restoreDialog = replaceMethod(dialog, "showOpenDialog", async () => ({
-      canceled: false, filePaths: [commitFile],
-    }));
+    const observationKey = require("crypto").randomBytes(12).toString("hex");
+    let installed = false;
+    let calls = 0;
+    let chooserFailure;
+    let snapshot;
+    const failures = [];
+    const choose = async function (owner, options) {
+      if (arguments.length !== 2 || owner !== win || calls++ !== 0 ||
+          !isDeepStrictEqual(options, {
+            properties: ["openFile", "multiSelections"],
+            filters: [
+              { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+              { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+              { name: "All Files", extensions: ["*"] },
+            ],
+          })) {
+        chooserFailure = new Error("Unexpected installed-fixture chooser");
+        throw chooserFailure;
+      }
+      return { canceled: false, filePaths: [commitFile] };
+    };
+    let restoreDialog;
     try {
-      await exec("window.ipcRenderer.send('open-file-dialog'); null");
-      const admitted = await waitForCondition(exec,
-        `window.CustomTabs.getDocumentDescriptor()?.logicalPath === ${jsCommitFile} &&
-          window.currentFilePath === ${jsCommitFile} &&
-          document.getElementById('viewer').textContent.includes('Installed commit fixture')`,
-        10000);
-      if (!admitted) throw new Error("Installed restart fixture did not receive a genuine native admission");
+      installed = true;
+      await installDialogBatchPageObservation(code => exec(`(() => {
+        if (window.__dialogBatchNative) throw new Error('Installed observation is already occupied');
+        try { return (${code}); }
+        finally {
+          if (window.__dialogBatchNative)
+            window.__dialogBatchNative.installedUpdateKey = ${JSON.stringify(observationKey)};
+        }
+      })()`));
+      await exec("window.__dialogBatchNative.phase = 'installed fixture'; true");
+      restoreDialog = replaceMethod(dialog, "showOpenDialog", choose);
+      await exec("window.folia.openFileDialog()");
+      const reached = await waitUntil(async () => {
+        if (chooserFailure) throw chooserFailure;
+        return exec("window.__dialogBatchNative.processors.length > 0");
+      }, 10000);
+      if (!reached || calls !== 1) throw new Error("Installed fixture did not reach its real processor");
+      await boundedDialogWork(exec(`(async () => {
+        const observation = window.__dialogBatchNative;
+        if (observation.processors.length !== 1 ||
+            observation.processors[0].packet.path !== ${jsCommitFile} ||
+            observation.processors[0].eventUndefined !== true)
+          throw new Error('Unexpected installed fixture processor');
+        await Promise.all(observation.processors.map(record => record.promise));
+        if (observation.renders.length !== 1 ||
+            observation.renders[0].prefix !== '# Installed commit fixtu')
+          throw new Error('Unexpected installed fixture render');
+        await Promise.all(observation.renders.map(record => record.promise));
+        if (observation.processors.length !== 1 || observation.renders.length !== 1 ||
+            [...observation.processors, ...observation.renders].some(record =>
+              record.error || !record.settled))
+          throw new Error('Installed fixture original work did not settle');
+        return true;
+      })()`), "installed fixture original processor and render", 10000);
       await exec("window.CustomTabs.settleSessionLayout()");
-    } finally { restoreDialog(); }
+      await exec("window.folia.getVersion()");
+      snapshot = await readInstalledDocument();
+      const body = fs.readFileSync(commitFile, "utf8");
+      if (snapshot.path !== commitFile || snapshot.original !== body ||
+          snapshot.tab?.path !== commitFile || snapshot.tab.content !== body ||
+          snapshot.tab.original !== body || snapshot.tab.dirty !== false ||
+          snapshot.dirty || snapshot.pending.count !== 0 || snapshot.frozen ||
+          !snapshot.viewer.includes("Installed commit fixture") ||
+          !(await installedMainOwns(snapshot))) {
+        throw new Error("Installed fixture has no clean rendered Main owner: " + JSON.stringify(snapshot));
+      }
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      if (restoreDialog) {
+        try {
+          if (dialog.showOpenDialog !== choose) throw new Error("Installed chooser ownership changed");
+          restoreDialog();
+        } catch (error) { failures.push(error); }
+      }
+      if (installed) {
+        try {
+          if (await restoreDialogBatchPageObservation(code => exec(`(() => {
+            if (window.__dialogBatchNative?.installedUpdateKey !== ${JSON.stringify(observationKey)})
+              throw new Error('Installed observation ownership changed');
+            return (${code});
+          })()`)) !== true)
+            throw new Error("Installed fixture observation cleanup was not confirmed");
+        } catch (error) { failures.push(error); }
+      }
+    }
+    if (failures.length) throw new AggregateError(failures, "Installed fixture admission failed");
+    return snapshot;
+  };
+  const editInstalledFixture = async (content, reason) => {
+    if (typeof content !== "string" || typeof reason !== "string" || !reason.trim()) {
+      throw new Error("Installed input needs exact text and an ordinary discard reason");
+    }
+    await exec("if (!isEditMode) toggleEditBtn.click(); null;");
+    if (!await waitForCondition(exec, "isEditMode === true", 8000)) {
+      throw new Error("Installed fixture editor did not open");
+    }
+    const before = await readInstalledDocument();
+    if (before.path !== commitFile || !before.tab || before.frozen || before.question ||
+        before.state?.maintained !== true ||
+        before.pending.count !== 0 || !before.editMode ||
+        !(await installedMainOwns(before))) {
+      throw new Error("Installed edit has no current owned editor: " + JSON.stringify(before));
+    }
+    await exec(`(() => {
+      const before = ${JSON.stringify(before)}, tab = window.CustomTabs.getActiveTab();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const deletion = owner && window.folia.queryDocumentDeletionState({
+        ...owner, filePath: tab.filePath });
+      if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
+          !${JSON.stringify(identityFields)}.every(field => owner?.[field] === before.owner[field]) ||
+          markdownEditor.value !== before.editor || window.originalMarkdown !== before.original ||
+          tab.content !== before.tab.content || tab.originalContent !== before.tab.original ||
+          tab.hasUnsavedChanges !== before.tab.dirty ||
+          JSON.stringify(window.CustomTabs.__documentState(tab)) !== JSON.stringify(before.state) ||
+          JSON.stringify(window.CustomTabs.getDocumentDescriptor(tab.id)) !== JSON.stringify(before.descriptor) ||
+          window.getActiveFileSelectionGeneration() !== before.selection ||
+          window.CustomTabs.isDocumentFrozen() || !isEditMode ||
+          window.getPendingSaveStatus().count !== 0 ||
+          deletion?.known !== true || deletion.unresolved !== false)
+        throw new Error('Installed fixture changed before ordinary input');
+      markdownEditor.value = ${JSON.stringify(content)};
+      markdownEditor.dispatchEvent(new Event('input'));
+      return true;
+    })()`);
+    const marker = content.trim().split("\n").pop();
+    const painted = await waitForCondition(exec,
+      `isEditMode && hasUnsavedChanges && markdownEditor.value === ${JSON.stringify(content)} &&
+       viewer.textContent.includes(${JSON.stringify(marker)})`, 8000);
+    const after = await readInstalledDocument();
+    if (!painted || after.path !== before.path || after.tab?.id !== before.tab.id ||
+        !identityFields.every(field => after.owner?.[field] === before.owner[field]) ||
+        after.tab.content !== before.tab.content || after.tab.original !== before.tab.original ||
+        after.tab.dirty !== before.tab.dirty || after.original !== before.original ||
+        after.state.mutationRevision <= before.state.mutationRevision ||
+        !(await installedMainOwns(after))) {
+      throw new Error("Installed input lost its live edit, lazy cache or owner: " + JSON.stringify(after));
+    }
+    expectedDiscards.set(after.tab.id, {
+      tabId: after.tab.id, filePath: after.path, owner: after.owner, content, reason,
+    });
+    return after;
   };
   // Hold a real main-to-renderer protocol message at its boundary, then
   // release the exact payload main.js produced. This controls an asynchronous
@@ -37017,14 +37284,13 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     };
   };
 
+  let installedFailure = null;
   try {
+    updaterFixture = createInstalledUpdaterFixture(exec, updater, commitFile);
     write(commitFile, "# Installed commit fixture\n");
     process.on("warning", observeProcessWarning);
     electronAutoUpdater.on("before-quit-for-update", countCommit);
-    updater.emit("update-downloaded", {
-      version: "9.9.9-f22",
-      downloadedFile: commitFile,
-    });
+    await updaterFixture.prepare();
 
     // An event raised inside quitAndInstall is the shortest possible installed
     // commit. Even then it must create a second, force-fresh approval; a clean
@@ -37052,7 +37318,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
     const immediateBeforeRequestId = __shutdown.state().lastRequestId;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const immediateCommitted = await waitUntil(
       () => installs === 1 && rig.quits === 1,
       10000,
@@ -37098,29 +37364,17 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const enteredDeferredGap = await waitUntil(() => installs === 1, 10000);
     const gapState = __shutdown.state();
     const exactGapEdit = "gap edit that nobody has been asked about";
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.createTab(${jsCommitFile}, 'gap base');
-        tab.content = ${JSON.stringify(exactGapEdit)};
-        tab.hasUnsavedChanges = false;
-        // Set before the switch: the switch snapshots the active tab, and a
-        // live copy still holding the pristine text folds this edit away.
-        window.originalMarkdown = tab.content;
-        window.CustomTabs.switchToTab(tab.id);
-        return tab.filename;
-      })()
-    `);
+    await admitInstalledFixture();
+    await editInstalledFixture(exactGapEdit, "discard the exact deferred-commit gap edit");
     rig.answer = 1;
     const closeInGap = guardEvent();
     win.emit("close", closeInGap);
     const gapCloseAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
-    const preservedGapEdit = await exec(
-      `window.CustomTabs.getActiveTab().content`,
-    );
+    const preservedGapEdit = (await readInstalledDocument()).editor;
     const afterGapClose = __shutdown.state();
     check(
       "a native close inside the installed deferred-commit gap is asked rather than silently authorized",
@@ -37154,34 +37408,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     // continuation has entered the updater, then emit the public commit. The
     // second request has to discover this exact new value; Cancel keeps it
     // intact and leaves no authorization behind.
-    const captureGapTeardownState = async () =>
-      JSON.parse(await exec(`
-        (() => {
-          const pageSession = window.getReloadRequestSession();
-          const tabs = window.CustomTabs.getTabs().map(tab => {
-            const owner = window.CustomTabs.getDocumentIdentityForTab(
-              tab.id,
-              tab.filePath,
-              pageSession,
-            );
-            return {
-              id: tab.id,
-              filePath: tab.filePath,
-              content: tab.content,
-              owner,
-              deletion:
-                owner && typeof window.queryDocumentDeletionState === 'function'
-                  ? window.queryDocumentDeletionState(tab.filePath, owner)
-                  : null,
-            };
-          });
-          return JSON.stringify({
-            freeze: window.CustomTabs.__shutdownFreeze(),
-            pageSession,
-            tabs,
-          });
-        })()
-      `));
+    const captureGapTeardownState = describeInstalledTabs;
     const gapTeardownBeforeReset = await captureGapTeardownState();
     const gapTeardown = await clearDocuments();
     const gapTabBeforeTeardown = gapTeardownBeforeReset.tabs.find(
@@ -37218,39 +37445,19 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.createTab(
-          ${jsCommitFile},
-          window.fs.readFileSync(${jsCommitFile}, 'utf8'),
-        );
-        window.CustomTabs.switchToTab(tab.id);
-        window.originalMarkdown = tab.originalContent;
-        return { id: tab.id, content: tab.content };
-      })()
-    `);
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await admitInstalledFixture();
+    await exec(`window.folia.installUpdate(); null;`);
     const initialApprovalEnteredUpdater = await waitUntil(
       () => installs === 1 && __shutdown.state().authorized === false,
       10000,
     );
     const exactPostApprovalEdit = "# Installed commit fixture\nPOST_APPROVAL_EXACT_EDIT\n";
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = ${JSON.stringify(exactPostApprovalEdit)};
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.content;
-        return tab.content;
-      })()
-    `);
+    await editInstalledFixture(exactPostApprovalEdit, "discard the exact post-approval edit");
     rig.answer = 1;
     electronAutoUpdater.emit("before-quit-for-update");
     app.emit("before-quit", guardEvent());
     const postApprovalEditAsked = await waitUntil(() => rig.dialogs.length === 1);
-    const preservedPostApprovalEdit = await exec(
-      `window.CustomTabs.getActiveTab().content`,
-    );
+    const preservedPostApprovalEdit = (await readInstalledDocument()).editor;
     const editCommitState = __shutdown.state();
     check(
       "an installed commit detects the exact post-approval edit and Cancel preserves it without authorization",
@@ -37315,7 +37522,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       },
     );
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const refusalReturned = await waitUntil(
         () =>
           installs === 1 &&
@@ -37323,7 +37530,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
           __shutdown.state().authorized === false,
         10000,
       );
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const refusalRetried = await waitUntil(() => installs === 2, 10000);
       check(
         "an installed synchronous refusal clears its attempt and leaves a later install request possible",
@@ -37358,22 +37565,13 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const installedAttemptPendingCommit = await waitUntil(() => installs === 1);
     const requestBeforeLateCommit = __shutdown.state().lastRequestId;
     updater.emit("error", new Error("controlled installed updater failure"));
     const afterUpdaterError = __shutdown.state();
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.createTab(${jsCommitFile}, 'updater error base');
-        tab.content = 'updater error exact edit';
-        tab.hasUnsavedChanges = false;
-        // Set before the switch, for the same reason as above.
-        window.originalMarkdown = tab.content;
-        window.CustomTabs.switchToTab(tab.id);
-        return tab.filename;
-      })()
-    `);
+    await admitInstalledFixture();
+    await editInstalledFixture("updater error exact edit", "discard the exact updater-error edit");
     rig.answer = 1;
     const closeAfterUpdaterError = guardEvent();
     win.emit("close", closeAfterUpdaterError);
@@ -37412,7 +37610,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const failedAttemptStarted = await waitUntil(
       () => installs === 1 && __shutdown.state().updaterInstallAttemptId > 0,
       10000,
@@ -37467,7 +37665,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     afterBaseUpdaterBoundary = () => {
       if (restoreRetryBoundaryImmediate) restoreRetryBoundaryImmediate();
     };
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const retryBoundaryQueued = await waitUntil(
       () =>
         installs === 2 &&
@@ -37562,7 +37760,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     installs = 0;
     commitMode = "manual";
     setLatch(false);
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const unrelatedErrorAttemptStarted = await waitUntil(
       () => installs === 1 && __shutdown.state().updaterInstallAttemptId > 0,
       10000,
@@ -37621,7 +37819,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       if (restoreMissingPairImmediate) restoreMissingPairImmediate();
     };
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const missingPairBoundaryArmed = await waitUntil(
         () =>
           baseUpdaterPairedQuitCalls === 1 &&
@@ -37706,7 +37904,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
     baseUpdaterAttemptAtQueue = null;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const queuedBoundaryErrorWasBlocked = await waitUntil(
       () =>
         installs === 1 &&
@@ -37722,16 +37920,9 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       ? baseUpdaterAttemptAtQueue.updaterInstallAttemptId
       : 0;
     const failedLatchCleared = updater.quitAndInstallCalled === false;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.createTab(${jsCommitFile}, 'poisoned boundary base');
-        tab.content = 'poisoned boundary user intent';
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.content + '!';
-        window.CustomTabs.switchToTab(tab.id);
-        return tab.filename;
-      })()
-    `);
+    await admitInstalledFixture();
+    await editInstalledFixture("poisoned boundary user intent",
+      "discard the exact edit after a poisoned updater boundary");
     rig.answer = 1;
     const closeAfterOldBoundary = guardEvent();
     win.emit("close", closeAfterOldBoundary);
@@ -37743,7 +37934,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     await clearDocuments();
     rig.answer = 0;
     commitMode = "manual";
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const failedAttemptRetried = await waitUntil(
       () =>
         installs === 2 &&
@@ -37800,23 +37991,11 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.createTab(${jsCommitFile}, 'poison boundary base');
-        window.CustomTabs.switchToTab(tab.id);
-        window.originalMarkdown = tab.originalContent;
-        return tab.id;
-      })()
-    `);
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await admitInstalledFixture();
+    await exec(`window.folia.installUpdate(); null;`);
     const ordinaryAttemptStarted = await waitUntil(() => installs === 1, 10000);
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        window.originalMarkdown = tab.content + '\\nPOISONED_BOUNDARY_DIRTY\\n';
-        return tab.filename;
-      })()
-    `);
+    await editInstalledFixture("# Installed commit fixture\nPOISONED_BOUNDARY_DIRTY\n",
+      "discard the exact edit beside the quarantined updater failure");
     const realSetImmediateForOrdinaryPoison = global.setImmediate;
     let runOrdinaryPoisonExpiry = null;
     global.setImmediate = (callback, ...args) => {
@@ -37889,7 +38068,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const retryAttemptStarted = await waitUntil(
       () => installs === 1 && __shutdown.state().updaterInstallAttemptId > poisonedAttemptId,
       10000,
@@ -37945,7 +38124,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     const heldUpdateApproval = holdRendererMessage("quit-approval-request");
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const updateApprovalHeld = await waitUntil(
         () =>
           heldUpdateApproval.held !== null &&
@@ -38017,7 +38196,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     let beforeCommitError;
     let afterCommitError;
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const updateCommitHeld = await waitUntil(
         () =>
           heldUpdateCommit.held !== null &&
@@ -38120,7 +38299,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     ipcMain.on("quit-approval-committed", captureConfirmedUpdateCommit);
     ipcMain.on("quit-approval-verified", failAfterVerifiedUpdateCommit);
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const enteredUpdater = await waitUntil(() => installs === 1, 10000);
       electronAutoUpdater.emit("before-quit-for-update");
       app.emit("before-quit", guardEvent());
@@ -38287,7 +38466,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       updater.emit("error", new Error("controlled error after continuation started"));
     });
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const startedUpdaterBeforeQuit = await waitUntil(() => installs === 1, 10000);
       electronAutoUpdater.emit("before-quit-for-update");
       app.emit("before-quit", guardEvent());
@@ -38336,36 +38515,13 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.createTab(${jsCommitFile}, 'pending close edit');
-        tab.content = 'pending close edit';
-        tab.hasUnsavedChanges = false;
-        window.CustomTabs.switchToTab(tab.id);
-        window.originalMarkdown = tab.content + '!';
-        return tab.filename;
-      })()
-    `);
+    await admitInstalledFixture();
     // Start a clean update attempt first, leaving only its public commit
     // outstanding; then make the document dirty and hold a close dialog.
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const waitingForCommit = await waitUntil(() => installs === 1);
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = 'pending close exact edit';
-        window.originalMarkdown = tab.content;
-        return tab.content;
-      })()
-    `);
+    await editInstalledFixture("pending close exact edit",
+      "discard the exact edit from the queued commit question");
     let releaseCloseQuestion;
     rig.answer = () =>
       new Promise((resolve) => {
@@ -38418,7 +38574,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const commitAwaitingDeadRenderer = await waitUntil(() => installs === 1);
     wc.forcefullyCrashRenderer();
     const rendererDead = await waitUntil(
@@ -38455,8 +38611,14 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     // The preceding dead-renderer case deliberately crashes this webContents.
     // Restore its real document before exercising further live IPC boundaries.
     if (wc.isCrashed()) {
+      const previousGeneration = __shutdown.state().rendererGeneration;
       await win.loadFile(indexFile);
-      await waitUntil(() => __shutdown.state().renderer === "ready", 20000);
+      if (!await waitUntil(() => {
+        const state = __shutdown.state();
+        return state.renderer === "ready" && state.rendererGeneration > previousGeneration;
+      }, 20000) || !await exec("window.CustomTabs.getTabs().length === 0")) {
+        throw new Error("Installed fallback did not restore a new empty renderer generation");
+      }
     }
 
     // A user close or quit that lands behind an updater approval is retained
@@ -38465,14 +38627,17 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     // exact user intent once, with its original arrival/strength identity.
     let approvedTerminalUserCloseRecovery = null;
     const restoreApprovedTerminalClose = async (approval) => {
-      const expectedPaths = JSON.parse(await exec(`
-        (() => JSON.stringify(
-          window.CustomTabs.getTabs()
-            .filter(tab => typeof tab.filePath === "string" && tab.filePath.length > 0)
-            .map(tab => tab.filePath)
-            .sort(),
-        ))()
-      `));
+      const originalPage = await describeInstalledTabs();
+      if (originalPage.tabs.length !== 1 || originalPage.tabs[0].filePath !== commitFile ||
+          originalPage.tabs.some(tab => tab.owner?.pageSession !== originalPage.pageSession ||
+            tab.owner?.tabId !== tab.id || tab.deletion?.known !== true ||
+            tab.deletion.unresolved !== false ||
+            !__shutdown.documentAdmissionIsCurrent(tab.owner.documentRef))) {
+        throw new Error("Installed terminal restart lost its original physical owner: " +
+          JSON.stringify(originalPage));
+      }
+      const expectedPaths = originalPage.tabs.map(tab => tab.filePath).sort();
+      await exec("window.CustomTabs.settleSessionLayout()");
       const previousGeneration = __shutdown.state().rendererGeneration;
       await win.loadFile(indexFile);
       const rendererReady = await waitUntil(() => {
@@ -38506,11 +38671,11 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
                   tabId: tab.id,
                   filePath: tab.filePath,
                   identity,
-                  deletion:
-                    identity &&
-                    typeof window.queryDocumentDeletionState === 'function'
-                      ? window.queryDocumentDeletionState(tab.filePath, identity)
-                      : null,
+                  descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
+                  content: tab.content, original: tab.originalContent,
+                  dirty: window.CustomTabs.__documentState(tab).dirty,
+                  deletion: identity && window.folia.queryDocumentDeletionState({
+                    ...identity, filePath: tab.filePath }),
                 };
               }),
             });
@@ -38525,11 +38690,18 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
             identity?.tabId === tabId &&
             deletion?.known === true &&
             deletion?.unresolved === false,
-          );
+          ) && restored.owners.every(({ identity, descriptor, filePath, content, original, dirty }) =>
+            descriptor?.logicalPath === filePath && descriptor.ref === identity.documentRef &&
+            content === fs.readFileSync(filePath, "utf8") && original === content && dirty === false &&
+            __shutdown.documentAdmissionIsCurrent(descriptor.ref) &&
+            __shutdown.documentSessionState().owners.some(owner =>
+              identityFields.every(field => owner[field] === identity[field]) &&
+              owner.readTarget === descriptor.readTarget));
       }, 20000);
       const afterRestartState = __shutdown.state();
       return {
         approval,
+        originalPage,
         previousGeneration,
         rendererReady,
         expectedPaths,
@@ -38630,14 +38802,6 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       commitMode = failure === "decline" ? "manual" : failure;
       setLatch(false);
       await admitInstalledFixture();
-      await exec(`
-        (() => {
-          const tab = window.CustomTabs.getActiveTab();
-          window.CustomTabs.switchToTab(tab.id);
-          window.originalMarkdown = tab.originalContent;
-          return tab.id;
-        })()
-      `);
       const held = holdAllRendererMessages("quit-approval-request");
       const responses = [];
       const commits = [];
@@ -38647,7 +38811,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       ipcMain.on("quit-approval-committed", captureCommit);
       let result;
       try {
-        await exec(`window.ipcRenderer.send('install-update'); null;`);
+        await exec(`window.folia.installUpdate(); null;`);
         const updaterRequestHeld = await waitUntil(() => held.held.length === 1, 10000);
         const gestures = [];
         for (const arrival of arrivals) {
@@ -38658,13 +38822,8 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
         }
         const absorbed = __shutdown.state();
         if (failure === "decline") {
-          await exec(`
-            (() => {
-              const tab = window.CustomTabs.getActiveTab();
-              window.originalMarkdown = tab.content + "\\nABSORBED_UPDATE_DECLINED\\n";
-              return true;
-            })()
-          `);
+          await editInstalledFixture("# Installed commit fixture\nABSORBED_UPDATE_DECLINED\n",
+            "discard the exact edit after independently approved replay");
           rig.answer = 1;
         }
         held.release(0);
@@ -38788,14 +38947,6 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     rig.driveQuitLifecycle = true;
     await admitInstalledFixture();
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        window.CustomTabs.switchToTab(tab.id);
-        window.originalMarkdown = tab.originalContent;
-        return tab.id;
-      })()
-    `);
     const heldSuccessfulUpdate = holdAllRendererMessages("quit-approval-request");
     const successfulResponses = [];
     const successfulCommits = [];
@@ -38805,7 +38956,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     ipcMain.on("quit-approval-committed", captureSuccessfulCommit);
     let successfulFinalApproval = null;
     try {
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const updateRequestHeld = await waitUntil(() => heldSuccessfulUpdate.held.length === 1, 10000);
       const absorbedClose = guardEvent();
       win.emit("close", absorbedClose);
@@ -39003,17 +39154,41 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     }
     await clearAfterApprovedTerminalUserClose();
 
+  } catch (error) {
+    installedFailure = error;
   } finally {
-    await baseUpdaterBranchBorrow.restore();
-    restoreQuitAndInstall();
-    restoreLatch();
-    electronAutoUpdater.removeListener("before-quit-for-update", countCommit);
-    process.removeListener("warning", observeProcessWarning);
-    rig.restore();
-    __shutdown.reset();
-    if (wc.isDestroyed()) return;
-    await win.loadFile(indexFile).catch(() => {});
-    await waitUntil(() => __shutdown.state().renderer === "ready", 20000);
+    const stateBeforeCleanup = __shutdown.state();
+    const failures = installedFailure ? [installedFailure] : [];
+    for (const restore of [
+      () => baseUpdaterBranchBorrow.restore(),
+      restoreQuitAndInstall,
+      restoreLatch,
+      () => electronAutoUpdater.removeListener("before-quit-for-update", countCommit),
+      () => process.removeListener("warning", observeProcessWarning),
+      () => { if (updaterFixture) updaterFixture.restore(); },
+      () => rig.restore(),
+      () => __shutdown.reset(),
+    ]) {
+      try { await restore(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length === 0) {
+      try {
+        if (wc.isDestroyed()) throw new Error("Installed scenario lost its cleanup webContents");
+        const previousGeneration = __shutdown.state().rendererGeneration;
+        await win.loadFile(indexFile);
+        if (!await waitUntil(() => {
+          const state = __shutdown.state();
+          return state.renderer === "ready" && state.rendererGeneration > previousGeneration;
+        }, 20000) || !await exec(`window.CustomTabs.getTabs().length === 0 &&
+          !window.CustomTabs.isDocumentFrozen() && window.getPendingSaveStatus().count === 0`)) {
+          throw new Error("Installed cleanup did not restore a new empty ready page");
+        }
+      } catch (error) { failures.push(error); }
+    }
+    if (failures.length) {
+      throw new AggregateError(failures,
+        "Installed updater scenario or independent cleanup failed: " + JSON.stringify(stateBeforeCleanup));
+    }
   }
 }
 
@@ -39038,6 +39213,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     trackedFields.map((name) => [name, Object.getOwnPropertyDescriptor(updater, name)]),
   );
   const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+  let updaterFixture;
   const restoreFields = () => {
     for (const [name, descriptor] of descriptors) {
       if (descriptor) Object.defineProperty(updater, name, descriptor);
@@ -39081,20 +39257,22 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     if (action.child) action.child(child);
     return child;
   });
-  const reset = () => {
+  const reset = async () => {
     __shutdown.reset();
     rig.reset();
     spawnCalls.length = 0;
     nextSpawn = [];
     setLatch(false);
-    updater.emit("update-downloaded", {
-      version: "9.9.9-nsis",
-      downloadedFile: installerPath,
-    });
+    if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 8000)) {
+      throw new Error("Windows launcher fixture did not thaw before its next candidate");
+    }
+    await updaterFixture.prepare();
   };
-  const start = () => exec(`window.ipcRenderer.send('install-update'); null;`);
+  const start = () => exec(`window.folia.installUpdate(); null;`);
 
+  let launcherFailure = null;
   try {
+    updaterFixture = createInstalledUpdaterFixture(exec, updater, installerPath);
     write(installerPath, "f22 installer");
     write(packagePath, "f22 package");
     fs.mkdirSync(resourcesPath, { recursive: true });
@@ -39104,9 +39282,6 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       configurable: true,
     });
     setField("installerPath", installerPath);
-    setField("downloadedUpdateHelper", {
-      downloadedFileInfo: { isAdminRightsRequired: false },
-    });
     setField("autoRunAppAfterInstall", true);
     setField("installDirectory", "");
     // runShutdownScenarios temporarily exercises BaseUpdater as Linux; restore
@@ -39116,22 +39291,15 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     // update-downloaded occurs before downloadUpdate's promise tail. Its path
     // is visible to the UI, but cannot authorize installation or poison an
     // unrelated launcher while that tail is still outstanding.
-    let settleDownload;
-    const restoreDownload = replaceMethod(
-      updater,
-      "downloadUpdate",
-      () => new Promise((resolve, reject) => { settleDownload = { resolve, reject }; }),
-    );
+    __shutdown.reset();
+    rig.reset();
+    const tail = await updaterFixture.prepare({ holdDownload: true });
     try {
-      __shutdown.reset();
-      rig.reset();
-      await exec(`window.ipcRenderer.send('download-update'); null;`);
-      updater.emit("update-downloaded", { version: "tail", downloadedFile: installerPath });
       const heldTail = __shutdown.state();
       await start();
       updater.emit("error", new Error("download tail error"));
       const afterTailError = __shutdown.state();
-      if (settleDownload) settleDownload.reject(new Error("tail rejected"));
+      tail.reject(new Error("tail rejected"));
       const failedTail = await waitUntil(
         () => __shutdown.state().updaterDownloadInFlight === false,
         5000,
@@ -39148,17 +39316,23 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
           failedTail &&
           afterFailedTail.updaterDownloadInFlight === false &&
           afterFailedTail.pendingId === 0 &&
-          afterFailedTail.updaterInstallAttemptId === 0,
-        JSON.stringify({ heldTail, afterTailError, afterFailedTail, spawnCalls }),
+          afterFailedTail.updaterInstallAttemptId === 0 &&
+          tail.state.status === "finalizing" &&
+          tail.state.canInstall === false &&
+          (await updaterFixture.read()).canInstall === false &&
+          spawnCalls.length === 0,
+        JSON.stringify({ tail: tail.state, heldTail, afterTailError, afterFailedTail, spawnCalls }),
       );
     } finally {
-      restoreDownload();
+      if (__shutdown.state().updaterDownloadInFlight) {
+        throw new Error("Windows launcher tail did not settle before the next scenario");
+      }
     }
 
     // The verified launcher deliberately supports only stock NSIS arguments.
     // A custom /D or web package cannot be relayed safely, so it must fail
     // before creating a child or retaining an installation latch.
-    reset();
+    await reset();
     setField("installDirectory", "C:\\Unsupported Directory");
     const directoryRequestBefore = __shutdown.state().lastRequestId;
     await start();
@@ -39171,6 +39345,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     const afterUnsupportedDirectory = __shutdown.state();
     setField("installDirectory", "");
     setField("downloadedUpdateHelper", {
+      ...updater.downloadedUpdateHelper,
       downloadedFileInfo: { isAdminRightsRequired: false },
       packageFile: packagePath,
     });
@@ -39183,9 +39358,9 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       5000,
     );
     const afterUnsupportedPackage = __shutdown.state();
-    setField("downloadedUpdateHelper", {
-      downloadedFileInfo: { isAdminRightsRequired: false },
-    });
+    const ordinaryHelper = { ...updater.downloadedUpdateHelper };
+    delete ordinaryHelper.packageFile;
+    setField("downloadedUpdateHelper", ordinaryHelper);
     check(
       "unsupported Windows NSIS metadata fails closed before a launcher child exists",
       unsupportedDirectoryRejected &&
@@ -39208,7 +39383,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     // spawn event, at which point it quits under that final approval.
     // The real launch plan, including the web-package and force-run arguments,
     // is inspected at the process boundary rather than duplicated internally.
-    reset();
+    await reset();
     await start();
     const directStarting = await waitUntil(() => spawnCalls.length === 1, 5000);
     const directBeforeSpawn = __shutdown.state();
@@ -39265,7 +39440,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     // Before a direct child proves start, every failure is retry-safe. Once it
     // proves start, later ambiguous child events cannot lower its duplicate
     // latch or create a second launcher.
-    reset();
+    await reset();
     nextSpawn.push({ throw: new Error("controlled direct sync throw") });
     await start();
     const afterDirectThrow = await waitUntil(
@@ -39295,7 +39470,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       JSON.stringify({ spawnCalls, state: __shutdown.state(), quits: rig.quits }),
     );
 
-    reset();
+    await reset();
     await start();
     const ambiguousReady = await waitUntil(() => spawnCalls.length === 1, 5000);
     const ambiguousChild = children[children.length - 1];
@@ -39320,7 +39495,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     // Access denied is the only direct failure that may use elevate.exe. The
     // helper's successful zero close is the positive ShellExecuteEx proof;
     // non-zero termination remains retry-safe.
-    reset();
+    await reset();
     await start();
     const eaccesDirectReady = await waitUntil(() => spawnCalls.length === 1, 5000);
     const eaccesDirect = children[children.length - 1];
@@ -39358,11 +39533,21 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
         updater.quitAndInstallCalled === true,
       JSON.stringify({ spawnCalls, elevatedState, quits: rig.quits }),
     );
+  } catch (error) {
+    launcherFailure = error;
   } finally {
-    restoreSpawn();
-    restoreFields();
-    rig.restore();
-    __shutdown.reset();
+    const stateBeforeCleanup = __shutdown.state();
+    const failures = launcherFailure ? [launcherFailure] : [];
+    for (const restore of [
+      restoreSpawn, restoreFields, () => { if (updaterFixture) updaterFixture.restore(); },
+      () => rig.restore(), () => __shutdown.reset(),
+    ]) {
+      try { await restore(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) {
+      throw new AggregateError(failures,
+        "Windows launcher scenario or independent cleanup failed: " + JSON.stringify(stateBeforeCleanup));
+    }
   }
 }
 
