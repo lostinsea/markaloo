@@ -332,6 +332,11 @@ try {
 } catch (error) {
   failStartup("reload contract", error);
 }
+try {
+  require("./test-owned-transport-contract.js").run(check);
+} catch (error) {
+  failStartup("owned transport contract", error);
+}
 
 // This is deliberately data-only: capability scheduling must be testable
 // without Electron state, and each group remains independently reportable.
@@ -11165,41 +11170,84 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
       return open.apply(this, arguments);
     });
     let outcome;
-    if (mode.endsWith("undo")) await sentinel.mute(`controlled conditional ${mode} stale-baseline selection`);
+    let restoreCommitListener;
+    let heldCommits;
+    const channel = "refresh-owned-tab-disk-snapshot";
+    const current = __shutdown.state();
+    const observation = {
+      target: win.webContents, frame: win.webContents.mainFrame,
+      generation: current.rendererGeneration, pageSession: current.rendererPageSession,
+      channels: new Set([channel]), records: [], fault: null,
+    };
+    if (tabDiskObservation || tabDiskRegistrations.get(channel)?.count !== 1) {
+      restoreOpen(); restoreStat();
+      throw new Error("Conditional journey requires its unique original Main read observer");
+    }
+    const targetRecords = () => observation.records.filter(record =>
+      record.request?.filePath === filePath);
+    tabDiskObservation = observation;
     try {
-      await exec(`(() => {
+      if (mode.endsWith("undo")) await sentinel.mute(`controlled conditional ${mode} stale-baseline selection`);
+      const request = await exec(`(() => {
+        if (window.__conditionalMetadata) throw new Error('Overlapping conditional page probe');
         const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${id});
+        const owner = window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, window.getReloadRequestSession());
         const probe = window.__conditionalMetadata = {
           before: window.CustomTabs.__documentState(tab),
-          content: tab.content, preparations: 0, receipt: null,
-          prepare: window.prepareDocumentDiskAdoption, invoke: window.ipcRenderer.invoke,
-          error: console.error, errors: [],
+          content: tab.content, preparations: 0, errors: [],
+          prepareDescriptor: Object.getOwnPropertyDescriptor(window, 'prepareDocumentDiskAdoption'),
+          errorDescriptor: Object.getOwnPropertyDescriptor(console, 'error'),
         };
-        console.error = function (message, detail) {
+        if (typeof probe.prepareDescriptor?.value !== 'function' ||
+            typeof probe.errorDescriptor?.value !== 'function') {
+          throw new Error('Conditional journey requires actual renderer preparation and console methods');
+        }
+        probe.error = function (message, detail) {
           probe.errors.push({ message: String(message), why: detail?.why });
-          return probe.error.apply(this, arguments);
+          return probe.errorDescriptor.value.apply(this, arguments);
         };
-        window.prepareDocumentDiskAdoption = function () {
-          probe.preparations += 1; return probe.prepare.apply(this, arguments);
+        probe.prepare = function () {
+          probe.preparations += 1;
+          return probe.prepareDescriptor.value.apply(this, arguments);
         };
-        window.ipcRenderer.invoke = function (channel, data) {
-          const result = probe.invoke.apply(this, arguments);
-          if (channel !== 'refresh-owned-tab-disk-snapshot' || data.filePath !== ${JSON.stringify(filePath)}) return result;
-          return Promise.resolve(result).then(receipt => { probe.receipt = receipt; return receipt; });
-        };
+        Object.defineProperty(console, 'error', { ...probe.errorDescriptor, value: probe.error });
+        probe.errorInstalled = true;
+        Object.defineProperty(window, 'prepareDocumentDiskAdoption',
+          { ...probe.prepareDescriptor, value: probe.prepare });
+        probe.prepareInstalled = true;
+        const request = { filePath: tab.filePath, pageSession: owner.pageSession,
+          rendererGeneration: owner.rendererGeneration, owner, diskVersion: tab.diskVersion };
         probe.done = window.CustomTabs.switchToTab(${id});
-        return null;
+        return request;
       })()`);
+      const expectedRequest = {
+        filePath: request.filePath, pageSession: request.pageSession,
+        rendererGeneration: request.rendererGeneration,
+        owner: Object.fromEntries(["pageSession", "rendererGeneration", "tabId",
+          "documentGeneration", "pathKey", "documentRef"].map(key => [key, request.owner[key]])),
+        diskVersion: Object.fromEntries(["dev", "ino", "size", "mtimeMs", "ctimeMs"]
+          .map(key => [key, request.diskVersion[key]])),
+      };
       const held = await waitUntil(() => !!release, 5000);
       armed = false;
       if (!held) throw new Error(`Conditional ${mode} metadata hold did not start`);
+      const records = targetRecords();
+      const record = records[0];
+      const qualified = records.length === 1 &&
+        exactTabDiskReceipt(record, observation, channel, expectedRequest) &&
+        !record.settled && !record.error && !Object.hasOwn(record, "actualReply");
+      check(`SEC-08 conditional ${mode} observes one qualified pending original Main metadata read`,
+        qualified, JSON.stringify(records));
+      if (!qualified) throw new Error("Conditional metadata hold lacks its exact Main request");
       const setup = await exec(`(() => {
         const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${id});
         const probe = window.__conditionalMetadata;
-        return { receipt: probe.receipt, preparations: probe.preparations,
+        return { preparations: probe.preparations,
           active: window.CustomTabs.getActiveTabId(),
           content: tab.content, revision: window.CustomTabs.__documentState(tab).mutationRevision };
       })()`);
+      setup.receipt = null; // The qualified original handler above is still pending.
       if (mode === "background-undo") {
         await exec(`(() => {
           const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${id});
@@ -11218,18 +11266,46 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
       } else if (mode === "closed") {
         await exec(`window.CustomTabs.closeTab(${id})`);
       } else {
-        await exec(`(() => {
-          const probe = window.__conditionalMetadata;
-          probe.send = window.ipcRenderer.send;
-          window.ipcRenderer.send = function (channel, data) {
-            if (channel === 'quit-approval-committed') { probe.commit = data; return; }
-            return probe.send.apply(this, arguments);
-          };
-          return null;
-        })()`);
+        const commitChannel = "quit-approval-committed";
+        const beforeFreeze = __shutdown.state();
+        if (beforeFreeze.pendingId || beforeFreeze.commitPendingId ||
+            beforeFreeze.rendererGeneration !== observation.generation ||
+            beforeFreeze.rendererPageSession !== observation.pageSession) {
+          throw new Error("Conditional freeze requires the unchanged renderer without an outstanding shutdown");
+        }
+        const listeners = ipcMain.listeners(commitChannel);
+        if (listeners.length !== 1) throw new Error("Conditional freeze requires one original commit listener");
+        const original = listeners[0];
+        heldCommits = [];
+        const hold = function (event, data) {
+          const state = __shutdown.state();
+          if (event.sender === observation.target && event.senderFrame === observation.frame &&
+              event.senderFrame === observation.target.mainFrame &&
+              state.rendererGeneration === observation.generation &&
+              state.rendererPageSession === observation.pageSession &&
+              state.commitPendingId > 0 && data?.id === state.commitPendingId &&
+              data.gen === observation.generation) {
+            heldCommits.push({ id: data.id, gen: data.gen });
+            return;
+          }
+          return original.apply(this, arguments);
+        };
+        ipcMain.removeListener(commitChannel, original);
+        ipcMain.on(commitChannel, hold);
+        restoreCommitListener = () => {
+          const installed = ipcMain.listeners(commitChannel);
+          if (installed.length !== 1 || installed[0] !== hold) {
+            throw new Error("Conditional fixture no longer owns its held Main commit listener");
+          }
+          ipcMain.removeListener(commitChannel, hold);
+          ipcMain.on(commitChannel, original);
+        };
         app.emit("before-quit", { preventDefault() {} });
-        if (!await waitForCondition(exec,
-          "window.CustomTabs.isDocumentFrozen()", 1000)) {
+        const [frozen, received] = await Promise.all([
+          waitForCondition(exec, "window.CustomTabs.isDocumentFrozen()", 1000),
+          waitUntil(() => heldCommits.length > 0, 1000),
+        ]);
+        if (!frozen || !received || heldCommits.length !== 1) {
           throw new Error("Conditional metadata journey did not reach actual phase-two freeze");
         }
       }
@@ -11238,11 +11314,17 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
         const probe = window.__conditionalMetadata; await probe.done;
         const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${id});
         return { content: tab?.content, state: tab && window.CustomTabs.__documentState(tab),
-          before: probe.before, preparations: probe.preparations, receipt: probe.receipt,
+          before: probe.before, preparations: probe.preparations,
           errors: probe.errors,
           frozen: window.CustomTabs.isDocumentFrozen(),
           active: window.CustomTabs.getActiveTabId() };
       })()`);
+      if (targetRecords().length !== 1 || targetRecords()[0] !== record ||
+          !record.settled || record.error || record.fault || record.faultFailure ||
+          !isDeepStrictEqual(record.actualReply, record.deliveredReply)) {
+        throw new Error("Conditional journey did not settle one unchanged original Main reply");
+      }
+      outcome.receipt = record.actualReply;
       outcome.setup = setup;
       outcome.opens = opens;
       check(`SEC-08 conditional ${mode} setup holds real changed metadata before body and approval`,
@@ -11266,23 +11348,48 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
     } finally {
       armed = false;
       if (release) release();
-      if (mode === "frozen") __shutdown.reset();
-      await exec(`(async () => {
-        const probe = window.__conditionalMetadata;
-        if (probe) {
-          await probe.done;
-          window.prepareDocumentDiskAdoption = probe.prepare;
-          window.ipcRenderer.invoke = probe.invoke;
-          console.error = probe.error;
-          if (probe.send) window.ipcRenderer.send = probe.send;
-          delete window.__conditionalMetadata;
+      try {
+        try {
+          const pending = __shutdown.state().commitPendingId;
+          if (restoreCommitListener && pending) {
+            if (heldCommits.length !== 1 || heldCommits[0].id !== pending) {
+              throw new Error("Conditional fixture cannot abort an unowned shutdown commit");
+            }
+            await abortOwnedMetadataFixtureFreeze(exec,
+              "SEC-08 conditional freeze abort preserves actual native document ownership");
+          }
+        } finally {
+          await exec(`(async () => {
+            const probe = window.__conditionalMetadata;
+            if (probe) {
+              try { await probe.done; }
+              finally {
+                const lost = [];
+                if (probe.prepareInstalled) {
+                  if (window.prepareDocumentDiskAdoption !== probe.prepare) lost.push('preparation');
+                  else Object.defineProperty(window, 'prepareDocumentDiskAdoption', probe.prepareDescriptor);
+                }
+                if (probe.errorInstalled) {
+                  if (console.error !== probe.error) lost.push('console');
+                  else Object.defineProperty(console, 'error', probe.errorDescriptor);
+                }
+                delete window.__conditionalMetadata;
+                if (lost.length) throw new Error('Conditional page probe lost observer ownership: ' + lost);
+              }
+            }
+          })()`);
         }
-      })()`);
-      restoreOpen(); restoreStat();
-      if (mode.endsWith("undo")) await sentinel.unmute();
-      if (mode === "frozen" && !await waitForCondition(exec,
-        "!window.CustomTabs.isDocumentFrozen()", 5000)) {
-        throw new Error("Conditional freeze journey did not thaw after its cancelled commit");
+      } finally {
+        try {
+          if (restoreCommitListener) restoreCommitListener();
+        } finally {
+          restoreOpen(); restoreStat();
+          if (tabDiskObservation !== observation) {
+            throw new Error("Conditional fixture lost its Main observation ownership");
+          }
+          tabDiskObservation = null;
+          if (mode.endsWith("undo")) await sentinel.unmute();
+        }
       }
     }
     if (mode !== "closed") await exec(`window.CustomTabs.closeTab(${id})`);

@@ -1067,7 +1067,7 @@ async function main() {
       reloadRenderer.includes("return reloadRequests.dispatch({"));
   check("ordinary tabs runs actual-code contract checks before Electron with failure propagation",
     pkg.scripts["test:tabs"] ===
-      "node test/test-reload-transport-contract.js && electron test/test-tab-refresh.js" &&
+      "node test/test-reload-transport-contract.js && node test/test-owned-transport-contract.js && electron test/test-tab-refresh.js" &&
       pkg.scripts.test.split(" && ").includes("npm run test:tabs"));
   const reloadPreflight = 'require("./test-reload-transport-contract.js").run(check);';
   check("direct focused and companion tabs launches cannot omit the actual-code contract preflight",
@@ -1075,6 +1075,12 @@ async function main() {
       reloadHarness.indexOf(reloadPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
       reloadHarness.indexOf(reloadPreflight) > reloadHarness.indexOf("function check(") &&
       reloadHarness.indexOf(reloadPreflight, reloadHarness.indexOf(reloadPreflight) + reloadPreflight.length) === -1);
+  const ownedPreflight = 'require("./test-owned-transport-contract.js").run(check);';
+  check("direct focused and companion tabs launches cannot omit the whole-preload owned transport contract",
+    /^try \{\r?\n  require\("\.\/test-owned-transport-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("owned transport contract", error\);\r?\n\}/m.test(reloadHarness) &&
+      reloadHarness.indexOf(ownedPreflight) > reloadHarness.indexOf(reloadPreflight) &&
+      reloadHarness.indexOf(ownedPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
+      reloadHarness.indexOf(ownedPreflight, reloadHarness.indexOf(ownedPreflight) + ownedPreflight.length) === -1);
   const inlineScript = '<script src="inline-formatting.js"></script>';
   const tableScript = '<script src="table-cell-editor.js"></script>';
   const inlineSource = read("src/inline-formatting.js");
