@@ -18475,6 +18475,40 @@ async function run(win) {
   // one before releasing the hold. This proves the replacement boundary, not
   // the atomicity of that Windows installation.
   write(fileB, "# Beta\n\nSEC08_ATOMIC_READ_ONE\n");
+  const atomicStateSource = `
+    (() => {
+      const tab = window.CustomTabs.getTabs().find(candidate => candidate.id === ${ids.b});
+      return {
+        active: window.CustomTabs.getActiveTabId(),
+        viewer: document.getElementById('viewer').textContent,
+        filePath: tab.filePath,
+        cache: {
+          content: tab.content, original: tab.originalContent,
+          dirty: tab.hasUnsavedChanges, diskVersion: tab.diskVersion,
+          owner: window.CustomTabs.getDocumentIdentityForTab(
+            tab.id, tab.filePath, window.getReloadRequestSession(),
+          ),
+        },
+      };
+    })()
+  `;
+  const atomicBefore = await exec(atomicStateSource);
+  const atomicReadRequest = {
+    filePath: atomicBefore.filePath,
+    pageSession: atomicBefore.cache.owner.pageSession,
+    rendererGeneration: atomicBefore.cache.owner.rendererGeneration,
+    owner: Object.fromEntries(['pageSession', 'rendererGeneration', 'tabId',
+      'documentGeneration', 'pathKey', 'documentRef']
+      .map(key => [key, atomicBefore.cache.owner[key]])),
+  };
+  const atomicReadChannel = "read-owned-tab-disk-snapshot";
+  const atomicObservation = {
+    target: win.webContents, frame: win.webContents.mainFrame,
+    pageSession: atomicReadRequest.pageSession,
+    generation: atomicReadRequest.rendererGeneration,
+    channels: new Set([atomicReadChannel]), records: [], fault: null,
+  };
+  if (tabDiskObservation) throw new Error("Overlapping atomic-read Main observers");
   const atomicReplacementPath = path.join(dir, "sec08-atomic-replacement.md");
   const atomicParkedPath = path.join(dir, "sec08-atomic-parked.md");
   const originalAtomicOpen = fs.promises.open;
@@ -18527,13 +18561,13 @@ async function run(win) {
     };
     return handle;
   });
+  tabDiskObservation = atomicObservation;
   try {
     await exec(`
       (() => {
         const probe = window.__sec08AtomicReadProbe = { settled: false };
-        probe.completion = window.ipcRenderer.invoke(
-          "read-owned-tab-disk-snapshot",
-          ${JSON.stringify(mainOwnedRefresh.validPayload)},
+        probe.completion = window.folia.readOwnedTabDiskSnapshot(
+          ${JSON.stringify(atomicReadRequest)},
         ).then(
           snapshot => {
             probe.settled = true;
@@ -18553,6 +18587,12 @@ async function run(win) {
       atomicPreHold = await exec(`({
         settled: window.__sec08AtomicReadProbe.settled,
       })`);
+      const receipt = atomicObservation.records[0];
+      atomicPreHold.mainPending = atomicObservation.records.length === 1 &&
+        exactTabDiskReceipt(receipt, atomicObservation, atomicReadChannel, atomicReadRequest) &&
+        receipt.settled === false && receipt.actualReply === undefined &&
+        receipt.deliveredReply === undefined;
+      atomicPreHold.state = await exec(atomicStateSource);
       write(atomicReplacementPath, "# Beta\n\nSEC08_ATOMIC_READ_TWO\n");
       if (process.platform === "win32") fs.renameSync(fileB, atomicParkedPath);
       fs.renameSync(atomicReplacementPath, fileB);
@@ -18577,11 +18617,32 @@ async function run(win) {
       ]);
     }
     restoreAtomicOpen();
+    tabDiskObservation = null;
     await exec(`delete window.__sec08AtomicReadProbe; null;`);
-    if (fs.existsSync(atomicReplacementPath)) fs.unlinkSync(atomicReplacementPath);
-    if (fs.existsSync(atomicParkedPath)) fs.unlinkSync(atomicParkedPath);
+    if (!atomicReadResult?.completionTimedOut &&
+        atomicObservation.records.every(record => record.settled)) {
+      if (fs.existsSync(atomicReplacementPath)) fs.unlinkSync(atomicReplacementPath);
+      if (fs.existsSync(atomicParkedPath)) fs.unlinkSync(atomicParkedPath);
+    }
   }
   if (atomicSetupError) throw atomicSetupError;
+  const atomicAfter = await exec(atomicStateSource);
+  const atomicReceipt = atomicObservation.records[0];
+  const atomicMainRead = {
+    records: atomicObservation.records,
+    exactReceipt: atomicObservation.records.length === 1 &&
+      exactTabDiskReceipt(atomicReceipt, atomicObservation, atomicReadChannel, atomicReadRequest),
+    settled: atomicReceipt?.settled,
+    error: atomicReceipt?.error,
+    fault: atomicReceipt?.fault,
+    faultFailure: atomicReceipt?.faultFailure,
+    replyUnmodified: isDeepStrictEqual(
+      atomicReceipt?.actualReply, atomicReceipt?.deliveredReply,
+    ),
+    replyReceived: isDeepStrictEqual(
+      atomicReadResult?.snapshot, atomicReceipt?.actualReply,
+    ),
+  };
   // On Windows, opening the replacement can advance ctime. Compare the
   // returned full version to the settled file, not its pre-open metadata.
   atomicSettledStats = fs.statSync(fileB);
@@ -18607,6 +18668,9 @@ async function run(win) {
     openCalls: atomicOpenCalls,
     closedAttempts: atomicClosedAttempts,
     result: atomicReadResult,
+    mainRead: atomicMainRead,
+    before: atomicBefore,
+    after: atomicAfter,
     replacementMethod: process.platform === "win32" ? "move-aside/install" : "atomic-rename",
   };
   check(
@@ -18614,6 +18678,12 @@ async function run(win) {
     atomicSecondStatHeld &&
       !atomicLateHold &&
       atomicPreHold && atomicPreHold.settled === false &&
+      atomicPreHold.mainPending === true &&
+      atomicBefore.active === ids.a && atomicBefore.cache.dirty === false &&
+      atomicBefore.cache.owner.tabId === ids.b &&
+      atomicBefore.filePath === fileB &&
+      atomicPreHold.state.active === ids.a &&
+      isDeepStrictEqual(atomicPreHold.state.cache, atomicBefore.cache) &&
       String(atomicFirstBytes).includes("SEC08_ATOMIC_READ_ONE") &&
       atomicFirstStats && atomicHeldStats && atomicReplacementStats &&
       atomicFirstStats.dev === atomicHeldStats.dev &&
@@ -18627,8 +18697,14 @@ async function run(win) {
     "SEC-08 main snapshot retries same-path inode replacement and returns only replacement bytes",
     atomicReadResult &&
       atomicReadResult.status === "fulfilled" &&
+      atomicMainRead.exactReceipt === true &&
+      atomicMainRead.settled === true &&
+      !atomicMainRead.error && !atomicMainRead.fault && !atomicMainRead.faultFailure &&
+      atomicMainRead.replyUnmodified === true &&
+      atomicMainRead.replyReceived === true &&
       atomicSnapshot &&
       atomicSnapshot.content === "# Beta\n\nSEC08_ATOMIC_READ_TWO\n" &&
+      atomicSnapshot.modifiedTime === atomicSnapshot.diskVersion?.mtimeMs &&
       atomicSettledStats &&
       ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(
         key => atomicSnapshot.diskVersion &&
@@ -18636,6 +18712,13 @@ async function run(win) {
       ) &&
       atomicOpenCalls === 2 &&
       atomicClosedAttempts.join(",") === "1,2",
+    JSON.stringify(atomicEvidence),
+  );
+  check(
+    "SEC-08 inactive atomic snapshot leaves its native owner and prior cache unchanged",
+    atomicAfter.active === ids.a &&
+      String(atomicAfter.viewer).includes("ALPHA_V2") &&
+      isDeepStrictEqual(atomicAfter.cache, atomicBefore.cache),
     JSON.stringify(atomicEvidence),
   );
   if (atomicReadResult && atomicReadResult.completionTimedOut) {
