@@ -1155,7 +1155,8 @@ async function main() {
     "test-f22-ordered-save-retirement.js",
     "test-f22-closed-companion-contracts.js",
     "test-security-actor-contracts.js",
-    "test-installed-update-contracts.js", "test-shutdown-deadline-source.js",
+    "test-installed-update-contracts.js", "test-portable-update-contracts.js",
+    "test-shutdown-deadline-source.js",
     "test-teardown-source.js", "test-mermaid-popup-contracts.js",
     "test-companion-accounting-contracts.js",
   ];

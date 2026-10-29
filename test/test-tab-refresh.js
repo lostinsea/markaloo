@@ -2306,6 +2306,16 @@ async function runPortableUpdateScenarios(win) {
   const childProcess = require("child_process");
   const updaterModule = require("electron-updater");
   const portableDir = path.join(dir, "portable-update");
+  const downloadPath = path.join(portableDir, "fixture-installer.exe");
+  const fixtureText = "# Portable update fixture\n";
+  let updaterFixture;
+  let automaticStarted = false;
+  let documentsClaimed = false;
+  let portableRetirement = null;
+  let portableFailure = null;
+  const expectedDiscards = new Map();
+  const identityFields = ["pageSession", "rendererGeneration", "tabId",
+    "documentGeneration", "pathKey", "documentRef"];
   const installHandler = ipcMain.listeners("install-update")[0];
   const realMkdtemp = fs.mkdtempSync;
   // CAPTURED BEFORE THE FAULT INJECTION, because the liveness block below has
@@ -2336,10 +2346,13 @@ async function runPortableUpdateScenarios(win) {
   // the real batch deletes itself, so main.js deliberately does not - which
   // makes them the only directories allowed to survive the sweep at the end.
   const acknowledgedBatchDirs = new Set();
+  const portableChildren = new Map();
+  const portableDirectories = new Set();
   let activeChild = null;
   let spawnMode = "park";
 
-  const resetCounts = () => {
+  const resetCounts = async () => {
+    await replacePortableFixture();
     spawnCalls = 0;
     batchDirectories = 0;
     batchWrites = 0;
@@ -2353,9 +2366,286 @@ async function runPortableUpdateScenarios(win) {
     spawnInvocations.length = 0;
     activeChild = null;
     rig.reset();
+    return updaterFixture.prepare();
   };
   const startInstall = () =>
-    exec(`window.ipcRenderer.send('install-update'); null;`);
+    exec(`window.folia.installUpdate(); null;`);
+  const readPortableDocuments = () => exec(`(() => {
+    const tabs = window.CustomTabs;
+    const activeId = tabs.getActiveTabId();
+    const pageSession = window.getReloadRequestSession();
+    return {
+      activeId, editMode: isEditMode, dirty: hasUnsavedChanges,
+      original: window.originalMarkdown, editor: markdownEditor.value,
+      currentPath: window.currentFilePath,
+      frozen: tabs.isDocumentFrozen(),
+      question: document.getElementById('appMessageDialog').open,
+      pending: window.getPendingSaveStatus().count,
+      tabs: tabs.getTabs().map(tab => {
+        const owner = tabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession);
+        const state = tabs.__documentState(tab);
+        return {
+          tabId: tab.id, filePath: tab.filePath, owner,
+          descriptor: tabs.getDocumentDescriptor(tab.id),
+          diskVersion: tab.diskVersion, mtimeMs: tab.mtimeMs,
+          content: tab.content, original: tab.originalContent,
+          dirty: tab.hasUnsavedChanges,
+          stateDirty: state.dirty,
+          mutationRevision: state.mutationRevision,
+          maintained: state.maintained,
+          deletionTombstone: state.deletionTombstone,
+          live: tab.id === activeId
+            ? isEditMode ? markdownEditor.value : window.originalMarkdown : tab.content,
+          deletion: owner && window.folia.queryDocumentDeletionState({
+            ...owner, filePath: tab.filePath }),
+        };
+      }),
+    };
+  })()`);
+  const mainPortableOwner = tab => {
+    const matches = __shutdown.documentSessionState().owners.filter(owner =>
+      identityFields.every(field => owner[field] === tab.owner?.[field]) &&
+      owner.readTarget === tab.descriptor?.readTarget);
+    if (tab.filePath !== fileA || !tab.maintained || !tab.owner || !tab.descriptor ||
+        tab.descriptor.logicalPath !== tab.filePath ||
+        tab.owner.documentRef !== tab.descriptor.ref ||
+        !__shutdown.documentAdmissionIsCurrent(tab.descriptor.ref) ||
+        matches.length !== 1 || !Number.isSafeInteger(matches[0].selectionGeneration) ||
+        matches[0].selectionGeneration < 1 || !tab.diskVersion ||
+        !Number.isFinite(tab.mtimeMs) || tab.mtimeMs !== tab.diskVersion.mtimeMs) {
+      throw new Error("Portable fixture has no exact retained Main owner: " + JSON.stringify(tab));
+    }
+    return matches[0];
+  };
+  const samePortableBuffers = (before, after) => {
+    const buffers = snapshot => ({
+      activeId: snapshot.activeId, editMode: snapshot.editMode, dirty: snapshot.dirty,
+      original: snapshot.original, editor: snapshot.editor, currentPath: snapshot.currentPath,
+      pending: snapshot.pending,
+      tabs: snapshot.tabs.map(({ deletion, ...tab }) => tab),
+    });
+    return isDeepStrictEqual(buffers(before), buffers(after));
+  };
+  const capturePortableDiscard = async (content, reason) => {
+    const snapshot = await readPortableDocuments();
+    const tab = snapshot.tabs.find(candidate => candidate.tabId === snapshot.activeId);
+    if (typeof reason !== "string" || !reason.trim() || !tab ||
+        tab.original !== fixtureText || tab.live !== content ||
+        !tab.maintained || snapshot.pending !== 0 ||
+        tab.deletion?.known !== true || tab.deletion.unresolved !== false) {
+      throw new Error("Portable discard has no exact captured fixture text: " +
+        JSON.stringify(snapshot));
+    }
+    mainPortableOwner(tab);
+    expectedDiscards.set(tab.tabId, {
+      tabId: tab.tabId, filePath: tab.filePath, owner: tab.owner, content, reason,
+    });
+  };
+  const inspectPortableFixture = async () => {
+    await exec("window.CustomTabs.settleSessionLayout()");
+    await exec("window.folia.getVersion()");
+    const snapshot = await readPortableDocuments();
+    const tab = snapshot.tabs.find(candidate => candidate.tabId === snapshot.activeId);
+    if (snapshot.tabs.length !== 1 || !tab || snapshot.frozen || snapshot.question ||
+        snapshot.pending !== 0 || snapshot.currentPath !== fileA ||
+        snapshot.original !== fixtureText || tab.content !== fixtureText ||
+        tab.original !== fixtureText || tab.live !== fixtureText ||
+        tab.dirty || snapshot.dirty || !tab.maintained ||
+        tab.deletion?.known !== true || tab.deletion.unresolved !== false) {
+      throw new Error("Portable fixture did not settle its clean current owner: " +
+        JSON.stringify(snapshot));
+    }
+    mainPortableOwner(tab);
+    return { ...tab, activeId: snapshot.activeId, activePath: snapshot.currentPath,
+      originalContent: tab.original };
+  };
+  const awaitPortableIdle = async () => {
+    const idle = await waitUntil(async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      const state = __shutdown.state();
+      return state.pendingId === 0 && state.commitPendingId === 0 &&
+        state.shutdownPendingContinuationCount === 0 &&
+        (win.isDestroyed() || !updaterFixture ||
+          (await updaterFixture.read()).canCheck === true);
+    }, 8000);
+    if (!idle) throw new Error("Portable original updater work did not settle before restoration");
+  };
+  const settlePortableOriginalWork = async () => {
+    for (const [child, record] of portableChildren) {
+      if (record.unrefRequestId === null && !record.closeReturned) child.emit("close", 1);
+      if (record.unrefRequestId === null &&
+          (!record.closeReturned || fs.existsSync(record.directory))) {
+        throw new Error("Portable original child cancellation did not retire its directory");
+      }
+    }
+    for (const directory of portableDirectories) {
+      const committed = [...portableChildren.values()].some(record =>
+        record.directory === directory && record.unrefRequestId !== null);
+      if (!committed && fs.existsSync(directory)) {
+        throw new Error("Portable original pre-spawn directory still exists");
+      }
+    }
+    const quiet = state => Number.isSafeInteger(state.lastRequestId) &&
+      state.pendingId === 0 && state.commitPendingId === 0 &&
+      state.queuedReason === null && state.absorbedUserIntentId === 0 &&
+      state.absorbedUserReplayScheduled === false &&
+      state.shutdownPendingContinuationCount === 0;
+    const committed = [...portableChildren.values()].filter(record =>
+      record.unrefRequestId !== null);
+    const observedChildren = [...portableChildren.keys()];
+    const observedDirectories = [...portableDirectories];
+    const settled = await waitUntil(async () => {
+      const before = __shutdown.state();
+      if (!quiet(before) || committed.some(record =>
+        !Number.isSafeInteger(record.unrefRequestId) ||
+        before.lastRequestId <= record.unrefRequestId)) return false;
+      // Quiet can precede a queued synchronous continuation. Drain after the
+      // quiet observation, then recheck without resetting any original latch.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+      const update = updaterFixture && !win.isDestroyed() ? await updaterFixture.read() : null;
+      const after = __shutdown.state();
+      const retiredLatch = observedChildren.length > 0 && after.updateInstallStarted === true &&
+        (update?.status === "installing" || update?.status === "error");
+      const sameAttempts = portableChildren.size === observedChildren.length &&
+        observedChildren.every(child => portableChildren.has(child)) &&
+        portableDirectories.size === observedDirectories.length &&
+        observedDirectories.every(directory => portableDirectories.has(directory));
+      return sameAttempts && quiet(after) && after.lastRequestId === before.lastRequestId &&
+        (!update || update.canCheck === true || retiredLatch);
+    }, 8000);
+    if (!settled) throw new Error("Portable original updater work did not settle before restoration");
+    portableChildren.clear();
+    portableDirectories.clear();
+  };
+  const assertPortableMainOwners = targets => {
+    const owners = __shutdown.documentSessionState().owners;
+    if (owners.length !== targets.length || targets.some(target =>
+      !__shutdown.documentAdmissionIsCurrent(target.descriptor.ref) ||
+      owners.filter(owner => identityFields.every(field =>
+        owner[field] === target.owner[field]) &&
+        owner.readTarget === target.descriptor.readTarget).length !== 1)) {
+      throw new Error("Portable retirement Main owner authority changed");
+    }
+  };
+  const retireCapturedPortableFixture = async () => {
+    const before = await readPortableDocuments();
+    if (before.pending !== 0 || before.question) {
+      throw new Error("Portable retirement still has original work or a question outstanding");
+    }
+    if (__shutdown.documentSessionState().owners.some(owner =>
+      !before.tabs.some(tab => identityFields.every(field =>
+        owner[field] === tab.owner?.[field])))) {
+      throw new Error("Portable retirement refuses an unowned Main document owner");
+    }
+    before.tabs.forEach(tab => {
+      mainPortableOwner(tab);
+      if (tab.deletion?.known !== true || tab.deletion.unresolved !== false ||
+          tab.deletionTombstone) {
+        throw new Error("Portable retirement refuses a deleted or unresolved owner");
+      }
+    });
+    const expectedTargets = before.tabs.map(tab => {
+      const disposition = tab.stateDirty === false && tab.dirty === false ? "clean" :
+        tab.stateDirty === true && tab.dirty === true ? "dirty-discard" : null;
+      if (tab.maintained !== true || disposition === null ||
+          ![tab.live, tab.content, tab.original].every(text => typeof text === "string")) {
+        throw new Error("Portable capture has no exact disposition or text");
+      }
+      return {
+        tabId: tab.tabId, path: tab.filePath,
+        owner: Object.fromEntries(identityFields.map(field => [field, tab.owner[field]])),
+        descriptor: { ref: tab.descriptor.ref, logicalPath: tab.descriptor.logicalPath,
+          readTarget: tab.descriptor.readTarget },
+        disposition, liveContent: tab.live, cacheContent: tab.content,
+        savedContent: tab.original,
+      };
+    });
+    const capturedDiscards = [...expectedDiscards.values()].map(permission => ({
+      ...permission,
+      owner: Object.fromEntries(identityFields.map(field => [field, permission.owner[field]])),
+    }));
+    documentsClaimed = true;
+    await settlePortableOriginalWork();
+    assertPortableMainOwners(expectedTargets);
+    if (before.frozen) {
+      // Reset sends the real thaw, but clears Main's baseline. Re-register the
+      // retained admitted version; never substitute a fresh stat or edit text.
+      __shutdown.reset();
+      if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 8000)) {
+        throw new Error("Portable fixture did not receive its genuine Main thaw");
+      }
+      await exec("window.folia.getVersion()");
+      const thawed = await readPortableDocuments();
+      if (!samePortableBuffers(before, thawed)) {
+        throw new Error("Portable thaw changed captured document buffers or identity");
+      }
+      for (const tab of thawed.tabs) {
+        const retained = mainPortableOwner(tab);
+        const owner = Object.fromEntries(identityFields.map(field => [field, tab.owner[field]]));
+        owner.selectionGeneration = retained.selectionGeneration;
+        await exec(`window.folia.registerDocumentOwner(${JSON.stringify({
+          filePath: tab.filePath, pageSession: owner.pageSession,
+          rendererGeneration: owner.rendererGeneration, owner,
+          diskVersion: tab.diskVersion, modifiedTime: tab.mtimeMs,
+        })}); null;`);
+      }
+      await exec("window.folia.getVersion()");
+      const registered = await readPortableDocuments();
+      if (!samePortableBuffers(before, registered) ||
+          registered.tabs.some(tab =>
+            tab.deletion?.known !== true || tab.deletion.unresolved !== false)) {
+        throw new Error("Portable re-registration did not restore exact ordinary ownership");
+      }
+      registered.tabs.forEach(mainPortableOwner);
+    }
+    const closed = await closeOwnedFixtureTabs(exec, "portable fixture retirement", {
+      tabIds: before.tabs.map(tab => tab.tabId),
+      expectedTargets,
+      expectedDiscards: capturedDiscards,
+    });
+    if (closed.records.length !== before.tabs.length || closed.remaining.length !== 0 ||
+        closed.records.some(record => !record.closed || !record.settled || record.error) ||
+        before.tabs.some(tab =>
+          closed.records.filter(record => record.tabId === tab.tabId).length !== 1)) {
+      throw new Error("Portable fixture retained an owner after ordered close");
+    }
+    const remaining = await readPortableDocuments();
+    if (remaining.tabs.length !== 0 ||
+        __shutdown.documentSessionState().owners.length !== 0) {
+      throw new Error("Portable close receipt preceded visible or Main owner retirement");
+    }
+    for (const record of closed.records) expectedDiscards.delete(record.tabId);
+    await exec("window.CustomTabs.settleSessionLayout()");
+    assertPortableMainOwners([]);
+    __shutdown.reset();
+    if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 8000)) {
+      throw new Error("Portable empty document did not settle after reset");
+    }
+    await awaitPortableIdle();
+    await exec(`(() => {
+      if (window.CustomTabs.getTabs().length !== 0 || hasUnsavedChanges ||
+          window.getPendingSaveStatus().count !== 0)
+        throw new Error('Portable mode restore still has a live or dirty owner');
+      if (isEditMode) toggleEditBtn.click();
+      if (isEditMode) throw new Error('Portable view mode did not settle');
+      return true;
+    })()`);
+  };
+  const retirePortableFixture = () => {
+    if (!portableRetirement) {
+      portableRetirement = retireCapturedPortableFixture().then(() => {
+        portableRetirement = null;
+      });
+    }
+    return portableRetirement;
+  };
+  const replacePortableFixture = async () => {
+    await retirePortableFixture();
+    write(fileA, fixtureText);
+    await openShutdownLifecycleFixture(exec, fileA, fixtureText, "Portable update fixture");
+    return inspectPortableFixture();
+  };
 
   try {
     fs.mkdirSync(portableDir, { recursive: true });
@@ -2368,92 +2658,44 @@ async function runPortableUpdateScenarios(win) {
       rendererReady,
       JSON.stringify(__shutdown.state()),
     );
-    if (!rendererReady) return;
-    write(fileA, "# Portable update fixture\n");
-    await exec(`
-      (() => {
-        const realConfirm = window.confirm;
-        window.confirm = () => true;
-        try {
-          window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-        } finally {
-          window.confirm = realConfirm;
-        }
-        const tab = window.CustomTabs.createTab(${jsA}, window.fs.readFileSync(${jsA}, 'utf8'));
-        window.CustomTabs.switchToTab(tab.id);
-        window.originalMarkdown = tab.originalContent;
-        window.isEditMode = false;
-        return window.CustomTabs.getTabs().length;
-      })()
-      `);
-    // That fresh id was deliberately far ahead of the real sequence, so this
-    // renderer would now treat every genuine request as stale. Replace it
-    // rather than leaving the next block to inherit the poisoned counter.
-    const portableReloadGeneration = __shutdown.state().rendererGeneration;
-    win.webContents.reload();
-    const portableRendererReady = await waitUntil(() => {
-      const state = __shutdown.state();
-      return state.renderer === "ready" &&
-        state.rendererGeneration > portableReloadGeneration;
-    }, 20000);
-    if (!portableRendererReady) {
-      throw new Error("portable reload fixture did not reach a new renderer generation");
+    if (!rendererReady) throw new Error("Portable renderer did not become ready");
+    updaterFixture = createInstalledUpdaterFixture(exec, updaterModule.autoUpdater, downloadPath);
+    const eligibility = await updaterFixture.read();
+    if (typeof eligibility.manualOnly !== "boolean") {
+      throw new Error("Portable updater did not report an explicit capability: " +
+        JSON.stringify(eligibility));
     }
-    // The no-download press initializes exactly the real lazy updater path;
-    // update-downloaded is then its real public state transition.
-    await startInstall();
-    const updaterConfigured = await waitUntil(
-      () =>
-        updaterModule.autoUpdater.requestHeaders &&
-        updaterModule.autoUpdater.requestHeaders["x-user-staging-id"] === "",
-    );
-    // THE ENVIRONMENT VARIABLE IS NOT THE EVIDENCE, and on its own it was
-    // circular: this harness writes PORTABLE_EXECUTABLE_DIR itself when the
-    // caller did not, so "the variable is set" could be true of a run that
-    // main.js had nonetheless resolved as a normal installed build. What
-    // decides the branch is main.js's own `isPortable`, and it is observable in
-    // production state rather than through a seam invented for the test:
-    // configureAutoUpdater() sets `autoInstallOnAppQuit = !isPortable`, so on
-    // this branch it must be FALSE. The parent suite asserts the same field is
-    // TRUE in a non-portable process, which is what makes this a discriminator
-    // and not a constant.
+    if (eligibility.manualOnly) {
+      const manualBoundary = eligibility.canDownload === false && eligibility.canInstall === false;
+      check("manual-only portable updates expose no automatic download or install",
+        manualBoundary, JSON.stringify(eligibility));
+      if (!manualBoundary) throw new Error("Portable manual-only updater boundary is invalid");
+      return { mode: "manual-only", updateState: eligibility };
+    }
+    automaticStarted = true;
+    write(downloadPath, "Portable updater fixture; contained by the spawn observer.\n");
+    const prepared = await resetCounts();
     check(
-      "the portable companion loaded the production portable updater branch",
-      !!process.env.PORTABLE_EXECUTABLE_DIR &&
-        typeof installHandler === "function" &&
-        updaterConfigured &&
-        // The branch itself, read off the real updater main.js configured.
-        // This, not the environment variable, is what carries the assertion:
-        // the variable can be written by this harness's own fallback, and
-        // "the variable is set" would then be true of a run main.js had
-        // nonetheless resolved as a normal installed build.
-        updaterModule.autoUpdater.autoInstallOnAppQuit === false &&
-        // Control: proves configureAutoUpdater ran at all, so the field above
-        // is a decision rather than an electron-updater default.
-        updaterModule.autoUpdater.autoDownload === false,
+      "the portable companion has a current checked and downloaded regular-file fixture",
+      typeof installHandler === "function" &&
+        prepared.state.manualOnly === false &&
+        prepared.state.canInstall === true &&
+        prepared.state.readyVersion === prepared.candidate &&
+        updaterModule.autoUpdater.downloadedUpdateHelper?.file === downloadPath &&
+        fs.statSync(downloadPath).isFile(),
       JSON.stringify({
-        portable: process.env.PORTABLE_EXECUTABLE_DIR,
-        // Recorded, not asserted: true when the parent supplied it, false when
-        // the fallback at the top of this file did. Either way the branch is
-        // proven by the product state above.
-        portableEnvWasInherited,
-        installHandlers: ipcMain.listeners("install-update").length,
-        updaterConfigured,
-        autoInstallOnAppQuit: updaterModule.autoUpdater.autoInstallOnAppQuit,
-        autoDownload: updaterModule.autoUpdater.autoDownload,
+        candidate: prepared.candidate, state: prepared.state, downloadPath,
       }),
     );
-    updaterModule.autoUpdater.emit("update-downloaded", {
-      version: "9.9.9-portable",
-      downloadedFile: fileA,
-    });
 
     restoreMkdtemp = replaceMethod(fs, "mkdtempSync", (prefix) => {
       if (!String(prefix).includes("folia-update-")) {
         return realMkdtemp(prefix);
       }
       batchDirectories += 1;
-      return realMkdtemp(path.join(portableDir, "batch-"));
+      const directory = realMkdtemp(path.join(portableDir, "batch-"));
+      portableDirectories.add(path.resolve(directory));
+      return directory;
     });
     const realWrite = fs.writeFileSync;
     restoreWrite = replaceMethod(fs, "writeFileSync", (target, ...rest) => {
@@ -2486,22 +2728,34 @@ async function runPortableUpdateScenarios(win) {
         spawnMode = "park";
         throw new Error("controlled portable spawn refusal");
       }
-      activeChild = new (require("events").EventEmitter)();
-      activeChild.unrefCalls = 0;
-      activeChild.unref = () => {
-        activeChild.unrefCalls += 1;
+      const child = new (require("events").EventEmitter)();
+      const record = {
+        directory: path.resolve(portableBatchDir(args[1])),
+        unrefRequestId: null,
+        closeReturned: false,
       };
-      activeChild.kill = () => {
+      portableChildren.set(child, record);
+      const originalEmit = child.emit;
+      child.emit = (event, ...values) => {
+        const emitted = originalEmit.call(child, event, ...values);
+        if (event === "close") record.closeReturned = true;
+        return emitted;
+      };
+      child.unrefCalls = 0;
+      child.unref = () => {
+        child.unrefCalls += 1;
+        record.unrefRequestId = __shutdown.state().lastRequestId;
+      };
+      child.kill = () => {
         childKills += 1;
         return true;
       };
-      return activeChild;
+      activeChild = child;
+      return child;
     });
 
     // Re-entrant request at the hand-off boundary: one private directory,
     // one batch, and one spawn attempt even when that first attempt refuses.
-    __shutdown.reset();
-    resetCounts();
     spawnMode = "reenter-then-throw";
     await startInstall();
     await waitUntil(() => spawnCalls === 1);
@@ -2525,8 +2779,7 @@ async function runPortableUpdateScenarios(win) {
     // Park the child before it reports success, issue a normal second press,
     // then release the public spawn event. This proves the in-flight latch
     // covers the real asynchronous gap rather than merely the call itself.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     spawnMode = "park";
     await startInstall();
     const parked = await waitUntil(() => activeChild !== null);
@@ -2717,33 +2970,8 @@ async function runPortableUpdateScenarios(win) {
     // the quit instead of exiting this companion, so release that otherwise
     // terminal freeze through the normal main-to-renderer IPC before the next
     // independent portable scenario selects its live document.
-    const portableForgedMarkerTab = await exec(`
-      (() => {
-        require("electron").ipcRenderer.emit("quit-approval-thaw", {});
-        const tabs = window.CustomTabs;
-        const before = tabs.getActiveTab() || null;
-        let tab = tabs.getTabs().find(entry =>
-          entry && entry.filePath === ${JSON.stringify(fileA)}) || null;
-        let created = false;
-        if (!tab) {
-          tab = tabs.createTab(
-            ${JSON.stringify(fileA)},
-            window.fs.readFileSync(${JSON.stringify(fileA)}, "utf8"),
-          );
-          created = true;
-        }
-        tabs.switchToTab(tab.id);
-        const active = tabs.getActiveTab() || null;
-        return {
-          beforeActiveId: before && before.id,
-          created,
-          tabId: tab.id,
-          activeId: active && active.id,
-          activePath: active && active.filePath,
-          originalContent: active && active.originalContent,
-        };
-      })()
-    `);
+    await resetCounts();
+    const portableForgedMarkerTab = await inspectPortableFixture();
     const portableForgedMarkerReady = !!(
       portableForgedMarkerTab &&
         Number.isSafeInteger(portableForgedMarkerTab.tabId) &&
@@ -2769,18 +2997,8 @@ async function runPortableUpdateScenarios(win) {
     // process that finds it. An `ack` with the wrong body has to leave the app
     // exactly as unauthorised as no `ack` at all - which the timeout below then
     // resolves fail-closed.
-    __shutdown.reset();
-    resetCounts();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
     await startInstall();
     const forgedChildParked = await waitUntil(() => activeChild !== null);
     const forgedChild = activeChild;
@@ -2837,18 +3055,9 @@ async function runPortableUpdateScenarios(win) {
     // The batch's own report that it could not start the installer - a swept
     // download, a refused `start`. It carries the same secret, so it is
     // believed immediately rather than waited out, and the app stays up.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
     await startInstall();
     const failedChildParked = await waitUntil(() => activeChild !== null);
     const failedChild = activeChild;
@@ -2901,8 +3110,7 @@ async function runPortableUpdateScenarios(win) {
     // something else - and believing it would quit the app for an installer
     // that has not started. The directory is minted fresh per attempt, so this
     // can never be the app's own residue.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const plantedChildParked = await waitUntil(() => activeChild !== null, 10000);
@@ -2965,8 +3173,7 @@ async function runPortableUpdateScenarios(win) {
     // acknowledgement lands, that answer no longer covers what the reader is
     // looking at - so the quit is re-asked rather than taken, exactly as the
     // installed updater's public commit boundary does.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const staleAckChildParked = await waitUntil(() => activeChild !== null, 10000);
@@ -2984,6 +3191,7 @@ async function runPortableUpdateScenarios(win) {
         return tab.content;
       })()
     `);
+    await capturePortableDiscard(exactPostReleaseEdit, "portable post-release source-change fixture");
     let releaseStaleAckClose;
     rig.answer = () =>
       new Promise((resolve) => {
@@ -3037,15 +3245,7 @@ async function runPortableUpdateScenarios(win) {
         state: __shutdown.state(),
       }),
     );
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
 
     // THE EDIT MADE WHILE THE INSTALLER WAS STARTING. This is the window a
     // generation check structurally cannot see: no navigation, no second
@@ -3055,8 +3255,7 @@ async function runPortableUpdateScenarios(win) {
     // longer exists. Cancel keeps the edit, does not quit, and leaves the
     // attempt latched: the installer is already running and must not be joined
     // by a second one.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const editRaceChildParked = await waitUntil(() => activeChild !== null, 10000);
@@ -3075,6 +3274,7 @@ async function runPortableUpdateScenarios(win) {
         return tab.content;
       })()
     `);
+    await capturePortableDiscard(exactPostGateEdit, "portable post-gate source-change fixture");
     if (editRaceGateReleased) {
       acknowledgedBatchDirs.add(path.resolve(portableBatchDir(batchPaths[0])));
       writePortableMarker(
@@ -3208,17 +3408,8 @@ async function runPortableUpdateScenarios(win) {
     // dirty, and an install press against a dirty document raises its OWN
     // approval dialog, which would make the dialog count below ambiguous
     // between the press and the confirmation this scenario is about.
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
-    __shutdown.reset();
-    resetCounts();
+
+    await resetCounts();
     rig.answer = 0;
     await startInstall();
     const approvedRaceChildParked = await waitUntil(
@@ -3240,6 +3431,7 @@ async function runPortableUpdateScenarios(win) {
         return tab.content;
       })()
     `);
+    await capturePortableDiscard(exactPostGateEdit + "APPROVED\n", "portable approved source-change fixture");
     if (approvedRaceGateReleased) {
       acknowledgedBatchDirs.add(path.resolve(portableBatchDir(batchPaths[0])));
       writePortableMarker(
@@ -3281,15 +3473,7 @@ async function runPortableUpdateScenarios(win) {
         state: __shutdown.state(),
       }),
     );
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
 
     // THE EDIT THAT ARRIVES IN THE SPAWN GAP. The install approval was given
     // against a clean document; spawning is asynchronous, and text typed while
@@ -3297,18 +3481,9 @@ async function runPortableUpdateScenarios(win) {
     // The generation has not changed - it is the same document - so only asking
     // again can find it. Cancel must keep the edit, release no gate, and leave
     // no authorization behind.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return tab.content;
-      })()
-    `);
+
     await startInstall();
     const gapChildParked = await waitUntil(() => activeChild !== null, 10000);
     const gapChild = activeChild;
@@ -3322,6 +3497,7 @@ async function runPortableUpdateScenarios(win) {
         return tab.content;
       })()
     `);
+    await capturePortableDiscard(exactGapEdit, "portable spawn-gap source-change fixture");
     if (gapChild) gapChild.emit("spawn");
     const gapAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
     const gapCancelled = await waitUntil(
@@ -3368,21 +3544,12 @@ async function runPortableUpdateScenarios(win) {
         gapDirRemoved,
       }),
     );
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
 
     // A dirty portable install is held at the same approval boundary as every
     // other shutdown. No private batch/gate exists while that question is on
     // screen, and Cancel therefore cannot accidentally release an installer.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     await exec(`
       (() => {
         const tab = window.CustomTabs.getActiveTab();
@@ -3392,6 +3559,7 @@ async function runPortableUpdateScenarios(win) {
         return tab.filename;
       })()
     `);
+    await capturePortableDiscard(fixtureText + "\nPORTABLE_HELD_APPROVAL_EDIT\n", "portable held-approval fixture");
     let releasePortableApproval;
     rig.answer = () =>
       new Promise((resolve) => {
@@ -3432,16 +3600,8 @@ async function runPortableUpdateScenarios(win) {
     // Once the child is parked, a committed document replacement invalidates
     // the approval that launched it. The child receives only a cancel gate;
     // its close event, not merely kill(), releases the retry latch.
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
-    __shutdown.reset();
-    resetCounts();
+
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const childParkedBeforeReplacement = await waitUntil(() => activeChild !== null);
@@ -3454,6 +3614,8 @@ async function runPortableUpdateScenarios(win) {
         __shutdown.state().rendererGeneration > parkedGeneration,
       20000,
     );
+    if (!replacementDocumentReady) throw new Error("Portable replacement renderer did not become ready");
+    await settleShutdownLifecycleRestore(exec, fileA, fixtureText, "Portable update fixture");
     if (parkedChild) parkedChild.emit("spawn");
     const cancelledParkedChild = await waitUntil(
       () => cancelWrites === 1 && childKills === 1,
@@ -3489,7 +3651,7 @@ async function runPortableUpdateScenarios(win) {
     // A retry is only meaningful after the cancelled child has closed. Give
     // it a separate batch and let its observed spawn event complete normally,
     // acknowledgement included.
-    resetCounts();
+    await resetCounts();
     rig.reset();
     await startInstall();
     const retryChildParked = await waitUntil(() => activeChild !== null);
@@ -3548,8 +3710,7 @@ async function runPortableUpdateScenarios(win) {
     // security software, crashed - can never emit another close. Waiting for
     // one that cannot arrive strands the in-flight latch, so no later Install
     // press can start anything, and leaves the private directory on disk.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const deadChildParked = await waitUntil(() => activeChild !== null, 10000);
@@ -3570,6 +3731,8 @@ async function runPortableUpdateScenarios(win) {
         __shutdown.state().rendererGeneration > deadGeneration,
       20000,
     );
+    if (!deadReplacementReady) throw new Error("Portable dead-child replacement did not become ready");
+    await settleShutdownLifecycleRestore(exec, fileA, fixtureText, "Portable update fixture");
     if (deadChild) deadChild.emit("spawn");
     const deadLatchReleased = await waitUntil(
       () => __shutdown.state().updateInstallStarted === false,
@@ -3608,30 +3771,8 @@ async function runPortableUpdateScenarios(win) {
     // that only measures LENGTH would pass a hard-coded one. Three attempts,
     // three tokens, and the previous attempt's acknowledgement replayed against
     // a later one - which must be refused for as long as it is offered.
-    const tokenReplayFixture = await exec(`
-      (() => {
-        const tabs = window.CustomTabs;
-        let tab = tabs.getTabs().find(entry =>
-          entry && entry.filePath === ${JSON.stringify(fileA)}) || null;
-        let created = false;
-        if (!tab) {
-          tab = tabs.createTab(
-            ${JSON.stringify(fileA)},
-            window.fs.readFileSync(${JSON.stringify(fileA)}, "utf8"),
-          );
-          created = true;
-        }
-        tabs.switchToTab(tab.id);
-        const active = tabs.getActiveTab() || null;
-        return {
-          created,
-          tabId: tab.id,
-          activeId: active && active.id,
-          activePath: active && active.filePath,
-          originalContent: active && active.originalContent,
-        };
-      })()
-    `);
+    await resetCounts();
+    const tokenReplayFixture = await inspectPortableFixture();
     const tokenReplayFixtureReady = !!(
       tokenReplayFixture &&
       Number.isSafeInteger(tokenReplayFixture.tabId) &&
@@ -3650,8 +3791,6 @@ async function runPortableUpdateScenarios(win) {
         JSON.stringify(tokenReplayFixture),
       );
     }
-    __shutdown.reset();
-    resetCounts();
     rig.answer = 1;
     await startInstall();
     const tokenAttemptA = await waitUntil(() => activeChild !== null, 10000);
@@ -3667,7 +3806,7 @@ async function runPortableUpdateScenarios(win) {
     await waitUntil(() => __shutdown.state().updateInstallStarted === false, 10000);
     await waitUntil(() => !fs.existsSync(dirA), 10000);
 
-    resetCounts();
+    await resetCounts();
     rig.reset();
     rig.answer = 1;
     await startInstall();
@@ -3728,8 +3867,7 @@ async function runPortableUpdateScenarios(win) {
     // The genuine current token, on a third attempt, still succeeds - and only
     // through the ordinary approval path. A replay test that left the real path
     // unproven would have shown the check refusing everything.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.reset();
     rig.answer = 1;
     await startInstall();
@@ -3780,8 +3918,7 @@ async function runPortableUpdateScenarios(win) {
     // `install-update` can quit the app and replace it on disk, so the sender
     // gate is a security control - and "the suite passed" is not evidence for
     // it. A real second BrowserWindow sends the message; nothing may move.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.reset();
     const impostor = new BrowserWindow({
       show: false,
@@ -3927,7 +4064,7 @@ async function runPortableUpdateScenarios(win) {
       const missingInstaller = path.join(liveDir, "no-such-installer.exe");
       // WHAT MAKES RUNNING PRODUCTION BYTES SAFE IS THE SUBSTITUTION, so the
       // substitution is PROVEN rather than performed and trusted. The real
-      // `downloadedFile` these scripts were emitted against is `fileA`, and it
+      // `downloadedFile` these scripts were emitted against is the regular fixture, and it
       // EXISTS - so a `start`/`if not exist` rewrite that silently failed to
       // apply would leave a runnable script pointing at a real file, the
       // `if not exist` guard would pass, and this test would hand a document to
@@ -3936,7 +4073,7 @@ async function runPortableUpdateScenarios(win) {
       // in the rewritten bytes, both the guard and the `start` name the
       // substitute, there is exactly one `start`, and the substitute is absent
       // from disk so control provably reaches `:failed` even if it got there.
-      const realDownloadPath = fileA;
+      const realDownloadPath = downloadPath;
       // THE PRE-CONDITION IS PROVEN BEFORE THE REWRITE, because a substitution
       // is only meaningful against a known starting point. If the captured
       // bytes did not name the real download in these two exact lines - a
@@ -4256,8 +4393,7 @@ async function runPortableUpdateScenarios(win) {
     // already gone opens nothing, the acknowledgement never comes, and the
     // deadline would then hold the retry latch for the rest of the session over
     // an installer that could not possibly have run.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const earlyDeathParked = await waitUntil(() => activeChild !== null, 10000);
@@ -4274,7 +4410,7 @@ async function runPortableUpdateScenarios(win) {
       10000,
     );
     // The latch is clear, so a later press may try again - and does.
-    resetCounts();
+    await resetCounts();
     rig.reset();
     await startInstall();
     const earlyDeathRetryParked = await waitUntil(
@@ -4311,8 +4447,7 @@ async function runPortableUpdateScenarios(win) {
 
     // A release-gate write is also a failed hand-off. It must fail closed,
     // cancel and await the child close before another attempt can start.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
     await startInstall();
     const releaseFailureChildParked = await waitUntil(() => activeChild !== null);
@@ -4387,8 +4522,7 @@ async function runPortableUpdateScenarios(win) {
     // An error before gate release does not prove cmd.exe has stopped holding
     // its script. It cancels immediately, but its retry latch and directory
     // remain owned by the child-close boundary.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     await startInstall();
     const errorChildReady = await waitUntil(() => activeChild !== null);
     const errorIsHandled =
@@ -4438,31 +4572,7 @@ async function runPortableUpdateScenarios(win) {
     // hand-off. The rig keeps this companion alive, so release that committed
     // renderer freeze and restore a real selected fixture before creating the
     // edit for the close-path assertion.
-    const errorCloseFixture = await exec(`
-      (() => {
-        require("electron").ipcRenderer.emit("quit-approval-thaw", {});
-        const tabs = window.CustomTabs;
-        let tab = tabs.getTabs().find(entry =>
-          entry && entry.filePath === ${JSON.stringify(fileA)}) || null;
-        let created = false;
-        if (!tab) {
-          tab = tabs.createTab(
-            ${JSON.stringify(fileA)},
-            window.fs.readFileSync(${JSON.stringify(fileA)}, "utf8"),
-          );
-          created = true;
-        }
-        tabs.switchToTab(tab.id);
-        const active = tabs.getActiveTab() || null;
-        return {
-          created,
-          tabId: tab.id,
-          activeId: active && active.id,
-          activePath: active && active.filePath,
-          originalContent: active && active.originalContent,
-        };
-      })()
-    `);
+    const errorCloseFixture = await replacePortableFixture();
     const errorCloseFixtureReady = !!(
       errorCloseFixture &&
       Number.isSafeInteger(errorCloseFixture.tabId) &&
@@ -4490,6 +4600,7 @@ async function runPortableUpdateScenarios(win) {
         return true;
       })()
     `);
+    await capturePortableDiscard(fixtureText + "\nPORTABLE_SPAWN_ERROR_EDIT\n", "portable child-error close fixture");
     rig.answer = 1;
     const closeAfterError = guardEvent();
     win.emit("close", closeAfterError);
@@ -4547,18 +4658,9 @@ async function runPortableUpdateScenarios(win) {
     // After release, an error cannot prove that cmd did not already reach
     // `start`. It must still wait for close before deleting the batch, and it
     // must retain the duplicate-install latch even after that close.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
     await startInstall();
     const releasedErrorChildReady = await waitUntil(() => activeChild !== null);
     const releasedErrorChild = activeChild;
@@ -4610,18 +4712,9 @@ async function runPortableUpdateScenarios(win) {
     // owner's perspective. Do not delete its tree or permit a retry; a late
     // close is the one event that may release that state, and duplicate late
     // lifecycle events must not release it twice.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.answer = 1;
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
+
     await startInstall();
     const neverCloseChildReady = await waitUntil(() => activeChild !== null);
     const neverCloseChild = activeChild;
@@ -4711,18 +4804,9 @@ async function runPortableUpdateScenarios(win) {
       },
     ];
     for (const terminalCase of preReleaseTerminalCases) {
-      __shutdown.reset();
-      resetCounts();
+      await resetCounts();
       rig.answer = 1;
-      await exec(`
-        (() => {
-          const tab = window.CustomTabs.getActiveTab();
-          tab.content = tab.originalContent;
-          tab.hasUnsavedChanges = false;
-          window.originalMarkdown = tab.originalContent;
-          return true;
-        })()
-      `);
+
       await startInstall();
       const oldChildParked = await waitUntil(() => activeChild !== null, 10000);
       const oldChild = activeChild;
@@ -4797,28 +4881,12 @@ async function runPortableUpdateScenarios(win) {
     // The window is destroyed for real, last, after every other scenario: this
     // is the only way to observe the branch, and the sweep below and the
     // teardown afterwards need no window.
-    __shutdown.reset();
-    resetCounts();
+    await resetCounts();
     rig.reset();
     rig.answer = 1;
-    // THE DOCUMENT IS PUT BACK CLEAN FIRST, and it has to be. The block above
-    // deliberately leaves an edit in the tab so that its close is asked about;
-    // an Install press against that edit raises a discard question, `answer: 1`
-    // CANCELS it, and no child is ever parked - so `batchPaths[0]` was
-    // undefined and reading the hand-off token out of it threw, taking the
-    // whole companion down after its last assertion. This block is about a
-    // window that disappears mid-hand-off, not about consent, so the consent
-    // question is removed rather than answered.
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        window.isEditMode = false;
-        return true;
-      })()
-    `);
+    // The prior fixture was retired through its exact ordinary close.
+    // This clean admitted document isolates window loss from discard consent.
+
     await startInstall();
     const noWindowParked = await waitUntil(() => activeChild !== null, 10000);
     const noWindowBatch = batchPaths[0];
@@ -4914,20 +4982,37 @@ async function runPortableUpdateScenarios(win) {
         acknowledged: [...acknowledgedBatchDirs],
       }),
     );
+    return { mode: "automatic" };
+  } catch (error) {
+    portableFailure = error;
   } finally {
-    if (restoreSpawn) restoreSpawn();
-    if (restoreWrite) restoreWrite();
-    if (restoreMkdtemp) restoreMkdtemp();
-    rig.restore();
-    __shutdown.reset();
+    const failures = [];
+    let quiescent = !automaticStarted;
     try {
-      fs.rmSync(portableDir, { recursive: true, force: true });
-    } catch (error) {
-      check(
-        "the portable updater test removes its private batch directories",
-        false,
-        String(error),
-      );
+      if (automaticStarted) {
+        if (documentsClaimed && !win.isDestroyed()) {
+          await retirePortableFixture();
+        } else {
+          await settlePortableOriginalWork();
+          // Without a live owned document, leave Main's evidence alone.
+        }
+        quiescent = true;
+      }
+    } catch (error) { failures.push(error); }
+    // Keep borrowed providers, containment and files if original work has not
+    // settled. The terminal harness must contain that failed run.
+    if (quiescent) {
+      for (const restore of [restoreSpawn, restoreWrite, restoreMkdtemp,
+        () => rig.restore(), updaterFixture && (() => updaterFixture.restore())]) {
+        if (!restore) continue;
+        try { restore(); } catch (error) { failures.push(error); }
+      }
+      try { fs.rmSync(portableDir, { recursive: true, force: true }); }
+      catch (error) { failures.push(error); }
+    }
+    if (portableFailure || failures.length) {
+      throw new AggregateError([portableFailure, ...failures].filter(Boolean),
+        "Portable scenario or owned restoration failed");
     }
   }
 }
