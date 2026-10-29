@@ -138,6 +138,73 @@ function isPackaged(files, rel) {
 async function main() {
   console.log("\n=== Packaging allowlist ===\n");
 
+  {
+    const { saveResultEchoesRequest } = require("./save-result-correlation");
+    const pageOracle = require("node:vm").runInNewContext(
+      "(" + saveResultEchoesRequest.toString() + ")",
+      {},
+      { timeout: 1000 },
+    );
+    const request = {
+      filePath: "C:\\f22-correlation.md", content: "F22_CURRENT_BYTES",
+      requestId: 17, saveRequestSession: "f22-correlation-page",
+      saveRequest: {
+        requestId: 17, sequence: 13, pageSession: "f22-correlation-page",
+        rendererGeneration: 23, tabId: 7, documentGeneration: 9,
+        pathKey: "f22-correlation-key", documentRef: "a".repeat(64),
+        selectionGeneration: 11,
+      },
+    };
+    const response = {
+      path: request.filePath, requestId: request.requestId,
+      saveRequestSession: request.saveRequestSession,
+      saveRequest: { ...request.saveRequest },
+    };
+    const both = (sent, received, expected) =>
+      [saveResultEchoesRequest, pageOracle].every(
+        oracle => oracle(sent, received) === expected,
+      );
+    check("F22 Save result oracles retain qualified success and refusal correlation in both realms",
+      both(request, { ...response, success: true }, true) &&
+      both(request, { ...response, success: false }, true));
+    const foreign = Object.entries(response.saveRequest).map(([field, value]) => ({
+      ...response,
+      saveRequest: {
+        ...response.saveRequest,
+        [field]: typeof value === "number" ? value + 1
+          : field === "documentRef" ? "b".repeat(64) : value + "-foreign",
+      },
+    }));
+    foreign.push(
+      { ...response, requestId: response.requestId + 1 },
+      { ...response, saveRequestSession: response.saveRequestSession + "-foreign" },
+    );
+    check("F22 Save result oracles reject every foreign correlation field in both realms",
+      foreign.length === 11 && foreign.every(reply => both(request, reply, false)));
+    const rejectsMatchingInvalid = (field, values) => values.every(value => {
+      const sent = { ...request, saveRequest: { ...request.saveRequest, [field]: value } };
+      const received = { ...response, saveRequest: { ...response.saveRequest, [field]: value } };
+      if (value === undefined) {
+        delete sent.saveRequest[field];
+        delete received.saveRequest[field];
+      }
+      return both(sent, received, false);
+    });
+    check("F22 Save result oracles reject missing or invalid renderer generations even when both echoes match",
+      rejectsMatchingInvalid("rendererGeneration",
+        [undefined, 0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "23"]));
+    check("F22 Save result oracles reject missing or invalid admitted document references even when both echoes match",
+      rejectsMatchingInvalid("documentRef",
+        [undefined, null, "", "x", "A".repeat(64), "a".repeat(63), 7,
+          ...["\n", "\r", "\r\n", "\u2028", "\u2029"].map(suffix => "a".repeat(64) + suffix)]));
+    check("F22 Save result oracles reject internally inconsistent request correlations",
+      both({ ...request, requestId: request.requestId + 1 }, response, false) &&
+      both({ ...request, saveRequestSession: "another-page" }, response, false));
+    const absent = [null, undefined, {}, [], { saveRequest: null }, { saveRequest: {} }];
+    check("F22 Save result oracles fail closed for absent request or response identities",
+      absent.every(value => both(value, response, false) && both(request, value, false)));
+  }
+
   const pkg = JSON.parse(read("package.json"));
   const files = pkg.build && pkg.build.files;
   check(

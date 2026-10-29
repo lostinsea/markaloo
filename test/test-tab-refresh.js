@@ -23577,6 +23577,7 @@ async function runF22SaveAndReloadScenarios(
   consoleAttribution = null,
 ) {
   const wc = win.webContents;
+  const { saveResultEchoesRequest } = require("./save-result-correlation");
   const rendererSourcePath = path.join(
     __dirname,
     "..",
@@ -23838,29 +23839,8 @@ async function runF22SaveAndReloadScenarios(
     // to correlate against, so a malformed producer request cannot make a
     // stale result look like a match.
     const f22SaveResultMatchesRequest = (result, request) => !!(
-      result &&
-      request &&
-      request.saveRequest &&
-      result.path === request.filePath &&
-      request.requestId === (request.saveRequest && request.saveRequest.requestId) &&
-      request.saveRequestSession ===
-        (request.saveRequest && request.saveRequest.pageSession) &&
-      Number.isSafeInteger(request.saveRequest.sequence) &&
-      request.saveRequest.sequence > 0 &&
-      Number.isSafeInteger(request.saveRequest.selectionGeneration) &&
-      request.saveRequest.selectionGeneration > 0 &&
-      result.requestId === request.requestId &&
-      result.saveRequestSession === request.saveRequestSession &&
-      result.saveRequest &&
-      result.saveRequest.requestId === request.saveRequest.requestId &&
-      result.saveRequest.sequence === request.saveRequest.sequence &&
-      result.saveRequest.pageSession === request.saveRequest.pageSession &&
-      result.saveRequest.tabId === request.saveRequest.tabId &&
-      result.saveRequest.documentGeneration ===
-        request.saveRequest.documentGeneration &&
-      result.saveRequest.pathKey === request.saveRequest.pathKey &&
-      result.saveRequest.selectionGeneration ===
-        request.saveRequest.selectionGeneration
+      result && request && result.path === request.filePath &&
+      (${saveResultEchoesRequest.toString()})(request, result)
     );
   `;
   // The same witness, for a switch that happens outside one of the save
@@ -24267,33 +24247,6 @@ async function runF22SaveAndReloadScenarios(
     return tab;
   };
 
-  // Correlation between ONE captured producer request and the result claimed
-  // to be its answer. The document path is not identity: a superseded save, a
-  // delivery retry, or an earlier scenario's save against the same fixture all
-  // arrive carrying the same `path`, so the correlation identifier, the page
-  // session and the complete save-request identity are all required, and the
-  // request is required to be internally consistent before it is trusted as
-  // the thing to correlate against.
-  const saveResultEchoesRequest = (request, result) => !!(
-    request && result &&
-    request.requestId === request.saveRequest?.requestId &&
-    request.saveRequestSession === request.saveRequest?.pageSession &&
-    Number.isSafeInteger(request.saveRequest?.tabId) &&
-    Number.isSafeInteger(request.saveRequest?.documentGeneration) &&
-    typeof request.saveRequest?.pathKey === "string" &&
-    Number.isSafeInteger(request.saveRequest?.selectionGeneration) &&
-    request.saveRequest.selectionGeneration > 0 &&
-    Number.isSafeInteger(request.saveRequest?.sequence) && request.saveRequest.sequence > 0 &&
-    result.requestId === request.requestId &&
-    result.saveRequestSession === request.saveRequestSession &&
-    result.saveRequest && result.saveRequest.requestId === request.saveRequest.requestId &&
-    result.saveRequest.sequence === request.saveRequest.sequence &&
-    result.saveRequest.pageSession === request.saveRequest.pageSession &&
-    result.saveRequest.tabId === request.saveRequest.tabId &&
-    result.saveRequest.documentGeneration === request.saveRequest.documentGeneration &&
-    result.saveRequest.pathKey === request.saveRequest.pathKey &&
-    result.saveRequest.selectionGeneration === request.saveRequest.selectionGeneration
-  );
   // The same correlation, plus the producer-owned path and bytes, for the
   // routes that capture their request as `save.requests[0]`.
   const producerRequestMatches = (save, filePath, content) => {
