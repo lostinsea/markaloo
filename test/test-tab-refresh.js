@@ -25036,6 +25036,36 @@ async function runF22SaveAndReloadScenarios(
     }
     return admitted.tab;
   };
+  const createCompanionTab = async (primary, filePath, content) => {
+    const companion = await createActiveTab(filePath, content);
+    const restored = await exec(`(async () => {
+      ${rendererSelectionWitnessSource}
+      await f22SwitchAndWitness(${primary.id}, ${JSON.stringify(primary.filePath)}, null);
+      await window.CustomTabs.settleSessionLayout();
+      const tab = window.CustomTabs.getActiveTab();
+      const selected = f22SelectionSnapshot(${JSON.stringify(primary.filePath)});
+      const expected = ${JSON.stringify(primary.content)};
+      if (tab?.id !== ${primary.id} ||
+          selected.owner?.tabId !== ${primary.id} ||
+          selected.currentFilePath !== ${JSON.stringify(primary.filePath)} ||
+          tab.content !== expected || tab.originalContent !== expected ||
+          (window.CustomTabs.__inEditMode() &&
+            selected.editor !== expected.replace(/\\r\\n?/g, '\\n')) ||
+          window.CustomTabs.__documentState(tab).dirty !== false) {
+        throw new Error('F22 companion admission did not restore its clean primary');
+      }
+      return selected.owner;
+    })()`);
+    await exec("window.folia.getVersion()");
+    const fields = ["pageSession", "rendererGeneration", "tabId",
+      "documentGeneration", "pathKey", "documentRef"];
+    if (!__shutdown.documentAdmissionIsCurrent(restored.documentRef) ||
+        !__shutdown.documentSessionState().owners.some(owner =>
+          fields.every(field => owner[field] === restored[field]))) {
+      throw new Error("F22 restored primary lacks its current Main owner");
+    }
+    return companion;
+  };
 
   // The same correlation, plus the producer-owned path and bytes, for the
   // routes that capture their request as `save.requests[0]`.
@@ -28099,6 +28129,7 @@ async function runF22SaveAndReloadScenarios(
   // as much as the subject here: this fixture switches to it and back, and an
   // unsettled companion reports itself modified externally, which turns an
   // ordinary tab fold into a reload decision the fixture never intended.
+  await closeOwnedFixtureTabs(exec, "F22 before CRLF fixtures");
   const crlfCtimeProbe = startF22CtimeProbe(crlfEditFile);
   const crlfVersionTimeline = [];
   const crlfSettled = await seedSettledFixture(crlfEditFile, crlfOriginal);
@@ -28108,17 +28139,18 @@ async function runF22SaveAndReloadScenarios(
     );
   }
   await seedSettledFixture(crlfOtherFile, crlfOtherOriginal);
-  await clearTabs();
   const crlfTab = await createActiveTab(crlfEditFile, crlfOriginal);
+  const crlfOtherTab = await createCompanionTab(
+    crlfTab,
+    crlfOtherFile,
+    crlfOtherOriginal,
+  );
   const crlfVersionAfterOpen = diskVersionOf(crlfEditFile);
   if (crlfCtimeProbe) {
     crlfVersionTimeline.push(
       await crlfCtimeProbe.capture("after-selection", crlfTab.id),
     );
   }
-  const crlfOtherTab = await exec(
-    `window.CustomTabs.createTab(${JSON.stringify(crlfOtherFile)}, ${JSON.stringify(crlfOtherOriginal)}, { activate: false })`,
-  );
   await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
   const crlfEnteredEditMode = await waitForCondition(
     exec,
@@ -28566,6 +28598,7 @@ async function runF22SaveAndReloadScenarios(
   // `conflict: true` with "The file changed on disk." - a correct product
   // refusal that said nothing at all about newline spelling. The companion is
   // settled too, because this scenario switches to it and back.
+  await closeOwnedFixtureTabs(exec, "F22 before mixed-newline fixtures");
   const mixedNewlineCtimeProbe = startF22CtimeProbe(mixedNewlineFile);
   const mixedNewlineVersionTimeline = [];
   const mixedNewlineSettled = await seedSettledFixture(
@@ -28578,10 +28611,14 @@ async function runF22SaveAndReloadScenarios(
     );
   }
   await seedSettledFixture(mixedNewlineOtherFile, mixedNewlineOtherOriginal);
-  await clearTabs();
   const mixedNewlineTab = await createActiveTab(
     mixedNewlineFile,
     mixedNewlineOriginal,
+  );
+  const mixedNewlineOtherTab = await createCompanionTab(
+    mixedNewlineTab,
+    mixedNewlineOtherFile,
+    mixedNewlineOtherOriginal,
   );
   const mixedNewlineVersionAfterOpen = diskVersionOf(mixedNewlineFile);
   if (mixedNewlineCtimeProbe) {
@@ -28592,9 +28629,6 @@ async function runF22SaveAndReloadScenarios(
       ),
     );
   }
-  const mixedNewlineOtherTab = await exec(
-    `window.CustomTabs.createTab(${JSON.stringify(mixedNewlineOtherFile)}, ${JSON.stringify(mixedNewlineOtherOriginal)}, { activate: false })`,
-  );
   const mixedNewlineSave = await exec(`
     (async () => {
       ${rendererSelectionWitnessSource}
@@ -28813,6 +28847,7 @@ async function runF22SaveAndReloadScenarios(
   // each spelling through the real input, undo, tab fold, and Save paths so
   // byte equality is checked at the only boundary that matters: the payload
   // ultimately written to disk.
+  await closeOwnedFixtureTabs(exec, "F22 before newline-spelling reset");
   __shutdown.reset();
   const newlineSpellingCases = [
     {
@@ -28843,6 +28878,10 @@ async function runF22SaveAndReloadScenarios(
   const spellingDiagnosticsBefore = __shutdown.state();
   const newlineSpellingEvidence = [];
   for (const spellingCase of newlineSpellingCases) {
+    await closeOwnedFixtureTabs(
+      exec,
+      "F22 before " + spellingCase.label + " spelling fixtures",
+    );
     const filePath = path.join(
       dir,
       `f22-${spellingCase.label.toLowerCase()}-spelling.md`,
@@ -28856,10 +28895,11 @@ async function runF22SaveAndReloadScenarios(
     // Let writes finish propagating before the first watcher is attached. A
     // watcher that observes fixture construction is not a valid Save setup.
     await sleep(350);
-    await clearTabs();
     const tab = await createActiveTab(filePath, spellingCase.original);
-    const otherTab = await exec(
-      `window.CustomTabs.createTab(${JSON.stringify(otherPath)}, "F22_NEWLINE_OTHER\\n", { activate: false })`,
+    const otherTab = await createCompanionTab(
+      tab,
+      otherPath,
+      "F22_NEWLINE_OTHER\n",
     );
     if (!(await exec(`window.CustomTabs.__inEditMode()`))) {
       await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
@@ -29024,22 +29064,24 @@ async function runF22SaveAndReloadScenarios(
     "f".repeat(2 * 1024 * 1024 - 2) + "\n";
   const activeEditorFoldEdited =
     activeEditorFoldOriginal.slice(0, -2) + "X\n";
+  await closeOwnedFixtureTabs(exec, "F22 before measured editor-fold fixtures");
   fs.writeFileSync(activeEditorFoldFile, activeEditorFoldOriginal, "utf8");
   fs.writeFileSync(activeEditorFoldOtherFile, "F22_FOLD_OTHER\n", "utf8");
   await sleep(350);
-  await clearTabs();
   const activeEditorFoldTab = await createActiveTab(
     activeEditorFoldFile,
     activeEditorFoldOriginal,
   );
-  const activeEditorFoldOtherTab = await exec(
-    `window.CustomTabs.createTab(${JSON.stringify(activeEditorFoldOtherFile)}, "F22_FOLD_OTHER\\n", { activate: false })`,
+  const activeEditorFoldOtherTab = await createCompanionTab(
+    activeEditorFoldTab,
+    activeEditorFoldOtherFile,
+    "F22_FOLD_OTHER\n",
   );
   if (!(await exec(`window.CustomTabs.__inEditMode()`))) {
     await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
   }
   const activeEditorFoldEvidence = await exec(`
-    (() => {
+    (async () => {
       const tab = window.CustomTabs.getTabs().find(
         (candidate) => candidate.id === ${activeEditorFoldTab.id},
       );
@@ -29050,6 +29092,7 @@ async function runF22SaveAndReloadScenarios(
       let replaceCalls = 0;
       let scannedBytes = 0;
       let switchPromise = null;
+      let evidence;
       String.prototype.indexOf = function () {
         indexOfCalls += 1;
         scannedBytes += String(this).length;
@@ -29066,7 +29109,7 @@ async function runF22SaveAndReloadScenarios(
           ${activeEditorFoldOtherTab.id},
           { silent: true },
         );
-        return {
+        evidence = {
           indexOfCalls,
           replaceCalls,
           scannedBytes,
@@ -29077,13 +29120,14 @@ async function runF22SaveAndReloadScenarios(
         String.prototype.indexOf = originalIndexOf;
         String.prototype.replace = originalReplace;
       }
+      await switchPromise;
+      return evidence;
     })()
   `);
-  await exec(
-    `(async () => {
-      await window.CustomTabs.switchToTab(${activeEditorFoldTab.id}, { silent: true });
-      return null;
-    })()`,
+  await switchAndWitness(
+    activeEditorFoldTab.id,
+    activeEditorFoldFile,
+    activeEditorFoldEdited,
   );
   check(
     "F22 active-editor fold proves dirty once without a duplicate full-document comparison",
@@ -29098,6 +29142,30 @@ async function runF22SaveAndReloadScenarios(
         6 * activeEditorFoldOriginal.length,
     JSON.stringify(activeEditorFoldEvidence),
   );
+  const activeEditorFoldDiscard = await exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    const session = window.getReloadRequestSession();
+    const identity = window.CustomTabs.getDocumentIdentityForTab(
+      ${activeEditorFoldTab.id}, ${JSON.stringify(activeEditorFoldFile)}, session);
+    if (tab?.id !== ${activeEditorFoldTab.id} ||
+        tab.filePath !== ${JSON.stringify(activeEditorFoldFile)} || !identity) {
+      throw new Error('F22 measured editor-fold owner changed before retirement');
+    }
+    const { pageSession, rendererGeneration, tabId, documentGeneration, pathKey, documentRef } = identity;
+    return {
+      tabId: tab.id, filePath: tab.filePath,
+      owner: { pageSession, rendererGeneration, tabId, documentGeneration, pathKey, documentRef },
+      content: window.CustomTabs.__inEditMode() ? window.markdownEditor.value : window.originalMarkdown,
+      reason: 'Discard measured F22 editor-fold edit after scan assertions',
+    };
+  })()`);
+  if (activeEditorFoldDiscard.content !== activeEditorFoldEdited) {
+    throw new Error("F22 measured editor-fold live text changed before retirement");
+  }
+  await closeOwnedFixtureTabs(exec, "F22 measured editor-fold retirement", {
+    tabIds: [activeEditorFoldOtherTab.id, activeEditorFoldTab.id],
+    expectedDiscards: [activeEditorFoldDiscard],
+  });
   if (newlineFocusedHarness) return;
 
   // ---- F22 regression: deleted-tab evidence belongs to its generation ----
