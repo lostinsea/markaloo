@@ -24172,79 +24172,155 @@ async function runF22SaveAndReloadScenarios(
       })()
     `);
   const createActiveTab = async (filePath, content) => {
-    const tab = await exec(`
-      window.CustomTabs.createTab(${JSON.stringify(filePath)}, ${JSON.stringify(content)})
-    `);
-    if (!tab || !Number.isSafeInteger(tab.id) || tab.id <= 0) {
-      throw new Error(
-        "F22 createActiveTab returned no usable tab: " + JSON.stringify(tab),
-      );
+    const ready = __shutdown.state();
+    if (ready.renderer !== "ready" || ready.pendingId !== 0 ||
+        typeof content !== "string") {
+      throw new Error("F22 admission requires a ready renderer outside a shutdown transaction");
     }
-    const activeSelectionReady = await waitForCondition(
-      exec,
-      `(() => {
+    const expectedOptions = {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Markdown Files", extensions: ["md", "markdown", "mdown", "mkd", "mkdn"] },
+        { name: "Mermaid Files", extensions: ["mmd", "mermaid"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    };
+    const packets = [];
+    let chooserCalls = 0;
+    const chooser = async function(parent, options) {
+      chooserCalls += 1;
+      if (parent !== win || arguments.length !== 2 || chooserCalls !== 1 ||
+          !isDeepStrictEqual(options, expectedOptions)) {
+        const refusal = { kind: "f22-native-admission", filePath, chooserCalls,
+          parentIsExpected: parent === win, argumentCount: arguments.length, options };
+        dialogSafety.unexpected.push(refusal);
+        throw new Error("Unexpected F22 chooser refused: " + JSON.stringify(refusal));
+      }
+      return { canceled: false, filePaths: [filePath] };
+    };
+    const originalSend = wc.send;
+    const send = function(channel, packet) {
+      if (channel === "file-opened") packets.push(structuredClone(packet));
+      return originalSend.apply(this, arguments);
+    };
+    const restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
+    const restoreSend = replaceMethod(wc, "send", send);
+    const observationToken = require("node:crypto").randomUUID();
+    let installed = false;
+    let installationCompleted = false;
+    let admitted;
+    let operationError;
+    const cleanupErrors = [];
+    try {
+      installed = true;
+      // Admit fixtures before dirty edits or held Save/Reload races.
+      const installation = await installDialogBatchPageObservation(code => exec(`(() => {
+        if (window.__dialogBatchNative) throw new Error('F22 admission found a foreign observation');
+        try { return ${code}; }
+        finally {
+          if (window.__dialogBatchNative) {
+            window.__dialogBatchNative.f22AdmissionToken = ${JSON.stringify(observationToken)};
+          }
+        }
+      })()`));
+      if (installation !== true) throw new Error("F22 page observation was not installed");
+      installationCompleted = true;
+      admitted = await boundedDialogWork(exec(`(async () => {
+        const state = window.__dialogBatchNative;
+        state.phase = 'F22 native fixture admission';
+        window.folia.openFileDialog();
+        const deadline = Date.now() + 6000;
+        while (!state.processors.length && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        const processor = state.processors[0];
+        if (state.processors.length !== 1 ||
+            processor.packet.path !== ${JSON.stringify(filePath)} || !processor.eventUndefined) {
+          throw new Error('F22 chooser did not reach its sole original file-open processor');
+        }
+        await processor.promise;
+        await Promise.all(state.renders.map(record => record.promise));
+        if (!processor.settled || processor.error || !state.renders.length ||
+            state.renders.some(record => !record.settled || record.error)) {
+          throw new Error('F22 original processor or render did not complete successfully');
+        }
+        await window.CustomTabs.settleSessionLayout();
+        const tab = window.CustomTabs.findTabByPath(${JSON.stringify(filePath)});
         const pageSession = window.getReloadRequestSession();
-        const activeTab = window.CustomTabs.getActiveTab();
-        const identity = window.CustomTabs.getActiveDocumentIdentity(
-          ${JSON.stringify(filePath)},
-          pageSession,
-        );
-        const selectionGeneration = window.getActiveFileSelectionGeneration();
-        return !!activeTab &&
-          activeTab.id === ${JSON.stringify(tab.id)} &&
-          activeTab.filePath === ${JSON.stringify(filePath)} &&
-          !!identity &&
-          identity.tabId === ${JSON.stringify(tab.id)} &&
-          identity.pageSession === pageSession &&
-          Number.isSafeInteger(identity.rendererGeneration) &&
-          identity.rendererGeneration > 0 &&
-          Number.isSafeInteger(identity.documentGeneration) &&
-          identity.documentGeneration > 0 &&
-          Number.isSafeInteger(selectionGeneration) &&
-          selectionGeneration > 0;
-      })()`,
-      8000,
-    );
-    if (!activeSelectionReady) {
-      const activeSelectionSnapshot = await exec(`
-        (() => {
-          const pageSession = window.getReloadRequestSession();
-          const activeTab = window.CustomTabs.getActiveTab();
-          const identity = window.CustomTabs.getActiveDocumentIdentity(
-            ${JSON.stringify(filePath)},
-            pageSession,
-          );
-          return {
-            expected: {
-              id: ${JSON.stringify(tab.id)},
-              filePath: ${JSON.stringify(filePath)},
-            },
-            pageSession,
-            activeTab: activeTab && {
-              id: activeTab.id,
-              filePath: activeTab.filePath,
-            },
-            identity,
-            selectionGeneration: window.getActiveFileSelectionGeneration(),
-          };
-        })()
-      `);
-      throw new Error(
-        "F22 createActiveTab did not select and identify its physical tab: " +
-          JSON.stringify(activeSelectionSnapshot),
+        return {
+          tab, pageSession, currentPath: window.currentFilePath,
+          activeId: window.CustomTabs.getActiveTabId(),
+          document: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
+          owner: tab && window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession),
+          selectionGeneration: window.getActiveFileSelectionGeneration(),
+        };
+      })()`), "F22 original file-open processor and render", 8000);
+      await exec("window.folia.getVersion()");
+      const current = __shutdown.state();
+      const packet = packets[0];
+      const fields = ["pageSession", "rendererGeneration", "tabId",
+        "documentGeneration", "pathKey", "documentRef"];
+      const owner = admitted?.owner;
+      const tab = admitted?.tab;
+      const valid = chooserCalls === 1 && packets.length === 1 &&
+        packet.path === filePath && packet.content === content &&
+        Number.isSafeInteger(tab?.id) && tab.id > 0 &&
+        tab.filePath === filePath && tab.content === content &&
+        tab.originalContent === content && tab.hasUnsavedChanges === false &&
+        admitted.currentPath === filePath && admitted.activeId === tab.id &&
+        isDeepStrictEqual(admitted.document, packet.document) &&
+        typeof packet.document?.ref === "string" &&
+        __shutdown.documentAdmissionIsCurrent(packet.document.ref) &&
+        owner?.documentRef === packet.document.ref && owner.tabId === tab.id &&
+        owner.pathKey === packet.document.pathKey &&
+        owner.pageSession === ready.rendererPageSession &&
+        admitted.pageSession === ready.rendererPageSession &&
+        owner.rendererGeneration === ready.rendererGeneration &&
+        Number.isSafeInteger(owner.documentGeneration) && owner.documentGeneration > 0 &&
+        Number.isSafeInteger(admitted.selectionGeneration) && admitted.selectionGeneration > 0 &&
+        current.renderer === "ready" && current.pendingId === 0 &&
+        current.rendererGeneration === ready.rendererGeneration &&
+        current.rendererPageSession === ready.rendererPageSession &&
+        __shutdown.documentSessionState().owners.some(candidate =>
+          fields.every(field => candidate[field] === owner[field]) &&
+          candidate.readTarget === packet.document.readTarget);
+      if (!valid) {
+        throw new Error("F22 fixture lacks its genuine Main/page admission: " +
+          JSON.stringify({ filePath, expectedContent: content, chooserCalls, packets, admitted, ready, current }));
+      }
+    } catch (error) {
+      operationError = error;
+    } finally {
+      for (const [label, target, name, owned, restore] of [
+        ["chooser", dialog, "showOpenDialog", chooser, restoreChooser],
+        ["Main send observer", wc, "send", send, restoreSend],
+      ]) {
+        try {
+          if (target[name] !== owned) throw new Error("restoration ownership changed");
+          restore();
+        } catch (error) { cleanupErrors.push(new Error("F22 " + label + ": " + error.message)); }
+      }
+      if (installed) {
+        try {
+          const ownership = await exec(`({
+            present: !!window.__dialogBatchNative,
+            owned: window.__dialogBatchNative?.f22AdmissionToken === ${JSON.stringify(observationToken)},
+          })`);
+          if (ownership.owned) await restoreDialogBatchPageObservation(exec);
+          else if (ownership.present || installationCompleted) {
+            throw new Error("F22 page observation restoration ownership changed");
+          }
+        }
+        catch (error) { cleanupErrors.push(error); }
+      }
+    }
+    if (operationError || cleanupErrors.length) {
+      throw new AggregateError(
+        [...(operationError ? [operationError] : []), ...cleanupErrors],
+        "F22 native fixture admission failed",
       );
     }
-    // The selection is now witnessed. Explicitly adopt the fixture's current
-    // baseline before any save so its initial fs.watch event cannot be
-    // mistaken for an external edit.
-    await exec(`
-      window.ipcRenderer.send("set-active-file", {
-        filePath: ${JSON.stringify(filePath)}, adoptBaseline: true
-      });
-      null;
-    `);
-    await sleep(350);
-    return tab;
+    return admitted.tab;
   };
 
   // The same correlation, plus the producer-owned path and bytes, for the
@@ -34193,7 +34269,12 @@ async function runF22SaveAndReloadScenarios(
     await exec(`window.reloadCurrentFile(); null;`);
     const frozenStaleHeld = await waitUntil(() => heldReloadResults.length === frozenStaleIndex + 1, 5000);
     const frozenStale = heldReloadResults[frozenStaleIndex];
-    await exec(`window.CustomTabs.closeTab(${frozenStaleOrigin.id}); null;`);
+    const frozenStaleOriginClosed = await exec(`(async () => {
+      await window.CustomTabs.closeTab(${frozenStaleOrigin.id});
+      return !window.CustomTabs.getTabs().some(tab => tab.id === ${frozenStaleOrigin.id});
+    })()`);
+    if (frozenStaleOriginClosed !== true) throw new Error("F22 stale reload origin did not close");
+    await seedSettledFixture(frozenReloadFile, "F22_FROZEN_STALE_REPLACEMENT");
     const frozenStaleReplacement = await createActiveTab(frozenReloadFile, "F22_FROZEN_STALE_REPLACEMENT");
     const frozenStaleBefore = await tabSnapshot(frozenStaleReplacement.id);
     const frozenStaleToasts = await allToastCount();
