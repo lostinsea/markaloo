@@ -35371,6 +35371,161 @@ async function runF22CommitSendThrowScenario(win, exec) {
   }
 }
 
+// These leaves own their chooser and join the unchanged production processor.
+// They do not manufacture admissions or treat a tab switch as a paint join.
+async function openShutdownLifecycleFixture(exec, filePath, text, paintMarker) {
+  if (typeof paintMarker !== "string" || !paintMarker.trim()) {
+    throw new Error("Shutdown lifecycle admission needs a rendered marker");
+  }
+  const observationOwner = require("node:crypto").randomUUID();
+  let observed = false;
+  let observationAttempted = false;
+  let restoreChooser;
+  let failure;
+  let result;
+  let chooserCalls = 0;
+  const chooser = async (_owner, options) => {
+    chooserCalls += 1;
+    if (chooserCalls !== 1 || !options?.properties?.includes("multiSelections")) {
+      throw new Error("Unexpected shutdown lifecycle chooser");
+    }
+    return { canceled: false, filePaths: [filePath] };
+  };
+  try {
+    observationAttempted = true;
+    await installDialogBatchPageObservation(code => exec(`(() => {
+      if (window.__dialogBatchNative) throw new Error('Shutdown observation already owned');
+      try { return (${code}); }
+      finally {
+        if (window.__dialogBatchNative) {
+          window.__dialogBatchNative.shutdownLifecycleOwner = ${JSON.stringify(observationOwner)};
+        }
+      }
+    })()`));
+    observed = true;
+    restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
+    await exec("window.folia.openFileDialog(); null");
+    if (!await waitForCondition(exec,
+      "window.__dialogBatchNative.processors.length === 1", 8000)) {
+      throw new Error("Shutdown lifecycle native file was not delivered");
+    }
+    result = await boundedDialogWork(exec(`(async () => {
+      const state = window.__dialogBatchNative;
+      if (state.processors.length !== 1) throw new Error('Unexpected shutdown processor count');
+      const processor = state.processors[0];
+      await processor.promise;
+      await Promise.all(state.renders.map(record => record.promise));
+      await window.CustomTabs.settleSessionLayout();
+      const filePath = ${JSON.stringify(filePath)};
+      const text = ${JSON.stringify(text)};
+      const paintMarker = ${JSON.stringify(paintMarker)};
+      const tab = window.CustomTabs.getActiveTab();
+      const pageSession = window.getReloadRequestSession();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(tab.id, filePath, pageSession);
+      const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
+      const deletion = owner && window.queryDocumentDeletionState(filePath, owner);
+      if (!processor.eventUndefined || !processor.settled || processor.error ||
+          processor.packet.path !== filePath || state.renders.length !== 1 ||
+          state.renders.some(record => !record.settled || record.error) ||
+          !tab || tab.filePath !== filePath || tab.content !== text ||
+          tab.originalContent !== text || window.originalMarkdown !== text ||
+          window.currentFilePath !== filePath || descriptor?.logicalPath !== filePath ||
+          owner?.tabId !== tab.id || owner?.pageSession !== pageSession ||
+          deletion?.known !== true || deletion.unresolved !== false ||
+          !document.getElementById('viewer').textContent.includes(paintMarker)) {
+        throw new Error('Shutdown lifecycle admission, owner or original paint did not settle');
+      }
+      return { tabId: tab.id, filePath, owner, descriptor, diskVersion: tab.diskVersion };
+    })()`), "shutdown lifecycle original processor and paint", 8000);
+    if (chooserCalls !== 1) throw new Error("Shutdown lifecycle chooser was not used exactly once");
+  } catch (error) {
+    failure = error;
+  } finally {
+    const failures = [];
+    if (restoreChooser) {
+      try {
+        if (dialog.showOpenDialog !== chooser) throw new Error("Shutdown chooser restoration ownership changed");
+        restoreChooser();
+      } catch (error) { failures.push(error); }
+    }
+    if (observationAttempted) {
+      try {
+        const owned = await exec(
+          `window.__dialogBatchNative?.shutdownLifecycleOwner === ${JSON.stringify(observationOwner)}`,
+        );
+        if (owned) await restoreDialogBatchPageObservation(exec);
+        else if (observed) throw new Error("Shutdown observation restoration ownership changed");
+      }
+      catch (error) { failures.push(error); }
+    }
+    if (failure || failures.length) {
+      throw new AggregateError([failure, ...failures].filter(Boolean),
+        "Shutdown lifecycle admission or observation cleanup failed");
+    }
+  }
+  return result;
+}
+
+async function clearShutdownLifecycleDocuments(exec) {
+  return boundedDialogWork(exec(`(async () => {
+    if (window.CustomTabs.isDocumentFrozen()) throw new Error('Shutdown cleanup is still frozen');
+    const active = window.CustomTabs.getActiveTab();
+    const tabs = window.CustomTabs.getTabs().slice();
+    // Teardown restores fixture bytes, including the live copy read by closeTab.
+    if (active) {
+      window.originalMarkdown = active.originalContent;
+      if (window.CustomTabs.__inEditMode()) window.markdownEditor.value = active.originalContent;
+    }
+    for (const tab of tabs) {
+      tab.content = tab.originalContent;
+      tab.hasUnsavedChanges = false;
+    }
+    for (const tab of tabs.filter(tab => tab.id !== active?.id)
+      .concat(tabs.filter(tab => tab.id === active?.id))) {
+      await window.CustomTabs.closeTab(tab.id);
+      if (window.CustomTabs.getTabs().some(candidate => candidate.id === tab.id)) {
+        throw new Error('Shutdown cleanup could not retire its owned tab: ' + tab.filePath);
+      }
+    }
+    await window.CustomTabs.settleSessionLayout();
+    if (window.CustomTabs.getTabs().length !== 0) throw new Error('Shutdown cleanup left live tabs');
+    return true;
+  })()`), "shutdown lifecycle sequential tab cleanup", 8000);
+}
+
+async function settleShutdownLifecycleRestore(exec, filePath, text, paintMarker) {
+  return boundedDialogWork(exec(`(async () => {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const tab = window.CustomTabs.getActiveTab();
+      const pageSession = window.getReloadRequestSession();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, ${JSON.stringify(filePath)}, pageSession);
+      const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
+      const deletion = owner && window.queryDocumentDeletionState(${JSON.stringify(filePath)}, owner);
+      if (tab?.filePath === ${JSON.stringify(filePath)} &&
+          window.currentFilePath === tab.filePath &&
+          tab.content === ${JSON.stringify(text)} &&
+          tab.originalContent === ${JSON.stringify(text)} &&
+          window.originalMarkdown === ${JSON.stringify(text)} &&
+          tab.hasUnsavedChanges === false &&
+          descriptor?.logicalPath === tab.filePath &&
+          owner?.tabId === tab.id && owner?.pageSession === pageSession &&
+          deletion?.known === true && deletion.unresolved === false &&
+          document.getElementById('viewer').textContent.includes(${JSON.stringify(paintMarker)})) {
+        try {
+          await window.CustomTabs.settleSessionLayout();
+          return { tabId: tab.id, filePath: tab.filePath, pageSession, owner, descriptor };
+        } catch (error) {
+          if (error.message !== 'The open tabs are still awaiting document restore') throw error;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error('Shutdown lifecycle restore did not reach its painted authenticated owner');
+  })()`), "shutdown lifecycle restored owner and layout", 10000);
+}
+
 async function runShutdownGenerationScenarios(win, exec) {
   const bareFile = path.join(dir, "f22-no-overlay.html");
   const discardNavigationFile = path.join(
@@ -35382,15 +35537,16 @@ async function runShutdownGenerationScenarios(win, exec) {
     "f22-navigation-edit.md",
   );
   const jsDiscardNavigationFile = JSON.stringify(discardNavigationFile);
-  const jsNavigationEditFile = JSON.stringify(navigationEditFile);
+  const discardSeed = "Generation discard fixture\n";
+  const navigationSeed = "Navigation edit fixture\n\nbefore\n";
   const indexFile = path.join(__dirname, "..", "src", "index.html");
   fs.writeFileSync(
     bareFile,
     "<!doctype html><meta charset=utf-8><title>F22 probe fixture</title>",
     "utf8",
   );
-  write(discardNavigationFile, "# Generation discard fixture\n");
-  write(navigationEditFile, "# Navigation edit fixture\n\nbefore\n");
+  write(discardNavigationFile, discardSeed);
+  write(navigationEditFile, navigationSeed);
   const rig = shutdownRig(win);
   const wc = win.webContents;
   const trackingSelections = [];
@@ -35434,74 +35590,31 @@ async function runShutdownGenerationScenarios(win, exec) {
     ...trackingDescriptor,
     value: observedTrackingListener,
   });
-  const navigationTrackingWitness = async (label, start) => ({
-    label,
-    renderer: await exec(`
+  const navigationTrackingWitness = async (label, start) => {
+    const renderer = await exec(`
       (() => {
         const tab = window.CustomTabs.getActiveTab();
-        const filePath = window.currentFilePath || null;
-        let diskVersion = null;
-        let fileExists = false;
-        let statError = null;
-        if (filePath) {
-          try {
-            const stat = window.fs.statSync(filePath);
-            fileExists = true;
-            diskVersion = {
-              dev: stat.dev,
-              ino: stat.ino,
-              size: stat.size,
-              mtimeMs: stat.mtimeMs,
-              ctimeMs: stat.ctimeMs,
-            };
-          } catch (error) {
-            statError = String(error && error.code ? error.code : error);
-          }
-        }
         const pageSession = window.getReloadRequestSession();
         return {
           activeTab: tab && { id: tab.id, filePath: tab.filePath },
-          currentFilePath: filePath,
-          fileExists,
-          diskVersion,
-          diskVersionValid: !!(
-            diskVersion &&
-            Number.isFinite(diskVersion.dev) &&
-            Number.isFinite(diskVersion.ino) &&
-            Number.isFinite(diskVersion.size) &&
-            Number.isFinite(diskVersion.mtimeMs) &&
-            Number.isFinite(diskVersion.ctimeMs)
-          ),
-          statError,
-          owner: tab && window.CustomTabs.getActiveDocumentIdentity(
-            tab.filePath,
-            pageSession,
-          ),
+          currentFilePath: window.currentFilePath || null,
+          diskVersion: tab?.diskVersion || null,
+          descriptor: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
+          owner: tab && window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession),
         };
       })()
-    `),
-    mainSelections: trackingSelections.slice(start),
-  });
-  const clearDocuments = () =>
-    exec(`
-      (() => {
-        const confirm = window.confirm;
-        window.confirm = () => true;
-        try {
-          window.CustomTabs.getTabs().forEach(t => {
-            t.content = t.originalContent;
-            t.hasUnsavedChanges = false;
-          });
-          window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-        } finally {
-          window.confirm = confirm;
-        }
-        localStorage.clear();
-        window.originalMarkdown = '';
-        window.isEditMode = false;
-        return window.CustomTabs.getTabs().length;
-      })()
     `);
+    const stat = renderer.currentFilePath && fs.statSync(renderer.currentFilePath);
+    return {
+    label,
+    renderer,
+    hostDiskVersion: stat && {
+      dev: stat.dev, ino: stat.ino, size: stat.size,
+      mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs,
+    },
+    mainSelections: trackingSelections.slice(start),
+    };
+  };
   try {
     // The preceding shutdown matrix intentionally exercises renderer-hang and
     // loss states. Begin this independent generation matrix from a real ready
@@ -35521,29 +35634,29 @@ async function runShutdownGenerationScenarios(win, exec) {
     if (!generationMatrixRendererReady) {
       throw new Error("generation matrix reload fixture did not reach a new renderer generation");
     }
-    await clearDocuments();
+    await clearShutdownLifecycleDocuments(exec);
 
-    // The generation is a capability, not a convenience accessor. Exercise
-    // the actual ipcMain.handle call from a separate BrowserWindow and from a
-    // subframe of the document owner; neither is allowed to mint a token.
+    // The foreign isolated window invokes Main. The owner subframe has no
+    // bridge; that exposure check is not a native subframe sender test.
     __shutdown.reset();
     const generationBefore = __shutdown.state().rendererGeneration;
-    const approvalSenderSource = fs.readFileSync(
-      path.join(__dirname, "..", "src", "main.js"),
-      "utf8",
-    );
-    const mainFrameGate =
-      approvalSenderSource.indexOf("return frame.parent === null;") >= 0;
+    const ownerGeneration = await exec("window.folia.getQuitApprovalGeneration()");
     const impostor = new BrowserWindow({
       show: false,
-      webPreferences: { nodeIntegration: true, contextIsolation: false },
+      webPreferences: {
+        preload: path.join(__dirname, "..", "src", "main-preload.js"),
+        nodeIntegration: false,
+        nodeIntegrationInSubFrames: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
     });
     let impostorGeneration;
     let frameGeneration;
     try {
       await impostor.loadFile(bareFile);
       impostorGeneration = await impostor.webContents.executeJavaScript(`
-        require('electron').ipcRenderer.invoke('quit-approval-generation')
+        window.folia.getQuitApprovalGeneration()
           .then(value => ({ resolved: true, value }))
           .catch(error => ({ resolved: false, message: String(error && error.message) }))
       `);
@@ -35551,26 +35664,19 @@ async function runShutdownGenerationScenarios(win, exec) {
         (async () => {
           const frame = document.createElement('iframe');
           frame.srcdoc = '<!doctype html><meta charset=utf-8><title>subframe</title>';
-          document.body.appendChild(frame);
           try {
             await new Promise((resolve, reject) => {
               frame.addEventListener('load', resolve, { once: true });
               frame.addEventListener('error', reject, { once: true });
+              document.body.appendChild(frame);
             });
             const child = frame.contentWindow;
-            const childIpc =
-              child.ipcRenderer ||
-              (typeof child.require === 'function' &&
-                child.require('electron').ipcRenderer);
-            if (!childIpc) return { attempted: false, reason: 'no child ipcRenderer' };
-            return await childIpc
-              .invoke('quit-approval-generation')
-              .then(value => ({ attempted: true, resolved: true, value }))
-              .catch(error => ({
-                attempted: true,
-                resolved: false,
-                message: String(error && error.message),
-              }));
+            return {
+              require: typeof child.require,
+              process: typeof child.process,
+              ipcRenderer: typeof child.ipcRenderer,
+              folia: typeof child.folia,
+            };
           } finally {
             frame.remove();
           }
@@ -35580,50 +35686,50 @@ async function runShutdownGenerationScenarios(win, exec) {
       if (!impostor.isDestroyed()) impostor.destroy();
     }
     check(
-      "the approval generation is available only to the document main frame",
+      "the owner obtains its approval generation and a foreign isolated window is rejected",
+      ownerGeneration === generationBefore &&
+        Number.isSafeInteger(ownerGeneration) && ownerGeneration > 0 &&
       impostorGeneration &&
         impostorGeneration.resolved === false &&
-        frameGeneration &&
-        // nodeIntegrationInSubFrames is deliberately off, so a subframe has
-        // no IPC bridge at all; if Electron ever gives it one, the handler
-        // must still reject the real invoke rather than trusting the frame.
-        (frameGeneration.attempted === false ||
-          frameGeneration.resolved === false) &&
-        mainFrameGate &&
         __shutdown.state().rendererGeneration === generationBefore,
       JSON.stringify({
+        ownerGeneration,
         impostorGeneration,
-        frameGeneration,
-        mainFrameGate,
         state: __shutdown.state(),
       }),
     );
+    check(
+      "an owner subframe has no generation bridge or Node capability",
+      frameGeneration && ["require", "process", "ipcRenderer", "folia"].every(
+        name => frameGeneration[name] === "undefined",
+      ),
+      JSON.stringify(frameGeneration),
+    );
 
-    // A dispatch belongs to a document generation. Hold the original
-    // renderer's listener, commit a real reload, then verify that its
-    // successor sees the SAME request id exactly once and can complete it.
+    // Hold Main's first delivery, not execution of a renderer listener.
+    // A committed reload must issue a new request for its new generation.
     __shutdown.reset();
     rig.reset();
     const replacementTrackingStart = trackingSelections.length;
     const dispatched = [];
     let replacementTracking = null;
-    const restoreSend = replaceMethod(wc, "send", function (channel, payload) {
-      if (channel === "quit-approval-request") dispatched.push(payload);
-      return Reflect.apply(Object.getPrototypeOf(wc).send, this, arguments);
-    });
+    const realGenerationSend = wc.send;
+    let firstDeliveryRetired = false;
+    const generationSend = function (channel, payload) {
+      if (channel === "quit-approval-request") {
+        const state = __shutdown.state();
+        if (this !== wc || !payload || payload.id !== state.pendingId ||
+            payload.gen !== state.rendererGeneration ||
+            state.pendingReason !== "window-close") {
+          throw new Error("Generation delivery has a foreign owner or attempt");
+        }
+        dispatched.push(payload);
+        if (dispatched.length === 1) return;
+      }
+      return Reflect.apply(realGenerationSend, this, arguments);
+    };
+    const restoreSend = replaceMethod(wc, "send", generationSend);
     try {
-      await exec(`
-        (() => {
-          const ipc = require('electron').ipcRenderer;
-          window.__f22HeldHandlers = ipc.listeners('quit-approval-request').slice();
-          ipc.removeAllListeners('quit-approval-request');
-          ipc.on('quit-approval-request', (_event, request) => {
-            window.__f22HeldRequest = request;
-          });
-          window.__f22HeldRequest = null;
-          return window.__f22HeldHandlers.length;
-        })()
-      `);
       const requestClose = guardEvent();
       win.emit("close", requestClose);
       const firstDispatched = await waitUntil(() => dispatched.length === 1);
@@ -35641,17 +35747,27 @@ async function runShutdownGenerationScenarios(win, exec) {
           "replacement-ready reload fixture did not reach a new renderer generation",
         );
       }
-      // A genuine sender carrying an old generation is still stale. It must
-      // not make the replacement renderer look ready or prevent its dispatch.
+      // This arrives after successor READY; it must not disturb that successor.
+      const staleReadyBefore = __shutdown.state().staleReadyCount;
       await exec(`
-        window.ipcRenderer.send('quit-approval-ready', { gen: ${first ? first.gen : -1} });
+        window.folia.announceQuitApprovalReady({
+          gen: ${first ? first.gen : -1},
+          pageSession: window.getReloadRequestSession(),
+        });
         null;
       `);
+      const staleReadyObserved = await waitUntil(
+        () => __shutdown.state().staleReadyCount === staleReadyBefore + 1,
+      );
       const redeliveredAndSettled = await waitUntil(
         () => dispatched.length === 2 && rig.closes === 1,
         10000,
       );
       const afterNavigation = __shutdown.state();
+      firstDeliveryRetired = !!first &&
+        afterNavigation.rendererGeneration > first.gen &&
+        afterNavigation.pendingId !== first.id &&
+        afterNavigation.navigationInvalidatedShutdownCount === 1;
       replacementTracking = await navigationTrackingWitness(
         "committed-navigation-replacement-ready",
         replacementTrackingStart,
@@ -35662,6 +35778,9 @@ async function runShutdownGenerationScenarios(win, exec) {
           replacementReady &&
           redeliveredAndSettled &&
           first &&
+          beforeNavigation.pendingId === first.id &&
+          beforeNavigation.pendingDispatchToken > 0 &&
+          firstDeliveryRetired &&
           dispatched[1] &&
           dispatched[0].id !== dispatched[1].id &&
           dispatched[0].gen !== dispatched[1].gen &&
@@ -35669,7 +35788,7 @@ async function runShutdownGenerationScenarios(win, exec) {
           afterNavigation.pendingId === 0 &&
           afterNavigation.lastRequestId === beforeNavigation.lastRequestId + 1 &&
           afterNavigation.navigationInvalidatedShutdownCount === 1 &&
-          afterNavigation.staleReadyCount >= 1,
+          staleReadyObserved,
         JSON.stringify({
           dispatched,
           beforeNavigation,
@@ -35679,6 +35798,7 @@ async function runShutdownGenerationScenarios(win, exec) {
         }),
       );
     } finally {
+      if (wc.send !== generationSend) throw new Error("Generation send restoration ownership changed");
       restoreSend();
     }
 
@@ -35707,64 +35827,45 @@ async function runShutdownGenerationScenarios(win, exec) {
       );
     }
     const afterRevocation = __shutdown.state();
+    const navigationAdmission = await openShutdownLifecycleFixture(
+      exec, navigationEditFile, navigationSeed, "Navigation edit fixture",
+    );
     const navigationEditSetup = await exec(`
-      (async () => {
-        const filePath = ${jsNavigationEditFile};
-        const tab = window.CustomTabs.createTab(
-          filePath,
-          window.fs.readFileSync(filePath, "utf8"),
-        );
-        if (!tab) {
-          throw new Error("navigation replacement physical fixture did not create a tab");
+      (() => {
+        const tab = window.CustomTabs.getActiveTab();
+        if (tab?.id !== ${JSON.stringify(navigationAdmission.tabId)}) {
+          throw new Error('Navigation fixture is not the admitted active tab');
         }
-        tab.content = 'after navigation exact edit';
-        tab.hasUnsavedChanges = false;
-        // THE LIVE COPY MOVES FIRST. A view-mode edit exists in
-        // window.originalMarkdown; assigning tab.content alone is a state the
-        // product cannot reach for the ACTIVE tab, and the switch below
-        // correctly folds the pristine text back over it - so a fixture that
-        // sets the live copy afterwards is simulating nothing.
-        window.originalMarkdown = tab.content;
-        await window.CustomTabs.switchToTab(tab.id);
-        const deadline = Date.now() + 5000;
-        let active = null;
-        let owner = null;
-        while (Date.now() < deadline) {
-          active = window.CustomTabs.getActiveTab();
-          owner = active && window.CustomTabs.getActiveDocumentIdentity(
-            filePath,
-            window.getReloadRequestSession(),
-          );
-          if (
-            active &&
-            active.id === tab.id &&
-            active.filePath === filePath &&
-            window.currentFilePath === filePath &&
-            owner
-          ) {
-            break;
-          }
-          await new Promise(resolve => setTimeout(resolve, 25));
-        }
-        const stat = window.fs.statSync(filePath);
-        const diskVersion = {
-          dev: stat.dev,
-          ino: stat.ino,
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          ctimeMs: stat.ctimeMs,
+        const cached = tab.content;
+        const live = cached + 'after navigation exact edit';
+        window.originalMarkdown = live;
+        const beforeScan = {
+          cached: tab.content, live: window.originalMarkdown,
+          dirtyFlag: tab.hasUnsavedChanges,
         };
+        const dirtyNames = window.CustomTabs.__dirtyTabNames();
         return {
-          tabId: tab.id,
-          filePath,
-          currentFilePath: window.currentFilePath || null,
-          active: active && { id: active.id, filePath: active.filePath },
-          owner,
-          diskVersion,
-          diskVersionValid: Object.values(diskVersion).every(Number.isFinite),
+          tabId: tab.id, filePath: tab.filePath,
+          currentFilePath: window.currentFilePath,
+          active: { id: tab.id, filePath: tab.filePath },
+          owner: window.CustomTabs.getDocumentIdentityForTab(
+            tab.id, tab.filePath, window.getReloadRequestSession()),
+          diskVersion: tab.diskVersion,
+          diskVersionValid: !!tab.diskVersion &&
+            Object.values(tab.diskVersion).every(Number.isFinite),
+          beforeScan, dirtyNames, folded: tab.content === live,
         };
       })()
     `);
+    check(
+      "the navigation replacement has a live-only edit before the real dirty scan folds it",
+      navigationEditSetup.beforeScan.cached === navigationSeed &&
+        navigationEditSetup.beforeScan.live !== navigationSeed &&
+        navigationEditSetup.beforeScan.dirtyFlag === false &&
+        navigationEditSetup.folded === true &&
+        navigationEditSetup.dirtyNames.includes(path.basename(navigationEditFile)),
+      JSON.stringify(navigationEditSetup),
+    );
     const matchesPhysicalNavigationSelection = ({ selection, decision }) => {
       if (
         !selection ||
@@ -35857,6 +35958,10 @@ async function runShutdownGenerationScenarios(win, exec) {
     // pending across a committed reload, deliberately make the replacement
     // revision collide, then release the old promise only after the replacement
     // request is held at its own generation boundary.
+    if (!await waitUntil(() => __shutdown.state().pendingId === 0)) {
+      throw new Error("Navigation cancel did not settle before discard setup");
+    }
+    await clearShutdownLifecycleDocuments(exec);
     __shutdown.reset();
     rig.reset();
     let releaseOldDiscard = null;
@@ -35864,8 +35969,14 @@ async function runShutdownGenerationScenarios(win, exec) {
     let heldReplacementRequest = null;
     const emittedDiscardRequests = [];
     const realDiscardSend = wc.send;
-    const restoreDiscardSend = replaceMethod(wc, "send", function (channel, ...args) {
+    const discardSend = function (channel, ...args) {
       if (channel === "quit-approval-request") {
+        const state = __shutdown.state();
+        if (this !== wc || args[0]?.id !== state.pendingId ||
+            args[0]?.gen !== state.rendererGeneration ||
+            state.pendingReason !== "window-close") {
+          throw new Error("Discard delivery has a foreign owner or attempt");
+        }
         emittedDiscardRequests.push(args[0]);
         if (holdReplacementRequest && heldReplacementRequest === null) {
           heldReplacementRequest = args[0];
@@ -35873,38 +35984,32 @@ async function runShutdownGenerationScenarios(win, exec) {
         }
       }
       return realDiscardSend.call(this, channel, ...args);
-    });
+    };
+    const restoreDiscardSend = replaceMethod(wc, "send", discardSend);
+    let discardSendRestored = false;
+    const restoreDiscardSendOnce = () => {
+      if (discardSendRestored) return;
+      if (wc.send !== discardSend) throw new Error("Discard send restoration ownership changed");
+      restoreDiscardSend();
+      discardSendRestored = true;
+    };
     try {
+      const discardAdmission = await openShutdownLifecycleFixture(
+        exec, discardNavigationFile, discardSeed, "Generation discard fixture",
+      );
       const oldDiscardFixture = await exec(`
-        (async () => {
-          try {
-            const ipc = require('electron').ipcRenderer;
-            const filePath = ${jsDiscardNavigationFile};
-            ipc.send('open-file-path', { filePath });
-            let tab = null;
-            for (let attempt = 0; attempt < 50; attempt += 1) {
-              const candidate = window.CustomTabs.getActiveTab();
-              const pageSession = window.getReloadRequestSession();
-              const identity = candidate &&
-                window.CustomTabs.getActiveDocumentIdentity(candidate.filePath, pageSession);
-              if (candidate && candidate.filePath === filePath && identity) {
-                tab = candidate;
-                break;
-              }
-              await new Promise(resolve => setTimeout(resolve, 20));
-            }
-            if (!tab) {
-              throw new Error("physical discard fixture did not obtain a tracked active tab");
-            }
-            window.originalMarkdown = tab.content + '\\nDIRTY_DISCARD_BEFORE_NAVIGATION\\n';
-            return {
-              tabId: tab.id,
-              filePath: tab.filePath,
-              revision: window.CustomTabs.__shutdownFreeze().revision,
-            };
-          } catch (error) {
-            return { error: String(error && error.stack ? error.stack : error) };
+        (() => {
+          const tab = window.CustomTabs.getActiveTab();
+          if (tab?.id !== ${JSON.stringify(discardAdmission.tabId)}) {
+            throw new Error('Discard fixture is not the admitted active tab');
           }
+          window.originalMarkdown = tab.content + '\\nDIRTY_DISCARD_BEFORE_NAVIGATION\\n';
+          return {
+            tabId: tab.id, filePath: tab.filePath,
+            cached: tab.content, live: window.originalMarkdown,
+            dirtyFlag: tab.hasUnsavedChanges,
+            revision: window.CustomTabs.__shutdownFreeze().revision,
+          };
         })()
       `);
       rig.answer = () =>
@@ -35914,6 +36019,18 @@ async function runShutdownGenerationScenarios(win, exec) {
       const dirtyDiscardClose = guardEvent();
       win.emit("close", dirtyDiscardClose);
       const oldDiscardAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
+      const oldDiscardDialog = rig.dialogs[0]?.options;
+      check(
+        "the generation collision holds an actual named dirty-discard dialog rather than an unreadable fallback",
+        oldDiscardAsked && oldDiscardDialog?.title === "Unsaved changes" &&
+          [oldDiscardDialog.message, oldDiscardDialog.detail].some(
+            value => String(value).includes(path.basename(discardNavigationFile)),
+          ),
+        JSON.stringify(oldDiscardDialog),
+      );
+      if (oldDiscardDialog?.title !== "Unsaved changes") {
+        throw new Error("Generation collision did not reach the dirty-discard branch");
+      }
       const oldDiscardState = __shutdown.state();
       const oldDiscardRevision = await exec(
         `window.CustomTabs.__shutdownFreeze().revision`,
@@ -35935,6 +36052,9 @@ async function runShutdownGenerationScenarios(win, exec) {
         );
       }
       const replacementDiscardState = __shutdown.state();
+      await settleShutdownLifecycleRestore(
+        exec, discardNavigationFile, discardSeed, "Generation discard fixture",
+      );
       const replacementCollision = await exec(`
         (async () => {
           const filePath = ${jsDiscardNavigationFile};
@@ -35961,8 +36081,8 @@ async function runShutdownGenerationScenarios(win, exec) {
             const active = window.CustomTabs.getActiveTab();
             const pageSession = window.getReloadRequestSession();
             const identity = active &&
-              window.CustomTabs.getActiveDocumentIdentity(
-                active.filePath,
+              window.CustomTabs.getDocumentIdentityForTab(
+                active.id, active.filePath,
                 pageSession,
               );
             if (!active ||
@@ -35973,13 +36093,20 @@ async function runShutdownGenerationScenarios(win, exec) {
               throw new Error("replacement physical fixture is not the active tracked document");
             }
             let revision = window.CustomTabs.__shutdownFreeze().revision;
-            while (revision < ${JSON.stringify(oldDiscardRevision)}) {
+            const target = ${JSON.stringify(oldDiscardRevision)};
+            if (!Number.isSafeInteger(target) || target < revision ||
+                target - revision > 10000) {
+              throw new Error("replacement revision cannot reach the old revision safely");
+            }
+            for (let step = 0; revision < target && step < 10000; step += 1) {
               // The accessor is the production mutation boundary. Assigning the
               // same text changes no document data but advances exactly one
               // revision, allowing a new renderer to collide numerically with
               // the old dialog's revision.
+              const previous = revision;
               tab.content = tab.content;
               revision = window.CustomTabs.__shutdownFreeze().revision;
+              if (revision !== previous + 1) throw new Error("revision accessor did not advance once");
             }
             return {
               tabId: tab.id,
@@ -36010,7 +36137,9 @@ async function runShutdownGenerationScenarios(win, exec) {
       check(
         "navigation aborts a dirty discard dialog and issues a fresh generation-bound approval despite a colliding revision",
         oldDiscardFixture &&
-          !oldDiscardFixture.error &&
+          oldDiscardFixture.cached === discardSeed &&
+          oldDiscardFixture.live !== discardSeed &&
+          oldDiscardFixture.dirtyFlag === false &&
           oldDiscardAsked &&
           dirtyDiscardClose.prevented === true &&
           oldDiscardState.pendingId > 0 &&
@@ -36089,23 +36218,25 @@ async function runShutdownGenerationScenarios(win, exec) {
             if (window.CustomTabs.getActiveTabId() !== tab.id) {
               await window.CustomTabs.switchToTab(tab.id);
             }
-            tab.content = 'replacement clean';
-            tab.originalContent = 'replacement clean';
-            tab.hasUnsavedChanges = false;
-            window.originalMarkdown = tab.content;
+            if (tab.content !== ${JSON.stringify(discardSeed)} ||
+                tab.originalContent !== ${JSON.stringify(discardSeed)} ||
+                window.originalMarkdown !== ${JSON.stringify(discardSeed)} ||
+                tab.hasUnsavedChanges !== false) {
+              throw new Error("restored replacement is not the actual clean disk baseline");
+            }
             const after = snapshot();
             const active = window.CustomTabs.getActiveTab();
             const pageSession = window.getReloadRequestSession();
             const activeIdentity = active &&
-              window.CustomTabs.getActiveDocumentIdentity(
-                active.filePath,
+              window.CustomTabs.getDocumentIdentityForTab(
+                active.id, active.filePath,
                 pageSession,
               );
             const clean =
-              tab.content === 'replacement clean' &&
-              tab.originalContent === 'replacement clean' &&
+              tab.content === ${JSON.stringify(discardSeed)} &&
+              tab.originalContent === ${JSON.stringify(discardSeed)} &&
               tab.hasUnsavedChanges === false &&
-              window.originalMarkdown === 'replacement clean';
+              window.originalMarkdown === ${JSON.stringify(discardSeed)};
             return {
               ok: true,
               tabId: tab.id,
@@ -36141,12 +36272,15 @@ async function runShutdownGenerationScenarios(win, exec) {
         JSON.stringify({ replacementCollision, replacementCleanSetup }),
       );
       holdReplacementRequest = false;
-      restoreDiscardSend();
-      heldReplacementRequest = null;
+      restoreDiscardSendOnce();
       // The held replacement message is real; deliver it only after its old
       // counterpart has proved stale and the replacement document is clean.
       if (replacementCleanReady) {
-        realDiscardSend.call(wc, "quit-approval-request", emittedDiscardRequests.at(-1));
+        if (__shutdown.state().pendingId !== heldReplacementRequest.id ||
+            __shutdown.state().rendererGeneration !== heldReplacementRequest.gen) {
+          throw new Error("Held replacement request lost its exact pending owner");
+        }
+        realDiscardSend.call(wc, "quit-approval-request", heldReplacementRequest);
       }
       const cleanReplacementClosed = replacementCleanReady &&
         await waitUntil(() => rig.closes === 1, 10000);
@@ -36156,7 +36290,8 @@ async function runShutdownGenerationScenarios(win, exec) {
           cleanReplacementClosed &&
           rig.dialogs.length === 1 &&
           __shutdown.state().pendingId === 0 &&
-          __shutdown.state().authorized === true,
+          __shutdown.state().authorized === true &&
+          __shutdown.state().authorizationGeneration === heldReplacementRequest.gen,
         JSON.stringify({
           replacementCleanSetup,
           cleanReplacementClosed,
@@ -36166,7 +36301,8 @@ async function runShutdownGenerationScenarios(win, exec) {
         }),
       );
     } finally {
-      restoreDiscardSend();
+      restoreDiscardSendOnce();
+      if (releaseOldDiscard) releaseOldDiscard(1);
     }
 
     // send() can throw synchronously while a renderer is nominally ready.
@@ -36184,7 +36320,7 @@ async function runShutdownGenerationScenarios(win, exec) {
       if (channel === "quit-approval-request") {
         throw new Error("controlled synchronous shutdown send failure");
       }
-      return Reflect.apply(Object.getPrototypeOf(wc).send, this, arguments);
+      return Reflect.apply(realDiscardSend, this, arguments);
     });
     let sendFailure;
     try {
@@ -36359,19 +36495,28 @@ async function runShutdownGenerationScenarios(win, exec) {
       JSON.stringify(__shutdown.state()),
     );
 
-    // Retain a real probe promise across a committed replacement. Resolving it
-    // afterwards must be counted as stale and must not disturb the successor's
-    // ready state or its (separate) probe ownership.
+    // Hold delivery of the completed old probe's actual return. This does not
+    // pretend that JavaScript kept running in a destroyed renderer.
     __shutdown.reset();
     let resolveOldProbe;
+    let oldProbeWork;
+    let oldProbeDelivery;
+    let oldProbeOutcome;
     let oldProbeGeneration = 0;
     const realExecuteJavaScript = wc.executeJavaScript;
     const restoreOldProbe = replaceMethod(wc, "executeJavaScript", function (code) {
       if (code === OVERLAY_PROBE_SOURCE && arguments.length === 1 && !resolveOldProbe) {
         oldProbeGeneration = __shutdown.state().rendererGeneration;
-        return new Promise((resolve) => {
+        const delivery = new Promise((resolve) => {
           resolveOldProbe = resolve;
         });
+        oldProbeWork = Reflect.apply(realExecuteJavaScript, this, arguments);
+        oldProbeDelivery = oldProbeWork.then(async (value) => {
+          oldProbeOutcome = value;
+          await delivery;
+          return value;
+        });
+        return oldProbeDelivery;
       }
       return Reflect.apply(realExecuteJavaScript, this, arguments);
     });
@@ -36386,6 +36531,7 @@ async function runShutdownGenerationScenarios(win, exec) {
       const oldProbeStarted = await waitUntil(
         () =>
           !!resolveOldProbe &&
+          oldProbeOutcome === false &&
           __shutdown.state().probeOwnerGeneration === oldProbeGeneration,
         10000,
       );
@@ -36401,7 +36547,8 @@ async function runShutdownGenerationScenarios(win, exec) {
         20000,
       );
       const successorBeforeOldCompletion = __shutdown.state();
-      if (resolveOldProbe) resolveOldProbe(false);
+      if (resolveOldProbe) resolveOldProbe();
+      await oldProbeDelivery;
       const staleCompletionObserved = await waitUntil(
         () => __shutdown.state().staleProbeCompletionCount === 1,
       );
@@ -36409,6 +36556,7 @@ async function runShutdownGenerationScenarios(win, exec) {
       check(
         "a stale asynchronous probe completion cannot clear or mark a newer generation",
         oldProbeStarted &&
+          oldProbeOutcome === false &&
           newGenerationReady &&
           staleCompletionObserved &&
           successorBeforeOldCompletion.renderer === "ready" &&
@@ -36427,6 +36575,9 @@ async function runShutdownGenerationScenarios(win, exec) {
       );
     } finally {
       restoreOldProbeOnce();
+      if (resolveOldProbe) resolveOldProbe();
+      if (oldProbeWork) await oldProbeWork;
+      if (oldProbeDelivery) await oldProbeDelivery;
     }
   } finally {
     Object.defineProperty(
@@ -36447,7 +36598,7 @@ async function runShutdownGenerationScenarios(win, exec) {
             ) || null;
           const pageSession = window.getReloadRequestSession();
           const identity = tab
-            ? window.CustomTabs.getActiveDocumentIdentity(tab.filePath, pageSession)
+            ? window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession)
             : null;
           return JSON.stringify({
             tabId: tab?.id ?? null,
@@ -36462,22 +36613,15 @@ async function runShutdownGenerationScenarios(win, exec) {
         })()
       `));
     const resetNativePath = path.join(dir, "generation-restored-native.md");
-    write(resetNativePath, "# Generation reset native\n\nGENERATION_RESET_NATIVE\n");
-    const restoreResetChooser = replaceMethod(dialog, "showOpenDialog", async () => ({
-      canceled: false, filePaths: [resetNativePath],
-    }));
-    try {
-      await exec("window.ipcRenderer.send('open-file-dialog'); null");
-      const resetNativeReady = await waitForCondition(exec,
-        `window.currentFilePath === ${JSON.stringify(resetNativePath)} &&
-          window.CustomTabs.getDocumentDescriptor()?.logicalPath === ${JSON.stringify(resetNativePath)} &&
-          document.getElementById('viewer').textContent.includes('GENERATION_RESET_NATIVE')`,
-        8000);
-      await exec("window.CustomTabs.settleSessionLayout()");
-      check("generation reset recovery starts with a genuinely admitted persisted owner",
-        resetNativeReady && __shutdown.documentSessionState().entries.some(entry =>
+    const resetText = "Generation reset native\n\nGENERATION_RESET_NATIVE\n";
+    write(resetNativePath, resetText);
+    const resetAdmission = await openShutdownLifecycleFixture(
+      exec, resetNativePath, resetText, "GENERATION_RESET_NATIVE",
+    );
+    check("generation reset recovery starts with a genuinely admitted persisted owner",
+      resetAdmission.filePath === resetNativePath &&
+        __shutdown.documentSessionState().entries.some(entry =>
           entry.filePath === resetNativePath));
-    } finally { restoreResetChooser(); }
     const resetBoundaryBefore = {
       main: __shutdown.state(),
       renderer: await captureRestoredDeletionState(),
@@ -44630,8 +44774,66 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
 
 async function runRendererLossScenario(win) {
   const rig = shutdownRig(win);
-  const bareFile = path.join(dir, "impostor.html");
+  const wc = win.webContents;
+  const exec = (code) => wc.executeJavaScript(code, true);
+  const indexFile = path.join(__dirname, "..", "src", "index.html");
+  const bareFile = path.join(dir, "renderer-loss-no-overlay.html");
+  const commitFile = path.join(dir, "renderer-loss-commit.md");
+  const commitText = "Renderer loss commit baseline\n";
+  let rearmComplete = false;
+  fs.writeFileSync(bareFile,
+    "<!doctype html><meta charset=utf-8><title>Renderer loss bare page</title>", "utf8");
+  write(commitFile, commitText);
   try {
+    // Sample loading synchronously after Main's committed-navigation listener.
+    // Keep unresponsive handling intact; READY, not a timer, releases the close.
+    __shutdown.reset();
+    await __shutdown.seedDocumentSessionLayout({ entries: [], activeEntryId: null });
+    const loadingGeneration = __shutdown.state().rendererGeneration;
+    let loadingWitness = null;
+    const loadingRequests = [];
+    const originalLoadingSend = wc.send;
+    const restoreLoadingSend = replaceMethod(wc, "send", function (channel, payload) {
+      if (channel === "quit-approval-request") loadingRequests.push(payload);
+      return Reflect.apply(originalLoadingSend, this, arguments);
+    });
+    const observeLoading = () => {
+      const before = __shutdown.state();
+      const close = guardEvent();
+      win.emit("close", close);
+      loadingWitness = {
+        before, held: __shutdown.state(), prevented: close.prevented,
+        closes: rig.closes, dialogs: rig.dialogs.length,
+      };
+    };
+    wc.once("did-navigate", observeLoading);
+    try {
+      await win.loadFile(indexFile);
+      const answered = await waitUntil(() => rig.closes === 1 &&
+        __shutdown.state().renderer === "ready" &&
+        __shutdown.state().pendingId === 0, 20000);
+      const state = __shutdown.state();
+      check(
+        "a close raised while the renderer is loading is held, then answered by the renderer that arrives",
+        loadingWitness?.before.renderer === "loading" &&
+          loadingWitness.before.rendererGeneration > loadingGeneration &&
+          loadingWitness.prevented === true &&
+          loadingWitness.held.pendingId > 0 &&
+          loadingWitness.held.pendingDispatchToken === 0 &&
+          loadingWitness.closes === 0 && loadingWitness.dialogs === 0 &&
+          loadingRequests.length === 1 &&
+          loadingRequests[0].id === loadingWitness.held.pendingId &&
+          loadingRequests[0].gen === loadingWitness.before.rendererGeneration &&
+          answered && rig.dialogs.length === 0 &&
+          state.authorizationGeneration === loadingRequests[0].gen &&
+          state.settleWhy === "clean",
+        JSON.stringify({ loadingGeneration, loadingWitness, loadingRequests, answered, state }),
+      );
+    } finally {
+      wc.removeListener("did-navigate", observeLoading);
+      restoreLoadingSend();
+    }
+
     // -- the renderer dies while its commit is outstanding ------------------
     // A REVISION-BEARING APPROVAL COMMITS OR FAILS CLOSED. This used to fall
     // through and run the continuation when the renderer had gone since it
@@ -44656,25 +44858,10 @@ async function runRendererLossScenario(win) {
     __shutdown.reset();
     rig.reset();
     rig.answer = 1;
-    await win.webContents.executeJavaScript(`
-      (() => {
-        const realConfirm = window.confirm;
-        window.confirm = () => true;
-        try {
-          window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-        } finally {
-          window.confirm = realConfirm;
-        }
-        const tab = window.CustomTabs.createTab(${JSON.stringify(
-          path.join(dir, "quit-alpha.md"),
-        )}, "commit-crash-baseline");
-        tab.content = tab.originalContent;
-        tab.hasUnsavedChanges = false;
-        window.originalMarkdown = tab.originalContent;
-        window.isEditMode = false;
-        return true;
-      })()
-    `);
+    await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 5000);
+    const commitAdmission = await openShutdownLifecycleFixture(
+      exec, commitFile, commitText, "Renderer loss commit baseline",
+    );
     let crashedDuringCommit = 0;
     let interceptedCommit = null;
     let commitPendingAtCrash = null;
@@ -44684,6 +44871,11 @@ async function runRendererLossScenario(win) {
       "send",
       function (channel, ...args) {
         if (channel === "quit-approval-commit" && !crashedDuringCommit) {
+          const state = __shutdown.state();
+          if (this !== wc || args[0]?.id !== state.commitPendingId ||
+              args[0]?.gen !== state.rendererGeneration) {
+            throw new Error("Renderer-loss commit has a foreign owner or attempt");
+          }
           crashedDuringCommit = 1;
           // Recorded so the scenario proves the product really reached the
           // commit phase with a revision in hand, rather than inferring it
@@ -44706,8 +44898,9 @@ async function runRendererLossScenario(win) {
     try {
       commitCrashClose = guardEvent();
       win.emit("close", commitCrashClose);
-      await waitUntil(() => rig.dialogs.length > 0, 20000);
-      await sleep(300);
+      await waitUntil(() => rig.dialogs.length === 1 &&
+        __shutdown.state().renderer === "unusable" &&
+        __shutdown.state().pendingId === 0, 20000);
     } finally {
       restoreCommitSend();
     }
@@ -44715,6 +44908,7 @@ async function runRendererLossScenario(win) {
     check(
       "a renderer that dies mid-commit fails the commit closed instead of running it",
       crashedDuringCommit === 1 &&
+        commitAdmission.filePath === commitFile &&
         // The setup control. Without it a product that stopped committing at
         // all - no send, no revision, no attempt registered - would satisfy
         // every clause below by never entering the commit phase, and this
@@ -44770,7 +44964,6 @@ async function runRendererLossScenario(win) {
       throw new Error("commit-crash reload fixture did not reach a new renderer generation");
     }
 
-    __shutdown.reset();
     // THE DIALOG LEDGER IS PER BLOCK. The commit-crash case above now really
     // does reach the main-process fallback, so it leaves one dialog recorded;
     // the two assertions below count dialogs absolutely ("exactly two", and
@@ -44786,8 +44979,8 @@ async function runRendererLossScenario(win) {
     rig.answer = 1;
     const cancelledQuit = guardEvent();
     app.emit("before-quit", cancelledQuit);
-    const askedInMain = await waitUntil(() => rig.dialogs.length > 0, 10000);
-    await sleep(200);
+    const askedInMain = await waitUntil(() => rig.dialogs.length === 1 &&
+      __shutdown.state().pendingId === 0, 10000);
     check(
       "a lost renderer is asked about in the main process rather than approved silently",
       lost &&
@@ -44809,63 +45002,23 @@ async function runRendererLossScenario(win) {
     rig.answer = 0;
     const approvedQuit = guardEvent();
     app.emit("before-quit", approvedQuit);
-    await waitUntil(() => rig.quits > 0, 10000);
-    await sleep(200);
+    await waitUntil(() => rig.quits === 1 && __shutdown.state().pendingId === 0, 10000);
     check(
       "approving the main-process fallback quits exactly once",
       rig.quits === 1 && rig.dialogs.length === 2,
       JSON.stringify({ quits: rig.quits, dialogs: rig.dialogs.length }),
     );
 
-    // -- a close raised while a renderer is coming up ----------------------
-    // Held, not answered and not auto-approved: this is the branch that keeps
-    // a startup-time X from being decided without the documents being
-    // consulted, and the readiness handshake is what releases it.
+    // Restore a genuine ready generation after the crash before navigation.
     __shutdown.reset();
     rig.reset();
-    rig.answer = 1;
-    // The preceding real renderer crash can leave Chromium's asynchronous
-    // hang notification queued after the replacement load begins. This
-    // scenario measures the loading/READY handshake, not the independently
-    // covered unresponsive fallback, so keep that stale notification from
-    // deciding the deliberately held request.
-    const unresponsiveHandlers = win.listeners("unresponsive");
-    win.removeAllListeners("unresponsive");
-    try {
-      win.webContents.reload();
-      const loading = await waitUntil(
-        () => __shutdown.state().renderer === "loading",
-        20000,
-      );
-      const heldClose = guardEvent();
-      win.emit("close", heldClose);
-      await sleep(150);
-      const heldState = __shutdown.state();
-      const closedWhileLoading = rig.closes;
-      const askedWhileLoading = rig.dialogs.length;
-      const answered = await waitUntil(() => rig.closes > 0, 20000);
-      check(
-        "a close raised while the renderer is loading is held, then answered by the renderer that arrives",
-        loading &&
-          heldClose.prevented === true &&
-          heldState.pendingId > 0 &&
-          closedWhileLoading === 0 &&
-          askedWhileLoading === 0 &&
-          answered &&
-          rig.dialogs.length === 0,
-        JSON.stringify({
-          loading,
-          heldState,
-          closedWhileLoading,
-          askedWhileLoading,
-          answered,
-          dialogs: rig.dialogs.map((d) => d.options.title),
-          finalState: __shutdown.state(),
-        }),
-      );
-    } finally {
-      unresponsiveHandlers.forEach((listener) => win.on("unresponsive", listener));
+    const deniedRecoveryGeneration = __shutdown.state().rendererGeneration;
+    await win.loadFile(indexFile);
+    if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
+        __shutdown.state().rendererGeneration > deniedRecoveryGeneration, 20000)) {
+      throw new Error("Renderer-loss navigation control did not recover its renderer");
     }
+    await settleShutdownLifecycleRestore(exec, commitFile, commitText, "Renderer loss commit baseline");
 
     // -- a navigation the main process DENIES -------------------------------
     // Measured in this repo (test-render-security.js, the N11 block): a
@@ -44873,11 +45026,10 @@ async function runRendererLossScenario(win) {
     // did-start-navigation. A readiness state keyed off the START of a
     // navigation would therefore be disarmed by a navigation that never
     // happens, sending the next close through a needless fallback question.
-    __shutdown.reset();
-    rig.reset();
     rig.answer = 1;
     const deniedTarget = "http://probe.invalid/denied";
     const originalUrl = win.webContents.getURL();
+    const deniedGeneration = __shutdown.state().rendererGeneration;
     const deniedNavigationStarts = [];
     const deniedNavigationAttempts = [];
     const observeDeniedStart = (details) => {
@@ -44905,13 +45057,13 @@ async function runRendererLossScenario(win) {
       win.webContents.removeListener("did-start-navigation", observeDeniedStart);
       win.webContents.removeListener("will-navigate", observeDeniedAttempt);
     }
-    await sleep(800);
     check(
       "the denied-navigation fixture reaches the main-frame guard without replacing its document",
       deniedNavigationStarts.length === 1 &&
         deniedNavigationAttempts.length === 1 &&
         deniedNavigationAttempts[0].prevented === true &&
         win.webContents.getURL() === originalUrl &&
+        __shutdown.state().rendererGeneration === deniedGeneration &&
         originalUrl.startsWith("file:"),
       JSON.stringify({
         deniedNavigationStarts,
@@ -44953,8 +45105,8 @@ async function runRendererLossScenario(win) {
     );
     const bareClose = guardEvent();
     win.emit("close", bareClose);
-    const bareAsked = await waitUntil(() => rig.dialogs.length > 0, 10000);
-    await sleep(200);
+    const bareAsked = await waitUntil(() => rig.dialogs.length === 1 &&
+      __shutdown.state().pendingId === 0, 10000);
     check(
       "a page that loads without the tab overlay falls through to the main-process question",
       bare &&
@@ -44974,19 +45126,25 @@ async function runRendererLossScenario(win) {
     // possible and because "the handshake re-arms" is what keeps a replaced
     // renderer from being unreachable forever.
     __shutdown.reset();
-    await win.loadFile(path.join(__dirname, "..", "src", "index.html"));
+    const rearmGeneration = __shutdown.state().rendererGeneration;
+    await win.loadFile(indexFile);
     const rearmed = await waitUntil(
-      () => __shutdown.state().renderer === "ready",
+      () => __shutdown.state().renderer === "ready" &&
+        __shutdown.state().rendererGeneration > rearmGeneration,
       20000,
     );
+    const rearmedOwner = rearmed && await settleShutdownLifecycleRestore(
+      exec, commitFile, commitText, "Renderer loss commit baseline",
+    );
+    rearmComplete = !!rearmedOwner;
     check(
       "a replaced renderer announces itself again and becomes answerable",
-      rearmed,
-      JSON.stringify(__shutdown.state()),
+      rearmed && rearmComplete,
+      JSON.stringify({ state: __shutdown.state(), rearmedOwner }),
     );
   } finally {
+    if (!rearmComplete) __shutdown.reset();
     rig.restore();
-    __shutdown.reset();
   }
 }
 
