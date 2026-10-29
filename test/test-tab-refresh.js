@@ -348,6 +348,19 @@ try {
   failStartup("deletion delivery contract", error);
 }
 
+// Missing or late startup reports must not shrink a companion's expected total.
+const EXPECTED_STARTUP_CONTRACT_ASSERTIONS = 54;
+const startupContractAssertionCount = results.length;
+if (
+  startupContractAssertionCount !== EXPECTED_STARTUP_CONTRACT_ASSERTIONS ||
+  results.some(result => result.ok !== true)
+) {
+  failStartup("contract inventory", new Error(
+    `Expected ${EXPECTED_STARTUP_CONTRACT_ASSERTIONS} successful startup contract checks; ` +
+    `received ${startupContractAssertionCount}, ${results.filter(result => result.ok !== true).length} failed`,
+  ));
+}
+
 // This is deliberately data-only: capability scheduling must be testable
 // without Electron state, and each group remains independently reportable.
 function createDeletionEvidencePlan(capabilities, acknowledgementContract) {
@@ -5599,7 +5612,13 @@ const companionWallClockMs = (budgetMs) =>
 
 const COMPANION_ASSERTION_TOTALS = {
   portable: 47,
-  teardown: { queued: 9, commit: 8, pending: 8, continuation: 7, poisoned: 7 },
+  teardown: actualHostPlatform === "darwin"
+    ? { queued: startupContractAssertionCount + 7, commit: startupContractAssertionCount + 9,
+      pending: startupContractAssertionCount + 7, continuation: startupContractAssertionCount + 7,
+      poisoned: startupContractAssertionCount + 7 }
+    : { queued: startupContractAssertionCount + 10, commit: startupContractAssertionCount + 9,
+      pending: startupContractAssertionCount + 9, continuation: startupContractAssertionCount + 8,
+      poisoned: startupContractAssertionCount + 8 },
 };
 
 // ONE SPAWNER FOR BOTH COMPANIONS. They differed only in their environment and

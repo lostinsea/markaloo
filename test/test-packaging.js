@@ -1142,8 +1142,58 @@ async function main() {
       reloadRenderer.includes("return reloadRequests.dispatch({"));
   check("ordinary tabs runs actual-code contract checks before Electron with failure propagation",
     pkg.scripts["test:tabs"] ===
-      "node test/test-reload-transport-contract.js && node test/test-owned-transport-contract.js && electron test/test-tab-refresh.js" &&
+      "npm run test:actor-contracts && node test/test-reload-transport-contract.js && node test/test-owned-transport-contract.js && electron test/test-tab-refresh.js" &&
       pkg.scripts.test.split(" && ").includes("npm run test:tabs"));
+  const actorContractFiles = [
+    "test-reload-transport-contract.js", "test-owned-transport-contract.js",
+    "test-shutdown-response-contract.js", "test-deletion-delivery-contract.js",
+    "test-default-tabs-contracts.js", "test-fixture-close-contracts.js",
+    "test-default-save-contracts.js", "test-shutdown-lifecycle-source.js",
+    "test-f22-fixture-contracts.js", "test-security-actor-contracts.js",
+    "test-installed-update-contracts.js", "test-shutdown-deadline-source.js",
+    "test-teardown-source.js", "test-mermaid-popup-contracts.js",
+    "test-companion-accounting-contracts.js",
+  ];
+  const actorContractCommand = actorContractFiles.map(file => "node test/" + file).join(" && ");
+  const preservedOrdinaryGroups = [
+    "packaging", "profile", "corpus", "startup", "document-session", "features",
+    "tabs", "reload-dialog", "owned-dialogs", "dialogs", "security", "popups",
+    "visual", "search", "toc", "reading", "zoom", "responsive", "mermaid",
+    "patch", "tables", "theme",
+  ];
+  const gatedActorCommands = {
+    test: "npm run test:actor-contracts && " +
+      preservedOrdinaryGroups.map(group => "npm run test:" + group).join(" && "),
+    "test:tabs": "npm run test:actor-contracts && node test/test-reload-transport-contract.js && node test/test-owned-transport-contract.js && electron test/test-tab-refresh.js",
+    "test:security": "node test/test-security-actor-contracts.js && electron test/test-render-security.js",
+    "test:popups": "node test/test-mermaid-popup-contracts.js && node --check src/main.js && node --check test/test-popup-security.js && electron test/test-popup-security.js",
+    "test:mermaid": "node test/test-mermaid-popup-contracts.js && electron test/test-mermaid-render.js",
+  };
+  const actorContractsRouted = scripts =>
+    scripts["test:actor-contracts"] === actorContractCommand &&
+    Object.entries(gatedActorCommands).every(([name, command]) => scripts[name] === command);
+  check("all actor contracts run as standalone Node commands rather than unawaited imports",
+    pkg.scripts["test:actor-contracts"] === actorContractCommand &&
+      actorContractFiles.every(file => fs.existsSync(path.join(ROOT, "test", file))));
+  check("Node contracts gate the preserved ordinary suite and direct actor entrypoints",
+    actorContractsRouted(pkg.scripts));
+  check("actor routing oracle rejects omissions duplicates late gates and swallowed failures",
+    actorContractsRouted(pkg.scripts) &&
+      actorContractFiles.every(file => !actorContractsRouted({
+        ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand.split(" && ")
+          .filter(command => command !== "node test/" + file).join(" && "),
+      })) &&
+      !actorContractsRouted({ ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand + " && node test/test-companion-accounting-contracts.js" }) &&
+      !actorContractsRouted({ ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand.replace(" && ", " || ") }) &&
+      !actorContractsRouted({ ...pkg.scripts,
+        test: preservedOrdinaryGroups.map(group => "npm run test:" + group).join(" && ") +
+          " && npm run test:actor-contracts" }) &&
+      Object.keys(gatedActorCommands).every(name => !actorContractsRouted({
+        ...pkg.scripts, [name]: gatedActorCommands[name].split(" && ").slice(1).join(" && "),
+      })));
   const reloadPreflight = 'require("./test-reload-transport-contract.js").run(check);';
   check("direct focused and companion tabs launches cannot omit the actual-code contract preflight",
     /^try \{\r?\n  require\("\.\/test-reload-transport-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("reload contract", error\);\r?\n\}/m.test(reloadHarness) &&
@@ -3017,11 +3067,17 @@ async function main() {
         standardCalls.indexOf("test:reading") > standardCalls.indexOf("test:tabs"),
       JSON.stringify(standardCalls));
     const ordinaryJob = read(".github/workflows/ci.yml").match(/^  test:\r?\n([\s\S]*?)(?=^  [\w-]+:|(?![\s\S]))/m)?.[1] || "";
+    const auditJob = read(".github/workflows/ci.yml").match(/^  revert-audit:\r?\n([\s\S]*?)(?=^  [\w-]+:|(?![\s\S]))/m)?.[1] || "";
     const ciCommands = [...ordinaryJob.matchAll(/^        run:\s*npm\s+(?:run\s+)?(test(?::[\w-]+)?)\s*$/gm)]
       .map(match => match[1]);
     const ciCalls = ciCommands.flatMap(name => orderedCalls(pkg.scripts, name) || []);
     check("ordinary CI executes the complete feature gate before legacy tabs",
       ciCommands.length > 0 && beforeLegacy(ciCalls), JSON.stringify(ciCommands));
+    check("ordinary CI reaches the Node actor gate through npm test without changing job budgets",
+      ciCommands.length === 1 && ciCommands[0] === "test" &&
+        pkg.scripts.test.startsWith("npm run test:actor-contracts && ") &&
+        /^    timeout-minutes: 45\s*$/m.test(ordinaryJob) &&
+        /^    timeout-minutes: 60\s*$/m.test(auditJob));
     const fixtureScripts = { test: "npm run test:features && npm run test:tabs",
       "test:features": featureScripts.map(name => "npm run " + name).join(" && "),
       "test:tabs": "electron test/test-tab-refresh.js",
