@@ -41,12 +41,16 @@ function fixture(options = {}) {
     id, filePath: id + ".md", filename: id + ".md", content: "BODY_" + id,
     originalContent: "BODY_" + id,
     dirty: (options.dirty || []).includes(id), revision: 1,
+    hasUnsavedChanges: (options.dirty || []).includes(id),
   }));
   const owners = new Map(tabs.map(tab => [tab.id, {
     pageSession: "PAGE", rendererGeneration: 1, tabId: tab.id,
     documentGeneration: 1, pathKey: tab.filePath, documentRef: "REF_" + tab.id,
   }]));
-  const documentState = new WeakMap(tabs.map(tab => [tab, {
+  const descriptors = new Map(tabs.map(tab => [tab.id, {
+    ref: "REF_" + tab.id, logicalPath: tab.filePath, readTarget: "physical-" + tab.filePath,
+  }]));
+  const tabState = tab => ({
     get dirty() { return tab.dirty; },
     get content() { return tab.content; },
     get originalContent() { return tab.originalContent; },
@@ -55,7 +59,8 @@ function fixture(options = {}) {
     reloadConflict: !!options.reloadConflict,
     saveFailure: !!options.saveFailure,
     deletionTombstone: options.tombstone ? { eventId: 1 } : null,
-  }]));
+  });
+  const documentState = new WeakMap(tabs.map(tab => [tab, tabState(tab)]));
   const projectState = vm.runInNewContext("({" + stateProjection + "})", {
     documentState,
     sameDocument: (left, right) => left === right,
@@ -84,7 +89,7 @@ function fixture(options = {}) {
   const removal = tab => {
     const index = tabs.indexOf(tab);
     if (index >= 0 && !options.noRemoval) tabs.splice(index, 1);
-    if (!options.keepAdmission) liveRefs.delete("REF_" + tab.id);
+    if (!options.keepAdmission) liveRefs.delete(owners.get(tab.id).documentRef);
     if (options.foreignEvidence) win.__fixtureTabCleanup = { key: "FOREIGN" };
   };
   buttons[1].click = () => {
@@ -97,7 +102,10 @@ function fixture(options = {}) {
     markdownEditor: { value: "BODY_" + selected },
     originalMarkdown: "BODY_" + selected,
     getReloadRequestSession: () => "PAGE",
-    getPendingSaveStatus: () => ({ count: options.pending ? 1 : 0 }),
+    getPendingSaveStatus: () => ({
+      count: options.pending ? 1 : 0,
+      pending: Object.hasOwn(options, "pendingValue") ? options.pendingValue : !!options.pending,
+    }),
     folia: {
       getVersion: () => "CONTROL_ONLY",
       queryDocumentDeletionState: () => ({
@@ -115,7 +123,7 @@ function fixture(options = {}) {
         return options.changedOwner && dialog.open
           ? { ...owner, documentGeneration: 2 } : owner;
       },
-      getDocumentDescriptor: id => ({ ref: "REF_" + id, logicalPath: id + ".md" }),
+      getDocumentDescriptor: id => ({ ...descriptors.get(id) }),
       __documentState: projectState,
       __inEditMode: () => true,
       __shutdownFreeze: () => ({ frozen: !!options.frozen, dialogDecisionIntent: intent }),
@@ -187,7 +195,15 @@ function fixture(options = {}) {
     setTimeout: options.heldClose ? setTimeout :
       (callback, ms) => { tick += ms; queueMicrotask(callback); },
   });
+  let dispatches = 0;
+  let planEntered;
+  const planStarted = new Promise(resolve => { planEntered = resolve; });
   const exec = async code => {
+    dispatches += 1;
+    if (dispatches === 1) {
+      planEntered();
+      if (options.planGate) await options.planGate;
+    }
     if (options.unreadableEvidence && code.includes("window.__fixtureTabCleanup?.key")) {
       throw new Error("PAGE_UNREADABLE");
     }
@@ -198,6 +214,7 @@ function fixture(options = {}) {
     require, isDeepStrictEqual, AggregateError,
     __shutdown: {
       documentAdmissionIsCurrent: ref => {
+        options.onAdmission?.();
         calls.push("main:" + ref + ":" + liveRefs.has(ref));
         return liveRefs.has(ref);
       },
@@ -210,9 +227,32 @@ function fixture(options = {}) {
     tabId: id, filePath: id + ".md", owner: { ...owners.get(id) },
     content: "BODY_" + id, reason: "Discard this exact fixture edit",
   });
+  const capture = (id, disposition) => {
+    const tab = tabs.find(current => current.id === id);
+    return {
+      tabId: id, path: tab.filePath, owner: { ...owners.get(id) },
+      descriptor: { ...descriptors.get(id) },
+      disposition: disposition || (tab.dirty ? "dirty-discard" : "clean"),
+      liveContent: selected === id ? win.markdownEditor.value : tab.content,
+      cacheContent: tab.content, savedContent: tab.originalContent,
+    };
+  };
+  const replace = id => {
+    const index = tabs.findIndex(tab => tab.id === id);
+    const tab = { ...tabs[index], content: "REPLACEMENT", originalContent: "REPLACEMENT",
+      dirty: false, hasUnsavedChanges: false };
+    tabs[index] = tab;
+    documentState.set(tab, tabState(tab));
+    owners.set(id, { ...owners.get(id), documentGeneration: 2, documentRef: "NEW_" + id });
+    descriptors.set(id, { ...descriptors.get(id), ref: "NEW_" + id });
+    liveRefs.add("NEW_" + id);
+    if (selected === id) win.markdownEditor.value = win.originalMarkdown = "REPLACEMENT";
+    return tab;
+  };
   return {
     win, tabs, calls, checks, liveRefs, permission, exec, close, dialog,
     observer: () => observer, heldCloses,
+    capture, replace, owners, descriptors, planStarted,
     waitForClose: id => calls.includes("close:" + id) ? Promise.resolve() :
       new Promise(resolve => closeStarted.set(id, resolve)),
   };
@@ -437,6 +477,256 @@ async function main() {
       await assert.rejects(runAliasCaller(bad, change), /retained original edit/);
       assert.equal(bad.calls.some(call => call.startsWith("close:")), false);
     }
+  });
+  await check("bound clean A/B preserve literal no-LF bytes and original close order", async () => {
+    const state = fixture();
+    const expectedTargets = ["A", "B"].map(id => state.capture(id));
+    assert.ok(expectedTargets.every(target =>
+      target.disposition === "clean" && !target.liveContent.endsWith("\n")));
+    const result = await state.close(state.exec, "bound clean", {
+      tabIds: ["A", "B"], expectedTargets,
+    });
+    assert.deepEqual(Array.from(result.records, record => record.tabId), ["A", "B"]);
+    assert.deepEqual(Array.from(result.remaining, tab => tab.id), ["C"]);
+    assert.equal(state.calls.some(call => call.startsWith("approve:")), false);
+  });
+  await check("bound dirty E keeps distinct live cache and saved baseline plus exact separate consent", async () => {
+    const state = fixture({ selected: "A", dirty: ["A"] });
+    const tab = state.tabs[0];
+    tab.content = state.win.markdownEditor.value = "F22_SAVE_E_NEWER_FAILURE";
+    tab.originalContent = "F22_SAVE_B_NEWER";
+    const expected = state.capture("A");
+    assert.equal(expected.disposition, "dirty-discard");
+    assert.equal(expected.liveContent, "F22_SAVE_E_NEWER_FAILURE");
+    assert.equal(expected.cacheContent, "F22_SAVE_E_NEWER_FAILURE");
+    assert.equal(expected.savedContent, "F22_SAVE_B_NEWER");
+    const result = await state.close(state.exec, "bound E", {
+      tabIds: ["A"], expectedTargets: [expected],
+      expectedDiscards: [{ ...state.permission("A"), content: expected.liveContent }],
+    });
+    assert.equal(result.records[0].answered, true);
+    assert.deepEqual(state.calls.filter(call => call.startsWith("approve:")), ["approve:A"]);
+  });
+  await check("a bound clean replacement during delegated planning remains untouched", async () => {
+    let release;
+    const state = fixture({ selected: "A", planGate: new Promise(resolve => { release = resolve; }) });
+    const expected = state.capture("A");
+    const work = state.close(state.exec, "delayed plan", {
+      tabIds: ["A"], expectedTargets: [expected],
+    }).then(() => null, error => error);
+    await state.planStarted;
+    const replacement = state.replace("A");
+    assert.equal(state.win.CustomTabs.__documentState(replacement).maintained, true);
+    assert.equal(state.win.CustomTabs.__documentState(replacement).dirty, false);
+    assert.notEqual(state.capture("A").owner.documentRef, expected.owner.documentRef);
+    release();
+    const error = await work;
+    assert.equal(state.calls.some(call => call.startsWith("close:")), false,
+      "the replacement must stay untouched at the actual delegated boundary");
+    assert.equal(state.tabs.includes(replacement), true);
+    assert.match(String(error), /Captured fixture target/);
+  });
+  await check("unbound callers retain legitimate fresh-owner adoption", async () => {
+    const state = fixture({ selected: "A" });
+    const replacement = state.replace("A");
+    const result = await state.close(state.exec, "legacy", { tabIds: ["A"] });
+    assert.equal(result.records[0].identity.documentRef, "NEW_A");
+    assert.equal(state.tabs.includes(replacement), false);
+  });
+  await check("a bound target still needs its separate exact dirty permission", async () => {
+    const state = fixture({ dirty: ["A"] });
+    await assert.rejects(state.close(state.exec, "no consent", {
+      tabIds: ["A"], expectedTargets: [state.capture("A")],
+    }), /fixture cleanup failed/);
+    assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+  });
+  await check("bound pre-effect guards refuse fresh owner descriptor bytes flags and pending-save changes", async () => {
+    for (const change of [
+      state => { state.replace("A"); },
+      state => { state.descriptors.get("A").readTarget = "NEW_PHYSICAL.md"; },
+      state => { state.tabs[0].content += "\n"; },
+      state => { state.tabs[0].originalContent += "\n"; },
+      state => { state.tabs[0].hasUnsavedChanges = true; },
+      (_state, options) => { options.pending = true; },
+      (_state, options) => { options.frozen = true; },
+    ]) {
+      let state, changed = false;
+      const options = { onAdmission() {
+        if (!changed) { changed = true; change(state, options); }
+      } };
+      state = fixture(options);
+      const expected = state.capture("A");
+      await assert.rejects(state.close(state.exec, "pre-effect", {
+        tabIds: ["A"], expectedTargets: [expected],
+      }), /fixture cleanup failed/);
+      assert.equal(changed, true, "the fresh plan completed before the change");
+      assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+      assert.equal(state.tabs.some(tab => tab.id === "A"), true);
+    }
+  });
+  await check("bound dirty disposition cannot silently become clean or lose either dirty flag", async () => {
+    for (const field of ["dirty", "hasUnsavedChanges"]) {
+      let state, changed = false;
+      const options = { dirty: ["A"], onAdmission() {
+        if (!changed) { changed = true; state.tabs[0][field] = false; }
+      } };
+      state = fixture(options);
+      const expected = state.capture("A");
+      await assert.rejects(state.close(state.exec, "dirty disposition", {
+        tabIds: ["A"], expectedTargets: [expected], expectedDiscards: [state.permission("A")],
+      }), /fixture cleanup failed/);
+      assert.equal(changed, true);
+      assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+      assert.equal(state.calls.some(call => call.startsWith("approve:")), false);
+    }
+  });
+  await check("bound capture validation rejects missing duplicate malformed and byte-coerced targets", async () => {
+    for (const malformed of [
+      () => undefined,
+      () => {},
+      () => [undefined],
+      capture => [capture, capture],
+      capture => [{ ...capture, disposition: "discard" }],
+      capture => [{ ...capture, liveContent: null }],
+      capture => [{ ...capture, owner: { ...capture.owner, documentGeneration: 0 } }],
+      capture => [{ ...capture, descriptor: { ...capture.descriptor, ref: "OTHER" } }],
+    ]) {
+      const state = fixture();
+      await assert.rejects(state.close(state.exec, "bad capture", {
+        tabIds: ["A"], expectedTargets: malformed(state.capture("A")),
+      }), /Captured fixture/);
+      assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+    }
+    for (const ids of [[], ["A", "B"]]) {
+      const state = fixture();
+      await assert.rejects(state.close(state.exec, "coverage", {
+        tabIds: ["A"], expectedTargets: ids.map(id => state.capture(id)),
+      }), /exact requested set/);
+      assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+    }
+  });
+  await check("bound captures are copied before dispatch rather than borrowing caller mutation", async () => {
+    let release;
+    const state = fixture({ planGate: new Promise(resolve => { release = resolve; }) });
+    const capture = state.capture("A");
+    const work = state.close(state.exec, "capture lifetime", {
+      tabIds: ["A"], expectedTargets: [capture],
+    });
+    await state.planStarted;
+    capture.owner.documentGeneration = 99;
+    capture.descriptor.ref = "UNOWNED";
+    capture.liveContent = "OTHER";
+    release();
+    assert.equal((await work).records[0].closed, true);
+  });
+  await check("bound calls reject missing nonboolean and truthy malformed pending status", async () => {
+    for (const pendingValue of [undefined, null, 0, "yes", {}]) {
+      const state = fixture({ pendingValue });
+      await assert.rejects(state.close(state.exec, "bad pending", {
+        tabIds: ["A"], expectedTargets: [state.capture("A")],
+      }), /Captured fixture target/);
+      assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+    }
+  });
+  await check("each captured owner field and descriptor path remains binding before the original action", async () => {
+    for (const field of ["pageSession", "rendererGeneration", "tabId",
+      "documentGeneration", "pathKey", "documentRef", "path", "logicalPath"]) {
+      let state, changed = false;
+      const options = { onAdmission() {
+        if (changed) return;
+        changed = true;
+        if (field === "path") state.tabs[0].filePath = "OTHER.md";
+        else if (field === "logicalPath") state.descriptors.get("A").logicalPath = "OTHER.md";
+        else {
+          const owner = state.owners.get("A");
+          owner[field] = typeof owner[field] === "number" ? owner[field] + 1 : owner[field] + "_NEW";
+        }
+      } };
+      state = fixture(options);
+      await assert.rejects(state.close(state.exec, "exact fields", {
+        tabIds: ["A"], expectedTargets: [state.capture("A")],
+      }), /fixture cleanup failed/);
+      assert.equal(changed, true);
+      assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+    }
+  });
+  await check("a captured dirty E cannot authorize a replacement clean owner during planning", async () => {
+    let release;
+    const state = fixture({ selected: "A", dirty: ["A"],
+      planGate: new Promise(resolve => { release = resolve; }) });
+    const expected = state.capture("A");
+    const permission = state.permission("A");
+    const work = state.close(state.exec, "E replacement", {
+      tabIds: ["A"], expectedTargets: [expected], expectedDiscards: [permission],
+    }).then(() => null, error => error);
+    await state.planStarted;
+    const replacement = state.replace("A");
+    assert.equal(state.win.CustomTabs.__documentState(replacement).dirty, false);
+    release();
+    assert.match(String(await work), /Captured fixture target/);
+    assert.equal(state.calls.some(call => call.startsWith("close:")), false);
+    assert.equal(state.calls.some(call => call.startsWith("approve:")), false);
+    assert.equal(state.tabs.includes(replacement), true);
+  });
+  await check("bound original dirty closes keep their existing asynchronous stale-question guards", async () => {
+    for (const changed of ["changedOwner", "changedRevision", "changedContent",
+      "changedDeletion", "changedSelection"]) {
+      const state = fixture({ dirty: ["A"], [changed]: true });
+      await assert.rejects(state.close(state.exec, "bound question", {
+        tabIds: ["A"], expectedTargets: [state.capture("A")],
+        expectedDiscards: [state.permission("A")],
+      }), /fixture cleanup failed/);
+      assert.equal(state.calls.filter(call => call === "close:A").length, 1);
+      assert.equal(state.calls.some(call => call.startsWith("approve:")), false);
+      assert.equal(state.tabs.some(tab => tab.id === "A"), true);
+    }
+  });
+  await check("a bound discard permission cannot be added after cleanup starts", async () => {
+    let release;
+    const state = fixture({ dirty: ["A"],
+      planGate: new Promise(resolve => { release = resolve; }) });
+    const expectedDiscards = [];
+    const work = state.close(state.exec, "late permission", {
+      tabIds: ["A"], expectedTargets: [state.capture("A")], expectedDiscards,
+    }).then(() => null, error => error);
+    await state.planStarted;
+    expectedDiscards.push(state.permission("A"));
+    release();
+    const error = await work;
+    assert.equal(state.calls.some(call => call.startsWith("close:")), false,
+      "the original action must not use a permission added after invocation");
+    assert.equal(state.calls.some(call => call.startsWith("approve:")), false);
+    assert.equal(state.tabs.some(tab => tab.id === "A"), true);
+    assert.match(String(error), /fixture cleanup failed/);
+  });
+  await check("bound exact discard consent is copied before caller mutation", async () => {
+    let release;
+    const state = fixture({ dirty: ["A"],
+      planGate: new Promise(resolve => { release = resolve; }) });
+    const expectedDiscards = [state.permission("A")];
+    const work = state.close(state.exec, "consent lifetime", {
+      tabIds: ["A"], expectedTargets: [state.capture("A")], expectedDiscards,
+    });
+    await state.planStarted;
+    expectedDiscards[0].owner.documentRef = "FOREIGN";
+    expectedDiscards[0].content = "OTHER";
+    expectedDiscards.length = 0;
+    release();
+    assert.equal((await work).records[0].answered, true);
+    assert.deepEqual(state.calls.filter(call => call === "approve:A"), ["approve:A"]);
+  });
+  await check("unbound discard permission timing remains legacy behavior", async () => {
+    let release;
+    const state = fixture({ dirty: ["A"],
+      planGate: new Promise(resolve => { release = resolve; }) });
+    const expectedDiscards = [];
+    const work = state.close(state.exec, "legacy permission", {
+      tabIds: ["A"], expectedDiscards,
+    });
+    await state.planStarted;
+    expectedDiscards.push(state.permission("A"));
+    release();
+    assert.equal((await work).records[0].answered, true);
   });
   console.log("SOURCE/VM ONLY: " + passed + " passed; native close behavior is not qualified.");
 }

@@ -1,7 +1,7 @@
 "use strict";
 
-// Actual E caller code, controlled page/Main/closer ports. No Electron,
-// genuine question, producer retirement or renderer restoration runs here.
+// Actual E caller; composition cases also execute the shared closer/projection.
+// Page/Main/close/restoration ports are controlled. No Electron or native work.
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -40,6 +40,15 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const text = "F22_SAVE_E_NEWER_FAILURE";
 const baseline = "F22_SAVE_B_NEWER";
 const filePath = "C:\\fixture\\f22-stale-save-order.md";
+const fixtureSource = fs.readFileSync(
+  path.join(__dirname, "test-fixture-close-contracts.js"), "utf8",
+).replace(/\r\n/g, "\n");
+const fixtureBoundary = fixtureSource.indexOf("\nasync function main() {");
+assert.ok(fixtureBoundary > 0, "Existing shared closer fixture boundary");
+const sharedFixture = vm.runInNewContext(
+  fixtureSource.slice(0, fixtureBoundary) + "\nfixture",
+  { require, __dirname, console, queueMicrotask, setTimeout, setImmediate },
+);
 const identity = {
   pageSession: "e-page", rendererGeneration: 3, tabId: 41,
   documentGeneration: 7, pathKey: "e-path", documentRef: "e-document",
@@ -51,7 +60,8 @@ function fixture() {
     reloadConflict: false };
   const page = {
     tabs: [tab], activeId: 41, editMode: true, owner: clone(identity),
-    descriptor: { ref: identity.documentRef }, pending: { pending: false, count: 0 },
+    descriptor: { ref: identity.documentRef, logicalPath: filePath, readTarget: filePath },
+    pending: { pending: false, count: 0 },
     deletion: { known: true, unresolved: false }, frozen: false, dialog: { open: false },
   };
   const measured = { id: 41, activeTabId: 41, content: text, editor: text,
@@ -116,6 +126,52 @@ function fixture() {
   return { tab, state, page, measured, evidence, main, custody, window, scope,
     calls, behavior, run };
 }
+function composedFixture(replaceAt = null) {
+  let shared, replaced = false;
+  const replace = () => {
+    options.saveFailure = false;
+    shared.replace(41);
+    shared.win.markdownEditor.value = shared.win.originalMarkdown = "REPLACEMENT";
+    replaced = true;
+  };
+  const options = { selected: "B", dirty: ["B"], saveFailure: true,
+    onAdmission() {
+      if (replaceAt === "pre-effect" && !replaced) replace();
+    } };
+  shared = sharedFixture(options);
+  const tab = shared.tabs.find(item => item.id === "B");
+  shared.tabs.splice(0, shared.tabs.length, tab);
+  tab.id = 41;
+  tab.content = text;
+  tab.originalContent = baseline;
+  const owner = { ...shared.owners.get("B"), tabId: 41 };
+  shared.owners.set(41, owner);
+  shared.descriptors.set(41, shared.descriptors.get("B"));
+  shared.win.markdownEditor.value = text;
+  shared.win.originalMarkdown = baseline;
+  shared.win.CustomTabs.getActiveTab = () => shared.tabs[0] || null;
+  shared.win.CustomTabs.getActiveTabId = () => shared.tabs[0]?.id ?? null;
+  shared.win.CustomTabs.__inEditMode = () => shared.tabs.length > 0;
+  Object.defineProperty(shared.win, "currentFilePath", {
+    get: () => shared.tabs[0]?.filePath ?? null,
+  });
+  const f = fixture();
+  f.measured.selection = clone(owner);
+  f.main.rendererPageSession = owner.pageSession;
+  f.main.rendererGeneration = owner.rendererGeneration;
+  f.scope.orderedSaveFile = tab.filePath;
+  f.scope.exec = shared.exec;
+  f.scope.__shutdown.documentAdmissionIsCurrent = ref => shared.liveRefs.has(ref);
+  f.scope.__shutdown.documentSessionState = () => ({
+    owners: shared.tabs.map(current => shared.owners.get(current.id)),
+  });
+  f.scope.closeOwnedFixtureTabs = (...args) => {
+    f.calls.push({ phase: args[1], options: clone(args[2]) });
+    if (replaceAt === "before-plan") replace();
+    return shared.close(...args);
+  };
+  return { ...f, shared, replaced: () => replaced };
+}
 const cases = [];
 const test = (name, run) => cases.push([name, run]);
 test("actual actor parses and keeps the selected ordinary closer", () => {
@@ -123,7 +179,7 @@ test("actual actor parses and keeps the selected ordinary closer", () => {
   const closer = between(source, "async function closeOwnedFixtureTabs(exec, phase,",
     "\nasync function run(win)").trimEnd() + "\n";
   assert.equal(crypto.createHash("sha256").update(closer).digest("hex"),
-    "abdbe3a875bdba8dd87289b452a1cb4a43f3c17a58a4f2a698171450136aeb18");
+    "8771b1324757f3f6cc88e98cfc66cc0cbbf7fc8a70d628a4d91494f6ffa33aef");
 });
 test("retirement follows every original measured assertion and producer restoration", () => {
   const call = source.indexOf("  await retireOrderedSaveE();");
@@ -160,6 +216,10 @@ test("only measured live E receives exact owner/path/literal permission and reti
   assert.deepEqual(f.calls[0].options, {
     tabIds: [41], expectedDiscards: [{ tabId: 41, filePath, owner: identity,
       content: text, reason: "Discard measured F22 ordered E failure after all save assertions" }],
+    expectedTargets: [{ tabId: 41, path: filePath, owner: identity,
+      descriptor: { ref: identity.documentRef, logicalPath: filePath, readTarget: filePath },
+      disposition: "dirty-discard", liveContent: text, cacheContent: text,
+      savedContent: baseline }],
   });
   assert.equal(f.window.originalMarkdown, baseline, "No live-E claim is made about originalMarkdown");
 });
@@ -182,6 +242,9 @@ refusal("lost current Main admission refuses", f => { f.custody.admitted = false
 refusal("foreign Main generation refuses", f => { f.main.rendererGeneration++; });
 refusal("missing exact current Main owner refuses", f => { f.custody.owners = []; });
 refusal("current renderer owner change refuses before close", f => { f.page.owner.documentGeneration++; });
+refusal("foreign descriptor path refuses the captured retirement target", f => {
+  f.page.descriptor.logicalPath = "OTHER.md";
+});
 refusal("unexpected companion is not given discard permission", f => { f.page.tabs.push({ id: 99 }); });
 refusal("live E change refuses before close", f => { f.window.markdownEditor.value += "\n"; });
 refusal("cached E change refuses before close", f => { f.tab.content += "\n"; });
@@ -211,6 +274,32 @@ for (const [name, flag] of [
   await assert.rejects(f.run(), /F22 ordered E did not retire/);
   assert.equal(f.calls.length, 1);
 });
+test("actual E caller and selected supplier share the exact dirty target and separate consent", async () => {
+  const f = composedFixture();
+  await f.run();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].options.expectedTargets[0].disposition, "dirty-discard");
+  assert.equal(f.calls[0].options.expectedTargets[0].liveContent, text);
+  assert.equal(f.calls[0].options.expectedTargets[0].savedContent, baseline);
+  assert.deepEqual(Array.from(f.shared.calls.filter(call => call === "close:41")), ["close:41"]);
+  assert.deepEqual(Array.from(f.shared.calls.filter(call => call === "approve:41")), ["approve:41"]);
+  assert.equal(f.shared.tabs.length, 0);
+});
+for (const stage of ["before-plan", "pre-effect"]) test(
+  "actual E caller/supplier refuse a replacement clean owner " + stage, async () => {
+    const f = composedFixture(stage);
+    await assert.rejects(f.run(), /Captured fixture target|fixture cleanup failed/);
+    assert.equal(f.replaced(), true, "The replacement really reached the tested boundary");
+    const replacement = f.shared.tabs[0];
+    assert.equal(replacement.content, "REPLACEMENT");
+    assert.equal(replacement.hasUnsavedChanges, false);
+    assert.equal(f.shared.win.CustomTabs.__documentState(replacement).dirty, false);
+    assert.notEqual(f.shared.owners.get(41).documentRef, f.measured.selection.documentRef);
+    assert.equal(f.shared.calls.some(call => call.startsWith("close:")), false);
+    assert.equal(f.shared.calls.some(call => call.startsWith("approve:")), false);
+    assert.equal(f.shared.tabs.includes(replacement), true);
+  },
+);
 (async () => {
   let failed = 0;
   for (const [name, run] of cases) {

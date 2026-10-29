@@ -4,6 +4,7 @@
 // No native question, filesystem deletion, watcher, ACK or retirement runs.
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
@@ -19,6 +20,8 @@ const between = (start, end) => {
 };
 const authored = between("  const backgroundPairFields = [",
   '  const backgroundFile = path.join(dir, "f22-reload-background.md");');
+const nativeObserverSource = between("function observeNativeDocumentPorts(",
+  "async function runIsolatedOrdinaryMetadataControls(");
 const clone = value => JSON.parse(JSON.stringify(value));
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || args.length === 2 && args[0] === "--negative",
@@ -72,7 +75,7 @@ function fixture(inactive = false) {
   const window = {
     currentFilePath: selectedTab().filePath, originalMarkdown: selectedTab().content,
     getReloadRequestSession: () => "pair-page",
-    getPendingSaveStatus: () => ({ count: page.pending }),
+    getPendingSaveStatus: () => ({ count: page.pending, pending: page.pending !== 0 }),
     folia: {
       getVersion: () => "controlled",
       queryDocumentDeletionState: () => {
@@ -89,7 +92,9 @@ function fixture(inactive = false) {
       getActiveTab: selectedTab,
       getActiveTabId: () => page.selected,
       getDocumentIdentityForTab: id => id === 11 ? clone(page.owner) : identity(id),
-      getDocumentDescriptor: id => ({ ref: "doc-" + id }),
+      getDocumentDescriptor: id => ({ ref: "doc-" + id,
+        logicalPath: page.tabs.find(tab => tab.id === id)?.filePath,
+        readTarget: page.tabs.find(tab => tab.id === id)?.filePath }),
       __documentState: tab => tab.id === 11 ? clone(state) :
         { maintained: true, dirty: false, mutationRevision: 2 },
       __inEditMode: () => page.mode,
@@ -136,6 +141,7 @@ function fixture(inactive = false) {
     rendererGeneration: 3 };
   const scope = {
     target, fs: { existsSync: () => page.fileExists }, require, path,
+    win: { webContents: {} }, ipcMain: new EventEmitter(),
     __shutdown: {
       state: () => main,
       documentAdmissionIsCurrent: ref => ref === "doc-11" && page.admitted,
@@ -145,16 +151,65 @@ function fixture(inactive = false) {
     exec: code => Promise.resolve(vm.runInContext(code, context, { timeout: 1000 })),
   };
   const host = vm.createContext(scope);
-  vm.runInContext(helpers + "\n" +
+  vm.runInContext(nativeObserverSource + "\n" + helpers + "\n" +
     (inactive ? "backgroundFailureDeletedOwner = target; backgroundFailureCompanionId = 12;" :
       "backgroundDeletedOwner = target;"), host);
   const run = () => vm.runInContext("closeBackgroundPairDeletedOwner(" +
     (behavior.unknownTarget ? "JSON.parse(JSON.stringify(target))" : "target") + ")", host);
-  const capture = () => vm.runInContext(
-    "captureBackgroundPairOwner({id:11},target.filePath,target.content)", host);
+  const capture = expected => {
+    scope.expectedCapture = expected;
+    return vm.runInContext(
+      "captureBackgroundPairOwner({id:11},target.filePath,target.content,expectedCapture)", host);
+  };
   const dispose = () => { if (resolveClose) resolveClose(); };
+  const adopt = (prior, packet, records) => {
+    Object.assign(scope, { adoptionPrior: prior, adoptionPacket: packet, adoptionRecords: records });
+    return vm.runInContext(
+      "backgroundPairAdoptedTarget(adoptionPrior,adoptionPacket,adoptionRecords)", host);
+  };
+  const observe = () => vm.runInContext("observeBackgroundPairAdoption(target.filePath)", host);
   return { target, targetTab, companion, state, page, behavior, counts, window,
-    main, footer, proceed, title, name, message, nodes, run, capture, dispose };
+    main, footer, proceed, title, name, message, nodes, run, capture, dispose,
+    adopt, observe, scope };
+}
+async function adoptionFixture() {
+  const f = fixture();
+  f.page.deletion.unresolved = false;
+  f.state.deletionTombstone = null;
+  const prior = await f.capture();
+  const next = { ...clone(prior.owner), documentGeneration: 8 };
+  const version = { dev: 1, ino: 2, size: 23, mtimeMs: 120, ctimeMs: 121 };
+  const content = "F22_BACKGROUND_ACCEPTED";
+  const digest = crypto.createHash("sha256").update(content).digest("hex");
+  const packet = { success: true, path: prior.filePath, content,
+    modifiedTime: 120, diskVersion: clone(version),
+    reloadRequest: { ...clone(prior.owner), session: prior.owner.pageSession,
+      path: prior.filePath, sequence: 3 } };
+  const records = [{
+    channel: "commit-document-disk-adoption", replies: 1,
+    data: { filePath: prior.filePath, ownerFilePath: prior.filePath,
+      pageSession: next.pageSession, rendererGeneration: next.rendererGeneration,
+      oldOwner: clone(prior.owner), proposedOwner: clone(next),
+      capability: "actual-capability", modifiedTime: 120,
+      diskVersion: clone(version), contentDigest: digest },
+    reply: { accepted: true, capability: "actual-capability",
+      pathKey: next.pathKey, tabId: next.tabId,
+      documentGeneration: next.documentGeneration, version: clone(version),
+      contentDigest: digest, revision: 4 },
+  }, {
+    channel: "complete-document-disk-adoption", replies: 1,
+    data: { filePath: prior.filePath, ownerFilePath: prior.filePath,
+      pageSession: next.pageSession, rendererGeneration: next.rendererGeneration,
+      actualOwner: clone(next), capability: "actual-capability", revision: 4 },
+    reply: { completed: true, capability: "actual-capability", unresolvedEvidence: false },
+    mainOwners: [clone(next)], admissionCurrent: true,
+  }, ...[1, 2].map(() => ({
+    channel: "check-owned-tab-disk-snapshot", replies: 1,
+    data: { filePath: prior.filePath, sourcePath: prior.filePath,
+      owner: clone(next), diskVersion: clone(version) },
+    reply: { matches: true, pathKey: next.pathKey, diskVersion: clone(version) },
+  }))];
+  return { ...f, prior, next, packet, records };
 }
 const cases = [];
 const test = (name, run) => cases.push([name, run]);
@@ -172,7 +227,7 @@ test("accepted companion admission precedes every held result and keeps original
   assert.ok(admission > -1);
   assert.ok(source.includes('await seedSettledFixture(backgroundFile, "F22_BACKGROUND_BASE");'));
   assert.ok(source.includes('await captureBackgroundPairOwner(reloadForegroundTab, reloadForegroundFile, "F22_RELOAD_FOREGROUND_BASE");'));
-  assert.ok(source.includes('await captureBackgroundPairOwner(backgroundTab, backgroundFile, "F22_BACKGROUND_BASE");'));
+  assert.ok(source.includes('const backgroundCompanionOwner = await captureBackgroundPairOwner(backgroundTab, backgroundFile, "F22_BACKGROUND_BASE");'));
 });
 test("legacy deleted driver remains byte-exact outside this two-owner slice", () => {
   const legacy = between("    async function closeDeletedReloadOrigin(",
@@ -193,7 +248,7 @@ test("failure admission restores A before unlink without consuming held replies"
 test("actual B selection is joined before original success/failure packets are forwarded", () => {
   const success = source.indexOf("await switchAndWitness(backgroundTab.id, backgroundFile, null);");
   assert.ok(success < source.indexOf('if (heldReloadResults[2]) realReloadSend.call'));
-  const failure = source.indexOf("await switchAndWitness(backgroundFailureB.id, backgroundFailureBFile, null);");
+  const failure = source.indexOf("const backgroundFailureSelected = await switchAndWitness(");
   assert.ok(failure < source.indexOf('if (backgroundFailure) realReloadSend.call'));
   assert.ok(authored.includes("evidence.done = tabs.closeTab(target.tabId);"));
   assert.ok(authored.includes("await evidence.done;"));
@@ -213,6 +268,113 @@ test("fresh capture proves exact ordinary clean no-LF bytes and current Main adm
   const result = await f.capture();
   assert.equal(result.content, "TARGET_NO_LF");
   assert.deepEqual(clone(result.owner), identity(11));
+  assert.equal(result.disposition, "clean");
+  assert.equal(result.path, f.targetTab.filePath);
+  assert.equal(result.liveContent, "TARGET_NO_LF");
+  assert.equal(result.cacheContent, "TARGET_NO_LF");
+  assert.equal(result.savedContent, "TARGET_NO_LF");
+});
+test("failure B retains its setup target through the genuine pre-delivery selection", () => {
+  const actor = between('    const backgroundFailureAFile =',
+    "    // No path-only fallback is allowed after the origin has closed.");
+  assert.ok(actor.includes("const backgroundFailureCleanOwner = await captureBackgroundPairOwner("));
+  assert.ok(actor.includes("backgroundFailureSelected[field] === backgroundFailureCleanOwner.owner[field]"));
+  const validation = actor.indexOf('backgroundFailureB, backgroundFailureBFile, "F22_BACKGROUND_FAILURE_B",\n      backgroundFailureCleanOwner,');
+  assert.ok(validation > actor.indexOf("const backgroundFailureSelected"));
+  assert.ok(validation < actor.indexOf("if (backgroundFailure) realReloadSend.call"));
+  assert.ok(actor.includes("expectedTargets: [backgroundFailureCleanOwner]"));
+});
+test("pre-delivery capture rejects a new current owner instead of replacing its earlier target", async () => {
+  const f = fixture();
+  f.page.deletion.unresolved = false;
+  f.state.deletionTombstone = null;
+  const expected = await f.capture();
+  f.page.owner.documentGeneration++;
+  f.page.owners = [clone(f.page.owner)];
+  assert.equal((await f.capture()).owner.documentGeneration, 8,
+    "The replacement has fresh Main custody and passes an unbound capture");
+  await assert.rejects(f.capture(expected), /earlier clean owner/);
+  assert.equal(expected.owner.documentGeneration, 7);
+  assert.equal(f.counts.close, 0);
+});
+test("accepted A binds the actual proposed/completed Main owner and retained descriptor", async () => {
+  const f = await adoptionFixture();
+  const target = f.adopt(f.prior, f.packet, f.records);
+  assert.deepEqual(clone(target.owner), f.next);
+  assert.deepEqual(clone(target.descriptor), clone(f.prior.descriptor));
+  assert.equal(target.disposition, "clean");
+  assert.equal(target.liveContent, "F22_BACKGROUND_ACCEPTED");
+  assert.equal(target.cacheContent, target.liveContent);
+  assert.equal(target.savedContent, target.liveContent);
+});
+test("accepted A refuses missing stale foreign or failed original adoption witnesses", async () => {
+  for (const change of [
+    f => { f.packet.reloadRequest.documentGeneration++; },
+    f => { f.records[0].data.oldOwner.documentRef = "FOREIGN"; },
+    f => { f.records[0].reply.accepted = false; },
+    f => { f.records[0].reply.contentDigest = "OTHER"; },
+    f => { f.records[0].data.diskVersion.mtimeMs++; },
+    f => { f.records[0].reply.tabId++; },
+    f => { f.records[1].data.capability = "OTHER"; },
+    f => { f.records[1].data.actualOwner.documentGeneration++; },
+    f => { f.records[1].mainOwners = []; },
+    f => { f.records[1].admissionCurrent = false; },
+    f => { f.records[1].reply.unresolvedEvidence = true; },
+    f => { f.records[2].reply.matches = false; },
+    f => { f.records[2].data.owner.documentRef = "FOREIGN"; },
+    f => { f.records[2].data.sourcePath = "FOREIGN.md"; },
+    f => { f.records.pop(); },
+    f => { f.records.push(clone(f.records[0])); },
+    f => { f.records.reverse(); },
+  ]) {
+    const f = await adoptionFixture();
+    assert.equal(f.adopt(f.prior, f.packet, f.records).owner.documentGeneration, 8);
+    change(f);
+    assert.throws(() => f.adopt(f.prior, f.packet, f.records), /original adoption owner/);
+    assert.equal(f.counts.close, 0);
+  }
+});
+test("existing observer snapshots Main ownership only after the original completion reply", async () => {
+  const f = await adoptionFixture();
+  const originals = new Map();
+  for (const channel of ["commit-document-disk-adoption", "complete-document-disk-adoption",
+    "check-owned-tab-disk-snapshot"]) {
+    const original = (event, data) => {
+      if (channel === "complete-document-disk-adoption") {
+        f.page.owners = [clone(data.actualOwner)];
+        event.returnValue = f.records[1].reply;
+      }
+    };
+    originals.set(channel, original);
+    f.scope.ipcMain.on(channel, original);
+  }
+  const observer = f.observe();
+  try {
+    const event = { sender: f.scope.win.webContents };
+    f.scope.ipcMain.emit("complete-document-disk-adoption", event, f.records[1].data);
+    assert.equal(observer.records.length, 1);
+    assert.equal(event.returnValue, f.records[1].reply);
+    assert.equal(observer.records[0].replies, 1);
+    assert.equal(observer.records[0].mainOwners[0].documentGeneration, 8);
+    f.page.owners[0].documentGeneration = 99;
+    assert.equal(observer.records[0].mainOwners[0].documentGeneration, 8);
+  } finally { observer.restore(); }
+  for (const [channel, original] of originals) {
+    assert.deepEqual(f.scope.ipcMain.listeners(channel), [original]);
+  }
+});
+test("accepted A target is authenticated before B unlink and passed unchanged to clean retirement", () => {
+  const actor = between('    const foregroundBeforeBackground =',
+    "    async function closeDeletedReloadOrigin(");
+  assert.ok(actor.indexOf("const foregroundBeforeBackground") <
+    actor.indexOf('fs.writeFileSync(reloadForegroundFile, "F22_BACKGROUND_ACCEPTED"'));
+  assert.ok(actor.indexOf("observeBackgroundPairAdoption(reloadForegroundFile)") <
+    actor.indexOf('if (heldReloadResults[2]) realReloadSend.call'));
+  assert.ok(actor.indexOf("backgroundPairAdoptedTarget(") <
+    actor.indexOf("fs.unlinkSync(backgroundFile)"));
+  assert.ok(actor.includes("accepted.sequence !== heldReloadResults[2].reloadRequest.sequence"));
+  assert.ok(actor.includes("finally { backgroundAdoption.restore(); }"));
+  assert.ok(actor.includes("expectedTargets: [foregroundCleanOwner]"));
 });
 for (const inactive of [false, true]) test(inactive
   ? "deleted inactive A closes without selecting it or mutating active B"

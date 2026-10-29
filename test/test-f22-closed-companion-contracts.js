@@ -18,7 +18,7 @@ function between(text, start, end) {
 const closer = between(source, "async function closeOwnedFixtureTabs(",
   "\nasync function run(win)");
 assert.equal(createHash("sha256").update(closer).digest("hex"),
-  "abdbe3a875bdba8dd87289b452a1cb4a43f3c17a58a4f2a698171450136aeb18");
+  "8771b1324757f3f6cc88e98cfc66cc0cbbf7fc8a70d628a4d91494f6ffa33aef");
 const setup = between(source, "  const closedDeletedFile =",
   "  const closedCloseKey =");
 const cleanCapture = between(source, "  const closedCloseKey =",

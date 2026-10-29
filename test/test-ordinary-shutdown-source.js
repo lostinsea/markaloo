@@ -187,7 +187,7 @@ function questionFixture({ click = "returns" } = {}) {
     pendingId: 31, pendingReason: "window-close",
     rendererGeneration: 4, rendererPageSession: "simulated-question-page",
   };
-  const owner = { webContents: {} };
+  const owner = { isDestroyed: () => false, webContents: { isDestroyed: () => false } };
   const rig = { dialogs: [], answer: 1 };
   const tails = [];
   const guarded = function () { throw new Error("shared guard refused unexpected question"); };
@@ -255,12 +255,13 @@ function questionFixture({ click = "returns" } = {}) {
   };
   const install = new vm.Script(`${extract(source, "replaceMethod")}\n${
     extract(source, "withOrdinaryShutdownCleanup")}\n${
+    extract(source, "installMainOwnedShutdownQuestions")}\n${
     extract(source, "installOrdinaryShutdownQuestions")}\ninstallOrdinaryShutdownQuestions;`)
     .runInContext(vm.createContext({
       OwnedDialogs: DialogProvider, realOwnedDialogShow: originalProvider,
       __shutdown: { state: () => ({ ...state }) },
       ownedDialogUrl: "file:///simulated-owned-dialog.html",
-      waitUntil: async predicate => predicate(),
+      waitUntil: async predicate => predicate(), setTimeout, clearTimeout, Date,
     }));
   const actor = install(owner, rig, tails);
   return {
@@ -571,7 +572,7 @@ const cases = [
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(f.rig.dialogs.length, 1);
     assert.equal(f.rig.dialogs[0].response, null);
-    assert.throws(() => f.actor.restore(), /original unfinished work/);
+    assert.throws(() => f.actor.restore(), /legacy answer work unjoined/);
     release(0);
     await Promise.all(f.tails);
     assert.equal((await result).response, 0);
@@ -586,10 +587,12 @@ const cases = [
     f.state.pendingId += 1;
     release(0);
     const outcomes = await Promise.allSettled(f.tails);
-    assert.equal(outcomes.filter(outcome => outcome.status === "rejected").length, 1);
-    assert.match(outcomes[1].reason.message, /changed before its explicit answer/);
+    assert.equal(outcomes.filter(outcome => outcome.status === "rejected").length, 2);
+    assert.match(outcomes[1].reason.message, /choice is stale/);
+    assert.match(outcomes[2].reason.message, /choice is stale/);
     assert.equal((await result).cause, "cancel");
-    assert.equal(f.rig.dialogs[0].response, null);
+    assert.equal(f.rig.dialogs[0].result.cause, "cancel");
+    assert.equal(f.rig.dialogs[0].choiceDelivered, false);
     f.actor.restore();
   }],
   ["queued production continuation is not mistaken for a started async handoff", async () => {

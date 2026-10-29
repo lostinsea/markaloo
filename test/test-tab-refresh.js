@@ -17847,8 +17847,93 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
 }
 
 async function closeOwnedFixtureTabs(exec, phase,
-  { tabIds = null, expectedDiscards = [] } = {}) {
-  const closeFixtureTabsSource = `
+  options = {}) {
+  const { tabIds = null, expectedDiscards = [] } = options;
+  const expectedTargets = Object.prototype.hasOwnProperty.call(options, "expectedTargets")
+    ? options.expectedTargets : null;
+  const ownerFields = ["pageSession", "rendererGeneration", "tabId",
+    "documentGeneration", "pathKey", "documentRef"];
+  let capturedTargets = null;
+  if (expectedTargets !== null) {
+    if (!Array.isArray(expectedTargets)) {
+      throw new Error("Captured fixture targets must be an explicit array or null");
+    }
+    capturedTargets = [];
+    for (const target of expectedTargets) {
+      const owner = target?.owner;
+      const descriptor = target?.descriptor;
+      if (!target || typeof target !== "object" || Array.isArray(target) ||
+          !owner || typeof owner !== "object" || Array.isArray(owner) ||
+          !descriptor || typeof descriptor !== "object" || Array.isArray(descriptor) ||
+          !((typeof target.tabId === "string" && target.tabId.length > 0) ||
+            (Number.isSafeInteger(target.tabId) && target.tabId > 0)) ||
+          typeof target.path !== "string" || !target.path ||
+          owner.tabId !== target.tabId ||
+          !["pageSession", "pathKey", "documentRef"].every(field =>
+            typeof owner[field] === "string" && owner[field].length > 0) ||
+          !["rendererGeneration", "documentGeneration"].every(field =>
+            Number.isSafeInteger(owner[field]) && owner[field] > 0) ||
+          descriptor.ref !== owner.documentRef ||
+          descriptor.logicalPath !== target.path ||
+          typeof descriptor.readTarget !== "string" || !descriptor.readTarget ||
+          !["clean", "dirty-discard"].includes(target.disposition) ||
+          !["liveContent", "cacheContent", "savedContent"].every(field =>
+            typeof target[field] === "string") ||
+          capturedTargets.some(previous => previous.tabId === target.tabId)) {
+        throw new Error("Captured fixture target has no exact owner, descriptor or disposition");
+      }
+      capturedTargets.push({
+        tabId: target.tabId, path: target.path,
+        owner: Object.fromEntries(ownerFields.map(field => [field, owner[field]])),
+        descriptor: { ref: descriptor.ref, logicalPath: descriptor.logicalPath,
+          readTarget: descriptor.readTarget },
+        disposition: target.disposition, liveContent: target.liveContent,
+        cacheContent: target.cacheContent, savedContent: target.savedContent,
+      });
+    }
+  }
+  const capturedDiscardsSource = capturedTargets === null
+    ? null : JSON.stringify(expectedDiscards);
+  const capturedTargetSource = `
+    function assertCapturedFixtureTarget(expected, tab) {
+      if (expected === null) return;
+      const fields = ['pageSession', 'rendererGeneration', 'tabId',
+        'documentGeneration', 'pathKey', 'documentRef'];
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
+      const state = tab && window.CustomTabs.__documentState(tab);
+      const selected = window.CustomTabs.getActiveTabId();
+      const live = tab && (selected === tab.id && window.CustomTabs.__inEditMode()
+        ? window.markdownEditor.value
+        : selected === tab.id ? window.originalMarkdown : tab.content);
+      const pending = tab && window.getPendingSaveStatus(tab.filePath);
+      const sameText = (left, right) => typeof left === 'string' &&
+        typeof right === 'string' &&
+        left.replace(/\\r\\n?/g, '\\n') === right.replace(/\\r\\n?/g, '\\n');
+      const needsDiscard = state && (state.dirty || !sameText(live, tab.originalContent));
+      const dispositionMatches = expected.disposition === 'clean'
+        ? state?.dirty === false && tab?.hasUnsavedChanges === false && !needsDiscard
+        : state?.dirty === true && tab?.hasUnsavedChanges === true && needsDiscard === true;
+      const current = window.CustomTabs.getTabs().filter(candidate =>
+        candidate.id === expected.tabId);
+      if (!tab || current.length !== 1 || current[0] !== tab ||
+          tab.id !== expected.tabId || tab.filePath !== expected.path ||
+          !owner || !fields.every(field => owner[field] === expected.owner[field]) ||
+          !descriptor || descriptor.ref !== expected.descriptor.ref ||
+          descriptor.logicalPath !== expected.descriptor.logicalPath ||
+          descriptor.readTarget !== expected.descriptor.readTarget ||
+          state?.maintained !== true || !dispositionMatches ||
+          live !== expected.liveContent || tab.content !== expected.cacheContent ||
+          tab.originalContent !== expected.savedContent ||
+          !pending || pending.count !== 0 || pending.pending !== false ||
+          window.CustomTabs.__shutdownFreeze().frozen !== false ||
+          document.getElementById('appMessageDialog')?.open) {
+        throw new Error('Captured fixture target changed before its original close');
+      }
+    }
+  `;
+  const closeFixtureTabsSource = capturedTargetSource + `
     async function closeFixtureTabs(expectedDiscards, target, key) {
       if (Object.prototype.hasOwnProperty.call(window, '__fixtureTabCleanup')) {
         throw new Error('An earlier fixture close still owns its evidence');
@@ -17907,7 +17992,7 @@ async function closeOwnedFixtureTabs(exec, phase,
             selected, initialLive, initialCache, needsDiscard,
             settled: false, error: null, questions: [], answered: false,
           };
-          evidence.records.push(record);
+          if (target.expectedTarget === null) evidence.records.push(record);
           let presentations = 0;
           const collect = records => {
             presentations += records.filter(change =>
@@ -17918,6 +18003,9 @@ async function closeOwnedFixtureTabs(exec, phase,
             subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true,
           });
           try {
+            // No await separates this bound precondition from the original action.
+            assertCapturedFixtureTarget(target.expectedTarget, tab);
+            if (target.expectedTarget !== null) evidence.records.push(record);
             record.done = window.CustomTabs.closeTab(tab.id);
             if (!record.done || typeof record.done.then !== 'function') {
               throw new Error('Fixture close did not return its original Promise');
@@ -18027,8 +18115,10 @@ async function closeOwnedFixtureTabs(exec, phase,
       }
     }
   `;
-  const plan = await exec(`(() => {
+  const plan = await exec(`${capturedTargetSource}
+  (() => {
     const requested = ${JSON.stringify(tabIds)};
+    const expected = ${JSON.stringify(capturedTargets)};
     const tabs = window.CustomTabs.getTabs().slice();
     if (requested !== null && (!Array.isArray(requested) ||
         new Set(requested).size !== requested.length ||
@@ -18038,15 +18128,24 @@ async function closeOwnedFixtureTabs(exec, phase,
     const selected = window.CustomTabs.getActiveTabId();
     const targets = requested === null ? tabs :
       tabs.filter(tab => requested.includes(tab.id));
+    if (expected !== null && (expected.length !== targets.length ||
+        expected.some(capture => !targets.some(tab => tab.id === capture.tabId)))) {
+      throw new Error('Captured fixture targets must cover the exact requested set');
+    }
     const ordered = targets.filter(tab => tab.id !== selected)
       .concat(targets.filter(tab => tab.id === selected));
     return {
-      targets: ordered.map(tab => ({
-        tabId: tab.id, path: tab.filePath,
-        descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
-        owner: window.CustomTabs.getDocumentIdentityForTab(
-          tab.id, tab.filePath, window.getReloadRequestSession()),
-      })),
+      targets: ordered.map(tab => {
+        const expectedTarget = expected === null ? null :
+          expected.find(capture => capture.tabId === tab.id);
+        assertCapturedFixtureTarget(expectedTarget, tab);
+        return {
+          tabId: tab.id, path: tab.filePath, expectedTarget,
+          descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
+          owner: window.CustomTabs.getDocumentIdentityForTab(
+            tab.id, tab.filePath, window.getReloadRequestSession()),
+        };
+      }),
       unrelatedIds: tabs.filter(tab => !targets.includes(tab)).map(tab => tab.id),
     };
   })()`);
@@ -18061,7 +18160,8 @@ async function closeOwnedFixtureTabs(exec, phase,
     let outcome;
     try {
       outcome = await exec(`${closeFixtureTabsSource}
-        closeFixtureTabs(${JSON.stringify(expectedDiscards)},
+        closeFixtureTabs(${capturedDiscardsSource === null
+          ? JSON.stringify(expectedDiscards) : capturedDiscardsSource},
           ${JSON.stringify(target)}, ${JSON.stringify(cleanupKey)})`);
       await exec("window.folia.getVersion()");
     } catch (error) {
@@ -34180,7 +34280,7 @@ async function runF22SaveAndReloadScenarios(
           fields.every(field => candidate[field] === owner[field]))) {
       throw new Error("F22 ordered E retirement lost its current Main owner");
     }
-    const permission = await exec(`(() => {
+    const { permission, target } = await exec(`(() => {
       const expected = ${JSON.stringify(owner)};
       const fields = ${JSON.stringify(fields)};
       const tabs = window.CustomTabs.getTabs();
@@ -34199,6 +34299,8 @@ async function runF22SaveAndReloadScenarios(
           window.currentFilePath !== tab.filePath ||
           !identity || !fields.every(field => identity[field] === expected[field]) ||
           descriptor?.ref !== expected.documentRef ||
+          descriptor.logicalPath !== tab.filePath ||
+          typeof descriptor.readTarget !== "string" || !descriptor.readTarget ||
           tab.content !== ${JSON.stringify(text)} ||
           tab.originalContent !== ${JSON.stringify(baseline)} ||
           window.CustomTabs.__inEditMode() !== true ||
@@ -34211,15 +34313,25 @@ async function runF22SaveAndReloadScenarios(
           window.CustomTabs.__shutdownFreeze().frozen !== false) {
         throw new Error("F22 ordered E changed before its exact retirement permission");
       }
+      const owner = Object.fromEntries(fields.map(field => [field, identity[field]]));
       return {
-        tabId: tab.id, filePath: tab.filePath,
-        owner: Object.fromEntries(fields.map(field => [field, identity[field]])),
-        content: ${JSON.stringify(text)},
-        reason: "Discard measured F22 ordered E failure after all save assertions",
+        permission: {
+          tabId: tab.id, filePath: tab.filePath, owner,
+          content: ${JSON.stringify(text)},
+          reason: "Discard measured F22 ordered E failure after all save assertions",
+        },
+        target: {
+          tabId: tab.id, path: tab.filePath, owner,
+          descriptor: { ref: descriptor.ref, logicalPath: descriptor.logicalPath,
+            readTarget: descriptor.readTarget },
+          disposition: "dirty-discard", liveContent: window.markdownEditor.value,
+          cacheContent: tab.content, savedContent: tab.originalContent,
+        },
       };
     })()`);
     const outcome = await closeOwnedFixtureTabs(exec, "F22 ordered E retirement", {
       tabIds: [orderedSaveTab.id], expectedDiscards: [permission],
+      expectedTargets: [target],
     });
     const record = outcome.records[0];
     const restored = await exec(`({
@@ -34912,13 +35024,14 @@ async function runF22SaveAndReloadScenarios(
   const reloadForegroundFile = path.join(dir, "f22-reload-foreground.md");
   const backgroundPairFields = ["pageSession", "rendererGeneration", "tabId",
     "documentGeneration", "pathKey", "documentRef"];
-  const captureBackgroundPairOwner = async (tab, filePath, content) => {
+  const captureBackgroundPairOwner = async (tab, filePath, content, expected = null) => {
     const captured = await exec(`(() => {
       const tab = window.CustomTabs.getTabs().find(item => item.id === ${tab.id});
       const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
         tab.id, tab.filePath, window.getReloadRequestSession());
       const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
       const state = tab && window.CustomTabs.__documentState(tab);
+      const pending = tab && window.getPendingSaveStatus(tab.filePath);
       const deletion = owner && window.folia.queryDocumentDeletionState({
         ...owner, filePath: ${JSON.stringify(filePath)},
       });
@@ -34931,14 +35044,20 @@ async function runF22SaveAndReloadScenarios(
           (window.CustomTabs.getActiveTabId() === tab.id &&
             (window.currentFilePath !== tab.filePath ||
               window.originalMarkdown !== ${JSON.stringify(content)})) ||
-          window.getPendingSaveStatus(tab.filePath).count !== 0 ||
+          pending?.count !== 0 || pending.pending !== false ||
           deletion?.known !== true || deletion.unresolved !== false ||
           document.getElementById("appMessageDialog")?.open ||
-          !owner || descriptor?.ref !== owner.documentRef) {
+          !owner || descriptor?.ref !== owner.documentRef ||
+          descriptor.logicalPath !== tab.filePath ||
+          typeof descriptor.readTarget !== "string" || !descriptor.readTarget) {
         throw new Error("F22 background pair did not preserve its exact clean view bytes");
       }
       return { tabId: tab.id, filePath: tab.filePath,
-        content: ${JSON.stringify(content)}, owner, descriptor };
+        content: ${JSON.stringify(content)}, owner, descriptor,
+        path: tab.filePath, disposition: "clean",
+        liveContent: window.CustomTabs.getActiveTabId() === tab.id
+          ? window.originalMarkdown : tab.content,
+        cacheContent: tab.content, savedContent: tab.originalContent };
     })()`);
     const main = __shutdown.state();
     if (main.renderer !== "ready" || main.pendingId !== 0 ||
@@ -34949,7 +35068,101 @@ async function runF22SaveAndReloadScenarios(
           backgroundPairFields.every(field => owner[field] === captured.owner[field]))) {
       throw new Error("F22 background pair lacks its current Main admission");
     }
+    if (expected !== null &&
+        (!backgroundPairFields.every(field => captured.owner[field] === expected.owner[field]) ||
+          !["ref", "logicalPath", "readTarget"].every(field =>
+            captured.descriptor[field] === expected.descriptor[field]) ||
+          !["tabId", "path", "disposition", "liveContent", "cacheContent", "savedContent"]
+            .every(field => captured[field] === expected[field]))) {
+      throw new Error("F22 background pair changed its earlier clean owner");
+    }
     return captured;
+  };
+  const observeBackgroundPairAdoption = (filePath) => observeNativeDocumentPorts(win, [
+    "commit-document-disk-adoption", "complete-document-disk-adoption",
+    "check-owned-tab-disk-snapshot",
+  ], record => {
+    if (record.channel === "complete-document-disk-adoption" &&
+        record.data?.filePath === filePath) {
+      record.mainOwners = __shutdown.documentSessionState().owners.map(owner =>
+        Object.fromEntries(backgroundPairFields.map(field => [field, owner[field]])));
+      record.admissionCurrent = __shutdown.documentAdmissionIsCurrent(
+        record.data.actualOwner?.documentRef,
+      );
+    }
+  });
+  const backgroundPairAdoptedTarget = (prior, packet, records) => {
+    const sameOwner = (left, right) => !!left && !!right &&
+      backgroundPairFields.every(field => left[field] === right[field]);
+    const sameVersion = (left, right) => !!left && !!right &&
+      ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(field =>
+        Number.isFinite(left[field]) && Number.isFinite(right[field])) &&
+      ["dev", "ino", "size", "mtimeMs"].every(field => left[field] === right[field]);
+    const request = packet?.reloadRequest;
+    const oldOwner = request && { ...request, pageSession: request.session };
+    const selected = records.filter(record => record.data?.filePath === prior.filePath);
+    const commits = selected.filter(record => record.channel === "commit-document-disk-adoption");
+    const completions = selected.filter(record => record.channel === "complete-document-disk-adoption");
+    const commit = commits[0], completion = completions[0];
+    const proposed = commit?.data?.proposedOwner;
+    const checks = selected.filter(record => record.channel === "check-owned-tab-disk-snapshot");
+    const digest = typeof packet?.content === "string"
+      ? require("crypto").createHash("sha256").update(packet.content).digest("hex") : null;
+    if (packet?.success !== true || packet.path !== prior.filePath ||
+        packet.content !== "F22_BACKGROUND_ACCEPTED" ||
+        request?.path !== prior.filePath ||
+        !Number.isSafeInteger(request.sequence) || request.sequence <= 0 ||
+        !sameOwner(oldOwner, prior.owner) ||
+        prior.descriptor.ref !== prior.owner.documentRef ||
+        commits.length !== 1 || completions.length !== 1 ||
+        commit.replies !== 1 || commit.reply?.accepted !== true ||
+        typeof commit.data.capability !== "string" || !commit.data.capability ||
+        commit.reply.capability !== commit.data.capability ||
+        commit.data.ownerFilePath !== prior.filePath ||
+        !sameOwner(commit.data.oldOwner, prior.owner) ||
+        commit.data.pageSession !== prior.owner.pageSession ||
+        commit.data.rendererGeneration !== prior.owner.rendererGeneration ||
+        !proposed || proposed.tabId !== prior.tabId ||
+        proposed.pageSession !== prior.owner.pageSession ||
+        proposed.rendererGeneration !== prior.owner.rendererGeneration ||
+        proposed.documentRef !== prior.descriptor.ref ||
+        !Number.isSafeInteger(proposed.documentGeneration) ||
+        proposed.documentGeneration <= 0 ||
+        proposed.documentGeneration === prior.owner.documentGeneration ||
+        proposed.pathKey !== commit.reply.pathKey ||
+        commit.reply.tabId !== proposed.tabId ||
+        commit.reply.documentGeneration !== proposed.documentGeneration ||
+        commit.data.modifiedTime !== packet.modifiedTime ||
+        !sameVersion(commit.data.diskVersion, packet.diskVersion) ||
+        !sameVersion(commit.reply.version, packet.diskVersion) ||
+        commit.data.contentDigest !== digest || commit.reply.contentDigest !== digest ||
+        completion.replies !== 1 || completion.reply?.completed !== true ||
+        completion.reply.unresolvedEvidence !== false ||
+        completion.data.capability !== commit.reply.capability ||
+        completion.reply.capability !== commit.reply.capability ||
+        completion.data.ownerFilePath !== prior.filePath ||
+        completion.data.pageSession !== proposed.pageSession ||
+        completion.data.rendererGeneration !== proposed.rendererGeneration ||
+        completion.data.revision !== commit.reply.revision ||
+        !sameOwner(completion.data.actualOwner, proposed) ||
+        completion.admissionCurrent !== true ||
+        completion.mainOwners?.filter(owner => sameOwner(owner, proposed)).length !== 1 ||
+        records.indexOf(completion) <= records.indexOf(commit) ||
+        checks.length !== 2 || !checks.every(record =>
+          records.indexOf(record) > records.indexOf(completion) &&
+          record.replies === 1 && record.data.sourcePath === prior.filePath &&
+          sameOwner(record.data.owner, proposed) &&
+          sameVersion(record.data.diskVersion, packet.diskVersion) &&
+          record.reply?.matches === true && record.reply.pathKey === proposed.pathKey &&
+          sameVersion(record.reply.diskVersion, packet.diskVersion))) {
+      throw new Error("F22 accepted background reload lacks its original adoption owner");
+    }
+    return {
+      tabId: prior.tabId, path: prior.filePath,
+      owner: Object.fromEntries(backgroundPairFields.map(field => [field, proposed[field]])),
+      descriptor: { ...prior.descriptor }, disposition: "clean",
+      liveContent: packet.content, cacheContent: packet.content, savedContent: packet.content,
+    };
   };
   let backgroundDeletedOwner = null;
   let backgroundFailureDeletedOwner = null;
@@ -35197,7 +35410,7 @@ async function runF22SaveAndReloadScenarios(
     reloadForegroundTab, backgroundFile, "F22_BACKGROUND_BASE",
   );
   await captureBackgroundPairOwner(reloadForegroundTab, reloadForegroundFile, "F22_RELOAD_FOREGROUND_BASE");
-  await captureBackgroundPairOwner(backgroundTab, backgroundFile, "F22_BACKGROUND_BASE");
+  const backgroundCompanionOwner = await captureBackgroundPairOwner(backgroundTab, backgroundFile, "F22_BACKGROUND_BASE");
   const reloadForegroundOwner = await witnessActiveOwner(
     reloadForegroundFile,
     reloadForegroundTab.id,
@@ -35277,16 +35490,42 @@ async function runF22SaveAndReloadScenarios(
     // A result that arrives after a tab switch is accepted as a background
     // refresh, not stale. It must therefore notify once; a real failed reload
     // immediately afterwards must not add another success notification.
+    const foregroundBeforeBackground = await captureBackgroundPairOwner(
+      reloadForegroundTab, reloadForegroundFile, "F22_RELOAD_CURRENT",
+    );
     fs.writeFileSync(reloadForegroundFile, "F22_BACKGROUND_ACCEPTED", "utf8");
     await exec(`window.reloadCurrentFile(); null;`);
     const backgroundHeld = await waitUntil(() => heldReloadResults.length === 3, 5000);
     await switchAndWitness(backgroundTab.id, backgroundFile, null);
-    if (heldReloadResults[2]) realReloadSend.call(wc, "file-reload-result", heldReloadResults[2]);
-    await sleep(500);
+    const backgroundAdoption = observeBackgroundPairAdoption(reloadForegroundFile);
+    let foregroundCleanOwner;
+    try {
+      if (heldReloadResults[2]) realReloadSend.call(wc, "file-reload-result", heldReloadResults[2]);
+      await sleep(500);
+      if (!await waitUntil(() => backgroundAdoption.records.filter(record =>
+        record.channel === "check-owned-tab-disk-snapshot" &&
+          record.data?.filePath === reloadForegroundFile).length >= 2, 5000)) {
+        throw new Error("F22 accepted background reload never completed its retained-owner checks");
+      }
+      const expected = backgroundPairAdoptedTarget(
+        foregroundBeforeBackground, heldReloadResults[2], backgroundAdoption.records,
+      );
+      const accepted = await exec(`({
+        selected: window.CustomTabs.getActiveTabId(),
+        sequence: window.CustomTabs.__reloadState().acceptedSequence,
+      })`);
+      if (accepted.selected !== backgroundTab.id ||
+          accepted.sequence !== heldReloadResults[2].reloadRequest.sequence) {
+        throw new Error("F22 accepted background reload lost its original accepted sequence");
+      }
+      foregroundCleanOwner = await captureBackgroundPairOwner(
+        reloadForegroundTab, reloadForegroundFile, "F22_BACKGROUND_ACCEPTED", expected,
+      );
+    } finally { backgroundAdoption.restore(); }
     const afterBackgroundToastCount = await toastCount();
     const beforeBackgroundDeletionToasts = await reloadToastMessages();
     backgroundDeletedOwner = await captureBackgroundPairOwner(
-      backgroundTab, backgroundFile, "F22_BACKGROUND_BASE",
+      backgroundTab, backgroundFile, "F22_BACKGROUND_BASE", backgroundCompanionOwner,
     );
     fs.unlinkSync(backgroundFile);
     const backgroundDeletionNotified = await waitUntil(
@@ -35354,6 +35593,7 @@ async function runF22SaveAndReloadScenarios(
     );
     await closeOwnedFixtureTabs(exec, "F22 accepted background foreground retirement", {
       tabIds: [reloadForegroundTab.id],
+      expectedTargets: [foregroundCleanOwner],
     });
     await closeBackgroundPairDeletedOwner(backgroundDeletedOwner);
 
@@ -35533,7 +35773,7 @@ async function runF22SaveAndReloadScenarios(
     backgroundFailureDeletedOwner = await captureBackgroundPairOwner(
       backgroundFailureA, backgroundFailureAFile, "F22_BACKGROUND_FAILURE_A",
     );
-    await captureBackgroundPairOwner(
+    const backgroundFailureCleanOwner = await captureBackgroundPairOwner(
       backgroundFailureB, backgroundFailureBFile, "F22_BACKGROUND_FAILURE_B",
     );
     const backgroundFailureRestored = await witnessActiveOwner(
@@ -35551,7 +35791,17 @@ async function runF22SaveAndReloadScenarios(
       5000,
     );
     const backgroundFailure = heldReloadResults[backgroundFailureIndex];
-    await switchAndWitness(backgroundFailureB.id, backgroundFailureBFile, null);
+    const backgroundFailureSelected = await switchAndWitness(
+      backgroundFailureB.id, backgroundFailureBFile, null,
+    );
+    if (!backgroundPairFields.every(field =>
+      backgroundFailureSelected[field] === backgroundFailureCleanOwner.owner[field])) {
+      throw new Error("F22 background failure selected a different companion owner");
+    }
+    await captureBackgroundPairOwner(
+      backgroundFailureB, backgroundFailureBFile, "F22_BACKGROUND_FAILURE_B",
+      backgroundFailureCleanOwner,
+    );
     const beforeBackgroundFailure = await tabSnapshot(backgroundFailureB.id);
     const beforeBackgroundFailureToasts = await allToastCount();
     const beforeBackgroundFailureFailures = await failedToastCount();
@@ -35592,6 +35842,7 @@ async function runF22SaveAndReloadScenarios(
     await closeBackgroundPairDeletedOwner(backgroundFailureDeletedOwner);
     await closeOwnedFixtureTabs(exec, "F22 background failure companion retirement", {
       tabIds: [backgroundFailureB.id],
+      expectedTargets: [backgroundFailureCleanOwner],
     });
 
     // No path-only fallback is allowed after the origin has closed. Exercise
@@ -40286,152 +40537,368 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
   }
 }
 
-function installOrdinaryShutdownQuestions(win, rig, tails) {
+function installMainOwnedShutdownQuestions(win, tails, {
+  policy = "cancellable", onRecord = null,
+} = {}) {
+  if (!["cancellable", "ordinary-strict"].includes(policy) || !Array.isArray(tails) ||
+      (onRecord !== null && typeof onRecord !== "function")) {
+    throw new Error("Invalid Main-owned shutdown question driver contract");
+  }
   const guardedShow = OwnedDialogs.prototype.show;
   const records = [];
+  const setupFailures = [];
   let restored = false;
   const show = function (owner, options) {
+    if (owner !== win) return Reflect.apply(guardedShow, this, arguments);
     const state = __shutdown.state();
     const confirm = options?.title === "Unsaved changes" ? "Discard changes"
-      : options?.title === "Unsaved changes cannot be checked" ? "Close anyway" : null;
-    if (owner !== win || state.pendingId <= 0 ||
+      : policy === "ordinary-strict" && options?.title === "Unsaved changes cannot be checked"
+        ? "Close anyway" : null;
+    if (!Number.isSafeInteger(state.pendingId) || state.pendingId <= 0 ||
         !["window-close", "ctrl-q", "app-quit", "update-install"].includes(state.pendingReason) ||
+        (policy === "cancellable" && options?.allowUnavailableRenderer !== true) ||
         !confirm || options.defaultId !== 1 || options.cancelId !== 1 ||
         JSON.stringify(options.buttons) !== JSON.stringify([confirm, "Cancel"]) ||
-        typeof options.isCurrent !== "function" || !options.isCurrent() ||
-        options.signal?.aborted) {
+        typeof options.isCurrent !== "function" || !options.isCurrent() || options.signal?.aborted) {
       return Reflect.apply(guardedShow, this, arguments);
     }
+    const previousQueue = this.owners.get(owner);
+    const previousRequests = new Set([previousQueue?.active, ...(previousQueue?.queue || [])]);
     const producer = Reflect.apply(realOwnedDialogShow, this, arguments);
-    if (!producer || typeof producer.then !== "function") {
-      throw new Error("Ordinary owned question did not return its original producer Promise");
-    }
-    tails.push(producer);
-    const queue = this.owners.get(owner);
-    const matches = [queue?.active, ...(queue?.queue || [])].filter(
-      request => request?.options === options && request.owner === win &&
-        request.sender === win.webContents);
-    if (matches.length !== 1) {
-      throw new Error("Ordinary owned question has no exact original broker request");
-    }
-    const request = matches[0];
-    const record = {
-      options, pendingReason: state.pendingReason, requestId: state.pendingId,
-      generation: state.rendererGeneration, pageSession: state.rendererPageSession,
-      brokerId: request.id, response: null, displayed: false,
-      settled: false, driverSettled: false, driverError: null,
-    };
-    records.push(record);
-    const current = () => {
-      const now = __shutdown.state();
-      return !restored && now.pendingId === record.requestId &&
-        now.rendererGeneration === record.generation &&
-        now.rendererPageSession === record.pageSession &&
-        !request.done && request.owner === win && request.sender === win.webContents &&
-        request.options === options && options.isCurrent() && !options.signal?.aborted;
-    };
-    let failed = false;
-    let answerHost = null;
-    let closedListener = null;
-    const driver = withOrdinaryShutdownCleanup(async () => {
-      try {
-        const displayed = await waitUntil(async () => {
-          if (!current()) throw new Error("Ordinary owned question changed before presentation");
-          const host = request.window;
-          if (!request.displayed || !host || host.isDestroyed() || !host.isVisible()) return false;
-          if (host.getParentWindow() !== win || host.webContents.getURL() !== ownedDialogUrl) {
-            throw new Error("Ordinary owned question displayed in a different host");
-          }
-          const preferences = host.webContents.getLastWebPreferences();
-          if (preferences.nodeIntegration !== false || preferences.contextIsolation !== true ||
-              preferences.sandbox !== true) {
-            throw new Error("Ordinary owned question is not isolated");
-          }
-          return host.webContents.executeJavaScript(
-            "document.getElementById('appMessageDialog')?.open === true", true);
-        }, 12000);
-        if (!displayed) throw new Error("Ordinary owned question did not display");
-        const host = request.window;
-        const presentation = await host.webContents.executeJavaScript(`(() => ({
-          title: document.getElementById('appMessageTitle').textContent,
-          message: document.getElementById('appMessageText').textContent,
-          detail: document.getElementById('appMessageDetail').textContent,
-          buttons: Array.from(document.querySelectorAll('#appMessageButtons button'),
-            button => button.textContent),
-          focused: document.activeElement.dataset.dialogChoice,
-        }))()`, true);
-        const expected = {
-          title: options.title, message: options.message, detail: options.detail,
-          buttons: options.buttons, focused: String(options.defaultId),
-        };
-        if (!current() || JSON.stringify(presentation) !== JSON.stringify(expected)) {
-          throw new Error("Ordinary owned question did not present its exact current options");
-        }
-        record.displayed = true;
-        record.presentation = presentation;
-        rig.dialogs.push(record);
-        const answer = typeof rig.answer === "function" ? await rig.answer(options) : rig.answer;
-        if (!Number.isSafeInteger(answer) || answer < 0 || answer >= options.buttons.length ||
-            !current() || !request.displayed || request.window !== host) {
-          throw new Error("Ordinary owned question changed before its explicit answer");
-        }
-        answerHost = host;
-        const closed = new Promise(resolve => {
-          closedListener = resolve;
-          host.once("closed", closedListener);
-        });
-        // A genuine choice destroys this host before its evaluation response is guaranteed.
-        await Promise.race([closed, host.webContents.executeJavaScript(
-          `document.querySelector('#appMessageButtons [data-dialog-choice="${answer}"]').click(); true`,
-          true)]);
-        const result = await producer;
-        record.response = result.response;
-        record.result = result;
-        record.settled = true;
-        if (result.failed || result.displayed !== true || result.cause !== "choice" ||
-            result.response !== answer || !host.isDestroyed()) {
-          throw new Error("Ordinary owned question did not return its genuine chosen result");
-        }
-      } catch (error) {
-        failed = true;
-        record.driverError = String(error.stack || error);
-        throw error;
+    try {
+      const queue = this.owners.get(owner);
+      const matches = [queue?.active, ...(queue?.queue || [])].filter(
+        request => request?.options === options && !previousRequests.has(request) && request.owner === owner &&
+          request.sender === owner.webContents);
+      const request = matches.length === 1 ? matches[0] : null;
+      const record = {
+        response: null, displayed: false, presentation: null, result: null,
+        settled: false, driverSettled: false, driverError: null,
+        producerError: null, choiceSubmitted: null, choiceDelivered: false,
+        retired: false, completionKind: null, observerSettled: false, observerError: null,
+      };
+      for (const [key, value] of Object.entries({
+        options, pendingReason: state.pendingReason, requestId: state.pendingId,
+        generation: state.rendererGeneration, pageSession: state.rendererPageSession,
+        brokerId: request?.id ?? null,
+      })) Object.defineProperty(record, key, { value, enumerable: true });
+      for (const [key, value] of Object.entries({ owner, sender: owner.webContents, request, producer })) {
+        Object.defineProperty(record, key, { value });
       }
-    }, [
-      () => {
-        if (closedListener) answerHost.removeListener("closed", closedListener);
-      },
-      () => {
-        if (failed && request.window && !request.window.isDestroyed()) request.window.destroy();
-      },
-      async () => {
-        try { await producer; } finally { record.settled = true; }
-      },
-    ]);
-    // Keep the rejection on the original work for the mandatory join.
-    driver.then(
-      () => { record.driverSettled = true; },
-      error => {
-        record.driverSettled = true;
-        record.driverError = String(error.stack || error);
-      },
-    );
-    tails.push(driver);
-    return producer;
+      records.push(record);
+      let retire;
+      let decide;
+      let announce;
+      let reportObserverFailure;
+      let announced = false;
+      let answerHost = null;
+      let closedListener = null;
+      let failed = false;
+      const retired = new Promise(resolve => { retire = resolve; });
+      const decision = new Promise(resolve => { decide = resolve; });
+      const observerFailure = new Promise(resolve => { reportObserverFailure = resolve; });
+      const presentationReady = new Promise(resolve => { announce = value => {
+        if (!announced) { announced = true; resolve(value); }
+      }; });
+      const settlement = Promise.resolve(producer).then(
+        result => {
+          record.result = result;
+          record.response = result?.response ?? null;
+          record.settled = true;
+          record.retired = true;
+          retire();
+          return { result };
+        },
+        error => {
+          record.producerError = error;
+          record.settled = true;
+          record.retired = true;
+          retire();
+          return { error };
+        },
+      );
+      const current = () => {
+        const now = __shutdown.state();
+        return !restored && !record.retired && request && !request.done &&
+          now.pendingId === record.requestId &&
+          (policy !== "ordinary-strict" ||
+            (now.rendererGeneration === record.generation &&
+              now.rendererPageSession === record.pageSession)) &&
+          request.owner === owner && owner === win && request.sender === record.sender &&
+          owner.webContents === record.sender && !owner.isDestroyed() &&
+          !record.sender.isDestroyed() && request.options === options &&
+          options.isCurrent() && !options.signal?.aborted;
+      };
+      const choose = index => {
+        if (!Number.isSafeInteger(index) || index < 0 || index >= options.buttons.length) {
+          throw new Error("Main-owned question needs an explicit valid button index");
+        }
+        if (record.choiceSubmitted !== null || !record.displayed || !current() ||
+            request.window !== answerHost || !request.displayed || answerHost.isDestroyed()) {
+          throw new Error("Main-owned question choice is stale, repeated or not yet presented");
+        }
+        record.choiceSubmitted = index;
+        decide(index);
+      };
+      for (const [key, value] of Object.entries({ choose, presentationReady })) {
+        Object.defineProperty(record, key, { value });
+      }
+      const step = async (work, milliseconds = 12000) => {
+        let timeout;
+        try {
+          const outcome = await Promise.race([
+            Promise.resolve(work).then(value => ({ value }), error => ({ error })),
+            retired.then(() => ({ retired: true })),
+            new Promise(resolve => {
+              timeout = setTimeout(() => resolve({ timeout: true }), milliseconds);
+            }),
+          ]);
+          if (Object.hasOwn(outcome, "error")) throw outcome.error;
+          if (outcome.timeout) throw new Error("Main-owned question observation did not finish");
+          return outcome;
+        } finally { clearTimeout(timeout); }
+      };
+      const pause = async () => {
+        let timeout;
+        try {
+          await Promise.race([
+            retired, new Promise(resolve => { timeout = setTimeout(resolve, 20); }),
+          ]);
+        } finally { clearTimeout(timeout); }
+      };
+      const driver = withOrdinaryShutdownCleanup(async () => {
+        try {
+          if (!producer || typeof producer.then !== "function" || !request) {
+            throw new Error("Main-owned question has no exact original producer/broker request");
+          }
+          let hostStarted = null;
+          while (!record.settled && !record.displayed) {
+            if (request.done) { await settlement; break; }
+            const host = request.window;
+            if (host && hostStarted === null) hostStarted = Date.now();
+            if (hostStarted !== null && Date.now() - hostStarted >= 12000) {
+              throw new Error("Main-owned question did not present its actual child");
+            }
+            if (!host || host.isDestroyed() || !request.displayed || !host.isVisible()) {
+              await pause();
+              continue;
+            }
+            if (host.getParentWindow() !== owner || host.webContents.getURL() !== ownedDialogUrl) {
+              throw new Error("Main-owned question displayed in a different host");
+            }
+            const preferences = host.webContents.getLastWebPreferences();
+            if (preferences.nodeIntegration !== false || preferences.contextIsolation !== true ||
+                preferences.sandbox !== true) throw new Error("Main-owned question is not isolated");
+            const open = await step(host.webContents.executeJavaScript(
+              "document.getElementById('appMessageDialog')?.open === true", true));
+            if (open.retired) break;
+            if (!open.value) { await pause(); continue; }
+            const observed = await step(host.webContents.executeJavaScript(`(() => ({
+              title: document.getElementById('appMessageTitle').textContent,
+              message: document.getElementById('appMessageText').textContent,
+              detail: document.getElementById('appMessageDetail').textContent,
+              buttons: Array.from(document.querySelectorAll('#appMessageButtons button'),
+                button => button.textContent),
+              focused: document.activeElement.dataset.dialogChoice,
+            }))()`, true));
+            if (observed.retired) break;
+            const expected = {
+              title: options.title, message: options.message, detail: options.detail,
+              buttons: options.buttons, focused: String(options.defaultId),
+            };
+            if (!current() && policy === "cancellable") { await settlement; break; }
+            if (!current() || request.window !== host ||
+                JSON.stringify(observed.value) !== JSON.stringify(expected)) {
+              throw new Error("Main-owned question did not present its exact current options");
+            }
+            answerHost = host;
+            record.presentation = observed.value;
+            record.displayed = true;
+            announce({ kind: "displayed", presentation: observed.value });
+          }
+          if (record.displayed && !record.settled) {
+            const selected = await Promise.race([
+              decision.then(index => ({ index })), retired.then(() => ({ retired: true })),
+              observerFailure,
+            ]);
+            if (Object.hasOwn(selected, "error")) throw selected.error;
+            if (!selected.retired && current()) {
+              const closed = new Promise(resolve => {
+                closedListener = resolve;
+                answerHost.once("closed", closedListener);
+              });
+              // Host closure ends transport waiting, not the original producer.
+              await step(Promise.race([closed, answerHost.webContents.executeJavaScript(
+                `document.querySelector('#appMessageButtons [data-dialog-choice="${selected.index}"]').click(); true`,
+                true)]));
+            }
+          }
+          const outcome = await settlement;
+          if (Object.hasOwn(outcome, "error")) throw outcome.error;
+          const result = outcome.result;
+          if (result?.failed !== false || result?.emergency || typeof result?.displayed !== "boolean") {
+            throw new Error("Main-owned question failed or entered a distinct emergency fallback");
+          }
+          if (result.cause === "choice") {
+            if (!record.displayed || result.displayed !== true ||
+                record.choiceSubmitted === null || result.response !== record.choiceSubmitted ||
+                !answerHost.isDestroyed()) {
+              throw new Error("Main-owned question did not return its exact genuine chosen result");
+            }
+            record.choiceDelivered = true;
+            record.completionKind = "choice";
+          } else if (policy === "cancellable" &&
+              ["stale", "aborted", "cancel", "pagehide", "blocked"].includes(result.cause) &&
+              result.response === options.cancelId) {
+            record.completionKind = "cancellation";
+          } else {
+            throw new Error("Ordinary owned question did not return its genuine chosen result");
+          }
+        } catch (error) {
+          failed = true;
+          record.driverError = String(error?.stack || error);
+          throw error;
+        }
+      }, [
+        () => {
+          if (closedListener) answerHost.removeListener("closed", closedListener);
+        },
+        () => {
+          if (failed && request?.displayed && request.window && !request.window.isDestroyed()) {
+            request.window.destroy();
+          }
+        },
+        async () => {
+          await settlement;
+          announce({ kind: "completed", result: record.result,
+            error: record.producerError });
+        },
+      ]);
+      driver.then(
+        () => { record.driverSettled = true; },
+        error => {
+          record.driverSettled = true;
+          record.driverError = String(error?.stack || error);
+        },
+      );
+      const joined = Promise.allSettled([producer, driver]).then(outcomes => {
+        const errors = [...new Set(outcomes.filter(item => item.status === "rejected").map(item => item.reason))];
+        if (errors.length) throw new AggregateError(errors, "Main-owned question original work failed");
+        return record;
+      });
+      joined.catch(() => {});
+      Object.defineProperty(record, "joined", { value: joined });
+      let callback;
+      try { callback = onRecord?.(record); } catch (error) { callback = Promise.reject(error); }
+      const observerWork = Promise.resolve(callback);
+      observerWork.then(
+        () => { record.observerSettled = true; },
+        error => {
+          record.observerSettled = true;
+          record.observerError = error;
+          reportObserverFailure({ error });
+        },
+      );
+      Object.defineProperty(record, "observerWork", { value: observerWork });
+      tails.push(producer, driver, observerWork);
+      return producer;
+    } catch (error) {
+      const failure = { error, settled: false };
+      setupFailures.push(failure);
+      failure.producer = Promise.resolve(producer).finally(() => { failure.settled = true; });
+      failure.producer.catch(() => {});
+      failure.observer = Promise.reject(error);
+      failure.observer.catch(() => {});
+      tails.push(producer, failure.observer);
+      return producer;
+    }
   };
   const undo = replaceMethod(OwnedDialogs.prototype, "show", show);
   return {
     records,
+    async join(afterDispatch = null) {
+      if (afterDispatch !== null && typeof afterDispatch !== "function") {
+        throw new Error("Question draining needs an actual caller dispatch boundary");
+      }
+      const errors = [];
+      const boundary = afterDispatch === null ? null : (async () => {
+        try {
+          const completion = afterDispatch();
+          if (!completion || typeof completion.then !== "function") {
+            throw new Error("Caller boundary must return its original completion Promise, not a state predicate");
+          }
+          await completion;
+        } catch (error) { errors.push(error); }
+      })();
+      let observed;
+      do {
+        observed = records.length + setupFailures.length;
+        const outcomes = await Promise.allSettled([
+          ...records.flatMap(record => policy === "ordinary-strict"
+            ? [record.joined] : [record.joined, record.observerWork]),
+          ...setupFailures.flatMap(failure => [failure.producer, failure.observer]),
+        ]);
+        for (const outcome of outcomes) if (outcome.status === "rejected") errors.push(outcome.reason);
+        if (boundary) await boundary;
+        if (policy === "ordinary-strict") {
+          const callbacks = await Promise.allSettled(records.filter(
+            record => record.observerSettled).map(record => record.observerWork));
+          for (const outcome of callbacks) if (outcome.status === "rejected") errors.push(outcome.reason);
+        }
+      } while (observed !== records.length + setupFailures.length);
+      if (policy === "ordinary-strict" && records.some(record => !record.observerSettled)) {
+        errors.push(new Error("Ordinary legacy answer work unjoined; its Promise was not cancelled"));
+      }
+      if (errors.length) throw new AggregateError([...new Set(errors)], "Main-owned question drain failed");
+      return { records: records.slice(), dispatchBoundaryJoined: afterDispatch !== null };
+    },
     restore() {
-      if (restored) throw new Error("Ordinary owned question actor was restored twice");
-      if (records.some(record => !record.settled || !record.driverSettled)) {
-        throw new Error("Ordinary owned question actor still has original unfinished work");
+      if (restored) throw new Error("Main-owned question driver was restored twice");
+      if (records.some(record => !record.settled || !record.driverSettled || !record.observerSettled) ||
+          setupFailures.some(failure => !failure.settled)) {
+        throw new Error("Main-owned question driver still has original unfinished work");
       }
       if (OwnedDialogs.prototype.show !== show) {
-        throw new Error("Ordinary owned question actor restoration ownership changed");
+        throw new Error("Main-owned question driver restoration ownership changed");
       }
       undo();
       restored = true;
+    },
+  };
+}
+
+function installOrdinaryShutdownQuestions(win, rig, tails) {
+  const answers = [];
+  const driver = installMainOwnedShutdownQuestions(win, tails, {
+    policy: "ordinary-strict",
+    onRecord(record) {
+      const observation = { settled: false };
+      answers.push(observation);
+      const answerWork = (async () => {
+        const presentation = await record.presentationReady;
+        if (presentation.kind !== "displayed") return;
+        rig.dialogs.push(record);
+        const answer = typeof rig.answer === "function" ? await rig.answer(record.options) : rig.answer;
+        if (!record.settled) record.choose(answer);
+      })();
+      observation.work = answerWork;
+      answerWork.then(
+        () => { observation.settled = true; },
+        () => { observation.settled = true; },
+      );
+      return answerWork;
+    },
+  });
+  return {
+    records: driver.records,
+    async join(afterDispatch) {
+      return driver.join(afterDispatch);
+    },
+    restore() {
+      if (answers.some(answer => !answer.settled)) {
+        throw new Error("Ordinary legacy answer work unjoined; its Promise was not cancelled");
+      }
+      driver.restore();
     },
   };
 }
