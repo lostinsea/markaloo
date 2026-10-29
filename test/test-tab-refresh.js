@@ -4943,16 +4943,70 @@ async function runPortableUpdateScenarios(win) {
 //
 // Each case is headless, bounded by the parent's own timeout, and answers its
 // own dialogs; nothing here can open a native modal.
+async function prepareTeardownEditor(exec, filePath, text, marker) {
+  await exec("if (!window.CustomTabs.__inEditMode()) document.getElementById('toggleEdit').click(); null");
+  if (!await waitForCondition(exec, `
+    window.CustomTabs.__inEditMode() &&
+    window.CustomTabs.getActiveTab()?.filePath === ${JSON.stringify(filePath)} &&
+    window.markdownEditor?.value === ${JSON.stringify(text)}
+  `, 5000)) throw new Error("Teardown fixture did not enter its real editor");
+  return exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    const editor = window.markdownEditor;
+    const baseline = ${JSON.stringify(text)};
+    if (tab.content !== baseline || tab.originalContent !== baseline ||
+        tab.hasUnsavedChanges || editor.readOnly || document.body.inert) {
+      throw new Error('Teardown editor baseline is not clean and writable');
+    }
+    editor.value = baseline + ${JSON.stringify(marker)};
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    if (editor.value === baseline || tab.content !== baseline ||
+        tab.originalContent !== baseline) {
+      throw new Error('Teardown must bind live input separately from the old cache');
+    }
+    return { live: editor.value, cached: tab.content, baseline: tab.originalContent,
+      filePath: tab.filePath, readOnly: editor.readOnly, bodyInert: document.body.inert };
+  })()`);
+}
+
 async function runTeardownScenario(win, kase) {
-  const baseUpdaterBranchBorrow = createBaseUpdaterBranchBorrow();
+  if (!["queued", "commit", "pending", "continuation", "poisoned"].includes(kase)) {
+    throw new Error("Unknown teardown case: " + kase);
+  }
+  const wc = win.webContents;
   const exec = (code) => win.webContents.executeJavaScript(code, true);
-  const rig = shutdownRig(win);
   const updaterModule = require("electron-updater");
   const fileT = path.join(dir, `teardown-${kase}.md`);
-  write(fileT, "# Teardown fixture\n\nT_BODY\n");
+  const textT = "# Teardown fixture\n\nT_BODY\n";
+  const artifactPath = path.join(dir, `teardown-${kase}-download.fixture`);
+  write(fileT, textT);
+  if (kase !== "commit") fs.writeFileSync(artifactPath, "Contained teardown download fixture\n");
+  const baseUpdaterBranchBorrow = createBaseUpdaterBranchBorrow();
+  const rig = shutdownRig(win);
   let installs = 0;
+  let updaterFixture = null;
+  let bodyError;
   let restoreInstall = null;
   let restoreWindowAllClosed = null;
+  const dialogReleases = [];
+  let admission;
+  const ownsEvent = (event) => {
+    if (wc.isDestroyed() || event?.sender !== wc) return false;
+    const frame = event.senderFrame;
+    const main = wc.mainFrame;
+    return frame && !frame.isDestroyed() && main && !main.isDestroyed() &&
+      frame.parent === null && (frame === main || frame.frameTreeNodeId === main.frameTreeNodeId) &&
+      __shutdown.state().rendererPageSession === admission?.owner.pageSession;
+  };
+  const foldedEditor = () => exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    return { live: window.markdownEditor.value, cached: tab.content,
+      baseline: tab.originalContent, dirty: tab.hasUnsavedChanges };
+  })()`);
+  const namedDirtyQuestion = (reason) => rig.dialogs.length === 1 &&
+    rig.dialogs[0].pendingReason === reason &&
+    rig.dialogs[0].options.title === "Unsaved changes" &&
+    String(rig.dialogs[0].options.message).includes(path.basename(fileT));
   const updaterLatchDescriptor = Object.getOwnPropertyDescriptor(
     updaterModule.autoUpdater,
     "quitAndInstallCalled",
@@ -4978,7 +5032,22 @@ async function runTeardownScenario(win, kase) {
       ready,
       JSON.stringify(__shutdown.state()),
     );
-    if (!ready) return;
+    if (!ready) throw new Error("Teardown renderer did not become ready");
+    await boundedDialogWork(exec(`(async () => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        try { await window.CustomTabs.settleSessionLayout(); return true; }
+        catch (error) {
+          if (error.message !== 'The open tabs are still awaiting document restore') throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('Teardown initial document restore did not settle');
+    })()`), "teardown initial layout", 10000);
+    await clearShutdownLifecycleDocuments(exec);
+    __shutdown.reset();
+    rig.reset();
+    admission = await openShutdownLifecycleFixture(exec, fileT, textT, "Teardown fixture");
     restoreInstall = replaceMethod(
       updaterModule.autoUpdater,
       "quitAndInstall",
@@ -4997,80 +5066,51 @@ async function runTeardownScenario(win, kase) {
         });
       },
     );
-    // Armed through the real updater event, which is the only thing that makes
-    // the Install path reachable in the product.
-    //
-    // AND THE EVENT ONLY MEANS ANYTHING ONCE THE UPDATER EXISTS. main.js
-    // attaches its own `update-downloaded` listener inside getAutoUpdater(),
-    // which is lazy: nothing in a companion process has pressed Install yet,
-    // so emitting the event first sets `downloadedUpdatePath` on nobody and
-    // every later press logs "requested with nothing downloaded" and returns
-    // before requestShutdown(). Measured - all three cases then reported "no
-    // install question open" against a state machine that had never been
-    // asked. The priming press is inert by construction for exactly that
-    // reason: with nothing downloaded it returns before raising anything,
-    // which is the same real initialisation the portable companion uses.
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
-    const updaterArmed = await waitUntil(
-      () =>
-        !!updaterModule.autoUpdater.requestHeaders &&
-        updaterModule.autoUpdater.requestHeaders["x-user-staging-id"] === "",
-      10000,
-    );
-    updaterModule.autoUpdater.emit("update-downloaded", {
-      version: "9.9.9-teardown",
-      downloadedFile: fileT,
-    });
-    check(
-      `the teardown companion armed the real updater before the ${kase} case`,
-      updaterArmed === true &&
-        __shutdown.state().pendingId === 0 &&
-        rig.dialogs.length === 0,
-      JSON.stringify({
-        updaterArmed,
-        state: __shutdown.state(),
-        dialogs: rig.dialogs.length,
-      }),
-    );
-    await exec(`
-      (() => {
-        const realConfirm = window.confirm;
-        window.confirm = () => true;
-        try {
-          window.CustomTabs.getTabs().slice().forEach(t => window.CustomTabs.closeTab(t.id));
-        } finally {
-          window.confirm = realConfirm;
-        }
-        const tab = window.CustomTabs.createTab(${JSON.stringify(fileT)}, window.fs.readFileSync(${JSON.stringify(fileT)}, 'utf8'));
-        window.CustomTabs.switchToTab(tab.id);
-        window.originalMarkdown = tab.originalContent;
-        return true;
-      })()
-    `);
-    await sleep(300);
-    __shutdown.reset();
-    rig.reset();
+    if (kase === "commit") {
+      check("the teardown commit case has a genuinely admitted clean document",
+        admission.filePath === fileT && admission.owner.tabId === admission.tabId &&
+          admission.descriptor.logicalPath === fileT && fs.readFileSync(fileT, "utf8") === textT,
+        JSON.stringify(admission));
+    } else {
+      // The integration-owned fixture must survive the consuming shutdown
+      // attempt; a standalone update-downloaded event cannot grant readiness.
+      const eligibility = await exec("window.folia.getUpdateState()");
+      if (eligibility.manualOnly) {
+        check(`the ${kase} teardown case observes the actual manual-only updater boundary`,
+          eligibility.canDownload === false && eligibility.canInstall === false &&
+            installs === 0 && rig.dialogs.length === 0,
+          JSON.stringify(eligibility));
+        unavailable(`the automatic ${kase} updater teardown scenario`,
+          "This platform supports manual updates only; no automatic Check, Download or install scenario ran.");
+        return;
+      }
+      updaterFixture = createInstalledUpdaterFixture(exec, updaterModule.autoUpdater, artifactPath);
+      const prepared = await updaterFixture.prepare();
+      check(
+        `the teardown companion armed the real updater before the ${kase} case`,
+        prepared.state.canInstall === true &&
+          prepared.state.readyVersion === prepared.candidate &&
+          fs.statSync(artifactPath).isFile() &&
+          __shutdown.state().pendingId === 0 && rig.dialogs.length === 0,
+        JSON.stringify({ prepared, state: __shutdown.state(), dialogs: rig.dialogs.length }),
+      );
+    }
 
     if (kase === "queued") {
       // A close question on screen, an Install press queued behind it, and then
       // the window goes.
-      await exec(`
-        (() => {
-          const tab = window.CustomTabs.getActiveTab();
-          tab.content = tab.originalContent + '\\nTEARDOWN_CONSENT_EDIT\\n';
-          window.originalMarkdown = tab.content;
-          return true;
-        })()
-      `);
+      const dirtySetup = await prepareTeardownEditor(exec, fileT, textT, "\nTEARDOWN_CONSENT_EDIT\n");
       let releaseDialog = null;
       rig.answer = () =>
         new Promise((resolve) => {
           releaseDialog = resolve;
+          dialogReleases.push(resolve);
         });
       const teardownClose = guardEvent();
       win.emit("close", teardownClose);
       const asked = await waitUntil(() => rig.dialogs.length > 0, 15000);
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      const folded = await foldedEditor();
+      await exec(`window.folia.installUpdate(); null;`);
       const queued = await waitUntil(
         () => __shutdown.state().queuedReason === "update-install",
         15000,
@@ -5085,23 +5125,28 @@ async function runTeardownScenario(win, kase) {
           queued === true &&
           before.pendingReason === "window-close" &&
           before.queuedReason === "update-install" &&
-          rig.dialogs.length === 1,
-        JSON.stringify({ asked, queued, before, dialogs: rig.dialogs.length }),
+          namedDirtyQuestion("window-close") &&
+          dirtySetup.cached === textT && dirtySetup.live !== textT &&
+          folded.cached === dirtySetup.live && folded.live === dirtySetup.live &&
+          folded.baseline === textT && folded.dirty === true &&
+          fs.readFileSync(fileT, "utf8") === textT,
+        JSON.stringify({ asked, queued, before, dirtySetup, folded, dialogs: rig.dialogs }),
       );
       win.destroy();
       await waitUntil(() => win.isDestroyed(), 10000);
-      await sleep(300);
       const after = __shutdown.state();
       // The reader's answer to the dialog arrives after the window has gone. It
       // must decide nothing: the record it belonged to is already settled.
       if (releaseDialog) releaseDialog(0);
-      await sleep(400);
+      const producerReturned = await waitUntil(() => rig.dialogs[0]?.response === 0, 5000);
+      await new Promise(resolve => setImmediate(resolve));
       const afterAnswer = __shutdown.state();
       check(
         "a window that disappears declines the update queued behind its close instead of installing it",
         before.queuedReason === "update-install" &&
           after.queuedReason === null &&
           installs === 0 &&
+          producerReturned &&
           rig.dialogs.length === 1 &&
           afterAnswer.updateInstallStarted === false,
         JSON.stringify({ before, after, afterAnswer, installs, dialogs: rig.dialogs.length }),
@@ -5126,43 +5171,54 @@ async function runTeardownScenario(win, kase) {
       // wrong at teardown: the fresh question it raises can only be answered by
       // a rule, and the only rule left is the one this must not reach.
       rig.answer = 0;
-      await exec(`
-        (() => {
-          const tab = window.CustomTabs.getActiveTab();
-          tab.content = tab.originalContent;
-          tab.hasUnsavedChanges = false;
-          window.originalMarkdown = tab.originalContent;
-          return true;
-        })()
-      `);
       let commitInFlight = null;
-      const destroyDuringCommit = () => {
-        if (commitInFlight !== null) return;
-        // Sampled BEFORE the window is destroyed, inside the same tick the
-        // commit was sent on. This is the setup control: a zero here means the
-        // case never entered the state it claims to test.
-        commitInFlight = __shutdown.state().commitPendingId;
-        win.destroy();
+      let commitDeliveries = 0;
+      const originalSend = wc.send;
+      const forwardSend = function (channel) {
+        if (channel === "quit-approval-commit") commitDeliveries += 1;
+        return Reflect.apply(originalSend, this, arguments);
       };
-      ipcMain.on("quit-approval-response", destroyDuringCommit);
+      const destroyBeforeCommitDelivery = function (channel, payload) {
+        if (channel === "quit-approval-commit") {
+          const before = __shutdown.state();
+          if (commitInFlight || this !== wc || !payload ||
+              before.commitPendingId !== payload.id || before.commitSequence <= 0 ||
+              before.commitAuthorisedSeq !== before.lastRequestId ||
+              before.rendererGeneration !== payload.gen ||
+              before.rendererPageSession !== admission.owner.pageSession) {
+            throw new Error("Teardown commit delivery did not name its exact live attempt");
+          }
+          commitInFlight = { packet: payload, before, forwarded: commitDeliveries };
+          // Withhold only this actual outgoing packet and destroy synchronously.
+          // The renderer never receives it: this is not freeze/ACK coverage.
+          win.destroy();
+          return;
+        }
+        return Reflect.apply(forwardSend, this, arguments);
+      };
+      const restoreCommitSend = replaceMethod(wc, "send", destroyBeforeCommitDelivery);
       let commitClose;
       try {
         commitClose = guardEvent();
         win.emit("close", commitClose);
         await waitUntil(() => win.isDestroyed(), 15000);
-        await sleep(500);
+        await new Promise(resolve => setImmediate(resolve));
       } finally {
-        ipcMain.removeListener("quit-approval-response", destroyDuringCommit);
+        if (wc.send !== destroyBeforeCommitDelivery) throw new Error("Teardown commit send ownership changed");
+        restoreCommitSend();
       }
       const state = __shutdown.state();
       check(
         "the teardown commit case really destroyed the window with a commit outstanding",
-        commitInFlight !== null && commitInFlight > 0,
-        JSON.stringify({ commitInFlight, state }),
+        commitInFlight !== null && commitInFlight.before.commitPendingId > 0 &&
+          commitInFlight.packet.id === commitInFlight.before.commitPendingId &&
+          commitInFlight.before.commitSequence > 0 && commitInFlight.forwarded === 0 &&
+          commitDeliveries === 0 && win.isDestroyed() && commitClose.prevented,
+        JSON.stringify({ commitInFlight, commitDeliveries, state }),
       );
       check(
         "a commit in flight when the window goes is abandoned rather than re-raised into a new question",
-        commitInFlight > 0 &&
+        commitInFlight?.before.commitPendingId > 0 &&
           state.commitRefusedWhy === "window-closed" &&
           state.commitPendingId === 0 &&
           state.pendingId === 0 &&
@@ -5197,19 +5253,43 @@ async function runTeardownScenario(win, kase) {
       let confirmedUpdateCommit = null;
       let confirmedUpdateVerification = null;
       let destroyInjectionCount = 0;
-      const captureConfirmedUpdateCommit = (_event, data) => {
+      let initialInstallRequestId = 0;
+      let boundaryRaised = false;
+      let boundaryRequest = null;
+      let beforeDestroy = null;
+      const originalSend = wc.send;
+      const boundarySend = function (channel, payload) {
+        const state = __shutdown.state();
+        if (channel === "quit-approval-request" && boundaryRaised &&
+            state.pendingReason === "update-install" && payload?.id === state.pendingId) {
+          if (this !== wc || boundaryRequest || payload.id <= initialInstallRequestId ||
+              payload.gen !== state.rendererGeneration ||
+              state.rendererPageSession !== admission.owner.pageSession) {
+            throw new Error("Teardown updater boundary did not raise one fresh owned request");
+          }
+          boundaryRequest = payload;
+        }
+        return Reflect.apply(originalSend, this, arguments);
+      };
+      const restoreBoundarySend = replaceMethod(wc, "send", boundarySend);
+      const captureConfirmedUpdateCommit = (event, data) => {
         if (
+          !ownsEvent(event) ||
           !data ||
           data.committed !== true ||
           installs !== 1 ||
+          !boundaryRequest || data.id !== boundaryRequest.id ||
+          data.gen !== boundaryRequest.gen ||
+          __shutdown.state().commitPendingId !== data.id ||
           confirmedUpdateCommit !== null
         ) {
           return;
         }
         confirmedUpdateCommit = data;
       };
-      const destroyAfterVerifiedUpdateCommit = (_event, data) => {
+      const destroyAfterVerifiedUpdateCommit = (event, data) => {
         if (
+          !ownsEvent(event) ||
           !data ||
           data.valid !== true ||
           !confirmedUpdateCommit ||
@@ -5221,6 +5301,11 @@ async function runTeardownScenario(win, kase) {
           return;
         }
         confirmedUpdateVerification = data;
+        beforeDestroy = __shutdown.state();
+        if (beforeDestroy.commitPendingId !== 0 || beforeDestroy.pendingId !== 0 ||
+            beforeDestroy.lastRequestId !== data.id) {
+          throw new Error("Teardown destruction did not follow Main's accepted verification");
+        }
         destroyInjectionCount += 1;
         win.destroy();
       };
@@ -5232,14 +5317,17 @@ async function runTeardownScenario(win, kase) {
         for (const listener of allWindowsClosed) app.on("window-all-closed", listener);
       };
       try {
-        await exec(`window.ipcRenderer.send('install-update'); null;`);
+        await exec(`window.folia.installUpdate(); null;`);
         const updaterEntered = await waitUntil(() => installs === 1, 15000);
+        const installedAttempt = __shutdown.state();
+        initialInstallRequestId = installedAttempt.lastRequestId;
         // The public boundary and its updater-owned app.quit are one
         // synchronous lifecycle pair. Drive both before waiting for the fresh
         // approval; otherwise the production one-turn expiry correctly
         // classifies this as a boundary that never handed off.
+        boundaryRaised = true;
         electronAutoUpdater.emit("before-quit-for-update");
-        app.emit("before-quit", guardEvent());
+        const pairedBoundaryId = __shutdown.state().updaterQuitBoundaryAttemptId;
         const updaterLifecycleQuit = guardEvent();
         app.emit("before-quit", updaterLifecycleQuit);
         const initialUpdaterQuitHeld = updaterLifecycleQuit.prevented === true;
@@ -5255,6 +5343,9 @@ async function runTeardownScenario(win, kase) {
         check(
           "a closed owner window invalidates a confirmed deferred update continuation before it can quit",
           updaterEntered &&
+            installedAttempt.updaterInstallAttemptId > 0 &&
+            pairedBoundaryId === installedAttempt.updaterInstallAttemptId &&
+            !!boundaryRequest && boundaryRequest.id > initialInstallRequestId &&
             !!confirmedUpdateCommit &&
             !!confirmedUpdateVerification &&
             confirmedUpdateCommit.committed === true &&
@@ -5269,6 +5360,7 @@ async function runTeardownScenario(win, kase) {
             Number.isSafeInteger(confirmedUpdateCommit.revision) &&
             confirmedUpdateCommit.revision >= 0 &&
             destroyInjectionCount === 1 &&
+            beforeDestroy?.authorized === false &&
             initialUpdaterQuitHeld &&
             closedBeforeContinuation &&
             continuationInvalidated &&
@@ -5282,6 +5374,11 @@ async function runTeardownScenario(win, kase) {
             state.updaterShutdownCancelWhy === "window-closed",
           JSON.stringify({
             updaterEntered,
+            installedAttempt,
+            initialInstallRequestId,
+            pairedBoundaryId,
+            boundaryRequest,
+            beforeDestroy,
             confirmedUpdateCommit,
             confirmedUpdateVerification,
             destroyInjectionCount,
@@ -5304,6 +5401,8 @@ async function runTeardownScenario(win, kase) {
           "quit-approval-verified",
           destroyAfterVerifiedUpdateCommit,
         );
+        if (wc.send !== boundarySend) throw new Error("Teardown boundary send ownership changed");
+        restoreBoundarySend();
       }
       return;
     }
@@ -5315,7 +5414,7 @@ async function runTeardownScenario(win, kase) {
     if (kase === "poisoned") {
       rig.answer = 0;
       rig.driveQuitLifecycle = true;
-      await exec(`window.ipcRenderer.send('install-update'); null;`);
+      await exec(`window.folia.installUpdate(); null;`);
       const attemptStarted = await waitUntil(
         () => installs === 1 && __shutdown.state().updaterInstallAttemptId > 0,
         15000,
@@ -5331,7 +5430,9 @@ async function runTeardownScenario(win, kase) {
         for (const listener of allWindowsClosed) app.on("window-all-closed", listener);
       };
       win.destroy();
-      const ownerGone = await waitUntil(() => win.isDestroyed(), 10000);
+      // Poison expiry is the next check phase; claim and consume its real
+      // lifecycle pair in this same synchronous turn, before any await.
+      const ownerGone = win.isDestroyed();
       electronAutoUpdater.emit("before-quit-for-update");
       const boundaryArmed = __shutdown.state().updaterQuitBoundaryAttemptId ===
         beforeError.updaterInstallAttemptId;
@@ -5385,35 +5486,34 @@ async function runTeardownScenario(win, kase) {
     // Measured exactly that way before the edit below existed. The `queued`
     // case dirties its document for the same reason; this one had been relying
     // on a question that could not be raised.
-    await exec(`
-      (() => {
-        const tab = window.CustomTabs.getActiveTab();
-        tab.content = tab.originalContent + '\\nTEARDOWN_PENDING_EDIT\\n';
-        window.originalMarkdown = tab.content;
-        return true;
-      })()
-    `);
+    const pendingSetup = await prepareTeardownEditor(exec, fileT, textT, "\nTEARDOWN_PENDING_EDIT\n");
     let releasePendingDialog = null;
     rig.answer = () =>
       new Promise((resolve) => {
         releasePendingDialog = resolve;
+        dialogReleases.push(resolve);
       });
-    await exec(`window.ipcRenderer.send('install-update'); null;`);
+    await exec(`window.folia.installUpdate(); null;`);
     const pendingAsked = await waitUntil(() => rig.dialogs.length > 0, 15000);
+    const pendingFolded = await foldedEditor();
     const before = __shutdown.state();
     check(
       "the teardown pending case really has an update install question open",
       pendingAsked === true &&
         before.pendingReason === "update-install" &&
-        rig.dialogs.length === 1,
-      JSON.stringify({ pendingAsked, before, dialogs: rig.dialogs.length }),
+        namedDirtyQuestion("update-install") &&
+        pendingSetup.cached === textT && pendingSetup.live !== textT &&
+        pendingFolded.cached === pendingSetup.live && pendingFolded.live === pendingSetup.live &&
+        pendingFolded.baseline === textT && pendingFolded.dirty === true &&
+        fs.readFileSync(fileT, "utf8") === textT,
+      JSON.stringify({ pendingAsked, before, pendingSetup, pendingFolded, dialogs: rig.dialogs }),
     );
     win.destroy();
     await waitUntil(() => win.isDestroyed(), 10000);
-    await sleep(300);
     const after = __shutdown.state();
     if (releasePendingDialog) releasePendingDialog(0);
-    await sleep(400);
+    const producerReturned = await waitUntil(() => rig.dialogs[0]?.response === 0, 5000);
+    await new Promise(resolve => setImmediate(resolve));
     const afterAnswer = __shutdown.state();
     check(
       "a window that disappears refuses the update install it was still being asked about",
@@ -5421,18 +5521,36 @@ async function runTeardownScenario(win, kase) {
         after.pendingId === 0 &&
         after.settleWhy === "window-gone-updater" &&
         rig.dialogs.length === 1 &&
+        producerReturned &&
         installs === 0 &&
+        afterAnswer.pendingId === 0 && afterAnswer.commitPendingId === 0 &&
+        afterAnswer.lastRequestId === before.lastRequestId &&
         afterAnswer.authorized === false &&
         afterAnswer.updateInstallStarted === false,
       JSON.stringify({ before, after, afterAnswer, dialogs: rig.dialogs.length, installs }),
     );
+  } catch (error) {
+    bodyError = error;
   } finally {
-    await baseUpdaterBranchBorrow.restore();
-    if (restoreWindowAllClosed) restoreWindowAllClosed();
-    if (restoreInstall) restoreInstall();
-    restoreUpdaterLatch();
-    rig.restore();
+    const failures = [];
+    for (const release of dialogReleases) release(1);
     __shutdown.reset();
+    await new Promise(resolve => setImmediate(resolve));
+    const restorations = [
+      () => updaterFixture?.restore(),
+      () => baseUpdaterBranchBorrow.restore(),
+      () => restoreWindowAllClosed?.(),
+      () => restoreInstall?.(),
+      restoreUpdaterLatch,
+      () => rig.restore(),
+    ];
+    for (const restore of restorations) {
+      try { await restore(); } catch (error) { failures.push(error); }
+    }
+    if (bodyError || failures.length) {
+      throw new AggregateError([bodyError, ...failures].filter(Boolean),
+        "Teardown scenario or owned cleanup failed");
+    }
   }
 }
 
@@ -44596,72 +44714,309 @@ async function runSameDocumentShutdownScenarios(win, exec) {
   };
 }
 
+function holdDeadlineCommitIngress(win) {
+  const wc = win.webContents;
+  const frame = wc.mainFrame;
+  const initial = __shutdown.state();
+  const originalEmit = ipcMain.emit;
+  const originalSend = wc.send;
+  let packet = null;
+  let ingress = null;
+  let captured = 0;
+  let released = false;
+  let retired = null;
+  let restored = false;
+  let restorationAttempted = false;
+  const approvalRequests = [];
+  const ownsEvent = (event) => {
+    const senderFrame = event?.senderFrame;
+    return event?.sender === wc && !wc.isDestroyed() &&
+      senderFrame && !senderFrame.isDestroyed() && !frame.isDestroyed() &&
+      senderFrame.parent === null &&
+      (senderFrame === frame || senderFrame.frameTreeNodeId === frame.frameTreeNodeId);
+  };
+  const send = function (channel, payload) {
+    if (channel === "quit-approval-request") approvalRequests.push(payload);
+    if (channel === "quit-approval-commit" && packet === null) {
+      const state = __shutdown.state();
+      if (this !== wc || payload?.id !== state.commitPendingId ||
+          payload?.gen !== initial.rendererGeneration ||
+          state.rendererPageSession !== initial.rendererPageSession ||
+          state.commitSequence <= 0 ||
+          state.commitAuthorisedSeq !== state.lastRequestId) {
+        throw new Error("Deadline commit has a foreign owner or attempt");
+      }
+      packet = payload;
+    }
+    return Reflect.apply(originalSend, this, arguments);
+  };
+  const emit = function (channel, event, data) {
+    if (channel === "quit-approval-committed" && packet &&
+        data?.id === packet.id && data.gen === packet.gen &&
+        data.revision === packet.revision && data.committed === true &&
+        ownsEvent(event)) {
+      const state = __shutdown.state();
+      if (!released && !retired && state.commitPendingId === packet.id &&
+          state.rendererGeneration === packet.gen &&
+          state.rendererPageSession === initial.rendererPageSession) {
+        captured += 1;
+        if (ingress === null) ingress = { receiver: this, args: Array.from(arguments), data };
+        return true;
+      }
+    }
+    return Reflect.apply(originalEmit, this, arguments);
+  };
+  const restoreSend = replaceMethod(wc, "send", send);
+  let restoreEmit;
+  try {
+    restoreEmit = replaceMethod(ipcMain, "emit", emit);
+  } catch (error) {
+    restoreSend();
+    throw error;
+  }
+  return {
+    ownsEvent,
+    approvalRequests,
+    get packet() { return packet; },
+    get answer() { return ingress?.data || null; },
+    snapshot: () => ({ packet, captured, released, retired, restored, restorationAttempted }),
+    release() {
+      const state = __shutdown.state();
+      if (!ingress || captured !== 1 || released || retired ||
+          !ownsEvent(ingress.args[1]) ||
+          state.rendererGeneration !== packet.gen ||
+          state.rendererPageSession !== initial.rendererPageSession) {
+        throw new Error("Deadline ingress cannot be released on a different document");
+      }
+      released = true;
+      return Reflect.apply(originalEmit, ingress.receiver, ingress.args);
+    },
+    retire(reason) {
+      if (!ingress || released || retired || typeof reason !== "string" || !reason) {
+        throw new Error("Deadline ingress cannot be retired twice or without a reason");
+      }
+      retired = reason;
+      ingress = null;
+    },
+    restore() {
+      if (restorationAttempted) return;
+      restorationAttempted = true;
+      const failures = [];
+      try {
+        if (wc.send !== send) throw new Error("Deadline send restoration ownership changed");
+        restoreSend();
+      } catch (error) { failures.push(error); }
+      try {
+        if (ipcMain.emit !== emit) throw new Error("Deadline ingress restoration ownership changed");
+        restoreEmit();
+      } catch (error) { failures.push(error); }
+      restored = failures.length === 0;
+      if (failures.length) throw new AggregateError(failures, "Deadline observation restoration failed");
+    },
+    dispose() {
+      try {
+        if (packet && __shutdown.state().commitPendingId === packet.id) {
+          if (!__shutdown.abortCommit(packet.id)) throw new Error("Deadline fixture abort was refused");
+        }
+        if (ingress && !released && !retired) {
+          retired = "fixture-cleanup";
+          ingress = null;
+        }
+      } finally {
+        this.restore();
+      }
+    },
+  };
+}
+
 async function runCommitDeadlineAndContinuationScenarios(win, exec) {
   const wc = win.webContents;
-  const rig = shutdownRig(win);
   const indexFile = path.join(__dirname, "..", "src", "index.html");
-  // A genuine renderer crash can leave Chromium's asynchronous unresponsive
-  // notification queued across the replacement load. These cases own the
-  // commit deadline, so isolate that unrelated fallback route.
-  const unresponsiveHandlers = win.listeners("unresponsive");
-  win.removeAllListeners("unresponsive");
-  const cleanDocument = () =>
-    exec(`
-      (() => {
-        const confirm = window.confirm;
-        window.confirm = () => true;
+  const fixturePath = path.join(dir, "commit-deadline-native.md");
+  const fixtureText = "Commit deadline physical fixture\n";
+  write(fixturePath, fixtureText);
+  const rig = shutdownRig(win);
+  const holds = [];
+  const fallbackReleases = [];
+  let bodyError;
+  const prepareDocument = async (edit = true) => {
+    __shutdown.reset();
+    rig.reset();
+    await __shutdown.seedDocumentSessionLayout({ entries: [], activeEntryId: null });
+    const generation = __shutdown.state().rendererGeneration;
+    await win.loadFile(indexFile);
+    if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
+        __shutdown.state().rendererGeneration > generation, 20000)) {
+      throw new Error("Deadline fixture did not reach a fresh ready renderer");
+    }
+    await boundedDialogWork(exec(`(async () => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
         try {
-          window.CustomTabs.getTabs().forEach(t => {
-            t.content = t.originalContent;
-            t.hasUnsavedChanges = false;
-          });
-        } finally {
-          window.confirm = confirm;
+          await window.CustomTabs.settleSessionLayout();
+          if (window.CustomTabs.getTabs().length !== 0) throw new Error('Deadline empty restore left tabs');
+          return true;
+        } catch (error) {
+          if (error.message !== 'The open tabs are still awaiting document restore') throw error;
         }
-        const tab = window.CustomTabs.getActiveTab();
-        window.originalMarkdown = tab ? tab.originalContent : "";
-        return !!tab;
-      })()
-    `);
-  const waitForHeldCommit = async () => {
-    let held = null;
-    const realSend = wc.send;
-    const restoreSend = replaceMethod(wc, "send", function (channel, payload) {
-      if (channel === "quit-approval-commit" && held === null) {
-        held = payload;
-        return;
+        await new Promise(resolve => setTimeout(resolve, 25));
       }
-      return realSend.call(this, channel, payload);
-    });
+      throw new Error('Deadline empty session restore did not settle');
+    })()`), "deadline empty restored layout", 10000);
+    await clearShutdownLifecycleDocuments(exec);
+    const admission = await openShutdownLifecycleFixture(
+      exec, fixturePath, fixtureText, "Commit deadline physical fixture",
+    );
+    if (edit) {
+      await exec("document.getElementById('toggleEdit').click(); null");
+      if (!await waitForCondition(exec, `
+        window.CustomTabs.__inEditMode() &&
+        window.markdownEditor?.value === ${JSON.stringify(fixtureText)} &&
+        window.markdownEditor.readOnly === false && document.body.inert === false
+      `, 5000)) throw new Error("Deadline fixture did not enter its real writable editor");
+    }
+    return admission;
+  };
+  const freezeWitness = () => exec(`(() => {
+    const tab = window.CustomTabs.getActiveTab();
+    return {
+      freeze: window.CustomTabs.__shutdownFreeze(),
+      editorReadOnly: window.markdownEditor?.readOnly,
+      bodyInert: document.body.inert,
+      live: window.markdownEditor?.value,
+      cached: tab?.content,
+      baseline: tab?.originalContent,
+      filePath: tab?.filePath,
+    };
+  })()`);
+  const genuinelyFrozen = (attempt) => attempt.heldReady &&
+    attempt.frozen.freeze.frozen === true &&
+    attempt.frozen.freeze.id === attempt.held.id &&
+    attempt.frozen.editorReadOnly === true &&
+    attempt.frozen.bodyInert === true &&
+    attempt.frozen.live === fixtureText &&
+    attempt.frozen.cached === fixtureText &&
+    attempt.frozen.baseline === fixtureText &&
+    attempt.frozen.filePath === fixturePath &&
+    fs.readFileSync(fixturePath, "utf8") === fixtureText;
+  const waitForHeldCommit = async () => {
+    const hold = holdDeadlineCommitIngress(win);
+    holds.push(hold);
     const close = guardEvent();
     win.emit("close", close);
     const heldReady = await waitUntil(
-      () => held !== null && __shutdown.state().commitPendingId === held.id,
+      () => hold.answer !== null && hold.snapshot().captured === 1 &&
+        __shutdown.state().commitPendingId === hold.packet.id,
       10000,
     );
-    restoreSend();
-    return { close, held, heldReady };
+    if (!heldReady) throw new Error("Deadline fixture did not hold exactly one authentic committed ingress");
+    return { close, held: hold.packet, heldReady, hold, frozen: await freezeWitness() };
   };
   const armSyntheticDeadline = async () => {
     const realSetTimeout = global.setTimeout;
     let deadlineCallback = null;
-    global.setTimeout = (callback, delay, ...args) => {
+    let timer = null;
+    let timerOwner = null;
+    let calls = 0;
+    const captureTimeout = function (callback, delay, ...args) {
+      const handle = Reflect.apply(realSetTimeout, this, arguments);
       if (
         delay === 5000 &&
         deadlineCallback === null &&
         String(callback).includes("staleShutdownCommitTimeoutCount")
       ) {
-        deadlineCallback = () => callback(...args);
-        return { unref() {} };
+        timerOwner = __shutdown.state();
+        if (timerOwner.commitPendingId <= 0 || timerOwner.commitSequence <= 0 ||
+            timerOwner.commitAuthorisedSeq !== timerOwner.lastRequestId) {
+          clearTimeout(handle);
+          throw new Error("Synthetic deadline did not capture a current production attempt");
+        }
+        timer = handle;
+        clearTimeout(timer);
+        deadlineCallback = () => {
+          if (calls !== 0) throw new Error("Synthetic deadline callback was already consumed");
+          calls += 1;
+          return Reflect.apply(callback, timer, args);
+        };
       }
-      return realSetTimeout(callback, delay, ...args);
+      return handle;
     };
+    global.setTimeout = captureTimeout;
     try {
       const armed = await waitForHeldCommit();
-      return { ...armed, deadlineCallback };
+      if (!deadlineCallback || timerOwner.commitPendingId !== armed.held.id ||
+          timerOwner.rendererGeneration !== armed.held.gen) {
+        throw new Error("Synthetic deadline and held ingress name different attempts");
+      }
+      return { ...armed, deadlineCallback, timerOwner };
     } finally {
+      if (global.setTimeout !== captureTimeout) throw new Error("Deadline timer restoration ownership changed");
       global.setTimeout = realSetTimeout;
+      if (timer) clearTimeout(timer);
     }
+  };
+  const staleDeadlinePreservesWork = (attempt) => {
+    const before = __shutdown.state();
+    const effects = { closes: rig.closes, quits: rig.quits, dialogs: rig.dialogs.length };
+    attempt.deadlineCallback();
+    const after = __shutdown.state();
+    return after.staleCommitTimeoutCount === before.staleCommitTimeoutCount + 1 &&
+      ["pendingId", "commitPendingId", "rendererGeneration", "lastRequestId",
+        "authorized", "commitTimeoutCount", "commitRefusedCount"].every(key => after[key] === before[key]) &&
+      rig.closes === effects.closes && rig.quits === effects.quits &&
+      rig.dialogs.length === effects.dialogs;
+  };
+  const observeVerifiedContinuation = (attempt, newer) => {
+    const witness = { commit: null, verification: null, owner: null, before: null,
+      stalePreserved: false, closesBefore: null, count: 0 };
+    const ownerEvent = (event) => {
+      const frame = event?.senderFrame;
+      const main = wc.mainFrame;
+      return event?.sender === wc && frame && !frame.isDestroyed() &&
+        main && !main.isDestroyed() && frame.parent === null &&
+        (frame === main || frame.frameTreeNodeId === main.frameTreeNodeId);
+    };
+    const committed = (event, data) => {
+      const state = __shutdown.state();
+      if (!ownerEvent(event) || data?.committed !== true || witness.commit ||
+          (newer ? data.id <= attempt.held.id : data.id !== attempt.held.id) ||
+          state.commitPendingId !== data.id || state.rendererGeneration !== data.gen) return;
+      witness.commit = data;
+      witness.owner = { frameTreeNodeId: event.senderFrame.frameTreeNodeId,
+        pageSession: state.rendererPageSession };
+    };
+    const verified = (event, data) => {
+      const state = __shutdown.state();
+      if (!ownerEvent(event) || !witness.commit || data?.valid !== true ||
+          data.id !== witness.commit.id || data.gen !== witness.commit.gen ||
+          data.revision !== witness.commit.revision ||
+          event.senderFrame.frameTreeNodeId !== witness.owner.frameTreeNodeId ||
+          state.rendererPageSession !== witness.owner.pageSession ||
+          state.rendererGeneration !== data.gen || state.lastRequestId !== data.id ||
+          state.commitPendingId !== 0 || state.pendingId !== 0) return;
+      witness.count += 1;
+      if (witness.count !== 1) throw new Error("Deadline verification observer was consumed twice");
+      witness.verification = data;
+      witness.before = state;
+      witness.closesBefore = rig.closes;
+      // Main's listener has accepted this real verification; its original
+      // setImmediate continuation has not run while this event is dispatching.
+      witness.stalePreserved = staleDeadlinePreservesWork(attempt);
+    };
+    ipcMain.on("quit-approval-committed", committed);
+    ipcMain.on("quit-approval-verified", verified);
+    return {
+      witness,
+      restore() {
+        ipcMain.removeListener("quit-approval-committed", committed);
+        ipcMain.removeListener("quit-approval-verified", verified);
+      },
+    };
+  };
+  const witnessedQueuedWork = (observer) => {
+    const w = observer.witness;
+    return w.count === 1 && w.commit && w.verification && w.before &&
+      w.closesBefore === 0 && w.before.authorized === false && w.stalePreserved;
   };
 
   try {
@@ -44669,9 +45024,7 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
     // setImmediate continuation has not run yet. Losing that renderer in the
     // synchronous tail of the reply must invalidate the queued authorization,
     // thaw, and ask again through the fallback.
-    __shutdown.reset();
-    rig.reset();
-    await cleanDocument();
+    await prepareDocument();
     let confirmedCommit = null;
     let confirmedVerification = null;
     let lossInjectionCount = 0;
@@ -44679,13 +45032,18 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
     rig.answer = () =>
       new Promise((resolve) => {
         holdFallback = resolve;
+        fallbackReleases.push(resolve);
       });
-    const captureConfirmedCommit = (_event, data) => {
-      if (!data || data.committed !== true || confirmedCommit) return;
+    const lossAttempt = await waitForHeldCommit();
+    const captureConfirmedCommit = (event, data) => {
+      if (!lossAttempt.hold.ownsEvent(event) || data !== lossAttempt.hold.answer ||
+          data.committed !== true || confirmedCommit) return;
       confirmedCommit = data;
     };
-    const loseAfterVerifiedCommit = (_event, data) => {
+    let queuedBeforeLoss = null;
+    const loseAfterVerifiedCommit = (event, data) => {
       if (
+        !lossAttempt.hold.ownsEvent(event) ||
         !data ||
         data.valid !== true ||
         !confirmedCommit ||
@@ -44695,14 +45053,16 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
         data.revision !== confirmedCommit.revision
       ) return;
       confirmedVerification = data;
+      queuedBeforeLoss = __shutdown.state();
       lossInjectionCount += 1;
+      // Exercise Main's loss handler while the renderer remains live, not a crash.
       wc.emit("render-process-gone", {}, { reason: "controlled post-commit loss" });
     };
     ipcMain.on("quit-approval-committed", captureConfirmedCommit);
     ipcMain.on("quit-approval-verified", loseAfterVerifiedCommit);
-    const lossClose = guardEvent();
+    const lossClose = lossAttempt.close;
     try {
-      win.emit("close", lossClose);
+      lossAttempt.hold.release();
       await waitUntil(
         () =>
           rig.dialogs.length === 1 &&
@@ -44712,12 +45072,19 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
     } finally {
       ipcMain.removeListener("quit-approval-committed", captureConfirmedCommit);
       ipcMain.removeListener("quit-approval-verified", loseAfterVerifiedCommit);
+      lossAttempt.hold.restore();
     }
     const lossState = __shutdown.state();
     const thawedAfterLoss = await exec(`window.CustomTabs.__shutdownFreeze()`);
     check(
       "a renderer-confirmed commit lost before its deferred continuation re-requests fail-closed and thaws",
       !!confirmedCommit &&
+        genuinelyFrozen(lossAttempt) &&
+        queuedBeforeLoss?.commitPendingId === 0 &&
+        queuedBeforeLoss.pendingId === 0 &&
+        queuedBeforeLoss.lastRequestId === confirmedCommit.id &&
+        lossAttempt.hold.snapshot().released &&
+        lossAttempt.hold.snapshot().restored &&
         !!confirmedVerification &&
         confirmedCommit.committed === true &&
         confirmedVerification.valid === true &&
@@ -44749,21 +45116,20 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
         prevented: lossClose.prevented,
         state: lossState,
         thawedAfterLoss,
+        frozenBeforeLoss: lossAttempt.frozen,
+        queuedBeforeLoss,
         dialogs: rig.dialogs,
         closes: rig.closes,
         quits: rig.quits,
       }),
     );
     if (holdFallback) holdFallback(1);
+    await waitUntil(() => __shutdown.state().pendingId === 0, 5000);
 
     // Once the continuation is actually running, renderer loss is too late to
     // revoke it. The close is the witness: it is invoked exactly once while
     // the loss notification is delivered from inside that continuation.
-    await win.loadFile(indexFile);
-    await waitUntil(() => __shutdown.state().renderer === "ready", 20000);
-    __shutdown.reset();
-    rig.reset();
-    await cleanDocument();
+    await prepareDocument();
     const rigClose = Object.getOwnPropertyDescriptor(win, "close");
     let lossDuringRunningContinuation = 0;
     Object.defineProperty(win, "close", {
@@ -44801,30 +45167,23 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
       }),
     );
 
-    // The real five-second deadline. Suppress the first phase-two IPC reply,
+    // The real five-second deadline. Hold the authentic phase-two ingress,
     // then require the timeout to name the exact attempt it froze, thaw it,
     // and move a fresh request to the fallback. A late reply to the expired
     // id must be counted and must not settle that fresh request.
-    await win.loadFile(indexFile);
-    await waitUntil(() => __shutdown.state().renderer === "ready", 20000);
-    __shutdown.reset();
-    rig.reset();
-    await cleanDocument();
+    await prepareDocument();
     let releaseTimeoutFallback;
     rig.answer = () =>
       new Promise((resolve) => {
         releaseTimeoutFallback = resolve;
+        fallbackReleases.push(resolve);
       });
-    const timeoutApprovalRequests = [];
-    const realTimeoutSend = wc.send;
-    const restoreTimeoutSend = replaceMethod(wc, "send", function (channel, ...args) {
-      if (channel === "quit-approval-request") timeoutApprovalRequests.push(args[0]);
-      return realTimeoutSend.call(this, channel, ...args);
-    });
     const timeoutAttempt = await waitForHeldCommit();
+    const timeoutApprovalRequests = timeoutAttempt.hold.approvalRequests;
     const timeoutBefore = __shutdown.state();
     const timeoutArmed =
       timeoutAttempt.heldReady &&
+      genuinelyFrozen(timeoutAttempt) &&
       timeoutAttempt.held &&
       timeoutBefore.commitPendingId === timeoutAttempt.held.id &&
       timeoutBefore.commitSequence > 0 &&
@@ -44840,24 +45199,15 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
     const timeoutState = __shutdown.state();
     const thawedAfterTimeout = await exec(`window.CustomTabs.__shutdownFreeze()`);
     const staleRepliesBefore = timeoutState.staleCommitCount;
-    if (timeoutAttempt.held) {
-      await exec(`
-        window.ipcRenderer.send("quit-approval-committed", {
-          id: ${timeoutAttempt.held.id},
-          gen: ${timeoutAttempt.held.gen},
-          revision: ${timeoutAttempt.held.revision},
-          committed: true,
-        });
-        null;
-      `);
-    }
+    timeoutAttempt.hold.release();
     const lateReplyRejected = await waitUntil(
       () => __shutdown.state().staleCommitCount === staleRepliesBefore + 1,
       3000,
     );
     const afterLateReply = __shutdown.state();
+    timeoutAttempt.hold.restore();
     check(
-      "the five-second commit deadline guards exact identity, generation, and sequence; thaws, falls back, and rejects its late reply",
+      "the five-second commit deadline expires a genuinely frozen attempt, falls back, and rejects its authentic late reply",
       timeoutArmed &&
         timeoutFallback &&
         timeoutAttempt.close.prevented === true &&
@@ -44871,12 +45221,16 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
         timeoutApprovalRequests.length === 1 &&
         thawedAfterTimeout.frozen === false &&
         thawedAfterTimeout.editorReadOnly === false &&
+        (await freezeWitness()).bodyInert === false &&
         lateReplyRejected &&
+        timeoutAttempt.hold.snapshot().released &&
+        timeoutAttempt.hold.snapshot().restored &&
         afterLateReply.pendingId === timeoutState.pendingId &&
         afterLateReply.authorized === false &&
         rig.closes === 0,
       JSON.stringify({
-        timeoutAttempt,
+        timeoutAttempt: { held: timeoutAttempt.held, frozen: timeoutAttempt.frozen,
+          transport: timeoutAttempt.hold.snapshot() },
         timeoutBefore,
         timeoutArmed,
         timeoutFallback,
@@ -44890,137 +45244,135 @@ async function runCommitDeadlineAndContinuationScenarios(win, exec) {
       }),
     );
     if (releaseTimeoutFallback) releaseTimeoutFallback(1);
-    restoreTimeoutSend();
+    await waitUntil(() => __shutdown.state().pendingId === 0, 5000);
 
     await runF22CommitSendThrowScenario(win, exec);
 
     // clearTimeout cannot retract a callback already dequeued by the event
     // loop. Drive the captured callbacks after three real invalidations; each
     // must count stale and leave the later request/continuation untouched.
-    __shutdown.reset();
-    rig.reset();
-    await cleanDocument();
+    await prepareDocument();
     const replied = await armSyntheticDeadline();
-    let repliedVerification = null;
-    const captureRepliedVerification = (_event, data) => {
-      if (
-        !data ||
-        data.valid !== true ||
-        !replied.held ||
-        data.id !== replied.held.id ||
-        data.gen !== replied.held.gen ||
-        data.revision !== replied.held.revision
-      ) return;
-      repliedVerification = data;
-    };
-    ipcMain.on("quit-approval-verified", captureRepliedVerification);
+    const replyObserver = observeVerifiedContinuation(replied, false);
     let replyVerified;
     let replyFinished;
     try {
-      if (replied.held) {
-        wc.send("quit-approval-commit", replied.held);
-      }
-      replyVerified = await waitUntil(() => repliedVerification !== null, 5000);
+      replied.hold.release();
+      replyVerified = await waitUntil(() => replyObserver.witness.verification !== null, 5000);
       replyFinished = await waitUntil(() => rig.closes === 1, 5000);
     } finally {
-      ipcMain.removeListener("quit-approval-verified", captureRepliedVerification);
+      replyObserver.restore();
+      replied.hold.restore();
     }
-    const staleAfterReplyBefore = __shutdown.state().staleCommitTimeoutCount;
-    if (replied.deadlineCallback) replied.deadlineCallback();
-    const staleAfterReply = await waitUntil(
-      () => __shutdown.state().staleCommitTimeoutCount === staleAfterReplyBefore + 1,
-      3000,
-    );
+    const staleAfterReply = witnessedQueuedWork(replyObserver);
 
-    __shutdown.reset();
-    rig.reset();
-    await cleanDocument();
+    await prepareDocument();
     const navigated = await armSyntheticDeadline();
     const navigationStartId = __shutdown.state().lastRequestId;
-    wc.reload();
-    const navigationReplaced = await waitUntil(
-      () =>
-        __shutdown.state().renderer === "ready" &&
-        __shutdown.state().lastRequestId > navigationStartId,
-      20000,
-    );
-    const staleAfterNavigationBefore = __shutdown.state().staleCommitTimeoutCount;
-    if (navigated.deadlineCallback) navigated.deadlineCallback();
-    const staleAfterNavigation = await waitUntil(
-      () =>
-        __shutdown.state().staleCommitTimeoutCount ===
-        staleAfterNavigationBefore + 1,
-      3000,
-    );
+    const navigationObserver = observeVerifiedContinuation(navigated, true);
+    let navigationReplaced;
+    try {
+      wc.reload();
+      navigationReplaced = await waitUntil(
+        () =>
+          __shutdown.state().renderer === "ready" &&
+          __shutdown.state().lastRequestId > navigationStartId &&
+          __shutdown.state().rendererGeneration > navigated.held.gen &&
+          rig.closes === 1 && __shutdown.state().pendingId === 0,
+        20000,
+      );
+      navigated.hold.retire("committed-navigation");
+    } finally {
+      navigationObserver.restore();
+      navigated.hold.restore();
+    }
+    const staleAfterNavigation = witnessedQueuedWork(navigationObserver);
 
-    __shutdown.reset();
-    rig.reset();
-    await cleanDocument();
+    await prepareDocument();
     const superseded = await armSyntheticDeadline();
     const supersededStartId = __shutdown.state().lastRequestId;
     const newerClose = guardEvent();
-    win.emit("close", newerClose);
-    const newIntentReplaced = await waitUntil(
-      () => __shutdown.state().lastRequestId > supersededStartId,
-      5000,
+    const intentObserver = observeVerifiedContinuation(superseded, true);
+    let newIntentReplaced;
+    try {
+      win.emit("close", newerClose);
+      newIntentReplaced = await waitUntil(
+        () => __shutdown.state().lastRequestId > supersededStartId &&
+          rig.closes === 1 && __shutdown.state().pendingId === 0,
+        5000,
+      );
+    } finally { intentObserver.restore(); }
+    const staleAckBefore = __shutdown.state().staleCommitCount;
+    superseded.hold.release();
+    const supersededAckStale = await waitUntil(
+      () => __shutdown.state().staleCommitCount === staleAckBefore + 1, 3000,
     );
-    const staleAfterIntentBefore = __shutdown.state().staleCommitTimeoutCount;
-    if (superseded.deadlineCallback) superseded.deadlineCallback();
-    const staleAfterIntent = await waitUntil(
-      () =>
-        __shutdown.state().staleCommitTimeoutCount === staleAfterIntentBefore + 1,
-      3000,
-    );
+    superseded.hold.restore();
+    const staleAfterIntent = witnessedQueuedWork(intentObserver);
     const staleTimerState = __shutdown.state();
     check(
       "stale commit deadlines after reply, navigation, and a newer intent cannot affect later shutdown work",
       replied.heldReady &&
+        genuinelyFrozen(replied) &&
         typeof replied.deadlineCallback === "function" &&
         replyVerified &&
-        repliedVerification &&
-        repliedVerification.valid === true &&
-        replied.held &&
-        repliedVerification.id === replied.held.id &&
-        repliedVerification.gen === replied.held.gen &&
-        repliedVerification.revision === replied.held.revision &&
+        replyObserver.witness.verification &&
+        replyObserver.witness.verification.valid === true &&
         replyFinished &&
+        replied.hold.snapshot().released && replied.hold.snapshot().restored &&
         staleAfterReply &&
         navigated.heldReady &&
+        genuinelyFrozen(navigated) &&
         typeof navigated.deadlineCallback === "function" &&
         navigationReplaced &&
+        navigated.hold.snapshot().retired === "committed-navigation" &&
+        navigated.hold.snapshot().restored &&
         staleAfterNavigation &&
         superseded.heldReady &&
+        genuinelyFrozen(superseded) &&
         typeof superseded.deadlineCallback === "function" &&
         newerClose.prevented === true &&
         newIntentReplaced &&
+        supersededAckStale &&
+        superseded.hold.snapshot().released && superseded.hold.snapshot().restored &&
         staleAfterIntent &&
         staleTimerState.commitTimeoutCount === 0 &&
-        staleTimerState.authorized === false,
+        staleTimerState.authorized === true &&
+        rig.closes === 1,
       JSON.stringify({
         replied: {
           held: replied.held,
           replyVerified,
-          repliedVerification,
+          verifiedWork: replyObserver.witness,
           replyFinished,
           staleAfterReply,
         },
-        navigated: { held: navigated.held, navigationReplaced, staleAfterNavigation },
+        navigated: { held: navigated.held, navigationReplaced, staleAfterNavigation,
+          verifiedWork: navigationObserver.witness },
         superseded: {
           held: superseded.held,
           prevented: newerClose.prevented,
           newIntentReplaced,
+          supersededAckStale,
           staleAfterIntent,
+          verifiedWork: intentObserver.witness,
         },
         state: staleTimerState,
       }),
     );
+  } catch (error) {
+    bodyError = error;
   } finally {
-    for (const listener of unresponsiveHandlers) win.on("unresponsive", listener);
-    rig.restore();
-    __shutdown.reset();
-    if (!wc.isDestroyed()) {
-      await win.loadFile(indexFile).catch(() => {});
-      await waitUntil(() => __shutdown.state().renderer === "ready", 20000);
+    const failures = [];
+    for (const release of fallbackReleases) release(1);
+    for (const hold of holds.slice().reverse()) {
+      try { hold.dispose(); } catch (error) { failures.push(error); }
+    }
+    try { await prepareDocument(false); } catch (error) { failures.push(error); }
+    try { rig.restore(); } catch (error) { failures.push(error); }
+    if (bodyError || failures.length) {
+      throw new AggregateError([bodyError, ...failures].filter(Boolean),
+        "Deadline scenarios or owned cleanup failed");
     }
   }
 }
