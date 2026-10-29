@@ -181,6 +181,51 @@ function everyMeasuredFillDark(state) {
 
 async function run(win) {
   const exec = (code) => win.webContents.executeJavaScript(code, true);
+  const homeDiagramsReady = `(() => {
+    const home = window.CustomTabs.getTabs().find(t => t.filePath === ${jsM});
+    return !!home && window.CustomTabs.getActiveTab()?.id === home.id &&
+      currentFilePath === ${jsM} && originalMarkdown === ${JSON.stringify(DOC)} &&
+      viewer.querySelector('h1')?.textContent === 'Diagrams' &&
+      !loadingScreen.classList.contains('active') && (${DIAGRAMS_READY});
+  })()`;
+
+  async function restoreSuiteDocument(temporaryFile, label) {
+    harnessStage = label;
+    await exec(`(() => {
+      const state = window.__mermaidRestoreProbe = { done: false, error: null };
+      (async () => {
+        const home = window.CustomTabs.getTabs().find(t => t.filePath === ${jsM});
+        if (!home) throw new Error('The Mermaid home tab is missing');
+        // An owned-disk refresh can delay activation. Do not close the active
+        // fixture until that switch has finished choosing its replacement.
+        if (await window.CustomTabs.switchToTab(home.id) !== true ||
+            window.CustomTabs.getActiveTab()?.id !== home.id) {
+          throw new Error('The Mermaid home tab switch was refused or superseded');
+        }
+        const temporary = window.CustomTabs.getTabs().find(t =>
+          t.filePath === ${JSON.stringify(temporaryFile)});
+        if (temporary) {
+          await window.CustomTabs.closeTab(temporary.id);
+          if (window.CustomTabs.getTabs().some(t => t.id === temporary.id)) {
+            throw new Error('The Mermaid export fixture did not close');
+          }
+        }
+        state.done = true;
+      })().catch(error => {
+        state.error = String(error && (error.stack || error.message) || error);
+        console.error('Mermaid home restoration: ' + state.error);
+      });
+      return true;
+    })()`);
+    // Both operations and the DOM must settle inside the existing wait, not
+    // an unbounded page-side await or a leftover SVG from the export fixture.
+    await waitFor(exec, label, `(() => {
+      const state = window.__mermaidRestoreProbe;
+      if (state.error) throw new Error(state.error);
+      return state.done && (${homeDiagramsReady});
+    })()`);
+    harnessStage = "scenarios";
+  }
 
   // Watches the whole suite, not just the moments a screenshot is taken. See
   // startErrorSentinel() for why: a red mermaid error graphic that appears and
@@ -1081,14 +1126,9 @@ async function run(win) {
       // section's single-diagram tab active starved section 9, whose measure
       // needs the multi-diagram document, and it failed with measured:0 - a
       // failure that named section 9 but belonged to this one.
-      await exec(`(() => {
-        const held = window.CustomTabs.getTabs().find(t => t.filePath === ${JSON.stringify(holdDoc)});
-        const home = window.CustomTabs.getTabs().find(t => t.filePath === ${jsM});
-        if (home) window.CustomTabs.switchToTab(home.id);
-        if (held) window.CustomTabs.closeTab(held.id);
-        return true;
-      })()`);
-      await waitFor(exec, "the suite's own document to come back after the 8c exports", DIAGRAMS_READY);
+      await restoreSuiteDocument(
+        holdDoc, "the suite's own document to come back after the 8c exports",
+      );
     }
   }
 
@@ -1242,14 +1282,9 @@ async function run(win) {
         await updateMermaidTheme(false);
         return true;
       })()`);
-      await exec(`(() => {
-        const ov = window.CustomTabs.getTabs().find(t => t.filePath === ${JSON.stringify(overlapDoc)});
-        const home = window.CustomTabs.getTabs().find(t => t.filePath === ${jsM});
-        if (home) window.CustomTabs.switchToTab(home.id);
-        if (ov) window.CustomTabs.closeTab(ov.id);
-        return true;
-      })()`);
-      await waitFor(exec, "the suite's own document to come back after the 8e overlap", DIAGRAMS_READY);
+      await restoreSuiteDocument(
+        overlapDoc, "the suite's own document to come back after the 8e overlap",
+      );
     }
   }
 
@@ -1261,7 +1296,7 @@ async function run(win) {
   // it, which is the very bug this whole section exists to prevent.
   await exec(`
     (() => {
-      window.__runProbe = { active: 0, maxActive: 0, calls: 0 };
+      window.__runProbe = { active: 0, maxActive: 0, calls: 0, settled: false, error: null };
       const original = mermaid.run.bind(mermaid);
       window.__runProbeRestore = () => { mermaid.run = original; };
       mermaid.run = async function (...args) {
@@ -1275,45 +1310,60 @@ async function run(win) {
     })()
   `);
 
-  await exec(`
+  harnessStage = "rapid theme toggles";
+  try {
+    await exec(`
     (() => {
       const btn = document.getElementById('darkModeToggle');
       btn.click();
       btn.click();
       btn.click();
+      // The queue covers SVG adoption after mermaid.run returns. Its final
+      // theme can still have an idle catch-up tail, with its own settle seam.
+      mermaidWorkQueue.then(() => whenMermaidSettled()).then(() => {
+        window.__runProbe.settled = true;
+      }, error => {
+        window.__runProbe.error = String(error && (error.stack || error.message) || error);
+        console.error('Mermaid rapid-toggle completion: ' + window.__runProbe.error);
+      });
       return true;
     })()
-  `);
-  await waitFor(
-    exec,
-    "the queued theme updates to drain",
-    `window.__runProbe.active === 0 && window.__runProbe.calls > 0`,
-  );
-  await waitFor(exec, "diagrams to settle after rapid toggles", DIAGRAMS_READY);
+    `);
+    await waitFor(
+      exec,
+      "the queued theme updates to drain",
+      `(() => {
+        if (window.__runProbe.error) throw new Error(window.__runProbe.error);
+        return window.__runProbe.settled &&
+          window.__runProbe.active === 0 && window.__runProbe.calls > 0;
+      })()`,
+    );
+    await waitFor(exec, "diagrams to settle after rapid toggles", homeDiagramsReady);
 
-  const runProbe = await exec(`window.__runProbe`);
-  check(
-    "rapid theme toggles never run mermaid concurrently",
-    runProbe.maxActive === 1,
-    JSON.stringify(runProbe),
-  );
+    const runProbe = await exec(`window.__runProbe`);
+    check(
+      "rapid theme toggles never run mermaid concurrently",
+      runProbe.maxActive === 1,
+      JSON.stringify(runProbe),
+    );
 
-  const afterRace = await exec(MEASURE);
-  // Honest note: this one passed even with serialisation removed (maxActive=3),
-  // so it is a one-way ratchet, not the discriminating assertion — maxActive
-  // above is. It is kept because the failure mode it guards (stale-theme SVGs
-  // written back into the cache by a superseded call) is timing-dependent and
-  // would otherwise go unwatched.
-  check(
-    "the final theme wins after rapid toggles",
-    afterRace.worst !== null &&
-      (afterRace.bodyDark ? afterRace.worst.fillLum < 0.5 : afterRace.worst.fillLum > 0.5),
-    JSON.stringify(afterRace),
-  );
+    const afterRace = await exec(MEASURE);
+    // Honest note: this one passed even with serialisation removed (maxActive=3),
+    // so it is a one-way ratchet, not the discriminating assertion — maxActive
+    // above is. It is kept because the failure mode it guards (stale-theme SVGs
+    // written back into the cache by a superseded call) is timing-dependent and
+    // would otherwise go unwatched.
+    check(
+      "the final theme wins after rapid toggles",
+      afterRace.worst !== null &&
+        (afterRace.bodyDark ? afterRace.worst.fillLum < 0.5 : afterRace.worst.fillLum > 0.5),
+      JSON.stringify(afterRace),
+    );
 
-  // Section 9 is currently last, but leaving mermaid.run wrapped would silently
-  // contaminate any section added after it.
-  await exec(`window.__runProbeRestore(), true`);
+  } finally {
+    await exec(`window.__runProbeRestore(), true`);
+  }
+  harnessStage = "scenarios";
 
   // --- 10. Mermaid is loaded lazily, not on every launch -------------------
   // PERF-03: the 3.5MB bundle cost about 128ms of every startup even for
