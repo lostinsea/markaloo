@@ -342,6 +342,11 @@ try {
 } catch (error) {
   failStartup("shutdown response contract", error);
 }
+try {
+  require("./test-deletion-delivery-contract.js").run(check);
+} catch (error) {
+  failStartup("deletion delivery contract", error);
+}
 
 // This is deliberately data-only: capability scheduling must be testable
 // without Electron state, and each group remains independently reportable.

@@ -1162,6 +1162,12 @@ async function main() {
       reloadHarness.indexOf(shutdownPreflight) > reloadHarness.indexOf(ownedPreflight) &&
       reloadHarness.indexOf(shutdownPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
       reloadHarness.indexOf(shutdownPreflight, reloadHarness.indexOf(shutdownPreflight) + shutdownPreflight.length) === -1);
+  const deletionPreflight = 'require("./test-deletion-delivery-contract.js").run(check);';
+  check("direct focused and companion tabs launches cannot omit whole-renderer deletion construction",
+    /^try \{\r?\n  require\("\.\/test-deletion-delivery-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("deletion delivery contract", error\);\r?\n\}/m.test(reloadHarness) &&
+      reloadHarness.indexOf(deletionPreflight) > reloadHarness.indexOf(shutdownPreflight) &&
+      reloadHarness.indexOf(deletionPreflight) < reloadHarness.indexOf('require("../src/main.js")') &&
+      reloadHarness.indexOf(deletionPreflight, reloadHarness.indexOf(deletionPreflight) + deletionPreflight.length) === -1);
   const inlineScript = '<script src="inline-formatting.js"></script>';
   const tableScript = '<script src="table-cell-editor.js"></script>';
   const inlineSource = read("src/inline-formatting.js");
