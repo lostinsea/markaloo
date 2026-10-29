@@ -14557,7 +14557,7 @@ async function runReloadTransportFailure(exec, sentinel) {
     settled && sequence > result.prior, JSON.stringify({ sequence, result }));
 }
 
-async function runDocumentControlCloseJourney(exec) {
+async function runDocumentControlCloseJourney(win, exec) {
   const file = path.join(dir, "document-control-close.md");
   const jsFile = JSON.stringify(file);
   write(file, "# Document control close\n\nCONTROL_CLOSE_FIXTURE\n");
@@ -14613,30 +14613,114 @@ async function runDocumentControlCloseJourney(exec) {
       deleted.retained.ownDeletion === true && deleted.retained.unresolved === true,
     JSON.stringify(deleted),
   );
-  const closed = await exec(`(async () => {
-    const original = window.folia, realConfirm = window.confirm;
-    const confirmations = [], retirements = [];
-    window.confirm = message => { confirmations.push(message); return true; };
-    window.folia = { ...original, retireDeletedDocumentOwner(request) {
-      const result = original.retireDeletedDocumentOwner(request);
-      retirements.push({ request, result });
-      return result;
-    }};
-    try {
-      await window.CustomTabs.closeTab(${request.tabId});
-      return {
-        confirmations, retirements,
+  const observer = observeNativeDocumentPorts(win, ["retire-deleted-document-owner"]);
+  let closed;
+  try {
+    const closeWithChoice = async (choice) => {
+      const firstReceipt = observer.records.length;
+      await exec(`(() => {
+        const probe = window.__documentControlClose = { settled: false, questionCount: 0 };
+        probe.observer = new MutationObserver(records => {
+          probe.questionCount += records.filter(record =>
+            record.target.id === 'appMessageDialog' && record.oldValue === null).length;
+        });
+        probe.observer.observe(document.documentElement, {
+          subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true,
+        });
+        Promise.resolve(window.CustomTabs.closeTab(${request.tabId})).then(
+          () => { probe.settled = true; },
+          error => { probe.error = String(error.message || error); probe.settled = true; },
+        );
+        return null;
+      })()`);
+      const shown = await waitForCondition(exec, `
+        document.getElementById('appMessageDialog')?.open === true &&
+        document.getElementById('appMessageTitle').textContent === 'Close this copy?'
+      `);
+      if (!shown) throw new Error("The deleted-copy close question did not display");
+      const confirmation = await exec(`({
+        title: document.getElementById('appMessageTitle').textContent,
+        message: document.getElementById('appMessageText').textContent,
+        fileName: document.getElementById('appMessageName').textContent,
+        buttons: Array.from(document.querySelectorAll('#appMessageButtons [data-dialog-choice]'))
+          .map(button => ({ id: button.dataset.dialogChoice, label: button.textContent })),
+        pending: window.__documentControlClose.settled === false,
+        questionCount: window.__documentControlClose.questionCount,
         remains: window.CustomTabs.getTabs().some(tab => tab.id === ${request.tabId}),
+        owner: window.CustomTabs.getDocumentIdentityForTab(
+          ${request.tabId}, ${jsFile}, window.getReloadRequestSession()),
+        deletion: window.folia.queryDocumentDeletionState(${JSON.stringify(request)}),
+      })`);
+      const expectedQuestion = confirmation.title === "Close this copy?" &&
+        confirmation.message === "This tab may be the only remaining copy of the file. Close the tab?" &&
+        confirmation.fileName === path.basename(file) &&
+        isDeepStrictEqual(confirmation.buttons, [
+          { id: "cancel", label: "Cancel" }, { id: "proceed", label: "Close tab" },
+        ]) &&
+        confirmation.pending === true && confirmation.questionCount === 1 &&
+        confirmation.remains === true &&
+        Object.keys(request).every(key => key === "filePath" || confirmation.owner?.[key] === request[key]) &&
+        confirmation.deletion.known === true && confirmation.deletion.ownDeletion === true &&
+        confirmation.deletion.unresolved === true &&
+        observer.records.length === firstReceipt;
+      if (!expectedQuestion) {
+        throw new Error("Unexpected deleted-copy close question: " + JSON.stringify({
+          confirmation, retirements: observer.records,
+        }));
+      }
+      await exec(`
+        document.querySelector('#appMessageDialog [data-dialog-choice="${choice}"]').click();
+        null;
+      `);
+      const settled = await waitForCondition(exec, "window.__documentControlClose.settled === true");
+      if (!settled) throw new Error("The deleted-copy close did not settle after its answer");
+      const outcome = await exec(`(() => {
+        const probe = window.__documentControlClose;
+        probe.questionCount += probe.observer.takeRecords().filter(record =>
+          record.target.id === 'appMessageDialog' && record.oldValue === null).length;
+        probe.observer.disconnect();
+        return {
+          error: probe.error, questionCount: probe.questionCount,
+          remains: window.CustomTabs.getTabs().some(tab => tab.id === ${request.tabId}),
+          owner: window.CustomTabs.getDocumentIdentityForTab(
+            ${request.tabId}, ${jsFile}, window.getReloadRequestSession()),
+          dialogOpen: document.getElementById('appMessageDialog')?.open === true,
+          deletion: window.folia.queryDocumentDeletionState(${JSON.stringify(request)}),
+        };
+      })()`);
+      if (outcome.error) throw new Error("The deleted-copy close rejected: " + outcome.error);
+      return {
+        ...outcome, confirmation,
+        retirements: observer.records.slice(firstReceipt).map(record => ({
+          request: record.data, result: record.reply, replies: record.replies,
+        })),
       };
-    } finally { window.folia = original; window.confirm = realConfirm; }
-  })()`);
+    };
+    const canceled = await closeWithChoice("cancel");
+    check(
+      "SEC-08 canceling the actual deleted-copy close preserves its owner without retirement",
+      canceled.remains === true && canceled.dialogOpen === false && canceled.questionCount === 1 &&
+        Object.keys(request).every(key => key === "filePath" || canceled.owner?.[key] === request[key]) &&
+        canceled.retirements.length === 0 &&
+        canceled.deletion.known === true && canceled.deletion.ownDeletion === true &&
+        canceled.deletion.unresolved === true &&
+        observer.records.length === 0,
+      JSON.stringify(canceled),
+    );
+    closed = await closeWithChoice("proceed");
+  } finally {
+    observer.restore();
+    await exec("window.__documentControlClose?.observer?.disconnect(); delete window.__documentControlClose; null;");
+  }
   check(
     "SEC-08 actual close warns, acknowledges and retires only the deleted fixture owner",
-    closed.remains === false && closed.confirmations.length === 1 &&
-      closed.confirmations[0].includes("deleted outside Folia") &&
+    closed.remains === false && closed.dialogOpen === false &&
+      closed.questionCount === 1 && closed.confirmation.pending === true &&
       closed.retirements.length === 1 &&
-      closed.retirements[0].request.tabId === request.tabId &&
+      closed.retirements[0].replies === 1 &&
+      Object.keys(request).every(key => closed.retirements[0].request[key] === request[key]) &&
       closed.retirements[0].request.acknowledgedDeletion === true &&
+      closed.retirements[0].request.expectedDeletionRevision === closed.confirmation.deletion.revision &&
       closed.retirements[0].result.retired === true &&
       closed.retirements[0].result.unresolved === false,
     JSON.stringify(closed),
@@ -17231,7 +17315,7 @@ async function run(win) {
     await runNativeDanglingReload(exec);
     await runNativeDanglingReload(exec, "open-handoff");
     await runNativeDanglingReload(exec, "close-retarget");
-    await runDocumentControlCloseJourney(exec);
+    await runDocumentControlCloseJourney(win, exec);
     console.log("Native authority rendered control:", await captureScreenshot(win, "tabs-native-authority-final"));
     const alive = await proveSentinelAlive(win, sentinel);
     check("the error sentinel was demonstrably watching both channels",
@@ -18737,7 +18821,7 @@ async function run(win) {
     await viewerText(),
   );
 
-  await runDocumentControlCloseJourney(exec);
+  await runDocumentControlCloseJourney(win, exec);
   await runReloadTransportFailure(exec, sentinel);
   if (ownedReadFocusedHarness || dialogExtraFocusedHarness) {
     if (ownedReadFocusedHarness) {
