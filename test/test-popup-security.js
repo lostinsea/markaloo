@@ -15,8 +15,8 @@
 let app, BrowserWindow, fs, path, registeredDirs;
 let finishing = false, stickyFailure = false, footerWritten = false;
 let tearingDown = false, hostWindow = null, hostContents = null, main = null;
-let ownerCleanupInProgress = false, ownerCleanupReentered = false, exitOwner = false;
-let observeVerifiedOwners = null;
+let ownerCleanupPromise = null, ownerCleanupResult = null, terminalCompletion = null, exitOwner = false;
+let ownerInventoryInvalidated = false, ownerCleanupRecords = null;
 let chooserAllowance = null, chooserCalls = 0, nativeSaveCalls = 0;
 let expectedPopup = null, storageReady = false, mainIdentity = null;
 let mainStartup = null;
@@ -33,9 +33,23 @@ process.once("exit", () => {
   if (!exitOwner) {
     if (!finishing) finishing = "fatal";
     stickyFailure = true;
-    check("popup suite reached its controlled terminal path", false, "process exit preceded the explicit exit owner");
+    if (!footerWritten) {
+      check("popup suite reached its controlled terminal path", false, "process exit preceded the explicit exit owner");
+    }
   }
-  destroyOwners();
+  if (ownerCleanupResult === null) {
+    ownerInventoryInvalidated = true;
+    ownerCleanupResult = false;
+    destroyOwners();
+    retainOwnedFixtures("process exit preceded verified owner destruction");
+    if (!footerWritten) {
+      check("terminal popup cleanup completed", false, "process exit preceded verified owner destruction");
+    }
+  }
+  if (ownerCleanupResult === true && !ownerInventoryMatches()) {
+    invalidateOwnerInventory("process exit found a changed owner inventory");
+  }
+  if (ownerCleanupResult !== true) retainOwnedFixtures("process exit lacks current verified owner destruction");
   if (!footerWritten) reportFooter();
   if (stickyFailure) process.exitCode = 1;
 });
@@ -167,7 +181,15 @@ app.exit = code => {
     fatal(new Error("unexpected app.exit before controlled popup completion"));
     return;
   }
-  destroyOwners(); // Always precede the shared helper's pre-exit fixture sweep.
+  if (ownerCleanupResult === null) {
+    completeTerminalExit(code);
+    return;
+  }
+  if (ownerCleanupResult === true && !ownerInventoryMatches()) {
+    invalidateOwnerInventory("app.exit found a changed owner inventory");
+  }
+  if (ownerCleanupResult !== true) retainOwnedFixtures("app.exit lacks current verified owner destruction");
+  // Retained fixtures must remain excluded from the shared exit sweep.
   exitOwner = true;
   return exitWithSharedSweep(stickyFailure ? 1 : code);
 };
@@ -320,7 +342,11 @@ function checkLoadFileDelegation() {
 
 app.on("web-contents-created", (_event, wc) => {
   const contentsId = wc.id;
-  const state = { wc, enabled: false, installed: false, originalURL: null, timer: null,
+  if (finishing || ownerCleanupPromise) {
+    invalidateOwnerInventory("contents registered after terminal cleanup began: " + contentsId);
+    fatal(new Error("contents followed finish"));
+  }
+  const state = { wc, enabled: false, installed: false, scriptIdentifier: null, originalURL: null, timer: null,
     epoch: 0, frame: null, cdpCommit: null, documentToken: null, guardEpoch: null };
   guards.set(wc.id, state);
   wc.on("console-message", details => {
@@ -370,7 +396,13 @@ app.on("web-contents-created", (_event, wc) => {
   const enabled = wc.debugger.sendCommand("Page.enable").then(() => { state.enabled = true; });
   const installed = wc.debugger.sendCommand("Page.addScriptToEvaluateOnNewDocument", {
     source: promptGuardSource(wc.id), runImmediately: true,
-  }).then(() => { state.installed = true; });
+  }).then(ack => {
+    if (typeof ack?.identifier !== "string" || !ack.identifier.trim()) {
+      throw new Error("prompt guard installation lacks its actual script identifier");
+    }
+    state.scriptIdentifier = ack.identifier;
+    state.installed = true;
+  });
   state.timer = setTimeout(() => fatal(new Error("prompt guard ACK exceeded 10s")), 10000);
   Promise.all([
     enabled, installed,
@@ -419,7 +451,15 @@ app.on("browser-window-created", (_event, win) => {
   const record = { id: win.id, contentsId: wc.id, win, wc, kind: "unexpected",
     originalURL: null, stopped: false, resultOffset: results.length };
   windows.set(win.id, record);
-  if (!storageReady || finishing) { fatal(new Error("window preceded storage readiness or followed finish")); return; }
+  if (finishing || ownerCleanupPromise) {
+    invalidateOwnerInventory("window registered after terminal cleanup began: " + win.id);
+    destroyOwner(record).catch(error => {
+      retainOwnedFixtures("late owner destruction failed: " + String(error?.stack || error));
+    });
+    fatal(new Error("window followed finish"));
+    return;
+  }
+  if (!storageReady) { fatal(new Error("window preceded storage readiness")); return; }
   if (mainStartup && !mainStartup.record && !expectedPopup) {
     // Reserve one candidate only under the explicit startup expectation. It
     // does not become Main until the exact index commit and authenticated
@@ -560,6 +600,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function openPopup(channel, payload, settleMs = 1800, click = null) {
   assertMainOwner();
   const mainScope = await assertGuard(hostContents);
+  assertLiveOwnerReads();
   if (!(await waitForExternalTrap(hostWindow, 1000))) throw new Error("shell trap changed before popup actor");
   assertMainOwner();
   assertDocumentScope(mainScope);
@@ -577,6 +618,7 @@ async function openPopup(channel, payload, settleMs = 1800, click = null) {
     const record = windows.get(popup.id);
     await waitUntil(() => record.originalURL && !record.wc.isLoadingMainFrame(), "popup load", 8000);
     record.scope = await assertGuard(record.wc);
+    assertLiveOwnerReads();
     if (record.wc.getURL() !== record.originalURL || !request.receipt ||
         request.receipt.sender !== hostContents || request.receipt.mainScope !== mainScope) {
       throw new Error("popup identity changed during initial load");
@@ -616,6 +658,7 @@ async function openPopup(channel, payload, settleMs = 1800, click = null) {
 
 async function popupEval(popup, expr, timeout = 5000) {
   try {
+    assertLiveOwnerReads();
     const record = windows.get(popup.id);
     if (!record || record.win !== popup || popup.isDestroyed() ||
         popup.webContents !== record.wc || record.wc.getURL() !== record.originalURL) {
@@ -628,6 +671,7 @@ async function popupEval(popup, expr, timeout = 5000) {
     assertDocumentScope(record.scope);
     return value;
   } catch (e) {
+    assertLiveOwnerReads();
     return { __evalError: String(e && e.message) };
   }
 }
@@ -679,6 +723,7 @@ async function pwnedChannelLive(popup) {
 }
 
 function prefsOf(popup) {
+  assertLiveOwnerReads();
   const p = popup.webContents.getLastWebPreferences() || {};
   return {
     nodeIntegration: p.nodeIntegration === true,
@@ -718,14 +763,65 @@ function isOwnedPopupPath(url, kind) {
   } catch { return false; }
 }
 
+function assertLiveOwnerReads(allowNormalFinish = false) {
+  if (ownerCleanupPromise || finishing && !(allowNormalFinish && finishing === "normal")) {
+    throw new Error("owned document read cancelled by terminal cleanup");
+  }
+}
+
+async function reconcileRootCommit(wc, state) {
+  assertLiveOwnerReads();
+  const frame = state.frame;
+  const snapshot = { frameTreeNodeId: frame?.frameTreeNodeId,
+    processId: frame?.processId, routingId: frame?.routingId, originalURL: state.originalURL };
+  const unchanged = () => {
+    assertLiveOwnerReads();
+    return guards.get(wc.id) === state && state.wc === wc &&
+    state.enabled && state.installed && typeof state.scriptIdentifier === "string" &&
+    state.scriptIdentifier.trim().length > 0 && state.epoch === 1 && state.frame === frame &&
+    state.originalURL === snapshot.originalURL && !wc.isDestroyed() &&
+    !wc.isLoadingMainFrame() && wc.getURL() === snapshot.originalURL &&
+    Number.isSafeInteger(snapshot.frameTreeNodeId) && Number.isSafeInteger(snapshot.processId) &&
+    Number.isSafeInteger(snapshot.routingId) && isRetainedRoot(frame, snapshot) &&
+    isRetainedRoot(wc.mainFrame, snapshot);
+  };
+  if (!unchanged()) throw new Error("root document changed before CDP reconciliation");
+  // Page.enable can acknowledge after the initial commit event. Read actual
+  // CDP state instead of manufacturing the missed event or a loader identity.
+  const response = await bounded(wc.debugger.sendCommand("Page.getFrameTree"),
+    "actual root frame tree");
+  if (!unchanged()) throw new Error("root document changed during CDP reconciliation");
+  const root = response?.frameTree?.frame;
+  if (!root || root.parentId !== undefined || root.url !== snapshot.originalURL ||
+      typeof root.id !== "string" || !root.id.trim() ||
+      typeof root.loaderId !== "string" || !root.loaderId.trim()) {
+    throw new Error("CDP did not identify the exact original root document");
+  }
+  if (state.cdpCommit &&
+      (state.cdpCommit.frameId !== root.id || state.cdpCommit.loaderId !== root.loaderId)) {
+    throw new Error("CDP root query disagrees with the observed document commit");
+  }
+  if (!state.cdpCommit) {
+    state.cdpCommit = Object.freeze({ frameId: root.id, loaderId: root.loaderId });
+  }
+}
+
 async function assertGuard(wc) {
   try {
+    assertLiveOwnerReads();
     const state = guards.get(wc.id);
-    await waitUntil(() => state?.enabled && state.installed && state.epoch === 1 && state.cdpCommit,
+    await waitUntil(() => {
+      assertLiveOwnerReads();
+      return state?.enabled && state.installed && state.epoch === 1 && !wc.isLoadingMainFrame();
+    },
       "both prompt guard ACKs and the original root commit");
+    assertLiveOwnerReads();
+    if (state.documentToken === null) await reconcileRootCommit(wc, state);
+    assertLiveOwnerReads();
     const scope = documentScope(wc);
     const current = await bounded(scope.frame.executeJavaScript(
       `window[${JSON.stringify(guardKey)}]?.read()`, true), "current-document prompt guard");
+    assertLiveOwnerReads();
     assertDocumentScope(scope);
     if (!current || current.token !== guardToken || current.contentsId !== wc.id ||
         current.url !== state.originalURL || current.executed !== true ||
@@ -747,6 +843,7 @@ async function assertGuard(wc) {
 }
 
 function documentScope(wc) {
+  assertLiveOwnerReads(true);
   const state = guards.get(wc.id);
   const scope = { wc, contentsId: wc.id, state, frame: state?.frame, epoch: state?.epoch,
     frameTreeNodeId: state?.frame?.frameTreeNodeId, processId: state?.frame?.processId,
@@ -758,6 +855,7 @@ function documentScope(wc) {
 }
 
 function isRetainedRoot(frame, scope) {
+  assertLiveOwnerReads(true);
   try {
     // IPC may wrap the same frame in a different JS object. Pin its actual
     // node/process/routing identity, not optional preferences or wrapper equality.
@@ -768,6 +866,7 @@ function isRetainedRoot(frame, scope) {
 }
 
 function assertDocumentScope(scope) {
+  assertLiveOwnerReads(true);
   const state = scope && guards.get(scope.contentsId);
   if (!scope || !state || state !== scope.state || scope.wc.isDestroyed() ||
       state.epoch !== 1 || state.epoch !== scope.epoch || !state.cdpCommit ||
@@ -784,6 +883,7 @@ function assertDocumentScope(scope) {
 }
 
 function assertMainOwner() {
+  assertLiveOwnerReads();
   const state = main?.__shutdown?.state();
   if (finishing || !hostWindow || hostWindow.isDestroyed() ||
       hostWindow.webContents !== hostContents || hostContents.isDestroyed() ||
@@ -802,6 +902,7 @@ function assertMainOwner() {
 async function mainEval(code) {
   assertMainOwner();
   const scope = await assertGuard(hostContents);
+  assertLiveOwnerReads();
   if (!(await waitForExternalTrap(hostWindow, 1000))) throw new Error("Main shell guards changed");
   assertMainOwner();
   assertDocumentScope(scope);
@@ -830,6 +931,7 @@ function inspectMutes(report) {
 }
 
 async function closePopup(win) {
+  assertLiveOwnerReads();
   const record = windows.get(win.id);
   if (!record || record.stopped) return;
   const id = record.id;
@@ -846,10 +948,9 @@ async function closePopup(win) {
     check(`popup ${id} ordinary failure capture precedes destruction`, typeof shot === "string" && shot.length > 0, shot);
   }
   closing.add(record.contentsId);
-  win.destroy();
-  const destroyed = win.isDestroyed() && record.wc.isDestroyed();
-  check(`popup ${id} destruction is confirmed before fixture release`, destroyed);
-  if (!destroyed) throw new Error("popup destruction was not confirmed");
+  await destroyOwner(record);
+  assertLiveOwnerReads();
+  check(`popup ${id} destruction is confirmed before fixture release`, true);
   const file = record.originalURL && fileURLToPath(record.originalURL);
   check(`popup ${id} production close cleans its generated document directory`,
     !!file && !fs.existsSync(path.dirname(file)), file);
@@ -872,53 +973,133 @@ function retainOwnedFixtures(reason) {
     JSON.stringify([...retainedFixtures]) + "\n"); } catch { /* Exit stays nonzero. */ }
 }
 
-function destroyOwners() {
-  if (ownerCleanupInProgress) {
-    const firstReentry = !ownerCleanupReentered;
-    ownerCleanupReentered = true;
-    retainOwnedFixtures("owner cleanup reentered before destruction verification");
-    if (firstReentry) check("popup owner cleanup does not reenter", false, "destruction verification is still in progress");
-    return false;
+function invalidateOwnerInventory(reason) {
+  const first = !ownerInventoryInvalidated;
+  ownerInventoryInvalidated = true;
+  ownerCleanupResult = false;
+  retainOwnedFixtures(reason);
+  if (first && !footerWritten) check("terminal popup owner inventory remained fixed", false, reason);
+}
+
+function ownerInventoryMatches() {
+  return !ownerInventoryInvalidated && ownerCleanupRecords !== null &&
+    windows.size === ownerCleanupRecords.length && ownerCleanupRecords.every(record =>
+      windows.get(record.id) === record && record.win.isDestroyed() && record.wc.isDestroyed());
+}
+
+function destroyOwner(record) {
+  if (record.destruction) return record.destruction;
+  closing.add(record.contentsId);
+  clearTimeout(guards.get(record.contentsId)?.timer);
+  const observations = [];
+  let issue, refuse;
+  const issued = new Promise((resolve, reject) => { issue = resolve; refuse = reject; });
+  try {
+    for (const [target, event] of [[record.win, "closed"], [record.wc, "destroyed"]]) {
+      let done;
+      const observed = new Promise(resolve => { done = resolve; });
+      if (target.isDestroyed()) done();
+      else target.once(event, done);
+      observations.push({ target, event, done, observed });
+    }
+    record.destruction = bounded(Promise.all([issued, ...observations.map(item => item.observed)]),
+      "owned window and contents destruction").then(() => {
+      if (!record.win.isDestroyed() || !record.wc.isDestroyed()) {
+        throw new Error("owned destruction events did not confirm both actual states");
+      }
+    }).finally(() => {
+      for (const item of observations) item.target.removeListener(item.event, item.done);
+    });
+    if (!record.win.isDestroyed()) record.win.destroy();
+    issue();
+  } catch (error) {
+    // Install a handled result even when arming an observation itself failed.
+    if (!record.destruction) {
+      record.destruction = issued.finally(() => {
+        for (const item of observations) item.target.removeListener(item.event, item.done);
+      });
+    }
+    refuse(error);
   }
-  ownerCleanupInProgress = true;
+  return record.destruction;
+}
+
+function destroyOwners() {
+  if (ownerCleanupPromise) return ownerCleanupPromise;
+  let complete;
+  ownerCleanupPromise = new Promise(resolve => { complete = resolve; });
   tearingDown = true;
-  const protectedDirs = [];
+  const failures = [];
   try {
     // Fence the actual shared registry BEFORE any destruction can synchronously
     // emit process exit. Re-register only the active entries after verification.
     for (const dir of ownedFixtures) {
-      if (registeredDirs?.delete(dir)) protectedDirs.push(dir);
+      registeredDirs?.delete(dir);
     }
-    for (const item of pendingDownloads) {
-      try { item.cancel(); } catch { /* Production may already have denied it. */ }
-    }
-    pendingDownloads.clear();
-    let destroyed = true;
-    for (const record of [...windows.values()].sort((a, b) => (a.kind === "main") - (b.kind === "main"))) {
-      closing.add(record.contentsId);
-      clearTimeout(guards.get(record.contentsId)?.timer);
-      try {
-        if (!record.win.isDestroyed()) record.win.destroy();
-        if (!record.win.isDestroyed() || !record.wc.isDestroyed()) destroyed = false;
-      } catch { destroyed = false; }
-    }
-    if (!destroyed || ownerCleanupReentered) {
-      retainOwnedFixtures(ownerCleanupReentered ? "owner cleanup reentry remains sticky" : "owner destruction unconfirmed");
-      if (!ownerCleanupReentered) check("terminal popup cleanup completed", false, "owner destruction unconfirmed");
-      return false;
-    }
-    try { observeVerifiedOwners?.(); } catch { /* Observation must not change cleanup. */ }
-    for (const dir of protectedDirs) {
-      if (!retainedFixtures.has(dir)) registeredDirs.add(dir);
-    }
-    return true;
   } catch (error) {
+    failures.push("owner cleanup setup failed: " + error.message);
+  }
+  for (const item of pendingDownloads) {
+    try { item.cancel(); } catch { /* Production may already have denied it. */ }
+  }
+  pendingDownloads.clear();
+  const records = [...windows.values()].sort((a, b) => (a.kind === "main") - (b.kind === "main"));
+  ownerCleanupRecords = records;
+  // All destruction is issued on this stack, including the fatal path.
+  const pending = records.map(record => destroyOwner(record));
+  Promise.allSettled(pending).then(outcomes => {
+    for (let index = 0; index < outcomes.length; index++) {
+      const outcome = outcomes[index], record = records[index];
+      if (outcome.status === "rejected") {
+        failures.push("owner " + record.id + ": " + String(outcome.reason?.stack || outcome.reason));
+      }
+    }
+    if (!ownerInventoryMatches() && !ownerInventoryInvalidated && !failures.length) {
+      invalidateOwnerInventory("owner inventory changed during terminal destruction");
+    }
+    if (failures.length || ownerInventoryInvalidated) {
+      retainOwnedFixtures(failures.join("; ") || "terminal owner inventory was invalidated");
+      if (failures.length) check("terminal popup cleanup completed", false, failures.join("; "));
+      ownerCleanupResult = false;
+    } else {
+      ownerCleanupResult = true;
+    }
+    complete(ownerCleanupResult);
+  }).catch(error => {
     retainOwnedFixtures("owner cleanup failed: " + error.message);
     check("terminal popup cleanup completed", false, error.message);
-    return false;
-  } finally {
-    ownerCleanupInProgress = false;
-  }
+    ownerCleanupResult = false;
+    complete(false);
+  });
+  return ownerCleanupPromise;
+}
+
+function completeTerminalExit(code) {
+  if (terminalCompletion) return terminalCompletion;
+  const cleanup = destroyOwners();
+  terminalCompletion = cleanup.then(() => {
+    if (ownerCleanupResult === true && !ownerInventoryMatches()) {
+      invalidateOwnerInventory("terminal release found a changed owner inventory");
+    }
+    if (ownerCleanupResult === true) {
+      for (const dir of ownedFixtures) {
+        if (!retainedFixtures.has(dir)) {
+          const released = releaseTempDir(dir);
+          check("owned popup fixture directory released after all owners", released, dir);
+          if (!released) retainOwnedFixtures("owned fixture release did not confirm absence: " + dir);
+        }
+      }
+    } else retainOwnedFixtures("terminal release lacks current verified owner destruction");
+    clearTimeout(watchdog);
+    reportFooter();
+    finishing = "exiting";
+    if (app) app.exit(stickyFailure ? 1 : code);
+    else {
+      exitOwner = true;
+      process.exit(1);
+    }
+  });
+  return terminalCompletion;
 }
 
 function reportFooter() {
@@ -941,10 +1122,7 @@ function fatal(error) {
   clearTimeout(watchdog);
   try { check("popup fatal safety refusal", false, String(error?.stack || error)); }
   finally {
-    destroyOwners();
-    reportFooter();
-    if (app) app.exit(1);
-    else process.exit(1);
+    completeTerminalExit(1);
   }
 }
 
@@ -960,10 +1138,12 @@ async function finish(error) {
         try {
           if (record.scope) assertDocumentScope(record.scope);
           const report = await bounded(record.sentinel.stop(), "terminal live sentinel stop", 8000);
+          if (finishing !== "normal") return;
           if (record.scope) assertDocumentScope(record.scope);
           closedReports.set(record.win.id, report);
           record.stopped = true;
         } catch (cleanupError) {
+          if (finishing !== "normal") return;
           check("live sentinel teardown completed", false, cleanupError.message);
         }
       }
@@ -987,8 +1167,10 @@ async function finish(error) {
         [...windows.values()].some(record => record.kind === "image" && record.contentsId === request.contentsId)),
       netSentinel);
   } catch (cleanupError) {
+    if (finishing !== "normal") return;
     check("live sentinel teardown completed", false, cleanupError.message);
   } finally {
+    if (finishing !== "normal") return;
     try {
       // A clean functional run can still fail its final sentinel drain. Decide
       // capture only after those reports have contributed to the sticky result.
@@ -998,9 +1180,10 @@ async function finish(error) {
             if (record.scope) assertDocumentScope(record.scope);
             const shot = await bounded(captureScreenshot(record.win, "popup-final-failure-" + record.id),
               "ordinary failure capture", 3000).catch(captureError => {
-              check("ordinary failure capture is bounded", false, captureError.message);
+              if (finishing === "normal") check("ordinary failure capture is bounded", false, captureError.message);
               return null;
             });
+            if (finishing !== "normal") return;
             if (record.scope) assertDocumentScope(record.scope);
             check(`popup ${record.id} terminal failure capture succeeds`,
               typeof shot === "string" && shot.length > 0, shot);
@@ -1008,10 +1191,13 @@ async function finish(error) {
         }
       }
     } catch (captureError) {
+      if (finishing !== "normal") return;
       check("ordinary failure capture is bounded", false, captureError.message);
     }
     try {
-      if (destroyOwners()) {
+      const destroyed = await destroyOwners();
+      if (finishing !== "normal") return;
+      if (destroyed && ownerCleanupResult === true && ownerInventoryMatches()) {
         for (const remove of observers) {
           try { remove(); } catch (removeError) { check("popup observer removed", false, removeError.message); }
         }
@@ -1025,18 +1211,12 @@ async function finish(error) {
             check(`popup ${record.id} final production directory cleanup is verified`, !fs.existsSync(directory), directory);
           }
         }
-        for (const dir of ownedFixtures) {
-          if (!retainedFixtures.has(dir)) check("owned popup fixture directory released after all owners", releaseTempDir(dir), dir);
-        }
       }
     } catch (terminalError) {
+      if (finishing !== "normal") return;
       check("terminal popup cleanup completed", false, terminalError.stack || terminalError.message);
     } finally {
-      destroyOwners();
-      clearTimeout(watchdog);
-      reportFooter();
-      finishing = "exiting";
-      app.exit(stickyFailure ? 1 : 0);
+      if (finishing === "normal") await completeTerminalExit(stickyFailure ? 1 : 0);
     }
   }
 }
@@ -1048,6 +1228,7 @@ async function run() {
     !mainStartup.record.wc.isLoadingMainFrame(), "intended Main index commit and bridge readiness");
   const candidate = mainStartup.record;
   const scope = await assertGuard(candidate.wc);
+  assertLiveOwnerReads();
   const witness = await bounded(scope.frame.executeJavaScript(`(async () => ({
     generation: await window.folia.getQuitApprovalGeneration(),
     pageSession: window.getReloadRequestSession(),
@@ -1216,25 +1397,15 @@ async function run() {
   }
   await closeAll();
 
-  // ==========================================================================
-  // ==========================================================================
-  // REMOVAL PIN - the OmniWare wireframe feature was removed from the fork.
-  //
-  // There is deliberately no arbitrary-send bridge. This is an architecture
-  // removal check, not a claim to execute an unreachable legacy IPC actor.
-  // ==========================================================================
-  const removedRoute = await mainEval(`({
+  const popupAPI = await mainEval(`({
     publicKeys:Object.keys(window.folia),
-    rawIPC:typeof window.folia.send,
-    legacy:typeof window.folia.openOmniwarePopup
+    rawIPC:typeof window.folia.send
   })`);
   check(
-    "REMOVED OmniWare has neither a Main listener nor a public popup route",
-    ipcMain.listenerCount("open-omniware-popup") === 0 &&
-      removedRoute.legacy === "undefined" && removedRoute.rawIPC === "undefined" &&
-      !removedRoute.publicKeys.some(key => /omniware/i.test(key)) &&
-      ["openImagePopup", "openMermaidPopup", "openTablePopup"].every(key => removedRoute.publicKeys.includes(key)),
-    removedRoute,
+    "current popup APIs are explicit and expose no arbitrary-send bridge",
+    popupAPI.rawIPC === "undefined" &&
+      ["openImagePopup", "openMermaidPopup", "openTablePopup"].every(key => popupAPI.publicKeys.includes(key)),
+    popupAPI,
   );
   await closeAll();
 
@@ -2512,6 +2683,7 @@ async function run() {
   const dirB = pathB && path.dirname(pathB);
   await closePopup(mermaidA);
   await sleep(700);
+  assertLiveOwnerReads();
   check(
     "SEC-20 closing one popup removes only its own document, not the other's",
     !!dirA && !!dirB && !fs.existsSync(dirA) && fs.existsSync(dirB) &&
@@ -2520,6 +2692,7 @@ async function run() {
   );
   await closePopup(mermaidB);
   await sleep(700);
+  assertLiveOwnerReads();
   check(
     "SEC-20 the temp directory is cleaned up when the popup closes",
     !!dirB && !fs.existsSync(dirB),
@@ -2565,6 +2738,7 @@ async function run() {
   // that is a named failure rather than a quietly meaningless number.
   const MIN_SAMPLING_WIDTH_PX = 128;
   async function softEdgeFraction(win) {
+    assertLiveOwnerReads();
     // capturePage() intermittently rejects with UnknownVizError under load -
     // observed during a revert run, where it surfaced as the whole suite
     // throwing instead of the assertion under test failing. Retry rather than
@@ -2591,10 +2765,15 @@ async function run() {
         assertDocumentScope(scope);
         if (candidate && candidate.getSize().width > 0) img = candidate;
       } catch (e) {
+        assertLiveOwnerReads();
         lastErr = e;
       }
-      if (!img) await sleep(500);
+      if (!img) {
+        await sleep(500);
+        assertLiveOwnerReads();
+      }
     }
+    assertLiveOwnerReads();
     if (!img) {
       return {
         soft: 0,
@@ -2625,6 +2804,7 @@ async function run() {
       );
       if (typeof overlayRight !== "number") overlayRight = NaN;
     } catch {
+      assertLiveOwnerReads();
       overlayRight = NaN; // Invalid geometry must never silently sample chrome.
     }
     const { width, height } = img.getSize();
