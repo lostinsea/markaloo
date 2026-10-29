@@ -33981,6 +33981,9 @@ async function runF22SaveAndReloadScenarios(
   // path. Edit mode is entered only if it is not already on, and put back the
   // way it was found, because the scenarios after this one inherit it.
   const orderedSaveEditModeBefore = await exec(`window.CustomTabs.__inEditMode()`);
+  if (orderedSaveEditModeBefore !== false) {
+    throw new Error("F22 freshly admitted ordered Save owner did not start in view mode");
+  }
   if (orderedSaveEditModeBefore !== true) {
     await exec(`(isEditMode ? exitEditBtn : toggleEditBtn).click(); null;`);
   }
@@ -34142,6 +34145,104 @@ async function runF22SaveAndReloadScenarios(
   let producerCapturedSaves = null;
   let orderedSaveEvidence = null;
   let orderedEaccesMute = null;
+  const retireOrderedSaveE = async () => {
+    const text = "F22_SAVE_E_NEWER_FAILURE";
+    const baseline = "F22_SAVE_B_NEWER";
+    const measured = orderedSaveEvidence?.afterOldSuccess;
+    const fields = ["pageSession", "rendererGeneration", "tabId",
+      "documentGeneration", "pathKey", "documentRef"];
+    const owner = measured?.selection;
+    if (orderedSaveEditModeBefore !== false ||
+        orderedSaveEvidence?.capturedIdentityE !== true ||
+        orderedSaveEvidence.newerFailureApplied !== true ||
+        orderedSaveEvidence.oldSuccessSettled !== true ||
+        measured?.id !== orderedSaveTab.id ||
+        measured.activeTabId !== orderedSaveTab.id ||
+        measured.content !== text || measured.editor !== text ||
+        measured.original !== baseline || measured.editMode !== true ||
+        measured.dirty !== true || measured.documentState?.dirty !== true ||
+        measured.pending?.count !== 0 || measured.pending.pending !== false ||
+        measured.failedSaves !== true || measured.deletionTombstone !== false ||
+        measured.reloadConflict !== false || owner?.tabId !== orderedSaveTab.id ||
+        typeof owner.pageSession !== "string" || !owner.pageSession ||
+        typeof owner.pathKey !== "string" || !owner.pathKey ||
+        typeof owner.documentRef !== "string" || !owner.documentRef ||
+        !Number.isSafeInteger(owner.rendererGeneration) || owner.rendererGeneration <= 0 ||
+        !Number.isSafeInteger(owner.documentGeneration) || owner.documentGeneration <= 0) {
+      throw new Error("F22 ordered E retirement lacks its measured dirty owner");
+    }
+    const main = __shutdown.state();
+    if (main.renderer !== "ready" || main.pendingId !== 0 ||
+        main.rendererPageSession !== owner.pageSession ||
+        main.rendererGeneration !== owner.rendererGeneration ||
+        !__shutdown.documentAdmissionIsCurrent(owner.documentRef) ||
+        !__shutdown.documentSessionState().owners.some(candidate =>
+          fields.every(field => candidate[field] === owner[field]))) {
+      throw new Error("F22 ordered E retirement lost its current Main owner");
+    }
+    const permission = await exec(`(() => {
+      const expected = ${JSON.stringify(owner)};
+      const fields = ${JSON.stringify(fields)};
+      const tabs = window.CustomTabs.getTabs();
+      const tab = window.CustomTabs.getActiveTab();
+      const identity = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      const state = tab && window.CustomTabs.__documentState(tab);
+      const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
+      const pending = window.getPendingSaveStatus(${JSON.stringify(orderedSaveFile)});
+      const deletion = identity && window.folia.queryDocumentDeletionState({
+        ...identity, filePath: ${JSON.stringify(orderedSaveFile)},
+      });
+      if (tabs.length !== 1 || tab?.id !== ${orderedSaveTab.id} ||
+          window.CustomTabs.getActiveTabId() !== ${orderedSaveTab.id} ||
+          tab.filePath !== ${JSON.stringify(orderedSaveFile)} ||
+          window.currentFilePath !== tab.filePath ||
+          !identity || !fields.every(field => identity[field] === expected[field]) ||
+          descriptor?.ref !== expected.documentRef ||
+          tab.content !== ${JSON.stringify(text)} ||
+          tab.originalContent !== ${JSON.stringify(baseline)} ||
+          window.CustomTabs.__inEditMode() !== true ||
+          window.markdownEditor?.value !== ${JSON.stringify(text)} ||
+          tab.hasUnsavedChanges !== true || state?.maintained !== true ||
+          state.dirty !== true || state.deletionTombstone || state.reloadConflict ||
+          pending.count !== 0 || pending.pending !== false ||
+          deletion?.known !== true || deletion.unresolved !== false ||
+          document.getElementById("appMessageDialog")?.open ||
+          window.CustomTabs.__shutdownFreeze().frozen !== false) {
+        throw new Error("F22 ordered E changed before its exact retirement permission");
+      }
+      return {
+        tabId: tab.id, filePath: tab.filePath,
+        owner: Object.fromEntries(fields.map(field => [field, identity[field]])),
+        content: ${JSON.stringify(text)},
+        reason: "Discard measured F22 ordered E failure after all save assertions",
+      };
+    })()`);
+    const outcome = await closeOwnedFixtureTabs(exec, "F22 ordered E retirement", {
+      tabIds: [orderedSaveTab.id], expectedDiscards: [permission],
+    });
+    const record = outcome.records[0];
+    const restored = await exec(`({
+      count: window.CustomTabs.getTabs().length,
+      activeId: window.CustomTabs.getActiveTabId(),
+      path: window.currentFilePath,
+      editMode: window.CustomTabs.__inEditMode(),
+      question: !!document.getElementById("appMessageDialog")?.open,
+    })`);
+    if (outcome.records.length !== 1 || outcome.remaining.length !== 0 ||
+        record.tabId !== orderedSaveTab.id || record.initialLive !== text ||
+        record.initialCache !== text || record.needsDiscard !== true ||
+        record.answered !== true || record.closed !== true || record.settled !== true ||
+        !fields.every(field => record.identity[field] === owner[field]) ||
+        restored.count !== 0 || restored.activeId !== null || restored.path !== null ||
+        restored.editMode !== false || restored.question ||
+        __shutdown.documentAdmissionIsCurrent(owner.documentRef) ||
+        __shutdown.documentSessionState().owners.some(candidate =>
+          fields.every(field => candidate[field] === owner[field]))) {
+      throw new Error("F22 ordered E did not retire and restore its closed editor");
+    }
+    return outcome;
+  };
   try {
     producerCapturedSaves = await exec(`
       (() => {
@@ -34507,28 +34608,6 @@ async function runF22SaveAndReloadScenarios(
     restoreOrderedSaveOpen();
     restoreOrderedSaveSend();
     await exec(`window.__f22OrderedSaveCleanup && window.__f22OrderedSaveCleanup(); delete window.__f22OrderedSaveCleanup; null;`);
-    if (orderedSaveEditModeBefore !== true) {
-      // The E failure deliberately leaves this document DIRTY, and the product
-      // asks for confirmation before leaving edit mode with unsaved changes.
-      // `window.confirm` is a blocking native dialog in the renderer, so an
-      // unstubbed restore here would HANG the suite instead of failing it -
-      // and a cleanup that hangs reports a timeout, not a verdict. The
-      // approval is explicit, is scoped to this one click, and the real
-      // `confirm` is put back only once the mode has actually changed, because
-      // the toggle handler can await a pending save before it asks.
-      await exec(`
-        window.__f22OrderedSaveConfirm = window.confirm;
-        window.confirm = () => true;
-        if (window.CustomTabs.__inEditMode() === true) (isEditMode ? exitEditBtn : toggleEditBtn).click();
-        null;
-      `);
-      await waitForCondition(exec, `window.CustomTabs.__inEditMode() === false`, 5000);
-      await exec(`
-        if (window.__f22OrderedSaveConfirm) window.confirm = window.__f22OrderedSaveConfirm;
-        delete window.__f22OrderedSaveConfirm;
-        null;
-      `);
-    }
   }
   const orderedSaveDetail = JSON.stringify(orderedSaveEvidence);
   check(
@@ -34702,6 +34781,7 @@ async function runF22SaveAndReloadScenarios(
       Array.isArray(orderedSaveEvidence.afterOldSuccess.shutdownDirty),
     orderedSaveDetail,
   );
+  await retireOrderedSaveE();
   }
   if (f22WatcherProbe) {
     f22WatcherProbe.restore();
