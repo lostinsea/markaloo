@@ -192,6 +192,7 @@ async function checkMainContinuations() {
   let settled;
   const shutdown = {
     AbortController, shutdownOwnerWindow: () => ({}),
+    shutdownQuestionConsumers: new WeakMap(),
     pendingShutdown: null, deletionEvidenceCapacityLatched: false,
     deletionEvidenceRevision: 6, staleShutdownDialogCompletionCount: 0,
     deletionEvidenceTombstoneFileLabels: () => [], log: () => {},
