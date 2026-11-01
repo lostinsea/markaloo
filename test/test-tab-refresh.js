@@ -12790,6 +12790,94 @@ async function runTabPathCopyScenario(exec, expectedPath) {
     ctx.painted && ctx.onScreen, JSON.stringify(ctx));
   check("the tab menu copies that tab's full path and closes itself",
     ctx.copied === expectedPath && ctx.calls === 1 && ctx.dismissed, JSON.stringify(ctx));
+
+  const openTabMenu = () => exec(`(() => {
+    const tab = document.querySelector('.tab.active');
+    const viewer = document.getElementById('viewer');
+    const tabs = document.getElementById('tabsContainer');
+    const rect = tab.getBoundingClientRect();
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true,
+      clientX: Math.round(rect.x + rect.width / 2), clientY: Math.round(rect.y + rect.height / 2) }));
+    return {
+      open: document.getElementById('tabContextMenu').classList.contains('visible'),
+      anchorConnected: tab.isConnected, clickedPath: tab.title,
+      tabsRelated: tabs.isConnected && tabs.contains(tab),
+      viewerUnrelated: viewer.isConnected && !viewer.contains(tab) && !tab.contains(viewer),
+    };
+  })()`);
+  try {
+    const beforeViewerScroll = await openTabMenu();
+    check("tab-menu unrelated-scroll control starts with the actual clicked path and a sibling viewer",
+      beforeViewerScroll.open && beforeViewerScroll.anchorConnected &&
+        beforeViewerScroll.clickedPath === expectedPath &&
+        beforeViewerScroll.tabsRelated && beforeViewerScroll.viewerUnrelated,
+      JSON.stringify(beforeViewerScroll));
+    // Neither existing caller guarantees viewer overflow; this checks scroll
+    // routing on the live node, not a new fixture or physical-scroll campaign.
+    const viewerScroll = await exec(`(() => {
+      const event = new Event('scroll');
+      let delivered = false;
+      const observe = (received) => { if (received === event) delivered = true; };
+      document.addEventListener('scroll', observe, true);
+      try { document.getElementById('viewer').dispatchEvent(event); }
+      finally { document.removeEventListener('scroll', observe, true); }
+      return { delivered,
+        open: document.getElementById('tabContextMenu').classList.contains('visible') };
+    })()`);
+    check("unrelated viewer scroll events reach the document and retain the actual tab menu",
+      viewerScroll.delivered && viewerScroll.open, JSON.stringify(viewerScroll));
+    const retainedPath = await exec(`(async () => {
+      const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      const calls = [];
+      Object.defineProperty(navigator, 'clipboard', { configurable: true,
+        value: { writeText(text) { calls.push(text); return Promise.resolve(); } } });
+      try {
+        document.getElementById('ctxTabCopyPath').click();
+        await Promise.resolve(); await Promise.resolve();
+        return { copied: calls[0], calls: calls.length,
+          dismissed: !document.getElementById('tabContextMenu').classList.contains('visible') };
+      } finally {
+        if (descriptor) Object.defineProperty(navigator, 'clipboard', descriptor);
+        else delete navigator.clipboard;
+      }
+    })()`);
+    check("the retained tab menu still copies exactly its clicked full path once and dismisses",
+      retainedPath.copied === expectedPath && retainedPath.calls === 1 &&
+        retainedPath.dismissed, JSON.stringify(retainedPath));
+
+    const beforeTabsScroll = await openTabMenu();
+    check("tab-menu related-scroll control starts with the clicked anchor inside the actual tab strip",
+      beforeTabsScroll.open && beforeTabsScroll.anchorConnected &&
+        beforeTabsScroll.clickedPath === expectedPath && beforeTabsScroll.tabsRelated,
+      JSON.stringify(beforeTabsScroll));
+    const tabsScroll = await exec(`(() => {
+      document.getElementById('tabsContainer').dispatchEvent(new Event('scroll'));
+      return { dismissed:
+        !document.getElementById('tabContextMenu').classList.contains('visible') };
+    })()`);
+    check("scroll events on the actual tab strip dismiss its tab menu",
+      tabsScroll.dismissed, JSON.stringify(tabsScroll));
+
+    const beforeRebuild = await openTabMenu();
+    check("tab-menu rebuild control starts with the visible clicked anchor",
+      beforeRebuild.open && beforeRebuild.anchorConnected &&
+        beforeRebuild.clickedPath === expectedPath, JSON.stringify(beforeRebuild));
+    const rebuilt = await exec(`(() => {
+      const anchor = document.querySelector('.tab.active');
+      window.CustomTabs.renderTabs();
+      const replacement = document.querySelector('.tab.active');
+      return { anchorReplaced: !anchor.isConnected && replacement !== anchor &&
+          replacement.isConnected,
+        replacementPath: replacement.title,
+        dismissed: !document.getElementById('tabContextMenu').classList.contains('visible') };
+    })()`);
+    check("the existing renderTabs lifecycle really replaces the clicked anchor without changing its path",
+      rebuilt.anchorReplaced && rebuilt.replacementPath === expectedPath, JSON.stringify(rebuilt));
+    check("rebuilding the tab strip dismisses the menu for its replaced anchor",
+      rebuilt.dismissed, JSON.stringify(rebuilt));
+  } finally {
+    await exec(`document.body.click()`);
+  }
 }
 
 async function boundedDialogWork(work, label, timeoutMs = 12000) {

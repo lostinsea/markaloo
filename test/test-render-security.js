@@ -6192,121 +6192,169 @@ async function run(win) {
   );
 
   // ==========================================================================
-  // SEC-29 - the table paths sanitized with a BARE DOMPurify.sanitize()
-  //
-  // Five call sites parsed markdown and sanitized it without SANITIZE_CONFIG,
-  // silently opting out of the SEC-11 <form> control above. The comment on
-  // SANITIZE_CONFIG called itself the "single source of truth for what the
-  // sanitizer permits" - it was not.
-  //
-  // Reachability is the point: renderTableInDOM extracts only the <table>
-  // element from its scratch div, so a <form> as a SIBLING of the table would
-  // be dropped by the extraction. Nested inside a CELL it travels with the
-  // table and is appended straight into the Node-privileged viewer.
+  // SEC-29 - the shared table sanitizer and rich-cell preparation.
+  // No document owner is opened here. Preparation is not popup admission:
+  // forms are rejected by rich cells before sanitization, while supported
+  // inline tags still pass through the shared deny-lists.
   // ==========================================================================
   await render("# TableClean\n\nreset\n", "full", 600);
   const tableFormMd =
     "| A | B |\n" +
     "|---|---|\n" +
-    '| <form action="https://probe.invalid/tbl"><button>TableFormProbe</button></form> | y |\n';
+    '| <form action="https://probe.invalid/tbl"><button>TableFormProbe</button></form> ' +
+    '<button formaction="https://probe.invalid/fa">TableActionProbe</button> | y |\n';
   const tableFormState = await exec(`
     (() => {
-      window.renderTableInDOM(${JSON.stringify(tableFormMd)}, 'insert');
-      const v = document.getElementById('viewer');
-      const btns = Array.from(v.querySelectorAll('button'));
+      const sourceBefore = markdownEditor.value, viewerBefore = viewer.innerHTML;
+      const originalBefore = originalMarkdown, sessionBefore = tableCellSession;
+      const dirty = document.createElement('template');
+      dirty.innerHTML = marked.parse(${JSON.stringify(tableFormMd)});
+      const clean = document.createElement('template');
+      clean.innerHTML = sanitizeTableHtml(dirty.innerHTML);
+      const v = clean.content, btns = Array.from(v.querySelectorAll('button'));
       return {
+        payloadTable: dirty.content.querySelectorAll('table').length,
+        payloadFormInCell: dirty.content.querySelectorAll('td form[action]').length,
+        payloadFormAction: dirty.content.querySelectorAll('td button[formaction]').length,
         tables: v.querySelectorAll('table').length,
+        headers: Array.from(v.querySelectorAll('th')).map(x => x.textContent),
+        controlCell: v.querySelector('td:last-child')?.textContent,
         forms: v.querySelectorAll('form').length,
         actionAttrs: v.querySelectorAll('[action]').length,
-        // Same control as SEC-11: DOMPurify unwraps a forbidden tag and keeps
-        // its children, so the button surviving proves the payload reached the
-        // sanitizer and was specifically stripped - not that the table failed
-        // to render, or that renderTableInDOM bailed at its querySelector.
+        formActionAttrs: v.querySelectorAll('[formaction]').length,
         probeBtn: btns.some(b => b.textContent === 'TableFormProbe'),
+        actionBtn: btns.some(b => b.textContent === 'TableActionProbe'),
+        unchanged: markdownEditor.value === sourceBefore && originalMarkdown === originalBefore &&
+          viewer.innerHTML === viewerBefore && tableCellSession === sessionBefore,
       };
     })()
   `);
   check(
-    "SEC-29 a <form> nested in a table cell is stripped on the context-menu table path",
-    tableFormState.tables === 1 &&
+    "SEC-29 the shared table sanitizer strips forms and action attributes, not cell content",
+    tableFormState.payloadTable === 1 &&
+      tableFormState.payloadFormInCell === 1 &&
+      tableFormState.payloadFormAction === 1 &&
+      tableFormState.tables === 1 &&
+      tableFormState.headers.join() === "A,B" &&
+      tableFormState.controlCell === "y" &&
       tableFormState.forms === 0 &&
       tableFormState.actionAttrs === 0 &&
-      tableFormState.probeBtn === true,
+      tableFormState.formActionAttrs === 0 &&
+      tableFormState.probeBtn === true &&
+      tableFormState.actionBtn === true &&
+      tableFormState.unchanged === true,
     JSON.stringify(tableFormState),
   );
 
-  // The other reachable half: the table dialog's live preview element. This is
-  // fed from the open DOCUMENT on the 'edit' path, so its input is
-  // attacker-controlled too, and it is a live node in the privileged window
-  // rather than a detached scratch div.
-  const tablePreviewState = await exec(`
+  const tableCellPreparation = await exec(`
     (() => {
-      window.openTableInsertDialog(${JSON.stringify(tableFormMd)}, 'edit');
-      const p = document.getElementById('tableInsertPreview');
-      const out = {
-        found: !!p,
-        // Symmetric with the check above: without this, a marked change that
-        // stopped emitting a <table> would put the <form> in a <p>, strip it
-        // identically, and let probeBtn pass green while measuring a shape the
-        // assertion's own name does not describe.
-        tables: p ? p.querySelectorAll('table').length : -1,
-        cellBtns: p ? p.querySelectorAll('td button').length : -1,
-        forms: p ? p.querySelectorAll('form').length : -1,
-        actionAttrs: p ? p.querySelectorAll('[action]').length : -1,
-        probeBtn: p
-          ? Array.from(p.querySelectorAll('button')).some(
-              b => b.textContent === 'TableFormProbe',
-            )
-          : false,
+      const sourceBefore = markdownEditor.value, originalBefore = originalMarkdown;
+      const viewerBefore = viewer.innerHTML, sessionBefore = tableCellSession;
+      const gridBefore = tableCellGrid.innerHTML, openBefore = tableCellDialog.open;
+      const raw = '<span action="https://probe.invalid/cell" ' +
+        'formaction="https://probe.invalid/fa">CellActionProbe</span> **CellStrongControl**';
+      const dirty = document.createElement('template');
+      dirty.innerHTML = marked.parseInline(raw);
+      const input = document.createElement('div');
+      const provenance = FoliaTableCells.prepareCell(input, raw, raw, marked, {},
+        parseEmojis, sanitizeTableHtml);
+      const session = { model: { links: {} } };
+      const column = { id: 'security-preparation-column' };
+      const header = createTableCell(session, { header: true, editable: false }, column, 0, raw, null);
+      const controlRaw = '**EditableControl** and [SafeLink](https://probe.invalid/control)';
+      const control = createTableCell(session, { header: false, editable: true }, column, 0, controlRaw, null);
+      const form = '<form action="https://probe.invalid/cell"><button>CellFormProbe</button></form>';
+      const rejectedInput = document.createElement('div');
+      rejectedInput.textContent = 'PreparationControl';
+      let refusal = null, constructedFormCell = false, constructionRefusal = null;
+      try {
+        FoliaTableCells.prepareCell(rejectedInput, form, form, marked, {},
+          parseEmojis, sanitizeTableHtml);
+      } catch (error) {
+        refusal = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        createTableCell(session, { header: false, editable: true }, column, 0, form, null);
+        constructedFormCell = true;
+      } catch (error) {
+        constructionRefusal = error instanceof Error ? error.message : String(error);
+      }
+      return {
+        payloadAction: dirty.content.querySelectorAll('span[action][formaction]').length,
+        forms: input.querySelectorAll('form').length,
+        actionAttrs: input.querySelectorAll('[action], [formaction]').length,
+        text: input.textContent,
+        strong: input.querySelector('strong')?.textContent,
+        provenance: provenance.fragments instanceof Map && provenance.fragments.size > 0,
+        headerTag: header.container.tagName,
+        headerScope: header.container.scope,
+        headerRole: header.input.getAttribute('role'),
+        headerReadonly: header.input.getAttribute('aria-readonly'),
+        headerEditable: header.input.isContentEditable,
+        headerActions: header.input.querySelectorAll('[action], [formaction]').length,
+        headerText: header.input.textContent,
+        headerIdentity: tableCellForEvent({ target: header.input }) === header,
+        controlTag: control.container.tagName,
+        controlEditable: control.input.contentEditable,
+        controlRole: control.input.getAttribute('role'),
+        controlMultiline: control.input.getAttribute('aria-multiline'),
+        controlStrong: control.input.querySelector('strong')?.textContent,
+        controlHref: control.input.querySelector('a')?.getAttribute('href'),
+        controlSource: serializeSafeTableCell(control.input),
+        controlIdentity: tableCellForEvent({ target: control.input }) === control,
+        refusal, constructionRefusal, constructedFormCell,
+        rejectionPreserved: rejectedInput.textContent === 'PreparationControl' &&
+          rejectedInput.children.length === 0,
+        unchanged: markdownEditor.value === sourceBefore && originalMarkdown === originalBefore &&
+          viewer.innerHTML === viewerBefore && tableCellSession === sessionBefore &&
+          tableCellGrid.innerHTML === gridBefore && tableCellDialog.open === openBefore,
       };
-      // closeTableInsertDialog() only removes the 'visible' class, so on its
-      // own it would leave tableDialogMode==='edit', the attack markdown in the
-      // textarea and its render in the live preview - a trap for whatever test
-      // is appended here next. Clear the source first, then reopen in 'insert'
-      // (which resets the mode, the button label and, via updateTablePreview(),
-      // the preview itself) before closing for real.
-      const ta = document.getElementById('tableInsertMarkdown');
-      if (ta) ta.value = '';
-      window.openTableInsertDialog(null, 'insert');
-      window.closeTableInsertDialog();
-      out.residualForms = p ? p.querySelectorAll('form').length : -1;
-      out.residualBtn = p
-        ? Array.from(p.querySelectorAll('button')).some(
-            b => b.textContent === 'TableFormProbe',
-          )
-        : true;
-      return out;
     })()
   `);
   check(
-    "SEC-29 a <form> nested in a table cell is stripped in the table dialog preview",
-    tablePreviewState.found === true &&
-      tablePreviewState.tables === 1 &&
-      tablePreviewState.cellBtns === 1 &&
-      tablePreviewState.forms === 0 &&
-      tablePreviewState.actionAttrs === 0 &&
-      tablePreviewState.probeBtn === true,
-    JSON.stringify(tablePreviewState),
+    "SEC-29 shared rich-cell preparation strips action attributes and preserves supported content",
+    tableCellPreparation.payloadAction === 1 &&
+      tableCellPreparation.forms === 0 &&
+      tableCellPreparation.actionAttrs === 0 &&
+      tableCellPreparation.text === "CellActionProbe CellStrongControl" &&
+      tableCellPreparation.strong === "CellStrongControl" &&
+      tableCellPreparation.provenance === true &&
+      tableCellPreparation.headerTag === "TH" &&
+      tableCellPreparation.headerScope === "col" &&
+      tableCellPreparation.headerRole === "textbox" &&
+      tableCellPreparation.headerReadonly === "true" &&
+      tableCellPreparation.headerEditable === false &&
+      tableCellPreparation.headerActions === 0 &&
+      tableCellPreparation.headerText === "CellActionProbe CellStrongControl" &&
+      tableCellPreparation.headerIdentity === true,
+    JSON.stringify(tableCellPreparation),
   );
   check(
-    "SEC-29 the table dialog is left reset, not holding the attack markdown",
-    tablePreviewState.residualForms === 0 &&
-      tablePreviewState.residualBtn === false,
-    JSON.stringify(tablePreviewState),
+    "SEC-29 actual editable cells retain formatting, links and exact serialization authority",
+    tableCellPreparation.controlTag === "TD" &&
+      tableCellPreparation.controlEditable === "true" &&
+      tableCellPreparation.controlRole === "textbox" &&
+      tableCellPreparation.controlMultiline === "false" &&
+      tableCellPreparation.controlStrong === "EditableControl" &&
+      tableCellPreparation.controlHref === "https://probe.invalid/control" &&
+      tableCellPreparation.controlSource ===
+        "**EditableControl** and [SafeLink](https://probe.invalid/control)" &&
+      tableCellPreparation.controlIdentity === true,
+    JSON.stringify(tableCellPreparation),
+  );
+  check(
+    "SEC-29 form cells are refused during preparation without changing the document or popup",
+    tableCellPreparation.refusal === "tableCells.cellType" &&
+      tableCellPreparation.constructionRefusal === "tableCells.cellType" &&
+      tableCellPreparation.constructedFormCell === false &&
+      tableCellPreparation.rejectionPreserved === true &&
+      tableCellPreparation.unchanged === true,
+    JSON.stringify(tableCellPreparation),
   );
 
-  // The comment on TABLE_SANITIZE_CONFIG makes a load-bearing promise: the two
-  // deny-lists are shared BY REFERENCE, so a tag added to SANITIZE_CONFIG can
-  // never leave the table path behind again. Nothing measured that. Rewriting
-  // the config to literal copies (['form'] / ['action','formaction']) leaves
-  // both SEC-29 checks green and R449 still failing exactly as designed, while
-  // fully re-arming the drift the comment declares impossible.
-  //
-  // Object identity is the right oracle: a copy, a spread, or a literal all
-  // fail it, and it is the property the comment actually claims. SANITIZE_CONFIG
-  // is a top-level `const` in a classic script, so it is not on `window` but IS
-  // a global lexical binding - hence the reachability control, without which a
-  // renaming refactor would make this pass by throwing into the catch.
+  // Equal copies still allow the two policies to drift. Pin shared identity
+  // and freezing separately from the payload checks. The reachability control
+  // must fail if either global lexical binding is renamed or removed.
   const aliasState = await exec(`
     (() => {
       try {
@@ -6339,19 +6387,9 @@ async function run(win) {
   );
 
   // ==========================================================================
-  // SEC-30 - <a download> as an outbound-request primitive
-  //
-  // `download` is in DOMPurify 3.4.12's default ALLOWED_ATTR (measured: 118
-  // entries; `download` and `href` in, `target` and `ping` out). A download is
-  // NOT a navigation, so main.js's will-navigate / will-redirect /
-  // will-frame-navigate / setWindowOpenHandler denies never see it, and CSP has
-  // no directive that governs one. Inside #viewer the attribute was already
-  // inert - every branch of the click delegation calls preventDefault() and
-  // routes the link to shell.openExternal - but #tableInsertPreview sits
-  // OUTSIDE #viewer and had no delegation. Measured before the fix: a download
-  // anchor rendered there issued a live outbound HTTP request from the
-  // Node-privileged renderer to a loopback beacon, while a plain anchor in the
-  // same click batch was blocked by will-navigate.
+  // SEC-30 - downloads and clicks in the shared rich-cell surface.
+  // Downloads are not navigations. Keep both defenses: strip the attribute
+  // during preparation and prevent link defaults in the actual shared dialog.
   // ==========================================================================
   const dlProbeMd =
     "| A | B |\n" +
@@ -6388,166 +6426,172 @@ async function run(win) {
     JSON.stringify(dlViewerState),
   );
 
-  // The reachable half: the dialog preview, whose 'edit' input is the open
-  // document. Covered by the same strip only because TABLE_SANITIZE_CONFIG
-  // aliases FORBID_ATTR by reference - the property the check above pins.
-  const dlPreviewState = await exec(`
+  // Mount actual prepared cells under the existing dialog listener. No popup
+  // session or document target is invented; this tests cells and event handling,
+  // not admission, browser hit testing or a document Update.
+  const dlCellState = await exec(`
     (() => {
-      window.openTableInsertDialog(${JSON.stringify(dlProbeMd)}, 'edit');
-      const p = document.getElementById('tableInsertPreview');
-      const a = p
-        ? Array.from(p.querySelectorAll('a')).find(
-            x => x.textContent === 'DownloadProbe',
-          )
-        : null;
-      const out = {
-        found: !!p,
-        anchor: !!a,
-        href: a ? a.getAttribute('href') : null,
-        downloadAttrs: p ? p.querySelectorAll('[download]').length : -1,
-        tables: p ? p.querySelectorAll('table').length : -1,
+      if (tableCellSession !== null || tableCellDialog.open || tableCellGrid.childNodes.length) {
+        throw new Error('SEC-30 requires an idle shared table dialog');
+      }
+      const sourceBefore = markdownEditor.value, originalBefore = originalMarkdown;
+      const viewerBefore = viewer.innerHTML;
+      const table = document.createElement('table');
+      const session = { model: { links: {} } }, column = { id: 'security-download-column' };
+      const raw = '<a download="pwned.txt" href="https://probe.invalid/dl">DownloadProbe</a>';
+      const dirty = document.createElement('template');
+      dirty.innerHTML = marked.parseInline(raw);
+      const header = createTableCell(session, { header: true, editable: false }, column, 0, raw, null);
+      const data = createTableCell(session, { header: false, editable: true }, column, 0, raw, null);
+      const plainRaw = '[PlainLinkControl](https://probe.invalid/plain)';
+      const plain = createTableCell(session, { header: false, editable: true }, column, 1, plainRaw, null);
+      const text = createTableCell(session, { header: false, editable: true }, column, 2, 'TextControl', null);
+      const headerRow = table.createTHead().insertRow();
+      headerRow.appendChild(header.container);
+      const dataRow = table.createTBody().insertRow();
+      dataRow.append(data.container, plain.container, text.container);
+      const clicks = [];
+      const spy = event => clicks.push({ type: event.type, target: event.target,
+        prevented: event.defaultPrevented });
+      const click = (target, type = 'click', button = 0) => {
+        if (!target) return { seen: false, prevented: null, canceled: null };
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, button });
+        const before = clicks.length;
+        const canceled = !target.dispatchEvent(event), seen = clicks.at(-1);
+        return { seen: clicks.length === before + 1 && seen?.target === target && seen.type === type,
+          prevented: seen?.prevented, canceled };
       };
-      // Inertness of the preview surface itself, independent of the attribute
-      // strip. A bubble-phase listener observes the SAME event the capture
-      // guard has already defaultPrevented. clickSeen is the control: it
-      // proves the click really was dispatched to the anchor, so
-      // clickPrevented cannot pass by the click silently not happening.
-      let seen = false;
-      let prevented = null;
-      const spy = (e) => { seen = true; prevented = e.defaultPrevented; };
-      if (p) p.addEventListener('click', spy);
-      if (a) a.click();
-      if (p) p.removeEventListener('click', spy);
-      out.clickSeen = seen;
-      out.clickPrevented = prevented;
-      // Same reset as the SEC-29 block above: closeTableInsertDialog() only
-      // drops the 'visible' class, so without this the attack markdown stays in
-      // the textarea and its render stays in the live preview, trapping
-      // whatever test is appended here next.
-      const ta = document.getElementById('tableInsertMarkdown');
-      if (ta) ta.value = '';
-      window.openTableInsertDialog(null, 'insert');
-      window.closeTableInsertDialog();
-      out.residualDownloadAttrs = p ? p.querySelectorAll('[download]').length : -1;
+      const out = { payloadDownload: dirty.content.querySelectorAll('a[download][href]').length };
+      tableCellDialog.addEventListener('click', spy);
+      tableCellDialog.addEventListener('auxclick', spy);
+      try {
+        tableCellGrid.appendChild(table);
+        const cellsBefore = table.innerHTML;
+        out.mounted = tableCellDialog.contains(header.input) && tableCellGrid.contains(data.input);
+        out.tables = tableCellGrid.querySelectorAll('table').length;
+        out.cells = [header, data].map(cell => {
+          const anchor = cell.input.querySelector('a');
+          return { anchor: !!anchor, href: anchor?.getAttribute('href'),
+            text: anchor?.textContent, downloads: cell.input.querySelectorAll('[download]').length,
+            readonly: cell.input.getAttribute('aria-readonly'), editable: cell.input.isContentEditable,
+            identity: !!anchor && tableCellForEvent({ target: anchor }) === cell,
+            pointerEvents: anchor ? getComputedStyle(anchor).pointerEvents : null,
+            click: click(anchor), middle: click(anchor, 'auxclick', 1),
+            right: click(anchor, 'auxclick', 2) };
+        });
+        const anchor = plain.input.querySelector('a'), nested = anchor?.firstElementChild;
+        out.plainHref = anchor?.getAttribute('href');
+        out.plainText = anchor?.textContent;
+        out.plainClick = click(anchor);
+        out.nestedTarget = !!nested && nested !== anchor && anchor.contains(nested);
+        out.nestedClick = click(nested);
+        out.textClick = click(text.input);
+        out.cellsUnchanged = table.innerHTML === cellsBefore;
+        out.sourceUnchanged = markdownEditor.value === sourceBefore && originalMarkdown === originalBefore &&
+          viewer.innerHTML === viewerBefore && tableCellSession === null && !tableCellDialog.open;
+      } finally {
+        tableCellDialog.removeEventListener('click', spy);
+        tableCellDialog.removeEventListener('auxclick', spy);
+        table.remove();
+      }
+      out.cleaned = tableCellGrid.childNodes.length === 0 &&
+        tableCellDialog.querySelectorAll('[download]').length === 0;
       return out;
     })()
   `);
   check(
-    "SEC-30 the download attribute is stripped in the table dialog preview",
-    dlPreviewState.found === true &&
-      dlPreviewState.anchor === true &&
-      dlPreviewState.href === "https://probe.invalid/dl" &&
-      dlPreviewState.downloadAttrs === 0 &&
-      dlPreviewState.tables === 1 &&
-      dlPreviewState.residualDownloadAttrs === 0,
-    JSON.stringify(dlPreviewState),
+    "SEC-30 actual editable and read-only shared cells strip download, not the link",
+    dlCellState.payloadDownload === 1 &&
+      dlCellState.mounted === true &&
+      dlCellState.tables === 1 &&
+      dlCellState.cells.length === 2 &&
+      dlCellState.cells.every(cell => cell.anchor === true &&
+        cell.href === "https://probe.invalid/dl" && cell.text === "DownloadProbe" &&
+        cell.downloads === 0 && cell.identity === true && cell.pointerEvents === "none") &&
+      dlCellState.cells[0].readonly === "true" &&
+      dlCellState.cells[0].editable === false &&
+      dlCellState.cells[1].editable === true,
+    JSON.stringify(dlCellState),
   );
   check(
-    "SEC-30 clicks in the table dialog preview are inert",
-    dlPreviewState.clickSeen === true && dlPreviewState.clickPrevented === true,
-    JSON.stringify(dlPreviewState),
+    "SEC-30 shared-cell link clicks and auxiliary clicks are inert, not ordinary cell clicks",
+    dlCellState.cells.every(cell => [cell.click, cell.middle, cell.right].every(event =>
+      event.seen === true && event.prevented === true && event.canceled === true)) &&
+      dlCellState.plainHref === "https://probe.invalid/plain" &&
+      dlCellState.plainText === "PlainLinkControl" &&
+      dlCellState.nestedTarget === true &&
+      [dlCellState.plainClick, dlCellState.nestedClick].every(event =>
+        event.seen === true && event.prevented === true && event.canceled === true) &&
+      dlCellState.textClick.seen === true &&
+      dlCellState.textClick.prevented === false &&
+      dlCellState.textClick.canceled === false,
+    JSON.stringify(dlCellState),
+  );
+  check(
+    "SEC-30 shared-cell click probes leave cells, source and the idle dialog unchanged",
+    dlCellState.cellsUnchanged === true &&
+      dlCellState.sourceUnchanged === true &&
+      dlCellState.cleaned === true,
+    JSON.stringify(dlCellState),
   );
 
   // ==========================================================================
-  // N10 - the table dialog's validation error
-  //
-  // Three defects in one line. It was the last Turkish string in the product
-  // (the Turkish and Ukrainian locales, and the switcher between them, were
-  // removed earlier; this one survived because it never went through i18n(),
-  // so the locale sweep could not see it). It was assigned with innerHTML,
-  // into the very preview box SEC-30 had just hardened. And it hardcoded
-  // background:#ffe6e6, a light pink that is unreadable on the three dark
-  // themes, while every theme already defines --danger-fg/--danger-glow-rgb.
+  // N10 - the shared rich-cell error contract.
+  // Drive a real preparation refusal into the live error helper. Without a
+  // document owner this does not claim Start/Update validation or popup refusal.
   // ==========================================================================
   const n10State = await exec(`
     (() => {
-      const ta = document.getElementById('tableInsertMarkdown');
-      const p = document.getElementById('tableInsertPreview');
-      const btn = document.getElementById('tableInsertBtn');
-      const overlay = document.getElementById('tableInsertOverlay');
-      window.openTableInsertDialog(null, 'insert');
-      if (ta) ta.value = 'not a table, just prose';
-      // Driven through the real button, not the function, so the check also
-      // covers the listener being connected.
-      if (btn) btn.click();
-
-      const err = p ? p.querySelector('.table-insert-error') : null;
-      const out = {
-        found: !!p,
-        clicked: !!btn,
-        err: !!err,
-        // The dialog must STAY OPEN on invalid input. If validation stopped
-        // rejecting, insertTableFromDialog() would fall through, close the
-        // dialog and insert nothing - a silent failure this pins.
-        stillOpen: overlay ? overlay.classList.contains('visible') : null,
-        text: err ? err.textContent : null,
-        role: err ? err.getAttribute('role') : null,
-        // Shape and ordering: the error is the ONLY thing in the box and it is
-        // first. Deliberately NOT claimed as proof of node construction - an
-        // innerHTML assignment with no surrounding whitespace produces exactly
-        // one child node too, and would satisfy every conjunct here. That
-        // property is unobservable from the DOM and is pinned statically in
-        // test:packaging instead. What this does catch is a whitespace-padded
-        // assignment, or an append that leaves the previous render in place.
-        previewNodes: p ? p.childNodes.length : -1,
-        previewFirstIsErr: p ? p.firstChild === err : null,
-        errChildren: err ? err.children.length : -1,
-        inlineStyle: err ? err.getAttribute('style') : 'NO-ELEMENT',
-        // Full Turkish-specific set, upper and lower: the earlier version
-        // omitted c-cedilla, o- and u-umlaut and so could not have seen a
-        // partial reintroduction.
-        turkish: err
-          ? /[\\u011E\\u011F\\u0130\\u0131\\u015E\\u015F\\u00C7\\u00E7\\u00D6\\u00F6\\u00DC\\u00FC]/.test(
-              err.textContent,
-            )
-          : null,
-        fromTable: err ? err.textContent === i18n('table.invalidFormat') : null,
-      };
-
-      // Theming. Read the resolved colours under two different themes: the
-      // whole point of the change is that they track the theme rather than
-      // being frozen at one hardcoded red.
-      //
-      // try/finally, not straight-line: if a read throws, data-theme would
-      // otherwise be left on 'clarity' for every test appended after this one -
-      // the one leak the "do not trap the next test" reset below does not
-      // cover, because it only restores the dialog.
+      const err = document.getElementById('tableCellError');
+      if (!err || tableCellSession !== null || tableCellDialog.open) {
+        throw new Error('N10 requires the idle shared error surface');
+      }
+      const sourceBefore = markdownEditor.value, originalBefore = originalMarkdown;
+      const viewerBefore = viewer.innerHTML, gridBefore = tableCellGrid.innerHTML;
+      const textBefore = err.textContent;
       const themeBefore = document.body.getAttribute('data-theme');
+      const tokenControl = document.createElement('span');
+      tokenControl.style.color = 'var(--edit-error-fg)';
+      const out = {
+        found: tableCellDialog.contains(err), refusal: null, constructed: false,
+      };
       const readColours = () => {
-        if (!err || !p) return null;
         const cs = getComputedStyle(err);
         return {
-          fg: cs.color,
-          // Non-vacuity control. If --danger-fg were misspelt, the declaration
-          // color: var(--typo) is invalid at computed-value time and the
-          // element INHERITS instead - and inherited text colour also differs
-          // between themes, so "fg differs across themes" alone would still
-          // pass. Pinning err's colour as distinct from its parent's catches
-          // that.
-          inherited: getComputedStyle(p).color,
-          // The ABSENCE of a fill is a deliberate, measured decision (see the
-          // rule's comment in styles.css) and nothing else observes it.
-          bg: cs.backgroundColor,
-          // Width and style, not colour. border-top-COLOR is useless here: its
-          // initial value is currentcolor, so if the border declaration were
-          // misspelt or deleted outright it still reports the element's color,
-          // which already differs between themes - the conjunct could only
-          // fail when the colour check had already failed.
-          //
-          // Width is read as a NUMBER and only pinned non-zero. The string is
-          // not "1px": getComputedStyle returns the used value, which Chromium
-          // snaps to device pixels, and this window reports 0.8px. Deletion
-          // still computes to 0 with style 'none', which is what this catches.
-          borderW: parseFloat(cs.borderTopWidth),
-          borderS: cs.borderTopStyle,
+          fg: cs.color, token: getComputedStyle(tokenControl).color,
+          inherited: getComputedStyle(err.parentElement).color,
+          bg: cs.backgroundColor, minHeight: parseFloat(cs.minHeight),
         };
       };
       try {
+        // An existing marker must be replaced, not kept beside the error.
+        err.textContent = 'PreviousErrorControl';
+        const raw = '<form><button>N10FormProbe</button></form>';
+        try {
+          createTableCell({ model: { links: {} } }, { header: false, editable: true },
+            { id: 'security-error-column' }, 0, raw, null);
+          out.constructed = true;
+        } catch (error) {
+          out.refusal = error instanceof Error ? error.message : String(error);
+          showTableCellError(error);
+        }
+        out.text = err.textContent;
+        out.fromTable = err.textContent === i18n('tableCells.cellType');
+        out.role = err.getAttribute('role');
+        out.nodes = err.childNodes.length;
+        out.textNode = err.firstChild?.nodeType === Node.TEXT_NODE &&
+          err.firstChild.textContent === err.textContent;
+        out.children = err.children.length;
+        out.inlineStyle = err.getAttribute('style');
+        out.turkish = /[\\u011E\\u011F\\u0130\\u0131\\u015E\\u015F\\u00C7\\u00E7\\u00D6\\u00F6\\u00DC\\u00FC]/.test(err.textContent);
+        err.parentElement.appendChild(tokenControl);
         document.body.setAttribute('data-theme', 'abyss');
         out.abyss = readColours();
         document.body.setAttribute('data-theme', 'clarity');
         out.clarity = readColours();
       } finally {
+        tokenControl.remove();
+        err.textContent = textBefore;
         if (themeBefore === null) {
           document.body.removeAttribute('data-theme');
         } else {
@@ -6555,59 +6599,109 @@ async function run(win) {
         }
       }
       out.themeRestored = document.body.getAttribute('data-theme') === themeBefore;
-
-      if (ta) ta.value = '';
-      window.openTableInsertDialog(null, 'insert');
-      window.closeTableInsertDialog();
+      out.restored = err.textContent === textBefore && !tokenControl.isConnected;
+      out.unchanged = markdownEditor.value === sourceBefore && originalMarkdown === originalBefore &&
+        viewer.innerHTML === viewerBefore && tableCellGrid.innerHTML === gridBefore &&
+        tableCellSession === null && !tableCellDialog.open;
       return out;
     })()
   `);
   check(
-    "N10 the table validation error is an English text node, not Turkish markup",
+    "N10 a shared rich-cell refusal reports the known English error as plain alert text",
     n10State.found === true &&
-      n10State.clicked === true &&
-      n10State.err === true &&
-      n10State.stillOpen === true &&
+      n10State.constructed === false &&
+      n10State.refusal === "tableCells.cellType" &&
       n10State.turkish === false &&
-      // Both halves are required. i18n() returns the KEY when the key is
-      // missing, so fromTable alone would still be true if the string were
-      // deleted - both sides would collapse to 'table.invalidFormat'. The
-      // literal pins the actual English text.
       n10State.fromTable === true &&
-      n10State.text.includes("Invalid table format") &&
-      // The glyph survives neither revert on its own, so nothing else pins it.
-      n10State.text.startsWith("\u26A0") &&
+      n10State.text ===
+        "This cell contains content that cannot be edited safely here. The document has not changed." &&
       n10State.role === "alert" &&
-      n10State.previewNodes === 1 &&
-      n10State.previewFirstIsErr === true &&
-      n10State.errChildren === 0 &&
-      n10State.inlineStyle === null,
+      n10State.nodes === 1 &&
+      n10State.textNode === true &&
+      n10State.children === 0 &&
+      n10State.inlineStyle === null &&
+      n10State.unchanged === true &&
+      n10State.restored === true,
     JSON.stringify(n10State),
   );
   check(
-    "N10 the validation error is themed, and tracks the active theme",
-    n10State.abyss !== null &&
-      n10State.clarity !== null &&
-      // The colour it replaced, frozen at this value under every theme.
+    "N10 the shared error resolves the active theme's error token without a hardcoded fill",
+    !!n10State.abyss &&
+      !!n10State.clarity &&
       n10State.abyss.fg !== "rgb(255, 0, 0)" &&
       n10State.clarity.fg !== "rgb(255, 0, 0)" &&
-      // The token really resolved, rather than the declaration being dropped
-      // and the element inheriting its parent's colour.
+      n10State.abyss.fg === n10State.abyss.token &&
+      n10State.clarity.fg === n10State.clarity.token &&
       n10State.abyss.fg !== n10State.abyss.inherited &&
       n10State.clarity.fg !== n10State.clarity.inherited &&
-      // No tinted fill, under either theme. This is what makes R457's
-      // background line load-bearing: without it, a regression that re-added a
-      // fill while keeping the themed colour would pass every other conjunct.
       n10State.abyss.bg === "rgba(0, 0, 0, 0)" &&
       n10State.clarity.bg === "rgba(0, 0, 0, 0)" &&
-      // The box outline survives at all - deletion is the realistic accident,
-      // and it is invisible to a colour comparison.
-      n10State.abyss.borderW > 0 &&
-      n10State.abyss.borderS === "solid" &&
+      n10State.abyss.minHeight > 0 &&
+      n10State.clarity.minHeight > 0 &&
       n10State.abyss.fg !== n10State.clarity.fg &&
       n10State.themeRestored === true,
     JSON.stringify(n10State),
   );
+
+  await sentinel.mute("N10 reports one unknown shared-cell error on purpose");
+  let n10UnknownState;
+  try {
+    n10UnknownState = await exec(`
+      (() => {
+        const err = document.getElementById('tableCellError'), textBefore = err.textContent;
+        const sourceBefore = markdownEditor.value, originalBefore = originalMarkdown;
+        const viewerBefore = viewer.innerHTML, gridBefore = tableCellGrid.innerHTML;
+        const sessionBefore = tableCellSession, openBefore = tableCellDialog.open;
+        const pwnedBefore = window.__pwned;
+        const message = '<img src=x onerror="window.__pwned = 1"><b>N10ErrorProbe</b>';
+        const out = {};
+        try {
+          err.textContent = 'PreviousErrorControl';
+          showTableCellError(new Error(message));
+          out.text = err.textContent;
+          out.fromTable = err.textContent === i18n('tableCells.commitFailed');
+          out.children = err.children.length;
+          out.nodes = err.childNodes.length;
+          out.textNode = err.firstChild?.nodeType === Node.TEXT_NODE;
+          out.role = err.getAttribute('role');
+          out.inlineStyle = err.getAttribute('style');
+          out.unchanged = window.__pwned === pwnedBefore &&
+            markdownEditor.value === sourceBefore && originalMarkdown === originalBefore &&
+            viewer.innerHTML === viewerBefore && tableCellGrid.innerHTML === gridBefore &&
+            tableCellSession === sessionBefore && tableCellDialog.open === openBefore;
+        } finally {
+          err.textContent = textBefore;
+        }
+        out.restored = err.textContent === textBefore;
+        return out;
+      })()
+    `);
+    await sentinel.drain();
+    const suppressed = sentinel.currentMute()?.suppressed || [];
+    check(
+      "N10 an unknown shared-cell error reports the safe fallback, not attacker markup",
+      n10UnknownState.fromTable === true &&
+        n10UnknownState.text === "The table could not be updated. The document has not changed." &&
+        n10UnknownState.children === 0 &&
+        n10UnknownState.nodes === 1 &&
+        n10UnknownState.textNode === true &&
+        n10UnknownState.role === "alert" &&
+        n10UnknownState.inlineStyle === null &&
+        n10UnknownState.unchanged === true &&
+        n10UnknownState.restored === true,
+      JSON.stringify(n10UnknownState),
+    );
+    check(
+      "N10 the unknown shared-cell error is logged, so the narrow mute is not vacuous",
+      suppressed.length === 1 &&
+        suppressed[0].kind === "console-error" &&
+        /Table cell editor failed:/.test(suppressed[0].detail) &&
+        /N10ErrorProbe/.test(suppressed[0].detail),
+      JSON.stringify(suppressed).slice(0, 600),
+    );
+  } finally {
+    await sentinel.unmute();
+  }
 
   // ==========================================================================
   // N12 - the markdown render-failure banner

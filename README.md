@@ -34,8 +34,9 @@ retained in [`LICENSE`](LICENSE.txt) as MIT requires - which is why that file na
 three parties. Markaloo is maintained separately, with its own name and version
 series, and is **not** published, endorsed or supported by Omnicore.
 
-Markaloo diverged from its parent at commit **`854bdec`** (2026-02-23, upstream
-v2.0.7). It is a fork, not a downstream branch: upstream commits are reviewed
+The inherited OmniCore baseline is **`854bdec`** (2026-02-23, upstream v2.0.7).
+Project-owned work starts after the yumedzi parent **`fd5ab986`**, on 2026-07-30.
+It is a fork, not a downstream branch: upstream commits are reviewed
 and picked deliberately rather than merged wholesale, because a merge that looks
 like a clean improvement can silently undo a fix here. What the fork changed,
 and why, is recorded in [`CUSTOMIZATIONS.md`](https://github.com/lostinsea/markaloo/blob/main/docs/CUSTOMIZATIONS.md)
@@ -45,8 +46,12 @@ precisely so that the next merge has something to check against.
 
 ## What changed in Markaloo
 
-Markaloo is not a rebrand of its parent. The list below is the substantive work,
-and every item is covered by tests in this repository.
+The list below summarizes the substantive work. The complete guide separates
+published changes, candidate work and the evidence limits for each area.
+
+- [Complete project change list](docs/PROJECT-CHANGE-LIST.md) - security,
+  package upgrades, performance, CPU/memory evidence, features and fixes since
+  takeover, with the current 0.12.0 candidate status kept separate.
 
 ### The bug that started it
 
@@ -170,32 +175,45 @@ themselves the moment you confirm them.
 
 - **Live editor** - split view with a debounced preview, and a draggable splitter between the two panes
 - **Inline editing** - right-click any selected text and edit it in place, instead of hunting for it in the source. It works even when the selection spans bold or italic markers.
-- **Undo / redo** while editing
+- **Undo / redo** while editing, with compact buttons beside Save.
+  These use document history; they do not save the file or change cell-editor history.
+  One Undo reverses a typing group. New typing clears Redo immediately.
+  The candidate toolbar groups them as `| Undo Redo | Save || Exit`.
 - **PDF export** - forced to light colours so output is printer-friendly regardless of theme
 - Unsaved-changes indicator. Leaving edit mode with unsaved changes discards them, and says so before it does.
 
 ### Mermaid and table dialogs
 
-- In edit mode, select one table or some of its rows in the preview or Markdown
-  editor, then right-click **Edit table** or **Edit selected rows**.
-- Edit table opens the whole table, even when only some rows are selected.
-  Edit selected rows opens just those rows in the same visual cell grid.
+- The 0.12.0 candidate uses one visual popup for **Insert table**, **Edit table**
+  and **Edit selected rows**. It is pointer-qualified and locally installed.
+  Installation and qualification status are listed
+  in [the project change list](docs/PROJECT-CHANGE-LIST.md).
+- Creation starts with **3 columns and 2 data rows**, plus an editable header.
+  Choose **0 data rows** for a header-only table. Editing shows read-only
+  Data rows and Columns counts that follow draft changes.
+- Right-click a table in either editor pane to edit the whole table.
+  Select row text first to edit only those rows; a header outside that scope
+  stays read-only.
 - The table editor shows formatted cells, not Markdown source. Tab moves between
-  cells; Enter moves down a column. Drag the bottom-right corner to resize it.
+  cells; Enter moves down a column. Tiny tables open compactly; substantial
+  text gets wider data columns. Drag column separators or the bottom-right
+  corner to resize.
+- Select a clearly highlighted cell with the mouse or keyboard before inserting
+  rows or columns. Without one, **Select a cell first.** appears and nothing changes.
+- Insert columns left/right in creation or whole-table editing, not selected-row
+  editing. Remove row always asks first, including for empty or newly added rows.
+  The true header cannot be removed.
+- A header can anchor **Insert row below** when no data rows remain.
+  Selected-row recovery stays at its captured source gap, not at the document header.
 - **Update the document** applies one undoable change and closes the popup.
-  It does not save the file. Cancel leaves the document unchanged.
-- Select exactly one supported Markdown table. Missing or ambiguous selections,
-  unsupported tables and stale documents show an error without changing text.
-- Table insertion and Mermaid dialogs keep their existing behavior.
+  **Insert into the document** does the same for creation. Neither saves the file.
+  Cancel and unsupported, ambiguous or stale changes leave the document unchanged.
+- Paste Markdown directly into the document; the popup has no raw Markdown box.
+  Mermaid retains its own code and preview dialog.
 
 <div align="center">
   <img src="docs/images/mermaid-template-dialog-with-live-preview.png" alt="Mermaid Template Dialog with live preview" width="700">
   <p><em>Mermaid insert dialog — choose from 12 templates, edit code on the left, see the live diagram on the right</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/images/table-insert-dialog-with-live-preview.png" alt="Table Insert Dialog with live preview" width="560">
-  <p><em>Table insert dialog — set rows, columns, and header row; preview updates instantly before inserting</em></p>
 </div>
 
 ### Notes
@@ -235,7 +253,9 @@ The menu adapts to the mode you are in.
 - **Collapsible headings** - fold and unfold sections, individually or all at once
 - **Recent files** - the last 100
 - **OS-level file watching** - external changes are noticed immediately, without polling
-- The Mermaid, Insert table and Edit table dialogs are resizable, and never taller than the window they open in
+- The Mermaid dialog and the shared Insert/Edit table popup are resizable, and never taller than the window they open in.
+  The shared popup is pointer-qualified and locally installed for 0.12.0.
+  Manual checks passed on one Windows machine; publication is pending.
 - Click the file path to copy it
 
 ---

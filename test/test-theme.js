@@ -475,6 +475,8 @@ async function checkContextMenuViewport(win, exec) {
   function probe(action, x, y) {
     const menu = document.getElementById("contextMenu");
     const viewer = document.getElementById("viewer");
+    const tabs = document.getElementById("tabsContainer");
+    let unrelatedScrollDelivered = false;
     const rect = (el) => {
       const r = el.getBoundingClientRect();
       return { left: r.left, top: r.top, right: r.right, bottom: r.bottom,
@@ -487,6 +489,23 @@ async function checkContextMenuViewport(win, exec) {
       }));
       for (const animation of menu.getAnimations()) animation.finish();
     } else if (action === "scroll") menu.scrollTop = menu.scrollHeight;
+    else if (action === "tabs-scroll") {
+      // This small fixture does not guarantee tab-strip overflow. Exercise
+      // production scroll-event routing without claiming physical movement.
+      const event = new Event("scroll");
+      const observe = (received) => {
+        if (received === event) unrelatedScrollDelivered = true;
+      };
+      document.addEventListener("scroll", observe, true);
+      try { tabs.dispatchEvent(event); }
+      finally { document.removeEventListener("scroll", observe, true); }
+    } else if (action === "viewer-scroll") {
+      viewer.dispatchEvent(new Event("scroll"));
+    } else if (action === "root-scroll") {
+      document.documentElement.dispatchEvent(new Event("scroll"));
+    } else if (action === "outside-click") {
+      document.body.click();
+    }
     else if (action === "document-scroll") {
       document.dispatchEvent(new Event("scroll"));
     } else if (action === "escape") {
@@ -519,6 +538,12 @@ async function checkContextMenuViewport(win, exec) {
       lastHit: hit(document.getElementById("ctxSelectAll")),
       selected: window.getSelection().toString(),
       viewerText: viewer.innerText,
+      anchorConnected: viewer.isConnected,
+      tabsUnrelated: !!tabs && tabs.isConnected &&
+        !tabs.contains(viewer) && !viewer.contains(tabs),
+      rootRelated: document.documentElement.contains(viewer),
+      outsideClickTarget: !menu.contains(document.body),
+      unrelatedScrollDelivered,
     };
   }
   const read = (action, x = 0, y = 0) =>
@@ -567,7 +592,14 @@ async function checkContextMenuViewport(win, exec) {
         bounded(edge), JSON.stringify(edge));
     }
     shots.push(await captureScreenshot(win, `${prefix}-wide-edge`));
+    const beforeResize = await read("inspect");
+    check("context-viewport: viewport-resize control starts with a live viewer menu",
+      beforeResize.open && beforeResize.anchorConnected, JSON.stringify(beforeResize));
     const minimum = await resize(1, 340);
+    const afterResize = await read("inspect");
+    check("context-viewport: a measured viewport change dismisses the viewer menu",
+      (minimum.width !== beforeResize.width || minimum.height !== beforeResize.height) &&
+        !afterResize.open, JSON.stringify({ beforeResize, minimum, afterResize }));
     const repeated = await resize(2, 340);
     check("context-viewport: two requests measure the actual OS minimum width (control)",
       minimum.width > 2 && minimum.width === repeated.width, JSON.stringify({ minimum, repeated }));
@@ -615,11 +647,45 @@ async function checkContextMenuViewport(win, exec) {
         selected.selected.trim().length > 0 &&
         !selected.open, JSON.stringify(selected));
     await exec(`window.getSelection().removeAllRanges()`);
-    await read("open", 250, 100);
+    const beforeUnrelatedScroll = await read("open", 250, 100);
+    check("context-viewport: unrelated-scroll control starts with a live viewer anchor and sibling tab strip",
+      beforeUnrelatedScroll.open && beforeUnrelatedScroll.anchorConnected &&
+        beforeUnrelatedScroll.tabsUnrelated, JSON.stringify(beforeUnrelatedScroll));
+    const unrelatedScroll = await read("tabs-scroll");
+    check("context-viewport: unrelated tab-strip scroll events reach the document and retain the viewer menu",
+      unrelatedScroll.unrelatedScrollDelivered && unrelatedScroll.open,
+      JSON.stringify(unrelatedScroll));
+    const beforeViewerScroll = await read("inspect");
+    check("context-viewport: viewer-scroll control still owns the visible connected viewer anchor",
+      beforeViewerScroll.open && beforeViewerScroll.anchorConnected,
+      JSON.stringify(beforeViewerScroll));
+    const viewerScrolled = await read("viewer-scroll");
+    check("context-viewport: scroll events on the actual viewer anchor dismiss its menu",
+      !viewerScrolled.open, JSON.stringify(viewerScrolled));
+    const beforeRootScroll = await read("open", 250, 100);
+    check("context-viewport: root-scroll control starts with a visible menu under the document root",
+      beforeRootScroll.open && beforeRootScroll.anchorConnected &&
+        beforeRootScroll.rootRelated, JSON.stringify(beforeRootScroll));
+    const rootScrolled = await read("root-scroll");
+    check("context-viewport: scroll events on the viewer's document-root ancestor dismiss its menu",
+      !rootScrolled.open, JSON.stringify(rootScrolled));
+    const beforeDocumentScroll = await read("open", 250, 100);
+    check("context-viewport: document-scroll control starts with a live viewer menu",
+      beforeDocumentScroll.open && beforeDocumentScroll.anchorConnected,
+      JSON.stringify(beforeDocumentScroll));
     const dismissed = await read("document-scroll");
     check("context-viewport: outside document scrolling still dismisses the menu (control)",
       !dismissed.open, JSON.stringify(dismissed));
-    await read("open", 250, 100);
+    const beforeOutsideClick = await read("open", 250, 100);
+    check("context-viewport: outside-click control starts with a visible menu and an outside body target",
+      beforeOutsideClick.open && beforeOutsideClick.outsideClickTarget,
+      JSON.stringify(beforeOutsideClick));
+    const outsideClicked = await read("outside-click");
+    check("context-viewport: an outside body click dismisses the viewer menu",
+      !outsideClicked.open, JSON.stringify(outsideClicked));
+    const beforeEscape = await read("open", 250, 100);
+    check("context-viewport: Escape control starts with a live viewer menu",
+      beforeEscape.open && beforeEscape.anchorConnected, JSON.stringify(beforeEscape));
     const escaped = await read("escape");
     check("context-viewport: Escape still dismisses the menu (control)",
       !escaped.open, JSON.stringify(escaped));

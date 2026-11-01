@@ -117,16 +117,21 @@
   const ctxTabOpenFolder = document.getElementById("ctxTabOpenFolder");
   let tabContextPath = null;
 
-  function showTabContextMenu(x, y, filePath) {
+  function showTabContextMenu(x, y, tab, tabElement) {
+    const filePath = tab.filePath;
     if (!tabContextMenu || !filePath) return;
     tabContextPath = filePath;
-    positionTabMenu(tabContextMenu, x, y);
+    positionTabMenu(tabContextMenu, x, y, {
+      anchor: tabElement, contextNodes: [],
+      isCurrent: () => tabs.includes(tab) && tab.filePath === filePath &&
+        tabsElement.contains(tabElement),
+    });
   }
 
-  function hideTabContextMenu() {
-    if (!tabContextMenu) return;
-    hideTabMenuEl(tabContextMenu);
+  function hideTabContextMenu(event) {
+    if (!tabContextMenu || !hideTabMenuEl(tabContextMenu, event)) return false;
     tabContextPath = null;
+    return true;
   }
 
   if (tabContextMenu) {
@@ -2343,6 +2348,7 @@
 
   function renderTabs() {
     console.log("[CustomTabs] Rendering tabs, count:", tabs.length);
+    hideTabContextMenu();
 
     if (tabs.length === 0) {
       tabsContainer.style.display = "none";
@@ -2405,7 +2411,7 @@
       tabElement.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        showTabContextMenu(e.clientX, e.clientY, tab.filePath);
+        showTabContextMenu(e.clientX, e.clientY, tab, tabElement);
       });
 
       tabsElement.appendChild(tabElement);
@@ -2869,6 +2875,8 @@
 
     activeTabId = tabId;
     activeTabForMutations = tab;
+    window.updateEditorHistoryControls?.();
+    window.hideDocumentContextMenus?.();
     console.log("[CustomTabs] Switched to tab:", tab.filename);
 
     // Any pending "File Updated - Reload?" prompt belongs to the tab we just
@@ -3268,7 +3276,9 @@
       tabs.splice(tabIndex, 1);
       if (tab.id === activeTabId) {
         activeTabForMutations = null;
+        window.updateEditorHistoryControls?.();
         dismissUpdatePrompt();
+        window.hideDocumentContextMenus?.();
       }
       bumpDocumentRevision();
 
@@ -3356,6 +3366,7 @@
     if (!mayMutateDocument("tab:exact-editor-content")) return false;
     const tab = getActiveTab(), state = tab && documentState.get(tab);
     if (!state || !inEditMode() || typeof content !== "string") return false;
+    window.hideDocumentContextMenus?.();
     // A source-splice transaction already owns every newline. Re-aligning it
     // against repeated lines would discard information the transaction kept.
     state.content = content;
@@ -6187,6 +6198,7 @@
     };
     if (editor) editor.readOnly = true;
     if (inertOwner) inertOwner.inert = true;
+    window.updateEditorHistoryControls?.();
     if (
       typeof window.assertFileTrackingOwnership === "function" &&
       window.currentFilePath
@@ -6220,6 +6232,7 @@
       });
     }
     console.log("[CustomTabs] Shutdown freeze released:", why, frozen.id);
+    window.updateEditorHistoryControls?.();
     return true;
   }
 

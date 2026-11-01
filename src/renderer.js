@@ -828,6 +828,7 @@ const UI_STRINGS = {
   'save': 'Save', 'reload': 'Reload', 'dismiss': 'Dismiss',
   'cancel': 'Cancel', 'find': 'Find', 'later': 'Later', 'exit': 'Exit',
   'title.exitEdit': 'Exit Edit Mode',
+  'title.undo': 'Undo (Ctrl+Z)', 'title.redo': 'Redo (Ctrl+Y)',
   'title.splitter': 'Drag to resize, double-click to reset',
   'title.zoomOut': 'Zoom Out (Ctrl+-)', 'title.zoomReset': 'Reset Zoom (Ctrl+0)',
   'title.zoomIn': 'Zoom In (Ctrl++)',
@@ -919,16 +920,52 @@ const UI_STRINGS = {
   'alert.saveFailed': 'Failed to save file: ',
   'search.counter': '${current} of ${total}',
   'search.zero': '0 of 0',
-  'table.invalidFormat': '\u26A0 Invalid table format. Check the markdown table syntax (columns separated by | are required).',
   'ctx.editTable': 'Edit table',
   'ctx.editSelectedRows': 'Edit selected rows',
   'tableCells.title': 'Edit table',
   'tableCells.selectedTitle': 'Edit selected rows',
   'tableCells.update': 'Update the document',
+  'tableCells.createTitle': 'Insert table',
+  'tableCells.mode': 'This table action has an unsupported mode. Close the popup and try again.',
+  'tableCells.columnsScope': 'Columns change every row. Edit the whole table to insert or delete a column.',
+  'tableCells.columnProjection': 'These combined changes cannot preserve the original table source. Your draft is unchanged. Adjust the changes or edit the Markdown directly.',
+  'tableCells.insertLeft': 'Insert column left',
+  'tableCells.insertRight': 'Insert column right',
+  'tableCells.deleteColumn': 'Delete column',
+  'tableCells.deleteColumnTitle': 'Delete column?',
+  'tableCells.columnNumber': 'Column ${column}',
+  'tableCells.columnHeader': 'Column ${column}: ${header}',
+  'tableCells.deleteColumnMessage': 'Delete ${column}? The document changes only when you choose Update the document.',
+  'tableCells.deleteColumnCreateMessage': 'Delete ${column}? The document changes only when you choose Insert into the document.',
+  'tableCells.minimumColumns': 'A table needs at least one column.',
+  'tableCells.selectCell': 'Select a cell first.',
+  'tableCells.recoverRows': 'Add row in selected scope',
+  'tableCells.counts': 'Data rows: ${rows} | Columns: ${columns}',
+  'tableCells.insert': 'Insert into the document',
+  'tableCells.columns': 'Columns',
+  'tableCells.dataRows': 'Data rows',
+  'tableCells.start': 'Edit cells',
+  'tableCells.setup': 'Choose the size, then edit the cells. A header is always included.',
+  'tableCells.setupInvalid': 'Choose 1-15 columns and 0-30 data rows using whole numbers.',
+  'tableCells.createScope': '${rows} data rows, ${columns} columns. Insert adds this table without saving.',
+  'tableCells.createHelp': 'Tab: next cell. Enter / Shift+Enter: next / previous row. Ctrl+Enter: insert. Escape: cancel.',
+  'tableCells.insertPosition': 'A table cannot be inserted here. Cancel and move the cursor between paragraphs or other content.',
   'tableCells.scope': '${rows} rows, ${columns} columns. Only these cells will be updated.',
   'tableCells.help': 'Tab: next cell. Enter / Shift+Enter: next / previous row. Ctrl+Enter: update. Escape: cancel.',
   'tableCells.row': 'Row ${row}',
   'tableCells.header': 'Header',
+  'tableCells.insertAbove': 'Insert row above',
+  'tableCells.insertBelow': 'Insert row below',
+  'tableCells.removeAdded': 'Remove row',
+  'tableCells.removeTitle': 'Remove row?',
+  'tableCells.removeMessage': 'Remove ${row}? The document changes only when you choose Update the document.',
+  'tableCells.removeCreateMessage': 'Remove ${row}? The document changes only when you choose Insert into the document.',
+  'tableCells.headerMessage': 'This is the header. Header row removal is not allowed.',
+  'tableCells.rowActions': 'Table structure',
+  'tableCells.addedRow': 'New row ${row}',
+  'tableCells.draftScope': '${rows} original rows, ${added} new rows, ${removed} removed rows, ${columns} columns. Update applies only this scope.',
+  'tableCells.emptyScope': 'No data rows remain in this scope. Select the header, then add a row in the selected scope.',
+  'tableCells.composing': 'Finish entering text before changing rows, columns or updating.',
   'tableCells.cell': '${row}, column ${column}',
   'tableCells.select': 'Select a table or its rows first. The selection must contain exactly one table.',
   'tableCells.click': 'Right-click inside a table to edit it.',
@@ -937,7 +974,7 @@ const UI_STRINGS = {
   'tableCells.unsupported': 'This table cannot be edited as cells. Use a regular Markdown table with the same number of cells in every row.',
   'tableCells.mapping': 'The table could not be matched safely to the current document. Wait for the preview, then select it again.',
   'tableCells.stale': 'The document changed while this editor was open. Cancel and select the table again. Nothing was updated.',
-  'tableCells.invalid': 'These cells would change the table structure. Check the cell contents and try again.',
+  'tableCells.invalid': 'This table change could not be applied safely. Check the cells and rows, then try again.',
   'tableCells.cellType': 'This cell contains content that cannot be edited safely here. The document has not changed.',
   'tableCells.formatShortcuts': 'Bold, italic and underline shortcuts are not available in this popup. Existing formatting is unchanged.',
   'editText.mapping': 'This exact rendered selection cannot be edited safely. Select a smaller text range.',
@@ -946,6 +983,7 @@ const UI_STRINGS = {
   'editText.shortcuts': 'Formatting shortcuts are not available in this popup. Type Markdown bold, italic or code instead.',
   'tableCells.commitFailed': 'The table could not be updated. The document has not changed.',
   'tableCells.renderFailed': 'The document was updated, but the preview could not be refreshed. Close this editor and retry the preview; do not submit again.',
+  'tableCells.layoutFailed': 'The table layout could not be measured. Your document has not changed.',
   'tableCells.close': 'Close',
   'render.failed': 'Error rendering markdown:',
   'render.unknownError': 'Unknown rendering error',
@@ -1029,6 +1067,8 @@ const openEditorBtn = document.getElementById('openEditorBtn');
 const editorPanel = document.getElementById('editorPanel');
 const markdownEditor = document.getElementById('markdownEditor');
 const saveButton = document.getElementById('saveButton');
+const undoButton = document.getElementById('undoButton');
+const redoButton = document.getElementById('redoButton');
 const exitEditBtn = document.getElementById('exitEditBtn');
 const unsavedIndicator = document.getElementById('unsavedIndicator');
 const contentWrapper = document.querySelector('.content-wrapper');
@@ -1170,11 +1210,51 @@ let currentFilePath = null;
 // UNDO / REDO HISTORY
 // ============================================
 const MAX_UNDO_HISTORY = 100;
-let undoHistory = [];   // past states (string[])
-let redoHistory = [];   // future states (string[])
+let undoHistory = [];   // past strings or exact-source entries
+let redoHistory = [];   // future strings or exact-source entries
 let undoRedoRendering = false; // suppress loading screen & scrollTop reset during undo/redo
 let exactTypingSource = null;
 let exactInputWitness = null;
+let historyDebounceTimer = null;
+let editorComposition = null;
+
+function editorHistoryContext() {
+  const owner = currentDocumentActionOwner();
+  return isEditMode && owner ? { owner, sequence: fileOpenSequence, revision: editorModeRevision } : null;
+}
+
+function isCurrentEditorHistory(context) {
+  return context && isEditMode && context.owner === currentDocumentActionOwner() &&
+    context.sequence === fileOpenSequence && context.revision === editorModeRevision;
+}
+
+function editorHistoryComposing() {
+  return !!isCurrentEditorHistory(editorComposition);
+}
+
+function cancelEditorHistoryGroup() {
+  clearTimeout(historyDebounceTimer);
+  historyDebounceTimer = null;
+  exactInputWitness = null;
+  editorComposition = null;
+}
+
+function scheduleEditorHistoryExpiry(context) {
+  clearTimeout(historyDebounceTimer);
+  const timer = setTimeout(() => {
+    if (historyDebounceTimer !== timer || !isCurrentEditorHistory(context)) return;
+    if (editorHistoryComposing()) return;
+    historyDebounceTimer = null;
+  }, 800);
+  historyDebounceTimer = timer;
+}
+
+function updateEditorHistoryControls() {
+  const available = isEditMode && !editorHistoryComposing() &&
+    !frozenForShutdown() && !!currentDocumentActionOwner();
+  undoButton.disabled = !available || undoHistory.length === 0;
+  redoButton.disabled = !available || redoHistory.length === 0;
+}
 
 function historyPush(content) {
   if (!mayMutateRendererDocument('history-push')) return;
@@ -1204,6 +1284,7 @@ function historyPush(content) {
   undoHistory.push(content);
   if (undoHistory.length > MAX_UNDO_HISTORY) undoHistory.shift();
   redoHistory = []; // clear redo on new change
+  updateEditorHistoryControls();
 }
 
 function historyPushExact(source) {
@@ -1215,6 +1296,7 @@ function historyPushExact(source) {
     if (undoHistory.length > MAX_UNDO_HISTORY) undoHistory.shift();
   }
   redoHistory = [];
+  updateEditorHistoryControls();
 }
 
 function historyCurrentFor(entry, content) {
@@ -1260,13 +1342,16 @@ function historySnapshot() {
 
 function historyRestore(snapshot) {
   if (!snapshot) return;
+  cancelEditorHistoryGroup();
   undoHistory = snapshot.undo.slice();
   redoHistory = snapshot.redo.slice();
   exactTypingSource = snapshot.exactTypingSource ?? null;
   exactInputWitness = null;
+  updateEditorHistoryControls();
 }
 
 function historyUndo() {
+  if (editorHistoryComposing()) return;
   if (!mayMutateRendererDocument('history-undo')) return;
   if (undoHistory.length === 0) return;
   cancelEditorDeferredWork();
@@ -1276,12 +1361,13 @@ function historyUndo() {
   const prevContent = historyApply(entry);
   undoHistory.pop();
   redoHistory.push(reverse);
+  updateEditorHistoryControls();
   const scrollPos = contentWrapper.scrollTop;
 
   undoRedoRendering = true;
   if (isEditMode) {
     markdownEditor.value = prevContent;
-    if (exactTypingSource !== null) exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+    exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
     setDocumentDirtyFromContent(prevContent);
     clearTimeout(previewDebounceTimer);
     renderMarkdown(prevContent).then(() => {
@@ -1299,6 +1385,7 @@ function historyUndo() {
 }
 
 function historyRedo() {
+  if (editorHistoryComposing()) return;
   if (!mayMutateRendererDocument('history-redo')) return;
   if (redoHistory.length === 0) return;
   cancelEditorDeferredWork();
@@ -1308,12 +1395,13 @@ function historyRedo() {
   const nextContent = historyApply(entry);
   redoHistory.pop();
   undoHistory.push(reverse);
+  updateEditorHistoryControls();
   const scrollPos = contentWrapper.scrollTop;
 
   undoRedoRendering = true;
   if (isEditMode) {
     markdownEditor.value = nextContent;
-    if (exactTypingSource !== null) exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+    exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
     setDocumentDirtyFromContent(nextContent);
     clearTimeout(previewDebounceTimer);
     renderMarkdown(nextContent).then(() => {
@@ -1331,10 +1419,12 @@ function historyRedo() {
 }
 
 function historyClear() {
+  cancelEditorHistoryGroup();
   undoHistory = [];
   redoHistory = [];
   exactTypingSource = null;
   exactInputWitness = null;
+  updateEditorHistoryControls();
 }
 
 
@@ -1348,6 +1438,7 @@ let fileUpdateNotificationShown = false;
 
 // Editor state
 let isEditMode = false;
+let tableCellSession = null;
 let hasUnsavedChanges = false;
 // The paths whose last write FAILED, so their content exists in memory and
 // nowhere else. A successful auto-save clears the dirty flag on the save reply,
@@ -1524,6 +1615,7 @@ function setDocumentDirtyState(value) {
 }
 
 function noteActiveContentMutation() {
+  hideDocumentContextMenus();
   editorScroll.changed();
   window.CustomTabs?.noteActiveContentMutation?.();
 }
@@ -2373,6 +2465,7 @@ function scheduleZoomAnchorRestore() {
 
 // Update zoom display
 function updateZoom({ persist = true } = {}) {
+  tableColumnSizing.cancel();
   editorScroll.previewNavigation();
   editorScroll.invalidate();
   // Read the reading position FIRST - before any style write in this frame, so
@@ -3009,6 +3102,7 @@ async function renderMermaidBatch(nodes, seq) {
         mermaidSvgCache.set(el.dataset.mermaidSrc, el.innerHTML);
       }
     });
+    applyMermaidBreakout(publishBreakoutBudget());
   } catch (e) {
     // Now a cold path, not the common recovery it used to be: parse failures no
     // longer reach here (mermaid draws its own inline error graphic instead),
@@ -3527,6 +3621,7 @@ window.__foliaExportThemeHeld = function () {
 };
 
 async function setExportTheme(dark) {
+  tableColumnSizing.cancel();
   document.body.classList.toggle('dark-mode', dark);
   try {
     // Only re-theme if the diagrams are not already in the theme being asked
@@ -3708,6 +3803,7 @@ window.folia.onPdfExportResult(async (data) => {
 let editSessionBaseline = null;
 let editorModeRevision = 0;
 let editorInteractionRevision = 0;
+let pendingEditorScrollRestore = null;
 let editorExitOperation = null;
 
 function currentDocumentActionOwner() {
@@ -3717,6 +3813,8 @@ function currentDocumentActionOwner() {
 }
 
 function setEditorPresentation(open, enabled = true) {
+  tableColumnSizing.cancel();
+  tableCellSession?.sizing?.dispose();
   isEditMode = open;
   contentWrapper.classList.toggle('split-view', open);
   // Admission supplies this flag before the incoming tab becomes active.
@@ -3727,6 +3825,7 @@ function setEditorPresentation(open, enabled = true) {
   }
   toggleEditBtn.style.background = open ? 'var(--primary-color)' : '';
   toggleEditBtn.style.color = open ? '#ffffff' : '';
+  updateEditorHistoryControls();
 }
 
 function captureDocumentEditor() {
@@ -3734,8 +3833,7 @@ function captureDocumentEditor() {
     open: isEditMode,
     rendererMarkdown: originalMarkdown,
     history: historySnapshot(),
-    pendingHistory: exactTypingSource === null && historyDebounceTimer !== null && isEditMode
-      ? markdownEditor.value : null,
+    pendingHistory: null,
     selection: { start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
       direction: markdownEditor.selectionDirection },
     scrollTop: markdownEditor.scrollTop,
@@ -3745,21 +3843,29 @@ function captureDocumentEditor() {
 }
 
 function historyForEditorState(state) {
-  const history = { undo: state.history.undo.slice(), redo: state.history.redo.slice(),
+  return { undo: state.history.undo.slice(), redo: state.history.redo.slice(),
     exactTypingSource: state.history.exactTypingSource ?? null };
-  if (state.pendingHistory !== null && history.undo.at(-1) !== state.pendingHistory) {
-    history.undo.push(state.pendingHistory);
-    if (history.undo.length > MAX_UNDO_HISTORY) history.undo.shift();
-    history.redo = [];
-  }
-  return history;
+}
+
+function cancelEditorScrollRestore(ticket) {
+  if (!ticket) return;
+  ticket.cancelled = true;
+  if (pendingEditorScrollRestore === ticket) pendingEditorScrollRestore = null;
+}
+
+function prepareEditorScrollRestore(state) {
+  cancelEditorScrollRestore(pendingEditorScrollRestore);
+  pendingEditorScrollRestore = state?.open
+    ? { top: state.scrollTop, left: state.scrollLeft, cancelled: false } : null;
+  return pendingEditorScrollRestore;
 }
 
 function cancelEditorDeferredWork() {
+  cancelEditorScrollRestore(pendingEditorScrollRestore);
   clearTimeout(previewDebounceTimer);
-  clearTimeout(historyDebounceTimer);
-  previewDebounceTimer = historyDebounceTimer = null;
-  exactInputWitness = null;
+  previewDebounceTimer = null;
+  cancelEditorHistoryGroup();
+  updateEditorHistoryControls();
 }
 
 function retainCurrentDocumentEditor() {
@@ -3769,8 +3875,10 @@ function retainCurrentDocumentEditor() {
 
 function clearDocumentEditor() {
   if (!mayMutateRendererDocument('clear-document-editor')) return;
+  hideDocumentContextMenus();
   cancelEditorDeferredWork();
   editorModeRevision++;
+  tableCellSession?.sizing?.refresh();
   editSessionBaseline = null;
   originalMarkdown = '';
   markdownEditor.value = '';
@@ -3782,6 +3890,7 @@ function clearDocumentEditor() {
 
 window.captureDocumentEditor = captureDocumentEditor;
 window.clearDocumentEditor = clearDocumentEditor;
+window.hideDocumentContextMenus = hideDocumentContextMenus;
 
 function captureEditSessionBaseline(force) {
   // Coming back to a document mid-session must NOT overwrite the baseline that
@@ -3874,6 +3983,7 @@ async function changeCurrentDocumentEditor(open) {
     discardOnExit = true;
   }
 
+  hideDocumentContextMenus();
   editorModeRevision++;
   setEditorPresentation(open);
 
@@ -3888,6 +3998,7 @@ async function changeCurrentDocumentEditor(open) {
     // than unconditionally declaring it clean.
     captureEditSessionBaseline(true);
     markdownEditor.value = originalMarkdown;
+    exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
     if (!editorScroll.enter()) renderMarkdown(markdownEditor.value, 'full');
     // Do NOT unconditionally declare the document clean. Since notes auto-save,
     // there are exactly two ways view mode carries a dirty flag into edit mode,
@@ -3919,10 +4030,6 @@ async function changeCurrentDocumentEditor(open) {
     applyTableBreakout();
     const previewPending = previewDebounceTimer !== null;
     cancelEditorDeferredWork();
-    // The pending history push is guarded by `if (isEditMode)`, which is
-    // already false here, but a timer left running can still fire inside a
-    // NEXT session started within its 800ms window and plant a bogus first
-    // undo step. Cancel it next to the preview timer it belongs with.
 
     if (discardOnExit) {
       // Restore the document, the history and the dirty flag to the baseline
@@ -3942,6 +4049,7 @@ async function changeCurrentDocumentEditor(open) {
         setDocumentDirtyState(false);
       }
       markdownEditor.value = originalMarkdown;
+      exactTypingSource = originalMarkdown;
       // The tab record holds its own copy, and switchToTab seeds
       // `originalMarkdown` from it. Leaving the discarded text there would let
       // the next tab switch replay it.
@@ -4112,10 +4220,11 @@ if (editorSplitter) {
 }
 
 function captureExactInput(event) {
-  if (!isEditMode || exactTypingSource === null) return;
+  const context = editorHistoryContext();
+  if (!context || frozenForShutdown()) return;
   exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
   exactInputWitness = { source: exactTypingSource, value: markdownEditor.value,
-    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd, type: event.inputType };
+    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd, type: event.inputType, context };
 }
 
 // Capture programmatic key edits too: textarea Tab does not emit beforeinput.
@@ -4124,6 +4233,7 @@ markdownEditor.addEventListener('beforeinput', captureExactInput);
 
 // Tab key → insert 2 spaces (prevent focus change)
 markdownEditor.addEventListener('keydown', (e) => {
+  if (e.isComposing || editorHistoryComposing()) return;
   if (e.key === 'Tab') {
     e.preventDefault();
     if (!mayMutateRendererDocument('editor-tab-key')) return;
@@ -4137,48 +4247,69 @@ markdownEditor.addEventListener('keydown', (e) => {
   }
 });
 
-// Push to undo history on significant changes (debounced)
-let historyDebounceTimer = null;
-for (const type of ['input', 'keydown', 'pointerdown', 'wheel']) {
-  markdownEditor.addEventListener(type, () => editorInteractionRevision++, { passive: true });
-}
-markdownEditor.addEventListener('input', () => {
-  if (!mayMutateRendererDocument('editor-input-history')) return;
-  if (!isEditMode) return;
-  // Discrete cell edits record past states. Keep the next typing burst
-  // separate without pushing its output as an immediate no-op Undo.
-  const exact = exactTypingSource !== null;
-  if (exact) {
-    if (historyDebounceTimer === null) historyPushExact(exactTypingSource);
-    const witness = exactInputWitness;
-    exactInputWitness = null;
-    if (witness && FoliaTableCells.normalise(witness.source) === witness.value) {
-      const value = markdownEditor.value;
-      let { start, end } = witness;
-      if (start === end && value.length < witness.value.length) {
-        const removed = witness.value.length - value.length;
-        if (witness.type?.endsWith('Backward')) start -= removed;
-        else end += removed;
-      }
-      const prefix = witness.value.slice(0, start), suffix = witness.value.slice(end);
-      if (start >= 0 && value.startsWith(prefix) && value.endsWith(suffix) &&
-          value.length >= prefix.length + suffix.length) {
-        const inserted = value.slice(prefix.length, value.length - suffix.length);
-        const source = FoliaTableCells.spliceInput(witness.source, start, end, inserted);
-        if (!window.CustomTabs.adoptExactEditorContent(source)) throw new Error('tableCells.commitFailed');
-        exactTypingSource = source;
-      } else exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
-    } else exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
-  }
-  clearTimeout(historyDebounceTimer);
-  const sequence = fileOpenSequence, revision = editorModeRevision;
-  historyDebounceTimer = setTimeout(() => {
-    historyDebounceTimer = null;
-    if (!exact && isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {
-      historyPush(markdownEditor.value);
-    }
-  }, 800);
+markdownEditor.addEventListener('compositionstart', () => {
+  const context = editorHistoryContext();
+  if (!context || frozenForShutdown()) return;
+  editorComposition = context;
+  updateEditorHistoryControls();
 });
+markdownEditor.addEventListener('compositionend', () => {
+  const composition = editorComposition;
+  queueMicrotask(() => {
+    if (editorComposition !== composition || !isCurrentEditorHistory(composition)) return;
+    editorComposition = null;
+    if (historyDebounceTimer !== null) scheduleEditorHistoryExpiry(composition);
+    updateEditorHistoryControls();
+  });
+});
+
+for (const type of ['input', 'keydown', 'pointerdown']) {
+  markdownEditor.addEventListener(type, () => {
+    editorInteractionRevision++;
+    if (isEditMode) hideContextMenu();
+    tableCellSession?.sizing?.refresh();
+  }, { passive: true });
+}
+markdownEditor.addEventListener('wheel', () => {
+  // Scrolling is not a source/selection change, but it supersedes a late restore.
+  cancelEditorScrollRestore(pendingEditorScrollRestore);
+  if (isEditMode && contextMenu.classList.contains('visible') &&
+      rightClickTarget === markdownEditor) hideContextMenu();
+  tableCellSession?.sizing?.refresh();
+}, { passive: true });
+function recordEditorInputHistory() {
+  if (!mayMutateRendererDocument('editor-input-history')) return;
+  const context = editorHistoryContext();
+  if (!context) return;
+  const witness = exactInputWitness;
+  exactInputWitness = null;
+  const witnessed = witness && isCurrentEditorHistory(witness.context) &&
+    FoliaTableCells.normalise(witness.source) === witness.value;
+  const before = witnessed ? witness.source : exactTypingSource;
+  if (typeof before !== 'string') throw new Error('Editor history checkpoint is unavailable');
+  const value = markdownEditor.value;
+  if (FoliaTableCells.normalise(before) === value) return;
+  // Store the pre-change source immediately; idle expiry only ends the burst.
+  if (historyDebounceTimer === null) historyPushExact(before);
+  if (witnessed) {
+    let { start, end } = witness;
+    if (start === end && value.length < witness.value.length) {
+      const removed = witness.value.length - value.length;
+      if (witness.type?.endsWith('Backward')) start -= removed;
+      else end += removed;
+    }
+    const prefix = witness.value.slice(0, start), suffix = witness.value.slice(end);
+    if (start >= 0 && value.startsWith(prefix) && value.endsWith(suffix) &&
+        value.length >= prefix.length + suffix.length) {
+      const inserted = value.slice(prefix.length, value.length - suffix.length);
+      const source = FoliaTableCells.spliceInput(witness.source, start, end, inserted);
+      if (!window.CustomTabs.adoptExactEditorContent(source)) throw new Error('tableCells.commitFailed');
+      exactTypingSource = source;
+    } else exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+  } else exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
+  scheduleEditorHistoryExpiry(context);
+}
+markdownEditor.addEventListener('input', recordEditorInputHistory);
 
 // Live preview with fast debounce
 markdownEditor.addEventListener('input', () => {
@@ -4204,7 +4335,9 @@ function syncEditorWithStore() {
   if (!mayMutateRendererDocument('sync-editor-store')) return false;
   if (isEditMode && markdownEditor.value !== originalMarkdown) {
     const cursorPos = markdownEditor.selectionStart;
+    cancelEditorDeferredWork();
     markdownEditor.value = originalMarkdown;
+    exactTypingSource = originalMarkdown;
     // Restore cursor position (clamped to new length)
     const newPos = Math.min(cursorPos, originalMarkdown.length);
     markdownEditor.selectionStart = markdownEditor.selectionEnd = newPos;
@@ -4557,6 +4690,16 @@ function saveMarkdownFile() {
 
 // Save button click
 saveButton.addEventListener('click', saveMarkdownFile);
+undoButton.addEventListener('click', () => {
+  if (!isEditMode || !currentDocumentActionOwner()) return;
+  historyUndo();
+});
+redoButton.addEventListener('click', () => {
+  if (!isEditMode || !currentDocumentActionOwner()) return;
+  historyRedo();
+});
+window.updateEditorHistoryControls = updateEditorHistoryControls;
+updateEditorHistoryControls();
 
 // Notes are the one editing feature that stays available in view mode, and
 // view mode has no way to reach a Save. Without this every note the reader
@@ -4596,7 +4739,7 @@ function autoSaveViewModeNote() {
 // to edit mode. A note added by mistake is still removable in view mode via
 // right-click > Delete Note, so no capability is lost.
 document.addEventListener('keydown', (e) => {
-  if (!isEditMode) return;
+  if (!isEditMode || e.isComposing || editorHistoryComposing()) return;
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
     e.preventDefault();
     if (!mayMutateRendererDocument('shortcut-undo')) return;
@@ -5042,6 +5185,7 @@ function saveRecentFile(filePath) {
 
 function updateFileMenuRecent() {
   const recentFiles = getRecentFiles();
+  hideRecentContextMenu();
 
   if (recentFiles.length === 0) {
     fileMenuRecent.innerHTML = '<div class="tools-menu-recent-empty" data-i18n="noRecentFiles">' + i18n('noRecentFiles') + '</div>';
@@ -5087,7 +5231,7 @@ function updateFileMenuRecent() {
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      showRecentContextMenu(e.clientX, e.clientY, file.path);
+      showRecentContextMenu(e.clientX, e.clientY, file.path, item);
     });
 
     fileMenuRecent.appendChild(item);
@@ -5604,6 +5748,7 @@ const tableHeaderTracking = (() => {
   let frame = 0;
   let dirty = true;
   let printing = false;
+  let resizing = false;
   let scroller = null;
   const observedTables = new Set();
 
@@ -5658,13 +5803,14 @@ const tableHeaderTracking = (() => {
       entry.parent = byTable.get(parent) || null;
     }
     entries.sort((a, b) => a.top - b.top);
+    tableColumnSizing.refresh();
     dirty = false;
   }
 
   function flush() {
     frame = 0;
     if (printing) return;
-    if (dirty) measure();
+    if ((dirty && !resizing) || !scroller) measure();
     const top = scroller.scrollTop;
     let low = 0;
     let high = entries.length;
@@ -5714,7 +5860,13 @@ const tableHeaderTracking = (() => {
   });
   window.addEventListener('afterprint', () => { printing = false; invalidate(); });
   schedule();
-  return { invalidate };
+  return {
+    invalidate,
+    setResizing(value) {
+      resizing = value;
+      if (!value) invalidate();
+    },
+  };
 })();
 
 // Collapsed state, persisted across re-renders.
@@ -5958,6 +6110,7 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
 
 function updateNotesList() {
   const allNotes = viewer.querySelectorAll('.noted-text[data-note-id], .noted-image[data-note-id], .note-label[data-note-id]');
+  hideNotesPanelContextMenu();
 
   if (allNotes.length === 0) {
     notesList.innerHTML = '<div class="notes-empty" data-i18n="noNotes">' + i18n('noNotes') + '</div>';
@@ -6038,7 +6191,7 @@ function updateNotesList() {
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      showNotesPanelContextMenu(e.clientX, e.clientY, noteId);
+      showNotesPanelContextMenu(e.clientX, e.clientY, noteId, item, noteEl);
     });
 
     notesList.appendChild(item);
@@ -6164,7 +6317,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Mouse wheel zoom
-document.addEventListener('wheel', (e) => {
+function handleReadingZoomWheel(e) {
   if (e.ctrlKey || e.metaKey) {
     e.preventDefault();
 
@@ -6184,7 +6337,17 @@ document.addEventListener('wheel', (e) => {
       }
     }
   }
-}, { passive: false });
+}
+
+document.addEventListener('wheel', handleReadingZoomWheel, { passive: false });
+
+// Keep document-level dialog blockers ahead of diagram gestures.
+viewer.addEventListener('wheel', (e) => {
+  if (e.defaultPrevented || !(e.ctrlKey || e.metaKey)) return;
+  if (!(e.target instanceof Element) || !e.target.closest('.mermaid-container, .mermaid')) return;
+  handleReadingZoomWheel(e);
+  e.stopPropagation();
+}, { capture: true, passive: false });
 
 // ============================================
 // RENDER OPTIMIZATION
@@ -6801,6 +6964,9 @@ function highlightNewElements() {
 // Smart render dispatcher — chooses mode based on content diff
 let _lastRenderedContent = null;
 async function renderMarkdown(content, forceMode = null) {
+  hideDocumentContextMenus(true);
+  tableColumnSizing.reset();
+  tableCellSession?.sizing?.refresh();
   const generation = ++renderGeneration;
   editorScroll.start();
   const mode = forceMode || detectRenderMode(_lastRenderedContent, content);
@@ -7003,7 +7169,9 @@ async function renderMarkdownFull(content, generation) {
           `;
 
           maxBtn.addEventListener('click', () => {
-            const svgContent = svg.outerHTML;
+            const liveSvg = el.querySelector('svg');
+            if (!liveSvg) return;
+            const svgContent = liveSvg.outerHTML;
             const isDarkMode = document.body.classList.contains('dark-mode');
             window.folia.openMermaidPopup({ svgContent, isDarkMode });
           });
@@ -7335,6 +7503,634 @@ function preferredTableWidth(container, memo) {
   }
 }
 
+// Keep controls and width rules outside table.innerHTML: the cell editor seals
+// that markup to verify that its source selection still describes this table.
+let nextTableSizingId = 0;
+function createTableColumnSizing({
+  root, containerSelector, minimumWidth = 48, firstColumn = 0,
+  fitOnResize = false, initialWeights, initialFixedWidths,
+  keyboardRoot = document, focusOnPointer = true, cancelOnScroll = false,
+  isCurrent = () => true, generation = () => 0,
+  onDragChange = () => {}, onLayout = () => {},
+}) {
+  const states = new Map();
+  const listeners = [];
+  const composing = new Map();
+  let controls = null;
+  let drag = null;
+  let frame = 0;
+  let resizeFrame = 0;
+  let resizeWork = null;
+  let controlsGeneration = 0;
+  let disposed = false;
+  let availableWidth = fitOnResize ? root.clientWidth : 0;
+
+  function listen(target, type, listener, options) {
+    target.addEventListener(type, listener, options);
+    listeners.push(() => target.removeEventListener(type, listener, options));
+  }
+
+  function current() {
+    if (disposed) return false;
+    if (isCurrent()) return true;
+    dispose();
+    return false;
+  }
+
+  function clearControls() {
+    cancelResizeLayout();
+    controlsGeneration++;
+    resize.disconnect();
+    controls?.overlay.remove();
+    controls = null;
+  }
+
+  function cancelResizeLayout() {
+    if (resizeWork) cancelAnimationFrame(resizeFrame);
+    resizeFrame = 0;
+    resizeWork = null;
+  }
+
+  function reconcileResizeLayout(expected = resizeWork) {
+    if (!expected || expected !== resizeWork) return;
+    cancelResizeLayout();
+    if (expected.generation !== controlsGeneration || expected.controls !== controls ||
+        expected.table !== controls?.table || !current()) return;
+    if (!root.contains(expected.table)) {
+      refresh();
+      return;
+    }
+    fitAvailableWidth();
+    position();
+  }
+
+  function invalidateResizeLayout() {
+    if (disposed || !controls || resizeWork) return;
+    const work = resizeWork = { controls, table: controls.table, generation: controlsGeneration };
+    resizeFrame = requestAnimationFrame(() => reconcileResizeLayout(work));
+  }
+
+  function removeWidths(table) {
+    const state = states.get(table);
+    if (!state) return;
+    state.style.remove();
+    table.classList.remove(state.className, 'table-manually-sized');
+    states.delete(table);
+  }
+
+  function resetTableWidths(table) {
+    if (fitOnResize) {
+      reconcileResizeLayout();
+      if (!current() || controls?.table !== table || !root.contains(table)) return;
+    }
+    removeWidths(table);
+    if (initialFixedWidths && controls?.table === table) controls.initialize = true;
+    layout(table);
+  }
+
+  function writeWidths(table, widths, proportions = widths, manual = true) {
+    let state = states.get(table);
+    if (!state) {
+      const style = document.createElement('style');
+      style.media = 'screen';
+      document.head.appendChild(style);
+      state = { style, className: `mv-table-sizing-${++nextTableSizingId}`, widths: [] };
+      states.set(table, state);
+      table.classList.add(state.className);
+    }
+    if (manual) table.classList.add('table-manually-sized');
+    else table.classList.remove('table-manually-sized');
+    state.manual = manual;
+    state.widths = widths.slice();
+    state.proportions = fitOnResize ? proportions.slice() : null;
+    const total = widths.reduce((sum, width) => sum + width, 0);
+    state.style.textContent = `#${root.id} table.${state.className}{width:${total}px;min-width:0;table-layout:fixed;}\n` + widths.map((width, index) =>
+      `#${root.id} table.${state.className} > :is(thead,tbody,tfoot) > tr > :is(th,td):nth-child(${index + 1})` +
+      `{box-sizing:border-box;width:${width}px;}`
+    ).join('\n');
+  }
+
+  function fitWidths(widths, proportions, width) {
+    const columns = proportions.slice(firstColumn)
+      .map((weight, offset) => ({ index: offset + firstColumn, weight }))
+      .sort((a, b) => a.weight - b.weight);
+    let weight = columns.reduce((sum, column) => sum + column.weight, 0);
+    const fixed = widths.slice(0, firstColumn).reduce((sum, value) => sum + value, 0);
+    let remaining = Math.max(width - fixed, columns.length * minimumWidth);
+    // Clamp the smallest columns first; the others share the remaining space.
+    for (const column of columns) {
+      const fitted = Math.max(minimumWidth, remaining * column.weight / weight);
+      widths[column.index] = fitted;
+      remaining -= fitted;
+      weight -= column.weight;
+    }
+    return widths;
+  }
+
+  function fitAvailableWidth() {
+    if (!fitOnResize) return;
+    const width = root.clientWidth;
+    if (width <= 0 || width === availableWidth) return;
+    finish(false);
+    if (controls?.naturalWidths && !states.has(controls.table)) {
+      writeWidths(controls.table, controls.naturalWidths);
+    }
+    availableWidth = width;
+    for (const [table, state] of states) {
+      writeWidths(table, fitWidths(state.widths.slice(), state.proportions, width),
+        state.proportions, state.manual);
+    }
+  }
+
+  function position() {
+    if (!current() || !controls || !root.contains(controls.table)) return;
+    const { table, overlay, handles } = controls;
+    const row = table.rows[0];
+    const bounds = table.getBoundingClientRect();
+    if (!row || bounds.width <= 0) return;
+    const zoom = Number(getComputedStyle(root).zoom) || 1;
+    const cells = [...row.cells].map(cell => cell.getBoundingClientRect());
+    const total = cells.reduce((sum, cell) => sum + cell.width, 0);
+    if (total <= 0) return;
+    if (controls.initialize) {
+      controls.initialize = false;
+      const widths = cells.map((cell, index) => index < firstColumn && initialFixedWidths?.[index] !== undefined
+        ? initialFixedWidths[index] : cell.width / zoom);
+      const proportions = widths.map((width, index) =>
+        index < firstColumn ? width : initialWeights?.[index - firstColumn] ?? 1);
+      // Reuse this first-row read; browser word lengths must not choose the initial data split.
+      writeWidths(table, fitWidths(widths, proportions, root.clientWidth), proportions, false);
+    }
+    if (fitOnResize && !states.has(table) && root.clientWidth === availableWidth) {
+      controls.naturalWidths = cells.map(cell => cell.width / zoom);
+    }
+    const geometry = {
+      left: table.offsetLeft + 'px',
+      top: table.offsetTop + 'px',
+      width: bounds.width / zoom + 'px',
+      height: table.offsetHeight + 'px',
+    };
+    for (const [key, value] of Object.entries(geometry)) {
+      if (overlay.style[key] !== value) overlay.style[key] = value;
+    }
+    handles.forEach((handle, offset) => {
+      const index = offset + firstColumn;
+      const left = (cells[index].right - bounds.left) / zoom + 'px';
+      if (handle.style.left !== left) handle.style.left = left;
+      const pixels = Number((cells[index].width / zoom).toFixed(2));
+      const proportion = Number(Math.min(100, Math.max(0, 100 * cells[index].width / total)).toFixed(2));
+      handle.setAttribute('aria-valuenow', String(proportion));
+      handle.setAttribute('aria-valuetext', `${pixels} pixels wide; ${proportion}% of table width`);
+    });
+  }
+
+  function layout(table) {
+    if (!disposed && root.contains(table)) onLayout(table);
+    position();
+  }
+
+  function finish(commit) {
+    if (!drag) return false;
+    const previous = drag;
+    drag = null;
+    cancelAnimationFrame(frame);
+    frame = 0;
+    previous.handle.classList.remove('table-column-handle-dragging');
+    if (!commit) {
+      if (previous.saved) writeWidths(previous.table, previous.saved, previous.savedProportions, previous.savedManual);
+      else removeWidths(previous.table);
+    }
+    onDragChange(false);
+    if (previous.handle.hasPointerCapture(previous.pointerId)) {
+      previous.handle.releasePointerCapture(previous.pointerId);
+    }
+    layout(previous.table);
+    return true;
+  }
+
+  function flush() {
+    frame = 0;
+    reconcileResizeLayout();
+    if (!current() || !drag) return;
+    if (!root.contains(drag.table) || drag.generation !== generation()) {
+      finish(false);
+      return;
+    }
+    const widths = drag.widths.slice();
+    widths[drag.index] = Math.max(minimumWidth,
+      widths[drag.index] + (drag.clientX - drag.startX) / drag.zoom);
+    writeWidths(drag.table, widths);
+    drag.changed = true;
+    // Re-centering breakout during a drag moves the separator away from the
+    // pointer. Keep the existing container budget until the gesture finishes.
+    position();
+  }
+
+  function start(event, table, index, handle) {
+    if (event.button !== 0 || !event.isPrimary || drag) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!current() || composing.size || event.isComposing) return;
+    if (fitOnResize) {
+      const expected = controls, pending = resizeWork !== null;
+      reconcileResizeLayout();
+      if (!current() || composing.size || event.isComposing || controls !== expected || controls?.table !== table ||
+          !root.contains(table) || !controls.handles.includes(handle)) return;
+      if (pending && root.ownerDocument.elementFromPoint(event.clientX, event.clientY) !== handle) return;
+    }
+    const zoom = Number(getComputedStyle(root).zoom) || 1;
+    drag = {
+      table, index, handle, zoom, pointerId: event.pointerId,
+      generation: generation(), startX: event.clientX, clientX: event.clientX,
+      saved: states.get(table)?.widths.slice() || null,
+      savedProportions: states.get(table)?.proportions?.slice() || null,
+      savedManual: states.get(table)?.manual,
+      widths: [...table.rows[0].cells].map(cell => cell.getBoundingClientRect().width / zoom),
+      scrollPositions: cancelOnScroll ? new Map([root, keyboardRoot].map(node =>
+        [node, { left: node.scrollLeft, top: node.scrollTop }])) : null,
+    };
+    if (focusOnPointer) handle.focus({ preventScroll: true });
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add('table-column-handle-dragging');
+    onDragChange(true);
+  }
+
+  function show(container) {
+    reconcileResizeLayout();
+    if (!current() || drag || controls?.container === container) return;
+    clearControls();
+    const table = container.querySelector(':scope > table');
+    const rows = table && [...table.rows];
+    const count = rows?.[0]?.cells.length;
+    // Spanning and nested HTML tables do not have a one-cell-per-column grid.
+    if (!count || count <= firstColumn || table.parentElement.closest('table') || table.querySelector('table,colgroup,col') ||
+        rows.some(row => row.cells.length !== count ||
+          [...row.cells].some(cell => cell.colSpan !== 1 || cell.rowSpan !== 1))) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'table-column-controls';
+    const handles = [...rows[0].cells].slice(firstColumn).map((cell, offset) => {
+      const index = firstColumn + offset;
+      const handle = document.createElement('div');
+      handle.className = 'table-column-handle';
+      handle.tabIndex = 0;
+      handle.setAttribute('role', 'separator');
+      handle.setAttribute('aria-orientation', 'vertical');
+      handle.setAttribute('aria-label', `Resize column ${offset + 1}`);
+      handle.setAttribute('aria-valuemin', '0');
+      handle.setAttribute('aria-valuemax', '100');
+      handle.title = 'Drag to resize column. Arrow keys resize; Home or double-click resets the table.';
+      handle.addEventListener('pointerdown', event => start(event, table, index, handle));
+      handle.addEventListener('pointermove', event => {
+        if (!current() || !drag || event.pointerId !== drag.pointerId) return;
+        drag.clientX = event.clientX;
+        if (!frame) frame = requestAnimationFrame(flush);
+      });
+      handle.addEventListener('pointerup', event => {
+        const expected = drag;
+        if (!current() || !expected || event.pointerId !== expected.pointerId) return;
+        if (fitOnResize) {
+          reconcileResizeLayout();
+          if (!current() || drag !== expected) return;
+        }
+        drag.clientX = event.clientX;
+        if (drag.changed || drag.clientX !== drag.startX) {
+          cancelAnimationFrame(frame);
+          flush();
+        }
+        if (!fitOnResize || drag === expected) finish(true);
+      });
+      handle.addEventListener('pointercancel', () => finish(false));
+      handle.addEventListener('lostpointercapture', () => finish(false));
+      handle.addEventListener('dblclick', event => {
+        event.preventDefault();
+        if (!current() || composing.size || event.isComposing) return;
+        resetTableWidths(table);
+      });
+      handle.addEventListener('keydown', event => {
+        if (document.activeElement !== handle || !['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const expected = controls;
+        reconcileResizeLayout();
+        if (!current() || composing.size || event.isComposing) return;
+        if (fitOnResize && (controls !== expected || controls?.table !== table ||
+            !root.contains(table) || !controls.handles.includes(handle))) return;
+        finish(false);
+        if (event.key === 'Home') {
+          resetTableWidths(table);
+          return;
+        }
+        else {
+          const zoom = Number(getComputedStyle(root).zoom) || 1;
+          const widths = [...table.rows[0].cells].map(cell => cell.getBoundingClientRect().width / zoom);
+          widths[index] = Math.max(minimumWidth, widths[index] +
+            (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 48 : 16));
+          writeWidths(table, widths);
+        }
+        layout(table);
+      });
+      overlay.appendChild(handle);
+      return handle;
+    });
+    container.appendChild(overlay);
+    controls = { table, container, overlay, handles,
+      initialize: fitOnResize && initialWeights !== undefined && !states.has(table) };
+    resize.observe(table);
+    resize.observe(root);
+    if (fitOnResize) for (const cell of rows[0].cells) resize.observe(cell);
+    position();
+  }
+
+  function refresh() {
+    reconcileResizeLayout();
+    if (!current()) return;
+    if (controls && !root.contains(controls.table)) {
+      finish(false);
+      clearControls();
+    }
+    for (const table of states.keys()) if (!root.contains(table)) removeWidths(table);
+    position();
+  }
+
+  function changeColumn(index, anchor, transaction, remove) {
+    reconcileResizeLayout();
+    if (!current()) throw new Error('tableCells.stale');
+    if (composing.size) throw new Error('tableCells.composing');
+    const table = controls?.table, count = table?.rows[0]?.cells.length - firstColumn;
+    if (!fitOnResize || !table || !Number.isSafeInteger(count) || count < (remove ? 2 : 1) ||
+        !Number.isSafeInteger(index) || index < 0 || index >= count + (remove ? 0 : 1) ||
+        !Number.isSafeInteger(anchor) || anchor < 0 || anchor >= count ||
+        typeof transaction?.apply !== 'function' || typeof transaction?.rollback !== 'function') {
+      throw new Error('tableCells.invalid');
+    }
+    finish(false);
+    const state = states.get(table), container = controls.container;
+    const previous = state ? { widths: state.widths.slice(), proportions: state.proportions.slice(),
+      manual: state.manual } : null;
+    const zoom = Number(getComputedStyle(root).zoom) || 1;
+    const fixed = [...table.rows[0].cells].slice(0, firstColumn).map((cell, index) =>
+      initialFixedWidths?.[index] ?? cell.getBoundingClientRect().width / zoom);
+    const proportions = previous?.proportions ||
+      [...fixed, ...Array.from({ length: count }, (_, i) => initialWeights?.[i] ?? 1)];
+    if (proportions.some(weight => !Number.isFinite(weight) || weight <= 0)) throw new Error('tableCells.invalid');
+    const next = proportions.slice();
+    if (remove) next.splice(firstColumn + index, 1);
+    else next.splice(firstColumn + index, 0, proportions[firstColumn + anchor]);
+    const widths = previous?.widths.slice() || [...fixed, ...Array(count).fill(minimumWidth)];
+    if (remove) widths.splice(firstColumn + index, 1);
+    else widths.splice(firstColumn + index, 0, minimumWidth);
+    const fitted = fitWidths(widths, next, root.clientWidth), beforeWeights = initialWeights;
+    const resetWeights = Array.from({ length: count }, (_, i) => initialWeights?.[i] ?? 1);
+    if (remove) resetWeights.splice(index, 1);
+    else resetWeights.splice(index, 0, resetWeights[anchor]);
+    try {
+      transaction.apply();
+      clearControls();
+      initialWeights = resetWeights;
+      writeWidths(table, fitted, next, previous?.manual ?? false);
+      show(container);
+      layout(table);
+    } catch (error) {
+      try {
+        transaction.rollback();
+        clearControls();
+        initialWeights = beforeWeights;
+        if (previous) writeWidths(table, previous.widths, previous.proportions, previous.manual);
+        else removeWidths(table);
+        show(container);
+      } catch (restorationError) {
+        throw new AggregateError([error, restorationError], 'Table column change could not be restored');
+      }
+      throw error;
+    }
+  }
+
+  function insertColumn(index, anchor, transaction) {
+    changeColumn(index, anchor, transaction, false);
+  }
+
+  function removeColumn(index, transaction) {
+    changeColumn(index, index, transaction, true);
+  }
+
+  function reset() {
+    cancelResizeLayout();
+    finish(false);
+    clearControls();
+    for (const table of states.keys()) removeWidths(table);
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    reset();
+    for (const remove of listeners) remove();
+    listeners.length = 0;
+    composing.clear();
+  }
+
+  const resize = new ResizeObserver(() => {
+    // Fitting can remove a scrollbar and resize this observer's own root.
+    // Even current() may dispose controls, so keep it outside this delivery.
+    if (fitOnResize) {
+      invalidateResizeLayout();
+      return;
+    }
+    if (!current()) return;
+    fitAvailableWidth();
+    position();
+  });
+  for (const type of ['pointerover', 'focusin']) {
+    listen(root, type, event => {
+      const container = event.target.closest(containerSelector);
+      if (container && root.contains(container)) show(container);
+    });
+  }
+  listen(keyboardRoot, 'keydown', event => {
+    if (!current() || event.key !== 'Escape' || !drag) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    finish(false);
+  }, true);
+  listen(root, 'compositionstart', event => {
+    composing.set(event.target, {});
+    finish(false);
+  });
+  listen(root, 'compositionend', event => {
+    const revision = composing.get(event.target);
+    // The inline editor finishes formatting in its earlier queued microtask.
+    queueMicrotask(() => {
+      if (!disposed && composing.get(event.target) === revision) composing.delete(event.target);
+    });
+  });
+  if (cancelOnScroll) listen(keyboardRoot, 'scroll', event => {
+    if (!current() || !drag) return;
+    const before = drag.scrollPositions.get(event.target);
+    if (before && before.left === event.target.scrollLeft && before.top === event.target.scrollTop) return;
+    finish(false);
+  }, true);
+  for (const type of ['blur', 'resize', 'beforeprint', 'pagehide']) {
+    listen(window, type, () => finish(false));
+  }
+
+  return {
+    cancel: () => finish(false),
+    refresh, reset, dispose, insertColumn, removeColumn,
+    isComposing: () => composing.size > 0,
+    isDragging: container => drag?.table.parentElement === container,
+    wanted: table => states.has(table)
+      ? states.get(table).widths.reduce((sum, width) => sum + width, 0) : null,
+  };
+}
+
+function estimateTableCellOpening(rows, viewportWidth) {
+  const maxRows = 24, maxCells = 128, maxCharacters = 8192, maxCellCharacters = 256;
+  const frameWidth = 65 + 40 + 2; // Row label, grid margins and dialog borders.
+  const columns = rows[0].cells.length;
+  const fit = width => Math.min(Math.max(0, viewportWidth - 48), Math.min(960, Math.max(480, width)));
+  // Unknown content is not compact content. Saturate every demand without more cell reads.
+  const fallback = () => ({ width: fit(960), weights: null });
+  // Only the opening estimate is bounded; parsing and rendering still cover the displayed scope.
+  if (rows.length > maxRows || columns > maxCells) return fallback();
+  const widths = Array(columns).fill(96);
+  const demands = Array(columns).fill(96);
+  let cells = 0, characters = 0;
+  for (const row of rows) {
+    for (let column = 0; column < columns; column++) {
+      if (++cells > maxCells) return fallback();
+      const length = row.cells[column].text.length;
+      characters += length;
+      if (length > maxCellCharacters || characters > maxCharacters) return fallback();
+      widths[column] = Math.max(widths[column], Math.min(240, length * 8 + 18));
+      demands[column] = Math.max(demands[column], length * 8 + 18);
+    }
+  }
+  return { width: fit(frameWidth + demands.reduce((sum, width) => sum + width, 0)), weights: widths };
+}
+
+function measureTableCellLabelWidth(root) {
+  const label = root.querySelector('table')?.rows[0]?.cells[0];
+  if (!label) throw new Error('tableCells.layoutFailed');
+  const style = getComputedStyle(label), zoomValue = getComputedStyle(root).zoom;
+  const zoom = zoomValue === 'normal' ? 1 : Number(zoomValue);
+  const minimum = Number.parseFloat(style.minWidth);
+  const edges = ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth']
+    .map(property => Number.parseFloat(style[property]));
+  const range = document.createRange();
+  range.selectNodeContents(label);
+  const textWidth = range.getBoundingClientRect().width;
+  if (!Number.isFinite(zoom) || zoom <= 0 || !Number.isFinite(minimum) || minimum < 0 ||
+      edges.some(width => !Number.isFinite(width) || width < 0) ||
+      !Number.isFinite(textWidth) || textWidth <= 0) throw new Error('tableCells.layoutFailed');
+  // Measure the label's text, not the browser's surplus allocation to its cell.
+  return Math.ceil(Math.max(minimum, textWidth / zoom + edges.reduce((sum, width) => sum + width, 0)));
+}
+
+function createTableCellSizing({
+  root, dialog, isCurrent, onDragChange, initialWidth = window.innerWidth - 48, initialWeights,
+}) {
+  const listeners = [];
+  let disposed = false, gesture = null, timer = 0;
+  // Choose preferences before layout; viewport clamps must not become the reference.
+  let width = Math.max(0, initialWidth) / window.innerWidth;
+  let height = null;
+  dialog.style.width = `${width * 100}vw`;
+  dialog.style.height = '';
+  const labelWidth = measureTableCellLabelWidth(root);
+  const columns = createTableColumnSizing({
+    root, containerSelector: '.table-cell-sizing-container',
+    firstColumn: 1, initialFixedWidths: [labelWidth], fitOnResize: true, initialWeights, keyboardRoot: dialog,
+    focusOnPointer: false, cancelOnScroll: true, isCurrent: current, onDragChange,
+  });
+
+  function current() {
+    if (disposed) return false;
+    if (isCurrent()) return true;
+    dispose();
+    return false;
+  }
+  function listen(target, type, listener, capture = true) {
+    target.addEventListener(type, listener, capture);
+    listeners.push(() => target.removeEventListener(type, listener, capture));
+  }
+  function restorePreferences() {
+    dialog.style.width = `${width * 100}vw`;
+    dialog.style.height = height === null ? '' : `${height * 100}vh`;
+  }
+  function settle() {
+    clearTimeout(timer);
+    timer = 0;
+    const before = gesture;
+    gesture = null;
+    if (!before || !current()) return;
+    if (before.end?.commit && !before.invalid &&
+        before.viewportWidth === window.innerWidth && before.viewportHeight === window.innerHeight) {
+      const bounds = dialog.getBoundingClientRect();
+      const changed = (axis, coordinate) =>
+        dialog.style[axis] !== before[axis] && dialog.style[axis].endsWith('px') &&
+        Math.abs(before.end[coordinate] - before[coordinate]) > .5 &&
+        Math.abs(bounds[axis] - before.bounds[axis]) > .5;
+      if (changed('width', 'clientX')) width = bounds.width / before.viewportWidth;
+      if (changed('height', 'clientY')) height = bounds.height / before.viewportHeight;
+    }
+    // Native width-only resizing can write a pixel height without height intent.
+    restorePreferences();
+  }
+  listen(dialog, 'pointerdown', event => {
+    if (!current() || !event.isTrusted || event.button !== 0 || !event.isPrimary || event.target !== dialog) return;
+    if (gesture) settle();
+    gesture = {
+      pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY,
+      bounds: dialog.getBoundingClientRect(), width: dialog.style.width, height: dialog.style.height,
+      viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+    };
+  });
+  const end = (event, commit) => {
+    if (!current() || !gesture || event.pointerId !== gesture.pointerId) return;
+    gesture.end = { commit, clientX: event.clientX, clientY: event.clientY };
+    clearTimeout(timer);
+    const transaction = gesture;
+    // Settle after native dispatch, even when a hidden window does not paint.
+    timer = setTimeout(() => { if (gesture === transaction) settle(); }, 0);
+  };
+  listen(window, 'pointerup', event => end(event, true));
+  listen(window, 'pointercancel', event => end(event, false));
+  for (const type of ['blur', 'pagehide']) {
+    // Cell blur must not abort a native dialog resize.
+    listen(window, type, () => { if (gesture) { gesture.end = null; settle(); } }, false);
+  }
+  listen(window, 'resize', () => {
+    if (!current() || !gesture) return;
+    if (gesture.viewportWidth !== window.innerWidth || gesture.viewportHeight !== window.innerHeight) {
+      gesture.invalid = true;
+    }
+  });
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    clearTimeout(timer);
+    timer = 0;
+    gesture = null;
+    for (const remove of listeners) remove();
+    listeners.length = 0;
+    columns.dispose();
+  }
+  return {
+    ...columns, dispose,
+    refresh() { if (current()) columns.refresh(); },
+  };
+}
+
+const tableColumnSizing = createTableColumnSizing({
+  root: viewer, containerSelector: '.table-container',
+  generation: () => renderGeneration,
+  onDragChange(resizing) {
+    tableHeaderTracking.setResizing(resizing);
+    document.body.classList.toggle('table-column-resizing', resizing);
+  },
+  onLayout: table => applyWideContentLayout(table.parentElement),
+});
+
 // Add maximize buttons to tables for popup view
 function addTableMaximizeButtons() {
   const tables = viewer.querySelectorAll('.markdown-body table, #viewer table');
@@ -7362,6 +8158,8 @@ function addTableMaximizeButtons() {
     // Create container and button
     const container = document.createElement('div');
     container.className = 'table-container';
+    container.tabIndex = 0;
+    container.setAttribute('aria-label', 'Table. Focus to resize columns.');
 
     const maxBtn = document.createElement('button');
     maxBtn.className = 'table-maximize-btn';
@@ -7551,21 +8349,63 @@ function republishBreakoutBudgetForZoom(zoomFactor) {
   );
 }
 
+function applyMermaidBreakout({ splitView, available, zoomFactor }) {
+  const diagrams = [...viewer.querySelectorAll('.mermaid-container')].filter(container => container.clientWidth > 0);
+  diagrams.forEach(container => {
+    container.classList.remove('mermaid-breakout');
+    container.style.removeProperty('--table-breakout-width');
+    container.style.removeProperty('--mv-breakout-applied');
+  });
+  const wrapper = document.querySelector('.content-wrapper');
+  if (splitView || !wrapper || available <= 0) return;
+  const wrapperBounds = wrapper.getBoundingClientRect();
+  const safeCenter = wrapperBounds.left + wrapper.clientLeft + wrapper.clientWidth / 2;
+  const measured = diagrams.map(container => {
+    const element = container.querySelector(':scope > .mermaid');
+    const svg = element?.querySelector('svg');
+    const width = svg?.viewBox?.baseVal.width;
+    if (!Number.isFinite(width) || width <= 0) return null;
+    const style = getComputedStyle(element);
+    const frame = ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth']
+      .reduce((sum, key) => sum + (parseFloat(style[key]) || 0), 0);
+    const bounds = container.getBoundingClientRect();
+    const penalty = 2 * Math.abs(bounds.left + bounds.width / 2 - safeCenter) / zoomFactor;
+    if (penalty * zoomFactor >= available) {
+      console.warn('Mermaid breakout cannot fit its containing block inside the reading area');
+      return null;
+    }
+    return { container, naturalWidth: width + frame, penalty };
+  });
+  measured.forEach(measurement => {
+    if (!measurement) return;
+    const { container, naturalWidth, penalty } = measurement;
+    container.style.setProperty('--table-breakout-width', naturalWidth + 'px');
+    // Keep a live cap even without widening: zoom can shrink the budget before
+    // the next layout pass. Nested content needs room on both sides of its center.
+    container.style.setProperty('--mv-breakout-applied',
+      `min(max(100%, ${naturalWidth}px), max(0px, calc(var(--mv-breakout-budget, 100%) - ${penalty}px)))`);
+    container.classList.add('mermaid-breakout');
+  });
+}
+
 function applyTableBreakout() {
+  applyWideContentLayout();
+}
+
+function applyWideContentLayout(onlyContainer = null) {
   // A pending coalesced run is now redundant: this call recomputes everything
   // it would have.
-  clearTimeout(tableBreakoutCoalesceTimer);
-  tableBreakoutCoalesceTimer = null;
+  if (!onlyContainer) {
+    clearTimeout(tableBreakoutCoalesceTimer);
+    tableBreakoutCoalesceTimer = null;
+  }
 
-  const containers = viewer.querySelectorAll('.table-container');
-  // Note this returns BEFORE publishing the budget, and that is sound: with no
-  // containers at all there is no stored width to clamp, and the paths that can
-  // create one - renderTableInDOM, and every render - call this again
-  // afterwards. The zoom path publishes unconditionally because it is not
-  // creating containers, only changing what the existing ones may occupy.
-  if (!containers.length) return;
+  const containers = onlyContainer ? [onlyContainer] : viewer.querySelectorAll('.table-container');
+  if (!containers.length && !viewer.querySelector('.mermaid-container')) return;
 
-  const { splitView, available, zoomFactor } = publishBreakoutBudget();
+  const budget = publishBreakoutBudget();
+  const { splitView, available, zoomFactor } = budget;
+  if (!onlyContainer) applyMermaidBreakout(budget);
 
   // Read pass. A container inside a collapsed section (display: none) has zero
   // width and cannot be measured; clearing it would drop a breakout that could
@@ -7574,6 +8414,7 @@ function applyTableBreakout() {
   // containers are therefore left exactly as they are.
   const visible = [];
   containers.forEach((c) => {
+    if (tableColumnSizing.isDragging(c)) return;
     if (c.clientWidth > 0) visible.push(c);
   });
   if (!visible.length) return;
@@ -7637,11 +8478,19 @@ function applyTableBreakout() {
   const preferredStates = [];
   try {
     for (const m of measured) {
+      const manual = tableColumnSizing.wanted(m.container.querySelector('table'));
+      m.manual = manual !== null;
+      m.wanted = manual === null ? 0 : manual * zoomFactor;
+      if (m.manual) {
+        preferredStates.push(null);
+        continue;
+      }
       preferredStates.push(tablePreferredBegin(m.container, capMemo));
     }
 
     // Read pass: one layout now answers every table.
     measured.forEach((m, i) => {
+      if (m.manual) return;
       // Two reasons to widen, and both matter. Overflow is the hard case:
       // content that cannot shrink any further (an unbreakable token) and is
       // genuinely clipped. The preferred width is the soft case: a table that
@@ -8428,6 +9277,7 @@ function beginFileOpen(data, options = {}) {
   if (!mayMutateRendererDocument(options.source || 'ipc-file-opened')) {
     return null;
   }
+  tableColumnSizing.reset();
   const openedPath = data && data.path;
   const openedContent = data && data.content;
   const dirty = options.hasUnsavedChanges === true;
@@ -8459,6 +9309,7 @@ function beginFileOpen(data, options = {}) {
       : null,
   };
   const openSequence = ++fileOpenSequence;
+  tableCellSession?.sizing?.dispose();
   // The incoming tab is not active yet. Its Main-issued descriptor seeds
   // correlation before ownership and captured Save-key lookups.
   const descriptor = data?.document ||
@@ -8531,6 +9382,7 @@ function beginFileOpen(data, options = {}) {
   // Store original markdown for editor
   originalMarkdown = incomingEditor?.open ? incomingEditor.rendererMarkdown : openedContent;
   markdownEditor.value = openedContent;
+  exactTypingSource = incomingEditor?.open ? openedContent : null;
   setEditorPresentation(incomingEditor?.open === true, !!incomingEditor);
   editSessionBaseline = incomingEditor?.open ? incomingEditor.baseline : null;
   const selection = incomingEditor?.selection;
@@ -8588,6 +9440,7 @@ function beginFileOpen(data, options = {}) {
     originalMarkdown = prior.markdown;
     setEditorPresentation(prior.editor.open, prior.documentActionsEnabled);
     markdownEditor.value = prior.editorValue;
+    exactTypingSource = prior.editor.open ? prior.history.exactTypingSource ?? prior.markdown : null;
     markdownEditor.setSelectionRange(prior.editor.selection.start, prior.editor.selection.end,
       prior.editor.selection.direction);
     markdownEditor.scrollTop = prior.editor.scrollTop;
@@ -8645,8 +9498,10 @@ function beginFileOpen(data, options = {}) {
     return null;
   }
 
+  hideDocumentContextMenus();
   cancelEditorDeferredWork();
   editorModeRevision++;
+  tableCellSession?.sizing?.refresh();
   editorScroll.reset();
   if (!isEditMode) editorScroll.leave();
   if (incomingEditor) {
@@ -8728,8 +9583,7 @@ function beginFileOpen(data, options = {}) {
   return Object.freeze({
     sequence: openSequence,
     editorInteraction: editorInteractionRevision,
-    editorScroll: incomingEditor?.open
-      ? { top: incomingEditor.scrollTop, left: incomingEditor.scrollLeft } : null,
+    editorScroll: prepareEditorScrollRestore(incomingEditor),
     path: openedPath,
     postRenderScroll,
     unresolvedEvidence:
@@ -8746,86 +9600,91 @@ function beginFileOpen(data, options = {}) {
 
 function completeFileOpen(context, visualCompletion = null) {
   if (!context || !Number.isSafeInteger(context.sequence)) return false;
-  // A newer file-open owns the renderer now. Its synchronous ownership
-  // boundary has already replaced these stores, so the older completion must
-  // not apply its visual position to the newer document.
-  if (context.sequence !== fileOpenSequence) {
-    supersededFileOpenCompletionCount += 1;
-    return false;
-  }
-  // Phase-two freeze can begin while a large/Mermaid render is awaiting. The
-  // core document and all state-machine ownership above are coherent and
-  // frozen; visual position must not move after that final approval.
-  if (!mayMutateRendererDocument('ipc-file-opened-after-render')) {
-    frozenFileOpenCompletionCount += 1;
-    return false;
-  }
-  let approvedSnapshotMatches = true;
-  if (context.approvedPathKey) {
-    approvedSnapshotMatches = false;
-    const owner = context.approvedOwner;
-    if (owner && owner.pathKey === context.approvedPathKey) {
-      try {
-        const checked = window.folia.checkOwnedTabDiskSnapshot({
-          filePath: context.path,
-          sourcePath: context.approvedSourcePath,
-          owner,
-          pageSession: owner.pageSession,
-          rendererGeneration: owner.rendererGeneration,
-          diskVersion: context.approvedDiskVersion,
-        });
-        approvedSnapshotMatches = checked.matches === true &&
-          checked.pathKey === context.approvedPathKey &&
-          diskVersionsEqual(checked.diskVersion, context.approvedDiskVersion);
-      } catch (error) {
-        console.error('Could not verify the approved post-render snapshot:', error);
+  try {
+    // A newer file-open owns the renderer now. Its synchronous ownership
+    // boundary has already replaced these stores, so the older completion must
+    // not apply its visual position to the newer document.
+    if (context.sequence !== fileOpenSequence) {
+      supersededFileOpenCompletionCount += 1;
+      return false;
+    }
+    // Phase-two freeze can begin while a large/Mermaid render is awaiting. The
+    // core document and all state-machine ownership above are coherent and
+    // frozen; visual position must not move after that final approval.
+    if (!mayMutateRendererDocument('ipc-file-opened-after-render')) {
+      frozenFileOpenCompletionCount += 1;
+      return false;
+    }
+    let approvedSnapshotMatches = true;
+    if (context.approvedPathKey) {
+      approvedSnapshotMatches = false;
+      const owner = context.approvedOwner;
+      if (owner && owner.pathKey === context.approvedPathKey) {
+        try {
+          const checked = window.folia.checkOwnedTabDiskSnapshot({
+            filePath: context.path,
+            sourcePath: context.approvedSourcePath,
+            owner,
+            pageSession: owner.pageSession,
+            rendererGeneration: owner.rendererGeneration,
+            diskVersion: context.approvedDiskVersion,
+          });
+          approvedSnapshotMatches = checked.matches === true &&
+            checked.pathKey === context.approvedPathKey &&
+            diskVersionsEqual(checked.diskVersion, context.approvedDiskVersion);
+        } catch (error) {
+          console.error('Could not verify the approved post-render snapshot:', error);
+        }
       }
     }
-  }
-  if (context.sequence !== fileOpenSequence) {
-    supersededFileOpenCompletionCount += 1;
-    return false;
-  }
-  if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {
-    frozenFileOpenCompletionCount += 1;
-    return false;
-  }
-  if (!approvedSnapshotMatches) {
-    markReloadConflict(context.path);
-    reportAdoptionTrackingConflict(context.path, context.approvedOwner);
-    showNotification(
-      'The file target moved during display. Its approved copy is kept with a conflict; review before saving.',
-      8000
-    );
-    return false;
-  }
+    if (context.sequence !== fileOpenSequence) {
+      supersededFileOpenCompletionCount += 1;
+      return false;
+    }
+    if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {
+      frozenFileOpenCompletionCount += 1;
+      return false;
+    }
+    if (!approvedSnapshotMatches) {
+      markReloadConflict(context.path);
+      reportAdoptionTrackingConflict(context.path, context.approvedOwner);
+      showNotification(
+        'The file target moved during display. Its approved copy is kept with a conflict; review before saving.',
+        8000
+      );
+      return false;
+    }
 
-  if (context.editorScroll && isEditMode &&
-      context.editorInteraction === editorInteractionRevision) {
-    markdownEditor.scrollTop = context.editorScroll.top;
-    markdownEditor.scrollLeft = context.editorScroll.left;
+    if (context.editorScroll && context.editorScroll === pendingEditorScrollRestore &&
+        context.editorScroll.cancelled === false && isEditMode &&
+        context.editorInteraction === editorInteractionRevision) {
+      markdownEditor.scrollTop = context.editorScroll.top;
+      markdownEditor.scrollLeft = context.editorScroll.left;
+    }
+    if (context.postRenderScroll.type === 'restore') {
+      // Small delay preserves the existing navigation behavior while retaining
+      // both ownership checks at the actual visual mutation.
+      setTimeout(() => {
+        if (
+          context.sequence !== fileOpenSequence ||
+          !mayMutateRendererDocument('file-opened-scroll-restore')
+        ) {
+          return;
+        }
+        contentWrapper.scrollTop = context.postRenderScroll.top;
+      }, 100);
+    } else if (context.postRenderScroll.type === 'top') {
+      contentWrapper.scrollTop = 0;
+    } else if (
+      context.postRenderScroll.type === 'caller' &&
+      typeof visualCompletion === 'function'
+    ) {
+      visualCompletion();
+    }
+    return true;
+  } finally {
+    cancelEditorScrollRestore(context.editorScroll);
   }
-  if (context.postRenderScroll.type === 'restore') {
-    // Small delay preserves the existing navigation behavior while retaining
-    // both ownership checks at the actual visual mutation.
-    setTimeout(() => {
-      if (
-        context.sequence !== fileOpenSequence ||
-        !mayMutateRendererDocument('file-opened-scroll-restore')
-      ) {
-        return;
-      }
-      contentWrapper.scrollTop = context.postRenderScroll.top;
-    }, 100);
-  } else if (context.postRenderScroll.type === 'top') {
-    contentWrapper.scrollTop = 0;
-  } else if (
-    context.postRenderScroll.type === 'caller' &&
-    typeof visualCompletion === 'function'
-  ) {
-    visualCompletion();
-  }
-  return true;
 }
 
 // Upstream fallback: when no tab overlay claims this channel, renderer owns
@@ -9456,10 +10315,12 @@ documentEvents.on('file-reload-result', async (event, data) => {
     if (!unresolvedEvidence && !trackingConflict) {
       reloadConflicts.delete(acceptedStateKey);
     }
+    hideDocumentContextMenus();
     originalMarkdown = data.content;
     cancelEditorDeferredWork();
     historyClear();
     editorModeRevision++;
+    tableCellSession?.sizing?.refresh();
     editSessionBaseline = null;
     withFileTrackingResumeHeld(() => {
       // The document was just re-read from disk, so whatever the last write
@@ -9473,6 +10334,7 @@ documentEvents.on('file-reload-result', async (event, data) => {
       // If in edit mode, update editor content
       if (isEditMode) {
         markdownEditor.value = originalMarkdown;
+        exactTypingSource = data.content;
         setDocumentDirtyState(unresolvedEvidence || trackingConflict);
         // The reload replaced the document underneath an open edit session, so
         // the session's baseline must move with it.
@@ -9618,6 +10480,25 @@ let rightClickCaretInfo = null;
 let rightClickLabelPos = null; // {left, top} relative to viewer
 let savedCursorPosition = null;
 
+function documentMenuPresentation(anchor, contextNodes = [], isCurrent = null) {
+  const owner = currentDocumentActionOwner(), filePath = currentFilePath;
+  const sequence = fileOpenSequence, mode = editorModeRevision, editing = isEditMode;
+  const source = editing ? markdownEditor.value : originalMarkdown;
+  const interaction = editorInteractionRevision;
+  const start = markdownEditor.selectionStart, end = markdownEditor.selectionEnd;
+  const direction = markdownEditor.selectionDirection;
+  return {
+    anchor, contextNodes,
+    isCurrent: () => currentDocumentActionOwner() === owner && currentFilePath === filePath &&
+      fileOpenSequence === sequence && editorModeRevision === mode && isEditMode === editing &&
+      (editing ? markdownEditor.value : originalMarkdown) === source &&
+      (anchor !== markdownEditor || editorInteractionRevision === interaction &&
+        markdownEditor.selectionStart === start && markdownEditor.selectionEnd === end &&
+        markdownEditor.selectionDirection === direction) &&
+      (!isCurrent || isCurrent()),
+  };
+}
+
 function showContextMenu(x, y, event) {
   captureTableMenuSelection(x, y, event);
   // Get and save selected text
@@ -9748,7 +10629,11 @@ function showContextMenu(x, y, event) {
   tidyContextMenuSeparators();
 
   // Use helper for positioning (handles screen edge adjustment)
-  positionContextMenu(contextMenu, x, y);
+  const capturedTable = tableMenuSelection;
+  const contextNodes = [capturedTable?.tableNode,
+    savedRange?.startContainer, savedRange?.endContainer].filter(Boolean);
+  positionContextMenu(contextMenu, x, y, documentMenuPresentation(rightClickTarget, contextNodes,
+    capturedTable ? () => capturedTable.isCurrent() : null));
 }
 
 // Items that change the document and are NOT notes. Kept as one list so the
@@ -9811,8 +10696,13 @@ function tidyContextMenuSeparators() {
   }
 }
 
-function hideContextMenu() {
-  contextMenu.classList.remove('visible');
+function hideContextMenu(event) {
+  return hideContextMenuHelper(contextMenu, event);
+}
+
+function hideDocumentContextMenus(previewOnly = false) {
+  if (!previewOnly || rightClickTarget !== markdownEditor) hideContextMenu();
+  hideNotesPanelContextMenu();
 }
 
 // Show context menu on right-click in viewer area
@@ -11780,7 +12670,7 @@ ctxInsertMermaid && ctxInsertMermaid.addEventListener('click', () => {
 // Insert Table → open TableInsertDialog
 ctxInsertTable && ctxInsertTable.addEventListener('click', () => {
   hideContextMenu();
-  openTableInsertDialog();
+  openTableCellEditor(TableCellMode.INSERT);
 });
 
 // Edit Mermaid — open dialog prefilled with existing code
@@ -11813,11 +12703,36 @@ ctxEditMermaid && ctxEditMermaid.addEventListener('click', () => {
 });
 
 let tableMenuSelection = null;
-let tableCellSession = null;
+const TableCellMode = FoliaTableCells.Mode;
+const tableCellInputs = new WeakMap();
 const tableCellDialog = document.getElementById('tableCellDialog');
 const tableCellGrid = document.getElementById('tableCellGrid');
 const tableCellError = document.getElementById('tableCellError');
 const tableCellUpdate = document.getElementById('tableCellUpdate');
+const tableCellInsertAbove = document.getElementById('tableCellInsertAbove');
+const tableCellInsertBelow = document.getElementById('tableCellInsertBelow');
+const tableCellRemoveAdded = document.getElementById('tableCellRemoveAdded');
+const tableCellSetup = document.getElementById('tableCellSetup');
+const tableCellColumns = document.getElementById('tableCellColumns');
+const tableCellDataRows = document.getElementById('tableCellDataRows');
+const tableCellStart = document.getElementById('tableCellStart');
+const tableCellInsertLeft = document.getElementById('tableCellInsertLeft');
+const tableCellInsertRight = document.getElementById('tableCellInsertRight');
+const tableCellDeleteColumn = document.getElementById('tableCellDeleteColumn');
+const tableCellCounts = document.getElementById('tableCellCounts');
+const tableCellColumnScope = document.getElementById('tableCellColumnScope');
+for (const [button, key] of [[tableCellInsertAbove, 'tableCells.insertAbove'],
+  [tableCellInsertBelow, 'tableCells.insertBelow'], [tableCellRemoveAdded, 'tableCells.removeAdded'],
+  [tableCellInsertLeft, 'tableCells.insertLeft'], [tableCellInsertRight, 'tableCells.insertRight'],
+  [tableCellDeleteColumn, 'tableCells.deleteColumn']]) {
+  labelTableCellAction(button, key);
+}
+function labelTableCellAction(button, key) {
+  const label = i18n(key);
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+document.getElementById('tableCellRowActions').setAttribute('aria-label', i18n('tableCells.rowActions'));
 FoliaInlineFormatting.attachDialogContainment({
   element: tableCellDialog, documentEditor: markdownEditor, isCurrent: () => tableCellDialog.open,
 });
@@ -11890,6 +12805,12 @@ function protectTableSource(text, mask) {
 function closeTableCellEditor() {
   const session = tableCellSession;
   tableCellSession = null;
+  session?.confirmation?.controller.abort();
+  tableCellGrid.inert = false;
+  tableCellGrid.hidden = false;
+  tableCellSetup.hidden = true;
+  tableCellDialog.classList.remove('table-cell-setup-open');
+  session?.sizing?.dispose();
   session?.cells.forEach(cell => cell.engine?.dispose());
   if (tableCellDialog.open) tableCellDialog.close();
   tableCellGrid.replaceChildren();
@@ -11905,99 +12826,605 @@ function showTableCellError(error) {
 }
 
 function serializeSafeTableCell(input, provenance) {
-  provenance ??= tableCellSession?.cells.find(cell => cell.input === input)?.provenance;
+  provenance ??= tableCellInputs.get(input)?.provenance;
   return FoliaInlineFormatting.serializeSurface(input, provenance,
     { marked, transform: parseEmojis, sanitize: sanitizeTableHtml });
 }
 
-function openTableCellEditor(rowsOnly) {
-  hideContextMenu();
-  const selection = tableMenuSelection;
-  if (!selection?.isCurrent()) {
-    showNotification(i18n('tableCells.stale'), 5000);
-    return;
+function createTableCell(session, row, columnState, column, raw, original) {
+  const container = document.createElement(row.header ? 'th' : 'td'), input = document.createElement('div');
+  if (row.header) container.scope = 'col';
+  input.dataset.tableCell = '';
+  input.setAttribute('role', 'textbox');
+  if (row.editable) {
+    input.contentEditable = 'true';
+    input.setAttribute('aria-multiline', 'false');
+  } else {
+    input.tabIndex = 0;
+    input.setAttribute('aria-readonly', 'true');
   }
+  const provenance = FoliaTableCells.prepareCell(input, original?.text ?? raw, raw, marked, session.model.links,
+    parseEmojis, sanitizeTableHtml);
+  if (row.editable) serializeSafeTableCell(input, provenance);
+  const cell = { cell: original, input, container, provenance, initial: input.innerHTML,
+    rowState: row, columnState, column };
+  tableCellInputs.set(input, cell);
+  container.appendChild(input);
+  return cell;
+}
+
+function createTableCellRow(session, original, editable, header = false, values = []) {
+  const element = document.createElement('tr'), label = document.createElement('th');
+  label.scope = 'row';
+  element.appendChild(label);
+  const row = { id: `row-${session.nextRowId++}`, original, editable, header, element, label, cells: [] };
+  for (let column = 0; column < session.columnOrder.length; column++) {
+    const columnState = session.columnOrder[column], cell = original?.cells[columnState.originalIndex];
+    const raw = cell ? session.model.source.slice(session.model.view.offsets[cell.start], session.model.view.offsets[cell.end]) :
+      values[column] ?? '';
+    const item = createTableCell(session, row, columnState, column, raw, cell);
+    row.cells.push(item);
+    element.appendChild(item.container);
+  }
+  return row;
+}
+
+function refreshTableCellRows(session) {
+  FoliaTableCells.validateMode(session.mode);
+  let number = session.mode === TableCellMode.INSERT ? 1 :
+    Math.max(1, session.target.table.rows.indexOf(session.target.rows[0]));
+  for (const row of session.rows) {
+    const header = row.header;
+    const index = header ? 0 : number++;
+    row.label.textContent = header ? i18n('tableCells.header') :
+      i18n(row.original ? 'tableCells.row' : 'tableCells.addedRow', { row: index });
+    for (const [column, cell] of row.cells.entries()) {
+      cell.column = column;
+      cell.row = index;
+      cell.input.setAttribute('aria-label', i18n('tableCells.cell',
+        { row: row.label.textContent, column: cell.column + 1 }));
+    }
+  }
+  session.cells = session.rows.filter(row => row.editable).flatMap(row => row.cells);
+  const added = session.rows.filter(row => !row.header && !row.original).length;
+  const removed = session.deletedRows.size;
+  tableCellCounts.textContent = i18n('tableCells.counts',
+    { rows: session.rows.filter(row => !row.header).length, columns: session.columns });
+  document.getElementById('tableCellScope').textContent = session.mode === TableCellMode.INSERT
+    ? i18n('tableCells.createScope', { rows: session.rows.filter(row => !row.header).length, columns: session.columns })
+    : i18n(added || removed ? 'tableCells.draftScope' : 'tableCells.scope',
+      { rows: session.target.rows.length, added, removed, columns: session.columns }) +
+      (session.cells.length ? '' : ' ' + i18n('tableCells.emptyScope'));
+  refreshTableCellRowActions();
+}
+
+function refreshTableCellRowActions() {
+  const session = tableCellSession, row = session?.selectedCell?.rowState;
+  const disabled = !session || !session.ready || session.submitting || session.applied || !!session.confirmation;
+  const recovery = session?.mode === TableCellMode.UPDATE_ROWS && !session.cells.length;
+  tableCellInsertAbove.disabled = disabled || !!row && (!row.editable || row.header);
+  tableCellInsertBelow.disabled = disabled || !!row && !row.editable && !recovery;
+  labelTableCellAction(tableCellInsertBelow, recovery ? 'tableCells.recoverRows' : 'tableCells.insertBelow');
+  tableCellRemoveAdded.disabled = disabled || !row;
+  tableCellInsertLeft.disabled = tableCellInsertRight.disabled =
+    disabled || session.mode === TableCellMode.UPDATE_ROWS;
+  tableCellDeleteColumn.disabled = disabled || session.mode === TableCellMode.UPDATE_ROWS ||
+    !session.selectedCell || session.columns <= 1;
+  tableCellColumnScope.hidden = session?.mode !== TableCellMode.UPDATE_ROWS;
+}
+
+function selectTableCell(session, cell) {
+  const previous = session.selectedCell;
+  previous?.container.classList.remove('table-cell-selected');
+  previous?.input.removeAttribute('aria-current');
+  session.selectedCell = cell;
+  cell?.container.classList.add('table-cell-selected');
+  cell?.input.setAttribute('aria-current', 'true');
+  refreshTableCellRowActions();
+}
+
+function currentSelectedTableCell(session) {
+  const cell = session.selectedCell, row = cell?.rowState;
+  if (!cell || !session.rows.includes(row) || !row.cells.includes(cell) ||
+      session.columnOrder[cell.column] !== cell.columnState ||
+      !tableCellGrid.contains(cell.input) || !cell.container.classList.contains('table-cell-selected')) {
+    throw new Error('tableCells.selectCell');
+  }
+  return cell;
+}
+
+function requireTableCellMutation(session, action) {
+  FoliaTableCells.validateMode(session.mode);
+  if (session.target && session.target.mode !== session.mode) throw new Error('tableCells.mode');
+  if (session.sizing?.isComposing()) throw new Error('tableCells.composing');
+  if (!session.selection.isCurrent() || !mayMutateRendererDocument(action) ||
+      window.CustomTabs.snapshotExactEditorContent() !== session.exact) {
+    selectTableCell(session, null);
+    throw new Error('tableCells.stale');
+  }
+}
+
+function finishTableCellDraftChange(session, focus, selected = null) {
+  session.activeCell = focus || null;
+  selectTableCell(session, selected);
+  refreshTableCellRows(session);
+  session.sizing?.refresh();
+  tableCellError.textContent = '';
+  if (focus) {
+    focus.input.focus({ preventScroll: true });
+    focus.input.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  } else {
+    tableCellInsertBelow.focus({ preventScroll: true });
+  }
+}
+
+function confirmTableCellRowRemoval(session, cell) {
+  return confirmTableCellRemoval(session, cell, 'row');
+}
+
+function confirmTableCellColumnRemoval(session, cell) {
+  return confirmTableCellRemoval(session, cell, 'column');
+}
+
+async function confirmTableCellRemoval(session, cell, kind) {
+  if (tableCellSession !== session || !session.ready || session.submitting ||
+      session.applied || session.confirmation) return;
+  const columnRemoval = kind === 'column', row = cell.rowState;
+  const header = !columnRemoval && row.header, column = cell.column;
+  const columnState = cell.columnState;
+  const pending = { controller: new AbortController() };
+  const mode = session.mode, target = session.target, model = session.model;
+  const exact = session.exact, selection = session.selection, source = model.source;
+  const view = model.view, table = target?.table, targetRows = target?.rows;
+  const originalTargetRows = targetRows?.slice();
+  const rows = session.rows, columns = session.columnOrder;
+  const editableCells = session.cells, beforeEditableCells = editableCells.slice(), body = session.body;
+  const nextRowId = session.nextRowId, nextColumnId = session.nextColumnId;
+  const deletedRows = session.deletedRows, deletedColumns = session.deletedColumns;
+  const beforeDeletedRows = [...deletedRows], beforeDeletedColumns = [...deletedColumns];
+  const columnWitness = columns.map(item => ({ item, id: item.id, originalIndex: item.originalIndex }));
+  const witness = rows.map(item => ({
+    item, id: item.id, original: item.original, header: item.header, editable: item.editable,
+    element: item.element, label: item.label, cells: item.cells,
+    originalCells: item.original?.cells,
+    originalValues: item.original?.cells.map(value => ({ value, start: value.start, end: value.end, text: value.text })),
+    nodes: [...item.element.children],
+    values: item.cells.map(value => ({
+      value, original: value.cell, input: value.input, container: value.container,
+      engine: value.engine, rowState: value.rowState, columnState: value.columnState,
+      column: value.column, html: value.input.innerHTML, initial: value.initial, provenance: value.provenance,
+    })),
+  }));
+  const same = (values, expected) => values.length === expected.length &&
+    expected.every((value, index) => values[index] === value);
+  const unchanged = () => session.mode === mode && session.target === target &&
+    (!target || target.mode === mode && target.model === model && target.table === table &&
+      target.rows === targetRows && same(targetRows, originalTargetRows)) &&
+    session.model === model && model.source === source && model.view === view && session.exact === exact &&
+    session.selection === selection && session.rows === rows && session.columnOrder === columns &&
+    session.cells === editableCells && same(editableCells, beforeEditableCells) && session.body === body &&
+    session.nextRowId === nextRowId && session.nextColumnId === nextColumnId &&
+    rows.length === witness.length && columns.length === columnWitness.length && session.columns === columns.length &&
+    columnWitness.every(({ item, id, originalIndex }, index) => columns[index] === item &&
+      item.id === id && item.originalIndex === originalIndex) &&
+    session.deletedRows === deletedRows && same([...deletedRows], beforeDeletedRows) &&
+    session.deletedColumns === deletedColumns && same([...deletedColumns], beforeDeletedColumns) &&
+    witness.every(({ item, id, original, header, editable, element, label, cells,
+      originalCells, originalValues, nodes, values }, index) =>
+      rows[index] === item && item.id === id && item.original === original &&
+      item.header === header && item.editable === editable && item.element === element &&
+      item.label === label && item.cells === cells && cells.length === values.length &&
+      (!original || original.cells === originalCells && originalCells.length === originalValues.length &&
+        originalValues.every(({ value, start, end, text }, index) => originalCells[index] === value &&
+          value.start === start && value.end === end && value.text === text)) &&
+      same(element.children, nodes) && values.every((before, index) => cells[index] === before.value &&
+        before.value.cell === before.original && before.value.input === before.input &&
+        before.value.container === before.container && before.value.engine === before.engine &&
+        before.value.rowState === before.rowState && before.value.columnState === before.columnState &&
+        before.value.column === before.column && before.input.innerHTML === before.html &&
+        before.value.initial === before.initial && before.value.provenance === before.provenance));
+  const current = () => tableCellSession === session && tableCellDialog.open &&
+    session.confirmation === pending && session.ready && !session.submitting && !session.applied &&
+    selection.isCurrent() && session.mode === mode && session.rows.includes(row);
+  let focus = cell;
   try {
-    const exact = window.CustomTabs.snapshotExactEditorContent();
-    const model = FoliaTableCells.index(exact, marked, protectTableSource);
-    const target = rowsOnly
-      ? selection.origin === 'markdown'
-        ? FoliaTableCells.resolveSource(model, selection.start, selection.end, true)
-        : FoliaTableCells.resolvePreview(model, selection.range, viewer,
-            node => editorScroll.tableSource(node), true)
-      : selection.origin === 'markdown'
-        ? FoliaTableCells.resolveSourceLine(model, selection.sourceLine)
-        : FoliaTableCells.resolvePreviewTable(model, selection.tableNode, viewer,
-            node => editorScroll.tableSource(node));
-    const session = { selection, target, exact, cells: [], submitting: false, applied: false };
-    const table = document.createElement('table'), head = table.createTHead(), body = table.createTBody();
-    const header = target.table.rows[0];
-    const displayRows = target.rows.includes(header) ? target.rows : [header, ...target.rows];
-    for (const row of displayRows) {
-      const rowIndex = target.table.rows.indexOf(row);
-      const editable = target.rows.includes(row);
-      const tr = (rowIndex === 0 ? head : body).insertRow();
-      const label = document.createElement('th');
-      label.scope = 'row';
-      label.textContent = rowIndex === 0 ? i18n('tableCells.header') : i18n('tableCells.row', { row: rowIndex });
-      tr.appendChild(label);
-      for (let c = 0; c < row.cells.length; c++) {
-        const cell = row.cells[c], container = document.createElement(rowIndex === 0 ? 'th' : 'td');
-        const input = document.createElement('div');
-        if (rowIndex === 0) container.scope = 'col';
-        if (editable) {
-          input.contentEditable = 'true';
-          input.setAttribute('role', 'textbox');
-          input.setAttribute('aria-multiline', 'false');
-        }
-        input.setAttribute('aria-label', i18n('tableCells.cell', { row: label.textContent, column: c + 1 }));
-        const raw = model.source.slice(model.view.offsets[cell.start], model.view.offsets[cell.end]);
-        const provenance = FoliaTableCells.prepareCell(input, cell.text, raw, marked, model.links,
-          parseEmojis, sanitizeTableHtml);
-        // Validate before exposing a partially editable table.
-        if (editable) {
-          serializeSafeTableCell(input, provenance);
-          session.cells.push({ cell, input, provenance, initial: input.innerHTML, row: rowIndex, column: c });
-        }
-        container.appendChild(input);
-        tr.appendChild(container);
+    if (!['row', 'column'].includes(kind)) throw new Error('tableCells.invalid');
+    requireTableCellMutation(session, columnRemoval ? 'table-column-remove' : 'table-row-remove');
+    if (currentSelectedTableCell(session) !== cell) throw new Error('tableCells.selectCell');
+    if (columnRemoval && mode === TableCellMode.UPDATE_ROWS) throw new Error('tableCells.columnsScope');
+    if (columnRemoval && session.columns <= 1) throw new Error('tableCells.minimumColumns');
+    const headerCell = rows.find(item => item.header)?.cells.find(item => item.columnState === columnState);
+    if (columnRemoval && !headerCell) throw new Error('tableCells.invalid');
+    const headerText = columnRemoval ? headerCell.input.textContent.trim() : '';
+    const columnName = i18n(headerText ? 'tableCells.columnHeader' : 'tableCells.columnNumber',
+      { column: column + 1, header: headerText });
+    session.confirmation = pending;
+    tableCellGrid.inert = true;
+    tableCellUpdate.disabled = true;
+    refreshTableCellRowActions();
+    const answer = await window.MarkalooDialogs.show({
+      title: i18n(columnRemoval ? 'tableCells.deleteColumnTitle' : header ? 'tableCells.header' : 'tableCells.removeTitle'),
+      message: i18n(columnRemoval
+        ? mode === TableCellMode.INSERT ? 'tableCells.deleteColumnCreateMessage' : 'tableCells.deleteColumnMessage'
+        : header ? 'tableCells.headerMessage' : mode === TableCellMode.INSERT
+          ? 'tableCells.removeCreateMessage' : 'tableCells.removeMessage',
+        { row: row.label.textContent, column: columnName }),
+      buttons: header ? [{ id: 'close', label: i18n('tableCells.close'), style: 'primary' }] : [
+        { id: 'cancel', label: i18n('cancel'), style: 'secondary' },
+        { id: 'remove', label: i18n(columnRemoval ? 'tableCells.deleteColumn' : 'tableCells.removeAdded'), style: 'danger' },
+      ],
+      defaultId: header ? 'close' : 'cancel',
+      cancelId: header ? 'close' : 'cancel',
+      signal: pending.controller.signal,
+      isCurrent: current,
+    });
+    if (tableCellSession !== session || session.confirmation !== pending) return;
+    if (!current() || !unchanged() ||
+        !mayMutateRendererDocument(columnRemoval ? 'table-column-remove-confirmed' : 'table-row-remove-confirmed') ||
+        window.CustomTabs.snapshotExactEditorContent() !== exact) {
+      throw new Error('tableCells.stale');
+    }
+    if (currentSelectedTableCell(session) !== cell || cell.column !== column ||
+        session.columnOrder[column] !== columnState) throw new Error('tableCells.stale');
+    if (session.sizing?.isComposing()) throw new Error('tableCells.composing');
+    if (header || answer.choice !== 'remove' || answer.cause !== 'choice') return;
+    if (columnRemoval) {
+      if (session.columns <= 1) throw new Error('tableCells.minimumColumns');
+      focus = removeTableCellColumnDraft(session, cell);
+      finishTableCellDraftChange(session, focus);
+      return;
+    }
+    const index = session.rows.indexOf(row);
+    session.rows.splice(index, 1);
+    if (row.original) session.deletedRows.add(row.original);
+    for (const removed of row.cells) removed.engine?.dispose();
+    row.element.remove();
+    const survivors = session.rows.filter(item => item.editable);
+    focus = (session.rows[index]?.editable ? session.rows[index] : survivors.at(-1))?.cells[cell.column];
+    finishTableCellDraftChange(session, focus);
+  } catch (error) {
+    if (tableCellSession === session) showTableCellError(error);
+  } finally {
+    if (tableCellSession === session && session.confirmation === pending) {
+      session.confirmation = null;
+      tableCellGrid.inert = false;
+      tableCellUpdate.disabled = session.submitting || session.applied;
+      refreshTableCellRowActions();
+      if (session.selection.isCurrent()) {
+        (focus?.input || tableCellInsertBelow).focus({ preventScroll: true });
       }
     }
-    tableCellGrid.replaceChildren(table);
-    tableCellError.textContent = '';
-    document.getElementById('tableCellTitle').textContent = rowsOnly
-      ? i18n('tableCells.selectedTitle') : i18n('tableCells.title');
-    document.getElementById('tableCellScope').textContent = i18n('tableCells.scope',
-      { rows: target.rows.length, columns: target.table.rows[0].cells.length });
-    document.getElementById('tableCellHelp').textContent = i18n('tableCells.help');
-    tableCellUpdate.textContent = i18n('tableCells.update');
-    tableCellUpdate.disabled = false;
-    tableCellSession = session;
-    for (const cell of session.cells) cell.engine = attachTableCellInput(cell, session);
-    tableCellDialog.showModal();
-    session.cells[0].input.focus();
+  }
+}
+
+function removeTableCellColumnDraft(session, cell) {
+  if (session.mode === TableCellMode.UPDATE_ROWS) throw new Error('tableCells.columnsScope');
+  if (session.columns <= 1) throw new Error('tableCells.minimumColumns');
+  const column = cell.column, columnState = cell.columnState;
+  if (currentSelectedTableCell(session) !== cell) throw new Error('tableCells.selectCell');
+  const columns = session.columnOrder.slice(), deleted = [...session.deletedColumns];
+  const removed = session.rows.map(row => ({ row, cell: row.cells[column] }));
+  session.sizing.removeColumn(column, {
+    apply() {
+      session.columnOrder.splice(column, 1);
+      if (columnState.originalIndex !== undefined) session.deletedColumns.add(columnState.originalIndex);
+      for (const { row, cell } of removed) {
+        row.cells.splice(column, 1);
+        cell.container.remove();
+      }
+    },
+    rollback() {
+      session.columnOrder.splice(0, session.columnOrder.length, ...columns);
+      session.deletedColumns.clear();
+      for (const index of deleted) session.deletedColumns.add(index);
+      for (const { row, cell } of removed) {
+        if (!row.cells.includes(cell)) row.cells.splice(column, 0, cell);
+        row.element.insertBefore(cell.container, row.cells[column + 1]?.container || null);
+      }
+    },
+  });
+  for (const { cell } of removed) cell.engine?.dispose();
+  return cell.rowState.cells[Math.min(column, session.columns - 1)];
+}
+
+function changeTableCellRows(action) {
+  const session = tableCellSession;
+  if (!session || !session.ready || session.submitting || session.applied || session.confirmation) return;
+  try {
+    requireTableCellMutation(session, 'table-row-change');
+    if (!['above', 'below', 'remove'].includes(action)) throw new Error('tableCells.invalid');
+    const cell = currentSelectedTableCell(session), row = cell.rowState;
+    const empty = !session.cells.length;
+    if (action === 'remove') {
+      if (!row || !session.rows.includes(row)) throw new Error('tableCells.invalid');
+      session.sizing?.cancel();
+      return confirmTableCellRowRemoval(session, cell);
+    }
+    const recovery = session.mode === TableCellMode.UPDATE_ROWS && empty && row.header;
+    if (!row.editable && !(recovery && action === 'below') ||
+        action === 'above' && row.header) throw new Error('tableCells.invalid');
+    session.sizing?.cancel();
+    const added = createTableCellRow(session, null, true);
+    const at = empty ? session.rows.length : session.rows.indexOf(row) + (action === 'below' ? 1 : 0);
+    session.rows.splice(at, 0, added);
+    session.body.insertBefore(added.element, session.rows[at + 1]?.element.parentElement === session.body
+      ? session.rows[at + 1].element : null);
+    for (const inserted of added.cells) inserted.engine = attachTableCellInput(inserted, session);
+    const focus = added.cells[cell.column];
+    finishTableCellDraftChange(session, focus, focus);
   } catch (error) {
+    showTableCellError(error);
+  }
+}
+
+function changeTableCellColumns(action) {
+  const session = tableCellSession;
+  if (!session || !session.ready || session.submitting || session.applied || session.confirmation) return;
+  try {
+    requireTableCellMutation(session, action === 'remove' ? 'table-column-remove' : 'table-column-insert');
+    if (session.mode === TableCellMode.UPDATE_ROWS) throw new Error('tableCells.columnsScope');
+    if (!['left', 'right', 'remove'].includes(action)) throw new Error('tableCells.invalid');
+    const selected = currentSelectedTableCell(session);
+    if (action === 'remove') {
+      if (session.columns <= 1) throw new Error('tableCells.minimumColumns');
+      session.sizing?.cancel();
+      return confirmTableCellColumnRemoval(session, selected);
+    }
+    const column = selected.column + (action === 'right' ? 1 : 0);
+    const columnState = { id: `column-${session.nextColumnId}` };
+    const added = [], nextId = session.nextColumnId;
+    try {
+      for (const row of session.rows) {
+        const cell = createTableCell(session, row, columnState, column, '', null);
+        added.push(cell);
+        if (row.editable) cell.engine = attachTableCellInput(cell, session);
+      }
+      session.sizing.insertColumn(column, selected.column, {
+        apply() {
+          session.columnOrder.splice(column, 0, columnState);
+          session.nextColumnId++;
+          for (const cell of added) {
+            const row = cell.rowState;
+            row.element.insertBefore(cell.container, row.cells[column]?.container || null);
+            row.cells.splice(column, 0, cell);
+          }
+        },
+        rollback() {
+          const at = session.columnOrder.indexOf(columnState);
+          if (at >= 0) session.columnOrder.splice(at, 1);
+          session.nextColumnId = nextId;
+          for (const cell of added) {
+            const row = cell.rowState, index = row.cells.indexOf(cell);
+            if (index >= 0) row.cells.splice(index, 1);
+            cell.container.remove();
+          }
+        },
+      });
+    } catch (error) {
+      for (const cell of added) cell.engine?.dispose();
+      throw error;
+    }
+    const focus = added[session.rows.indexOf(selected.rowState)];
+    finishTableCellDraftChange(session, focus, focus);
+  } catch (error) {
+    showTableCellError(error);
+  }
+}
+
+function populateTableCellGrid(session, displayRows) {
+  const table = document.createElement('table'), head = table.createTHead(), body = table.createTBody();
+  const opening = estimateTableCellOpening(displayRows.map(row => row.original ||
+    { cells: row.values.map(text => ({ text })) }), window.innerWidth);
+  session.body = body;
+  session.ready = true;
+  for (const row of displayRows) {
+    const item = createTableCellRow(session, row.original, row.editable, row.header, row.values);
+    session.rows.push(item);
+    (row.header ? head : body).appendChild(item.element);
+  }
+  const sizingContainer = document.createElement('div');
+  sizingContainer.className = 'table-cell-sizing-container';
+  sizingContainer.appendChild(table);
+  tableCellGrid.replaceChildren(sizingContainer);
+  tableCellGrid.hidden = false;
+  tableCellSetup.hidden = true;
+  document.getElementById('tableCellRowActions').hidden = false;
+  tableCellDialog.classList.remove('table-cell-setup-open');
+  tableCellError.textContent = '';
+  tableCellUpdate.disabled = false;
+  tableCellSession = session;
+  refreshTableCellRows(session);
+  session.selectedCell = null;
+  refreshTableCellRowActions();
+  for (const cell of session.cells) cell.engine = attachTableCellInput(cell, session);
+  if (!tableCellDialog.open) tableCellDialog.showModal();
+  session.sizing = createTableCellSizing({
+    root: tableCellGrid, dialog: tableCellDialog, initialWidth: opening.width, initialWeights: opening.weights,
+    isCurrent: () => tableCellSession === session && tableCellDialog.open &&
+      !session.submitting && !session.applied && session.selection.isCurrent(),
+    onDragChange(resizing) {
+      // Shrinking/wrapping must not clamp or anchor-scroll the captured grip.
+      sizingContainer.style.minWidth = resizing
+        ? Math.max(sizingContainer.offsetWidth, sizingContainer.scrollWidth) + 'px' : '';
+      sizingContainer.style.minHeight = resizing
+        ? Math.max(sizingContainer.offsetHeight, sizingContainer.scrollHeight) + 'px' : '';
+      sizingContainer.style.overflowAnchor = resizing ? 'none' : '';
+    },
+  });
+  session.cells[0]?.input.focus();
+}
+
+function captureTableInsertionSelection() {
+  const tab = currentDocumentActionOwner();
+  if (!isEditMode || !tab || !mayMutateRendererDocument('table-create-open')) throw new Error('tableCells.stale');
+  if (editorHistoryComposing()) throw new Error('tableCells.composing');
+  const exact = window.CustomTabs.snapshotExactEditorContent(), source = markdownEditor.value;
+  if (FoliaTableCells.normalise(exact) !== source) throw new Error('tableCells.stale');
+  const mode = editorModeRevision, sequence = fileOpenSequence, interaction = editorInteractionRevision;
+  const isCurrent = window.CustomTabs.captureDialogContext(tab), current = window.getSelection();
+  return { tab, source, mode, sequence,
+    origin: tableMenuSelection?.isCurrent() ? tableMenuSelection.origin : 'markdown',
+    start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
+    direction: markdownEditor.selectionDirection,
+    range: current?.rangeCount === 1 ? current.getRangeAt(0).cloneRange() : null,
+    anchorNode: current?.anchorNode, anchorOffset: current?.anchorOffset,
+    focusNode: current?.focusNode, focusOffset: current?.focusOffset,
+    isCurrent: () => isCurrent() && isEditMode && currentDocumentActionOwner() === tab &&
+      editorModeRevision === mode && fileOpenSequence === sequence &&
+      editorInteractionRevision === interaction && markdownEditor.value === source,
+  };
+}
+
+function openTableCellEditor(mode) {
+  hideContextMenu();
+  let opened = null;
+  try {
+    FoliaTableCells.validateMode(mode);
+    if (tableCellSession) closeTableCellEditor();
+    tableColumnSizing.cancel();
+    const selection = mode === TableCellMode.INSERT ? captureTableInsertionSelection() : tableMenuSelection;
+    if (!selection?.isCurrent()) throw new Error('tableCells.stale');
+    const exact = window.CustomTabs.snapshotExactEditorContent();
+    const model = FoliaTableCells.index(exact, marked, protectTableSource);
+    let target = null;
+    switch (mode) {
+      case TableCellMode.INSERT:
+        break;
+      case TableCellMode.UPDATE_ROWS:
+        target = selection.origin === 'markdown'
+          ? FoliaTableCells.resolveSource(model, selection.start, selection.end, mode)
+          : FoliaTableCells.resolvePreview(model, selection.range, viewer,
+              node => editorScroll.tableSource(node), mode);
+        break;
+      case TableCellMode.UPDATE_TABLE:
+        target = selection.origin === 'markdown'
+          ? FoliaTableCells.resolveSourceLine(model, selection.sourceLine, mode)
+          : FoliaTableCells.resolvePreviewTable(model, selection.tableNode, viewer,
+              node => editorScroll.tableSource(node), mode);
+        break;
+    }
+    const session = { mode, selection, target, model, columnOrder: [],
+      get columns() { return this.columnOrder.length; },
+      exact, cells: [], rows: [], deletedRows: new Set(), deletedColumns: new Set(), nextRowId: 1,
+      nextColumnId: 1, ready: false, submitting: false, applied: false };
+    tableCellSession = session;
+    opened = session;
+    const title = { [TableCellMode.INSERT]: 'tableCells.createTitle',
+      [TableCellMode.UPDATE_TABLE]: 'tableCells.title', [TableCellMode.UPDATE_ROWS]: 'tableCells.selectedTitle' };
+    document.getElementById('tableCellTitle').textContent = i18n(title[mode]);
+    document.getElementById('tableCellHelp').textContent =
+      i18n(mode === TableCellMode.INSERT ? 'tableCells.createHelp' : 'tableCells.help');
+    tableCellUpdate.textContent = i18n(mode === TableCellMode.INSERT ? 'tableCells.insert' : 'tableCells.update');
+    tableCellColumnScope.textContent = i18n('tableCells.columnsScope');
+    tableCellError.textContent = '';
+    if (mode === TableCellMode.INSERT) {
+      session.insertionOffset = skipPastCodeBlock(selection.source, selection.start);
+      tableCellGrid.replaceChildren();
+      tableCellGrid.hidden = true;
+      tableCellSetup.hidden = false;
+      tableCellCounts.textContent = '';
+      document.getElementById('tableCellRowActions').hidden = true;
+      tableCellDialog.style.removeProperty('width');
+      tableCellDialog.classList.add('table-cell-setup-open');
+      tableCellColumns.value = '3';
+      tableCellDataRows.value = '2';
+      document.getElementById('tableCellScope').textContent = i18n('tableCells.setup');
+      tableCellUpdate.disabled = true;
+      refreshTableCellRowActions();
+      tableCellDialog.showModal();
+      tableCellColumns.focus();
+    } else {
+      session.columnOrder = target.table.rows[0].cells.map((_cell, originalIndex) =>
+        ({ id: `column-${session.nextColumnId++}`, originalIndex }));
+      const header = target.table.rows[0];
+      const displayRows = target.rows.includes(header) ? target.rows : [header, ...target.rows];
+      populateTableCellGrid(session, displayRows.map(original =>
+        ({ original, header: original === header, editable: target.rows.includes(original) })));
+    }
+  } catch (error) {
+    if (opened && tableCellSession === opened) closeTableCellEditor();
     const key = error instanceof Error ? error.message : '';
     showNotification(Object.hasOwn(UI_STRINGS, key) ? i18n(key) : i18n('tableCells.commitFailed'), 6000);
     if (!Object.hasOwn(UI_STRINGS, key)) console.error('Table cell editor could not open:', error);
   }
 }
 
+function startTableCellCreation() {
+  const session = tableCellSession;
+  if (!session) return;
+  try {
+    FoliaTableCells.validateMode(session.mode);
+    if (session.mode !== TableCellMode.INSERT) throw new Error('tableCells.mode');
+    if (session.ready) return;
+    if (!session.selection.isCurrent() || !mayMutateRendererDocument('table-create-setup') ||
+        window.CustomTabs.snapshotExactEditorContent() !== session.exact) throw new Error('tableCells.stale');
+    const columns = Number(tableCellColumns.value), rows = Number(tableCellDataRows.value);
+    if (!tableCellColumns.value || !tableCellDataRows.value ||
+        !Number.isSafeInteger(columns) || columns < 1 || columns > 15 ||
+        !Number.isSafeInteger(rows) || rows < 0 || rows > 30) throw new Error('tableCells.setupInvalid');
+    session.columnOrder = Array.from({ length: columns }, () => ({ id: `column-${session.nextColumnId++}` }));
+    const displayRows = [{ original: null, editable: true, header: true,
+      values: Array.from({ length: columns }, (_, column) => `Header ${column + 1}`) }];
+    for (let row = 0; row < rows; row++) displayRows.push({ original: null, editable: true, header: false,
+      values: Array.from({ length: columns }, (_, column) => `Cell ${row + 1},${column + 1}`) });
+    populateTableCellGrid(session, displayRows);
+  } catch (error) {
+    showTableCellError(error);
+  }
+}
+
 async function updateTableCells() {
   const session = tableCellSession;
-  if (!session || session.submitting || session.applied) return;
+  if (!session || !session.ready || session.submitting || session.applied || session.confirmation) return;
   try {
-    if (!session.selection.isCurrent() || !mayMutateRendererDocument('table-cell-commit') ||
-        window.CustomTabs.snapshotExactEditorContent() !== session.exact) throw new Error('tableCells.stale');
-    const edits = session.cells.filter(cell => cell.input.innerHTML !== cell.initial).map(cell => ({
+    requireTableCellMutation(session, 'table-cell-commit');
+    const columnsChanged = session.deletedColumns.size > 0 ||
+      session.columnOrder.some(column => column.originalIndex === undefined) ||
+      session.mode !== TableCellMode.INSERT &&
+        (session.columnOrder.length !== session.target.table.rows[0].cells.length ||
+          session.columnOrder.some((column, index) => column.originalIndex !== index));
+    if (session.mode === TableCellMode.UPDATE_ROWS && columnsChanged) throw new Error('tableCells.columnsScope');
+    session.sizing?.cancel();
+    session.sizing?.refresh();
+    const edits = session.cells.filter(cell => cell.cell && cell.input.innerHTML !== cell.initial).map(cell => ({
       cell: cell.cell, text: cell.engine.readSource(),
     }));
-    if (!edits.length) {
+    const order = session.rows.filter(row => row.editable).map(row => row.original
+      ? { original: row.original } : { id: row.id, cells: row.cells.map(cell => cell.engine.readSource()) });
+    if (session.mode !== TableCellMode.INSERT && !columnsChanged &&
+        !edits.length && !session.deletedRows.size && order.every(row => row.original)) {
       closeTableCellEditor();
       return;
     }
-    const candidate = FoliaTableCells.replaceCells(session.target, edits, marked, protectTableSource);
-    if (!session.selection.isCurrent()) throw new Error('tableCells.stale');
+    if (session.mode === TableCellMode.INSERT && (session.rows[0]?.header !== true ||
+        session.rows.slice(1).some(row => row.header) ||
+        session.rows.some(row => !row.editable || row.original))) throw new Error('tableCells.invalid');
+    let candidate, insertion = null;
+    switch (session.mode) {
+      case TableCellMode.INSERT:
+        insertion = FoliaTableCells.insertTable(session.model, session.insertionOffset,
+          order.map(row => row.cells), marked, protectTableSource, session.mode);
+        candidate = insertion.source;
+        break;
+      case TableCellMode.UPDATE_TABLE:
+        candidate = columnsChanged
+          ? FoliaTableCells.replaceStructure(session.target, edits, session.rows.map(row =>
+              ({ id: row.id, original: row.original, cells: row.cells.map(cell => cell.engine.readSource()) })),
+            session.columnOrder, marked, protectTableSource, [...session.deletedRows], [...session.deletedColumns])
+          : FoliaTableCells.replaceRows(session.target, edits, order, marked, protectTableSource, [...session.deletedRows]);
+        break;
+      case TableCellMode.UPDATE_ROWS:
+        if (columnsChanged) throw new Error('tableCells.columnsScope');
+        candidate = FoliaTableCells.replaceRows(session.target, edits, order, marked, protectTableSource, [...session.deletedRows]);
+        break;
+    }
+    if (candidate === session.exact) {
+      closeTableCellEditor();
+      return;
+    }
+    if (!session.selection.isCurrent() || !mayMutateRendererDocument('table-cell-adopt') ||
+        window.CustomTabs.snapshotExactEditorContent() !== session.exact) throw new Error('tableCells.stale');
+    if (session.sizing?.isComposing()) throw new Error('tableCells.composing');
     session.submitting = true;
     // No await or event dispatch may split source adoption and its undo entry.
     if (!window.CustomTabs.adoptExactEditorContent(candidate)) throw new Error('tableCells.commitFailed');
@@ -12005,10 +13432,13 @@ async function updateTableCells() {
     historyPushExact(session.exact);
     markdownEditor.value = candidate;
     exactTypingSource = candidate;
+    if (insertion) markdownEditor.setSelectionRange(insertion.cursor, insertion.cursor);
     setDocumentDirtyFromContent(markdownEditor.value);
     retainCurrentDocumentEditor();
     session.applied = true;
+    session.sizing?.dispose();
     tableCellUpdate.disabled = true;
+    refreshTableCellRowActions();
     await renderMarkdown(markdownEditor.value);
     if (tableCellSession !== session) return;
     if (currentDocumentActionOwner() !== session.selection.tab ||
@@ -12017,20 +13447,58 @@ async function updateTableCells() {
       throw new Error('tableCells.renderFailed');
     }
     closeTableCellEditor();
+    if (insertion) markdownEditor.focus({ preventScroll: true });
   } catch (error) {
     showTableCellError(session.applied ? new Error('tableCells.renderFailed') : error);
   } finally {
     session.submitting = false;
+    if (tableCellSession === session) refreshTableCellRowActions();
   }
 }
 
-ctxEditTable?.addEventListener('click', () => openTableCellEditor(false));
-ctxEditSelectedRows?.addEventListener('click', () => openTableCellEditor(true));
+ctxEditTable?.addEventListener('click', () => openTableCellEditor(TableCellMode.UPDATE_TABLE));
+ctxEditSelectedRows?.addEventListener('click', () => openTableCellEditor(TableCellMode.UPDATE_ROWS));
 tableCellUpdate.addEventListener('click', updateTableCells);
+tableCellStart.addEventListener('click', startTableCellCreation);
+tableCellInsertAbove.addEventListener('click', () => changeTableCellRows('above'));
+tableCellInsertBelow.addEventListener('click', () => changeTableCellRows('below'));
+tableCellRemoveAdded.addEventListener('click', () => changeTableCellRows('remove'));
+tableCellInsertLeft.addEventListener('click', () => changeTableCellColumns('left'));
+tableCellInsertRight.addEventListener('click', () => changeTableCellColumns('right'));
+tableCellDeleteColumn.addEventListener('click', () => changeTableCellColumns('remove'));
+function tableCellForEvent(event) {
+  return tableCellInputs.get(event.target.closest?.('[data-table-cell]'));
+}
+tableCellGrid.addEventListener('focusin', event => {
+  const session = tableCellSession;
+  const cell = tableCellForEvent(event);
+  if (session && cell && session.rows.includes(cell.rowState) && !session.confirmation) {
+    session.activeCell = cell.rowState.editable ? cell : null;
+    if (session.keyboardSelection) selectTableCell(session, cell);
+    refreshTableCellRowActions();
+  }
+});
+tableCellGrid.addEventListener('pointerdown', event => {
+  const session = tableCellSession, cell = tableCellForEvent(event);
+  if (event.isTrusted && event.button === 0 && cell && session?.selection.isCurrent() &&
+      !session.confirmation && !session.sizing?.isComposing()) selectTableCell(session, cell);
+});
+tableCellDialog.addEventListener('keydown', event => {
+  const session = tableCellSession;
+  if (!event.isTrusted || !session?.ready || !session.selection.isCurrent() ||
+      session.confirmation || event.isComposing || session.sizing?.isComposing()) return;
+  const cell = tableCellForEvent(event);
+  if (cell && !['Shift', 'Control', 'Alt', 'Meta', 'Escape'].includes(event.key)) selectTableCell(session, cell);
+  if (event.key === 'Tab') {
+    session.keyboardSelection = true;
+    queueMicrotask(() => { session.keyboardSelection = false; });
+  }
+}, true);
 document.getElementById('tableCellCancel').addEventListener('click', closeTableCellEditor);
 document.getElementById('tableCellClose').addEventListener('click', closeTableCellEditor);
 tableCellDialog.addEventListener('cancel', event => {
   event.preventDefault();
+  if (tableCellSession?.sizing?.cancel()) return;
   closeTableCellEditor();
 });
 
@@ -12038,17 +13506,21 @@ function attachTableCellInput(cell, session) {
   return FoliaInlineFormatting.attachInlineEditor({
     element: cell.input, ownership: cell.provenance, marked,
     transform: parseEmojis, sanitize: sanitizeTableHtml, documentEditor: markdownEditor,
-    isCurrent: () => tableCellSession === session && session.selection.isCurrent(),
+    isCurrent: () => tableCellSession === session && !session.submitting &&
+      !session.applied && !session.confirmation && session.selection.isCurrent(),
     reportError: showTableCellError, clearError: () => { tableCellError.textContent = ''; },
     sourcePolicy: {
       keydown(event) {
+        if (session.confirmation) { event.preventDefault(); return; }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
           event.preventDefault(); updateTableCells();
         } else if (event.key === 'Enter') {
           event.preventDefault();
-          const next = session.cells.find(item => item.column === cell.column &&
-            item.row === cell.row + (event.shiftKey ? -1 : 1));
-          next?.input.focus();
+          const next = session.rows[session.rows.indexOf(cell.rowState) + (event.shiftKey ? -1 : 1)];
+          if (next?.editable) {
+            next.cells[cell.column].input.focus();
+            if (event.isTrusted) selectTableCell(session, next.cells[cell.column]);
+          }
         } else if ((event.ctrlKey || event.metaKey) &&
             !['a', 'c', 'x', 'v', 'z', 'y', 'b', 'i', 'u'].includes(event.key.toLowerCase())) {
           event.preventDefault();
@@ -12374,73 +13846,14 @@ async function renderMermaidInDOM(code, mode, replaceTarget) {
     }
     mermaidEl.replaceChildren(buildMermaidErrorBanner(err));
   }
-}
-
-// Render a markdown table directly into the DOM without a full page re-render.
-// mode='insert': inserts after the right-click anchor child of viewer
-// mode='replace': replaces replaceTarget (<table> element, parent .table-container used if present)
-function renderTableInDOM(mdTable, mode, replaceTarget) {
-  const html = sanitizeTableHtml(marked.parse(mdTable));
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = html;
-  const tableEl = tempDiv.querySelector('table');
-  if (!tableEl) return;
-
-  const firstRow = tableEl.querySelector('thead tr, tr:first-child');
-  if (firstRow && firstRow.querySelectorAll('th, td').length > 5) {
-    tableEl.classList.add('compact-table');
-  }
-  markShortColumns(tableEl);
-
-  const container = document.createElement('div');
-  container.className = 'table-container';
-  container.appendChild(tableEl);
-
-  const maxBtn = document.createElement('button');
-  maxBtn.className = 'table-maximize-btn';
-  maxBtn.title = 'Open in interactive popup';
-  maxBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
-  </svg>`;
-  maxBtn.addEventListener('click', () => {
-    window.folia.openTablePopup({ tableData: extractTableData(tableEl), isDarkMode: document.body.classList.contains('dark-mode') });
-  });
-  container.appendChild(maxBtn);
-
-  if (mode === 'replace') {
-    const replaceEl = replaceTarget.parentElement?.classList.contains('table-container')
-      ? replaceTarget.parentElement
-      : replaceTarget;
-    if (replaceEl.parentElement) {
-      // Reparents a live node; see addCodeBlockCopyButtons for why the zoom
-      // anchor has to be told.
-      noteViewerMutation();
-      replaceEl.parentElement.replaceChild(container, replaceEl);
-    }
-  } else {
-    // Adds a table container to #viewer, shifting everything below it. The
-    // replace branch above was told; this one is just as structural.
-    noteViewerMutation();
-    const anchor = getDomInsertAnchor();
-    if (anchor && anchor.parentElement === viewer) {
-      viewer.insertBefore(container, anchor.nextSibling);
-    } else {
-      viewer.appendChild(container);
-    }
-  }
-
-  // This path builds a table outside the render pipeline, so nothing else will
-  // size it. Without this a table inserted or edited from the context menu is
-  // the only kind that still gets a horizontal scrollbar inside the reading
-  // column.
-  applyTableBreakout(); // context-menu insert/edit builds its own container
+  if (generation === renderGeneration && viewer.contains(container)) applyTableBreakout();
 }
 
 // ============================================
 // MERMAID TEMPLATE DIALOG
 // ============================================
 
-// Dialog mode state (shared between mermaid and table dialogs)
+// Mermaid template dialog state.
 let mermaidDialogMode = 'insert'; // 'insert' | 'edit'
 let editingMermaidContainer = null;
 // The renderGeneration an open EDIT dialog was opened against; null when no
@@ -12879,211 +14292,9 @@ mermaidTemplateCode && mermaidTemplateCode.addEventListener('keydown', (e) => {
   }
 });
 
-// ============================================
-// TABLE INSERT DIALOG
-// ============================================
-
-const tableInsertOverlay = document.getElementById('tableInsertOverlay');
-const tableInsertClose = document.getElementById('tableInsertClose');
-const tableInsertCancelBtn = document.getElementById('tableInsertCancelBtn');
-const tableInsertBtn = document.getElementById('tableInsertBtn');
-const tableInsertRowsEl = document.getElementById('tableInsertRows');
-const tableInsertColsEl = document.getElementById('tableInsertCols');
-const tableInsertHeaderEl = document.getElementById('tableInsertHeader');
-const tableInsertPreviewEl = document.getElementById('tableInsertPreview');
-const tableInsertMarkdownEl = document.getElementById('tableInsertMarkdown');
-
-// SEC-30: the table dialog's preview is a PREVIEW - nothing rendered in it is
-// meant to be interactive. It sits outside #viewer, so the click delegation
-// that polices document links (preventDefault, then shell.openExternal under
-// the SEC-12 extension policy) never runs for it. That made it the one
-// clickable surface in the app with no policy attached, and its content is
-// attacker-controlled on the 'edit' path, which is fed from the open document.
-// Measured there: a plain link attempted a real top-frame navigation (denied by
-// main.js), and an <a download> reached the network outright.
-//
-// A capture-phase JS listener rather than CSS pointer-events, deliberately:
-// `style` is in DOMPurify's DEFAULT ALLOWED_ATTR, which TABLE_SANITIZE_CONFIG
-// keeps (it has no ADD_ATTR of its own - see the note on that config), so
-// document content can carry an inline style. An inline `!important`
-// declaration outranks an author stylesheet's `!important` (same origin, inline
-// wins on specificity), and pointer-events is inherited, so a descendant could
-// re-enable itself. A capture listener cannot be outranked by anything the
-// document is able to express.
-//
-// preventDefault only - no stopPropagation, which would silently change dialog
-// behaviour for any ancestor handler - and unconditional rather than matched
-// against 'a, area'.
-//
-// THE ORIGINAL REASON GIVEN HERE WAS FALSE AND IS RETRACTED. It read: "because
-// an image map's click target is the <img>, not the <area>, so a selector-based
-// guard would miss it." MEASURED with a trusted CDP pointer click on a real
-// rendered image map (a synthetic dispatchEvent cannot drive native
-// hit-testing, so it could not have answered this): document.elementFromPoint
-// reports AREA as the topmost element across the image, the delivered event has
-// target=AREA with isTrusted=true, and closest('a, area') finds it. So a
-// selector-based guard would NOT have missed it.
-//
-// The decision to stay unconditional stands anyway, on a reason that is true:
-// the claim this guard makes is "nothing in this preview activates", and
-// 'a, area' is an enumeration of the activatable things I happened to think of.
-// A guard whose subject list is narrower than its claim is the recurring defect
-// class in this file - the same shape as an absence check that fails open. An
-// unconditional preventDefault cannot be outrun by an element type added later.
-//
-// Scope, stated honestly: this covers activation, not every possible gesture.
-// Dragging a link or image out of the preview is still possible; that hands a
-// URL to whatever the user drops it on, which is an explicit user action
-// outside this window, and suppressing dragstart would also break selecting
-// text out of the preview.
-if (tableInsertPreviewEl) {
-  const blockPreviewActivation = (e) => {
-    e.preventDefault();
-  };
-  // 'auxclick' as well as 'click': Chromium has fired auxclick rather than
-  // click for non-primary buttons since Chrome 55, so a middle-click would
-  // otherwise skip this guard entirely and reach the default open-in-new-window
-  // path. That lands on main.js's setWindowOpenHandler deny - contained, but by
-  // a different layer than the one this code claims to be.
-  for (const type of ['click', 'auxclick']) {
-    tableInsertPreviewEl.addEventListener(type, blockPreviewActivation, true);
-  }
-}
-
-function buildTableMarkdown(rows, cols, hasHeader) {
-  const lines = [];
-  // Header row
-  const headerCells = Array.from({ length: cols }, (_, i) => ` Header ${i + 1} `);
-  lines.push('|' + headerCells.join('|') + '|');
-  // Separator
-  const sep = Array.from({ length: cols }, () => ' --- ');
-  lines.push('|' + sep.join('|') + '|');
-  // Data rows
-  const dataRowCount = hasHeader ? rows - 1 : rows;
-  for (let r = 0; r < Math.max(1, dataRowCount); r++) {
-    const cells = Array.from({ length: cols }, (_, c) => ` Cell ${r + 1},${c + 1} `);
-    lines.push('|' + cells.join('|') + '|');
-  }
-  return lines.join('\n');
-}
-
-function updateTablePreview() {
-  if (!tableInsertRowsEl || !tableInsertColsEl) return;
-  const rows = Math.max(1, Math.min(30, parseInt(tableInsertRowsEl.value) || 3));
-  const cols = Math.max(1, Math.min(15, parseInt(tableInsertColsEl.value) || 3));
-  const hasHeader = tableInsertHeaderEl ? tableInsertHeaderEl.checked : true;
-  const md = buildTableMarkdown(rows, cols, hasHeader);
-  if (tableInsertMarkdownEl) tableInsertMarkdownEl.value = md;
-  // HTML preview
-  if (tableInsertPreviewEl) {
-    tableInsertPreviewEl.innerHTML = sanitizeTableHtml(marked.parse(md));
-  }
-}
-
-function openTableInsertDialog() {
-  if (!tableInsertOverlay) return;
-  updateTablePreview();
-
-  if (tableInsertBtn) {
-    tableInsertBtn.textContent = 'Insert';
-  }
-
-  tableInsertOverlay.classList.add('visible');
-}
-
-function closeTableInsertDialog() {
-  tableInsertOverlay && tableInsertOverlay.classList.remove('visible');
-}
-
-function getCleanTableMarkdown() {
-  const raw = tableInsertMarkdownEl ? tableInsertMarkdownEl.value : '';
-  return raw.split('\n').map(l => l.trim()).join('\n');
-}
-
-function insertTableFromDialog() {
-  if (!mayMutateRendererDocument('table-dialog-commit')) return;
-  const md = getCleanTableMarkdown();
-  if (!md) return;
-
-  // Validate: must parse to a proper <table> element
-  const testDiv = document.createElement('div');
-  testDiv.innerHTML = sanitizeTableHtml(marked.parse(md));
-  if (!testDiv.querySelector('table')) {
-    if (tableInsertPreviewEl) {
-      // Built as a node rather than assigned as markup. The string is a
-      // constant today, so this is not closing a live sink - it is making sure
-      // a later ${...} interpolation cannot quietly turn a static line into one
-      // in the very box SEC-30 hardened. role=alert because the preview sits
-      // ABOVE the textarea while the button is in the footer: the error is
-      // visible, but nothing announces it to assistive technology, and the
-      // node is freshly created each time, so each failure is eligible to be
-      // announced again rather than being a silent no-op on an existing live
-      // region (whether it IS announced is the screen reader's decision).
-      const err = document.createElement('div');
-      err.className = 'table-insert-error';
-      err.setAttribute('role', 'alert');
-      err.textContent = i18n('table.invalidFormat');
-      tableInsertPreviewEl.replaceChildren(err);
-    }
-    return;
-  }
-
-  closeTableInsertDialog();
-
-  {
-    // INSERT mode
-    historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
-
-    if (isEditMode) {
-      const cursorPos = savedCursorPosition !== null ? savedCursorPosition : markdownEditor.selectionStart;
-      const safePos = skipPastCodeBlock(markdownEditor.value, cursorPos);
-      const before = markdownEditor.value.substring(0, safePos);
-      const after = markdownEditor.value.substring(safePos);
-      replaceEditorSourceRange(safePos, safePos, '\n' + md + '\n');
-      const newCursor = safePos + md.length + 2;
-      markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
-      markdownEditor.focus();
-      setDocumentDirtyFromContent(markdownEditor.value);
-      clearTimeout(previewDebounceTimer);
-      previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
-      showNotification('Table inserted', 1000);
-    } else {
-      // View mode: DOM patch, no full re-render
-      const activeContent = getActiveMarkdown();
-      const insertPos = skipPastCodeBlock(activeContent, getBlockInsertPosition());
-      const before = activeContent.substring(0, insertPos);
-      const after = activeContent.substring(insertPos);
-      const newContent = before + '\n' + md + '\n' + after;
-      originalMarkdown = newContent;
-      originalMarkdown = newContent;
-      setDocumentDirtyFromContent(originalMarkdown);
-      syncEditorWithStore();
-
-      renderTableInDOM(md, 'insert');
-      showNotification('Table inserted', 1000);
-    }
-  }
-}
-
-tableInsertRowsEl && tableInsertRowsEl.addEventListener('input', updateTablePreview);
-tableInsertColsEl && tableInsertColsEl.addEventListener('input', updateTablePreview);
-tableInsertHeaderEl && tableInsertHeaderEl.addEventListener('change', updateTablePreview);
-tableInsertMarkdownEl && tableInsertMarkdownEl.addEventListener('input', () => {
-  if (tableInsertPreviewEl) {
-    const md = getCleanTableMarkdown();
-    tableInsertPreviewEl.innerHTML = sanitizeTableHtml(marked.parse(md));
-  }
-});
-tableInsertClose && tableInsertClose.addEventListener('click', closeTableInsertDialog);
-tableInsertCancelBtn && tableInsertCancelBtn.addEventListener('click', closeTableInsertDialog);
-tableInsertBtn && tableInsertBtn.addEventListener('click', insertTableFromDialog);
-
 // Close dialogs on overlay click
 mermaidTemplateOverlay && mermaidTemplateOverlay.addEventListener('click', (e) => {
   if (e.target === mermaidTemplateOverlay) closeMermaidTemplateDialog();
-});
-tableInsertOverlay && tableInsertOverlay.addEventListener('click', (e) => {
-  if (e.target === tableInsertOverlay) closeTableInsertDialog();
 });
 
 // ============================================
@@ -13208,16 +14419,21 @@ const ctxCopyPath = document.getElementById('ctxCopyPath');
 
 let recentContextFilePath = null;
 
-function showRecentContextMenu(x, y, filePath) {
+function showRecentContextMenu(x, y, filePath, item) {
   recentContextFilePath = filePath;
 
   // Use helper for positioning (handles screen edge adjustment)
-  positionContextMenu(recentContextMenu, x, y);
+  positionContextMenu(recentContextMenu, x, y, item ? {
+    anchor: item, contextNodes: [],
+    isCurrent: () => recentContextFilePath === filePath && fileMenuRecent.contains(item) &&
+      item.querySelector('.tools-menu-recent-path')?.textContent === filePath,
+  } : undefined);
 }
 
-function hideRecentContextMenu() {
-  recentContextMenu.classList.remove('visible');
+function hideRecentContextMenu(event) {
+  if (!hideContextMenuHelper(recentContextMenu, event)) return false;
   recentContextFilePath = null;
+  return true;
 }
 
 // Hide recent context menu when clicking elsewhere
@@ -13275,14 +14491,19 @@ const ctxNotesPanelDelete = document.getElementById('ctxNotesPanelDelete');
 
 let notesPanelContextNoteId = null;
 
-function showNotesPanelContextMenu(x, y, noteId) {
+function showNotesPanelContextMenu(x, y, noteId, item, noteEl) {
   notesPanelContextNoteId = noteId;
-  positionContextMenu(notesPanelContextMenu, x, y);
+  positionContextMenu(notesPanelContextMenu, x, y, item && noteEl ?
+    documentMenuPresentation(item, [noteEl], () =>
+      notesPanelContextNoteId === noteId && notesList.contains(item) &&
+      item.dataset.noteId === noteId && viewer.contains(noteEl) &&
+      noteEl.getAttribute('data-note-id') === noteId) : undefined);
 }
 
-function hideNotesPanelContextMenu() {
-  notesPanelContextMenu.classList.remove('visible');
+function hideNotesPanelContextMenu(event) {
+  if (!hideContextMenuHelper(notesPanelContextMenu, event)) return false;
   notesPanelContextNoteId = null;
+  return true;
 }
 
 document.addEventListener('click', (e) => {

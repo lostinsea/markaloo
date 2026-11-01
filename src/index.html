@@ -414,47 +414,64 @@
                   style="display: none"
                   >● Unsaved</span
                 >
-                <button
-                  id="saveButton"
-                  class="editor-save-btn"
-                  data-i18n-title="title.save"
-                  title="Save (Ctrl+S)"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
+                <div class="editor-history-controls">
+                  <span class="editor-toolbar-separator" aria-hidden="true">|</span>
+                  <button
+                    id="undoButton"
+                    class="nav-btn editor-history-btn"
+                    type="button"
+                    data-i18n-title="title.undo"
+                    title="Undo (Ctrl+Z)"
+                    aria-label="Undo (Ctrl+Z)"
+                    disabled
                   >
-                    <path
-                      d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"
-                    ></path>
-                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                    <polyline points="7 3 7 8 15 8"></polyline>
-                  </svg>
-                  <span data-i18n="save">Save</span>
-                </button>
-                <button
-                  id="exitEditBtn"
-                  class="editor-exit-btn"
-                  data-i18n-title="title.exitEdit"
-                  title="Exit Edit Mode"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                      stroke-linejoin="round" aria-hidden="true">
+                      <path d="m9 14-5-5 5-5M4 9h10a7 7 0 0 1 7 7v4"></path>
+                    </svg>
+                  </button>
+                  <button
+                    id="redoButton"
+                    class="nav-btn editor-history-btn"
+                    type="button"
+                    data-i18n-title="title.redo"
+                    title="Redo (Ctrl+Y)"
+                    aria-label="Redo (Ctrl+Y)"
+                    disabled
                   >
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                  <span data-i18n="exit">Exit</span>
-                </button>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                      stroke-linejoin="round" aria-hidden="true">
+                      <path d="m15 14 5-5-5-5M20 9H10a7 7 0 0 0-7 7v4"></path>
+                    </svg>
+                  </button>
+                </div>
+                <div class="editor-toolbar-group">
+                  <span class="editor-toolbar-separator" aria-hidden="true">|</span>
+                  <button id="saveButton" class="editor-save-btn"
+                    data-i18n-title="title.save" title="Save (Ctrl+S)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                      <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                      <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                    <span data-i18n="save">Save</span>
+                  </button>
+                </div>
+                <div class="editor-toolbar-group">
+                  <span class="editor-toolbar-separator" aria-hidden="true">||</span>
+                  <button id="exitEditBtn" class="editor-exit-btn"
+                    data-i18n-title="title.exitEdit" title="Exit Edit Mode">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    <span data-i18n="exit">Exit</span>
+                  </button>
+                </div>
               </div>
             </div>
             <textarea
@@ -1703,70 +1720,64 @@
       </div>
     </div>
 
-    <!-- Table Insert Dialog -->
-    <div id="tableInsertOverlay" class="note-dialog-overlay">
-      <div class="note-dialog table-insert-dialog">
-        <div class="note-dialog-header">
-          <span>Insert Table</span>
-          <button id="tableInsertClose" class="close-btn">&times;</button>
-        </div>
-        <div class="note-dialog-body">
-          <div class="table-dialog-controls">
-            <label class="note-dialog-label"
-              >Rows
-              <input
-                type="number"
-                id="tableInsertRows"
-                class="note-dialog-input table-num-input"
-                value="3"
-                min="1"
-                max="30"
-              />
-            </label>
-            <label class="note-dialog-label"
-              >Columns
-              <input
-                type="number"
-                id="tableInsertCols"
-                class="note-dialog-input table-num-input"
-                value="3"
-                min="1"
-                max="15"
-              />
-            </label>
-            <label class="note-dialog-label table-header-label">
-              <input type="checkbox" id="tableInsertHeader" checked /> Header
-              Row
-            </label>
-          </div>
-          <label class="note-dialog-label">Preview</label>
-          <div id="tableInsertPreview" class="table-insert-preview"></div>
-          <label class="note-dialog-label" style="margin-top: 10px"
-            >Markdown</label
-          >
-          <textarea
-            id="tableInsertMarkdown"
-            class="note-dialog-textarea"
-            rows="6"
-          ></textarea>
-        </div>
-        <div class="note-dialog-footer">
-          <button id="tableInsertBtn" class="note-dialog-btn primary">
-            Insert
-          </button>
-          <button id="tableInsertCancelBtn" class="note-dialog-btn secondary">
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-
     <dialog id="tableCellDialog" class="table-cell-dialog" aria-labelledby="tableCellTitle"
       aria-describedby="tableCellScope tableCellHelp">
       <div class="note-dialog-header">
         <h2 id="tableCellTitle"></h2>
         <button id="tableCellClose" class="close-btn" type="button" aria-label="Close">&times;</button>
       </div>
+      <div id="tableCellSetup" class="table-cell-setup" hidden>
+        <label><span data-i18n="tableCells.columns">Columns</span>
+          <input id="tableCellColumns" class="note-dialog-input" type="number" value="3" min="1" max="15" step="1">
+        </label>
+        <label><span data-i18n="tableCells.dataRows">Data rows</span>
+          <input id="tableCellDataRows" class="note-dialog-input" type="number" value="2" min="0" max="30" step="1">
+        </label>
+        <button id="tableCellStart" class="note-dialog-btn secondary" type="button" data-i18n="tableCells.start">Edit cells</button>
+      </div>
+      <div id="tableCellRowActions" class="table-cell-row-actions" role="group">
+        <button id="tableCellInsertAbove" class="note-dialog-btn secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <rect x="3" y="11" width="18" height="10" rx="1"></rect>
+            <path d="M3 16h18M9 11v10M15 11v10M12 2v6M9 5h6"></path>
+          </svg>
+        </button>
+        <button id="tableCellInsertBelow" class="note-dialog-btn secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <rect x="3" y="3" width="18" height="10" rx="1"></rect>
+            <path d="M3 8h18M9 3v10M15 3v10M12 16v6M9 19h6"></path>
+          </svg>
+        </button>
+        <button id="tableCellRemoveAdded" class="note-dialog-btn secondary" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <rect x="3" y="3" width="18" height="18" rx="1"></rect>
+            <path d="M3 9h18M3 15h18M9 3v6M15 3v6M9 15v6M15 15v6M8 12h8"></path>
+          </svg>
+        </button>
+        <button id="tableCellInsertLeft" class="note-dialog-btn secondary" type="button"
+          aria-describedby="tableCellColumnScope">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <rect x="11" y="3" width="10" height="18" rx="1"></rect>
+            <path d="M16 3v18M11 9h10M11 15h10M2 12h6M5 9v6"></path>
+          </svg>
+        </button>
+        <button id="tableCellInsertRight" class="note-dialog-btn secondary" type="button"
+          aria-describedby="tableCellColumnScope">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <rect x="3" y="3" width="10" height="18" rx="1"></rect>
+            <path d="M8 3v18M3 9h10M3 15h10M16 12h6M19 9v6"></path>
+          </svg>
+        </button>
+        <button id="tableCellDeleteColumn" class="note-dialog-btn secondary" type="button"
+          aria-describedby="tableCellColumnScope">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <rect x="3" y="3" width="18" height="18" rx="1"></rect>
+            <path d="M9 3v18M15 3v18M3 9h6M3 15h6M15 9h6M15 15h6M10 12h4"></path>
+          </svg>
+        </button>
+      </div>
+      <p id="tableCellCounts" class="table-cell-counts" aria-live="polite"></p>
+      <p id="tableCellColumnScope" class="table-cell-column-scope" hidden></p>
       <div id="tableCellGrid" class="table-cell-grid"></div>
       <p id="tableCellError" role="alert" class="table-cell-error"></p>
       <div class="note-dialog-footer">

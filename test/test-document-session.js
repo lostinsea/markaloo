@@ -474,7 +474,7 @@ if (typeof electron === "string") {
     const modalSelectors = [
       "#appMessageDialog[open]", "#reloadDocumentDialog[open]", "#aboutDialog[open]",
       "#noteDialogOverlay.visible", "#findNoteOverlay.visible", "#editTextOverlay.visible",
-      "#mermaidTemplateOverlay.visible", "#tableInsertOverlay.visible",
+      "#mermaidTemplateOverlay.visible", "#tableCellDialog[open]",
     ];
     let guardedMain = null;
     let mainContents = null;

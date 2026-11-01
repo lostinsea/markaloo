@@ -464,7 +464,7 @@ async function settleFrame(win) {
  *     having produced a frame yet, not a permanent condition);
  *   - if every attempt fails, DELETE the destination so the gap is visible.
  */
-async function captureScreenshot(win, name) {
+async function captureScreenshot(win, name, ownedHidden = false) {
   let safe = "unnamed";
   let file = null;
   let lastErr = null;
@@ -482,14 +482,20 @@ async function captureScreenshot(win, name) {
           break;
         }
         fs.mkdirSync(SHOT_DIR, { recursive: true });
-        await settleFrame(win);
-        const img = await win.webContents.capturePage();
+        let img;
+        if (ownedHidden === true) {
+          img = await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+        } else {
+          await settleFrame(win);
+          img = await win.webContents.capturePage();
+        }
         // A capture can succeed and still be empty if no frame was produced.
         if (img.isEmpty()) throw new Error("captured an empty frame");
         fs.writeFileSync(file, img.toPNG());
         return file;
       } catch (e) {
         lastErr = e;
+        if (ownedHidden === true) break;
         await new Promise((r) => setTimeout(r, CAPTURE_RETRY_DELAY_MS));
       }
     }

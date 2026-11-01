@@ -9382,6 +9382,82 @@ ipcMain.on("reload-file", async (event, data) => {
 // IPC HANDLERS - Popups
 // ============================================
 
+const popupViewerControlsCss = `
+    .viewer-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: fit-content;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+    .viewer-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+    .viewer-controls button, .viewer-controls summary {
+        box-sizing: border-box;
+        min-height: 28px;
+        padding: 5px 10px;
+        background: var(--accent-main);
+        color: var(--on-accent-fg);
+        border: 1px solid transparent;
+        border-radius: 4px;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 16px;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+    .viewer-controls button:hover, .viewer-controls summary:hover {
+        background: var(--accent-hover);
+    }
+    .viewer-controls button:focus-visible, .viewer-controls summary:focus-visible {
+        outline: 2px solid var(--accent-main);
+        outline-offset: 2px;
+    }
+    .viewer-controls button:disabled {
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        cursor: not-allowed;
+    }
+    .viewer-help {
+        margin: 0;
+        min-width: 0;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.4;
+    }
+    .viewer-export { position: relative; }
+    .viewer-export summary { list-style-position: inside; }
+    .viewer-export-options {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: max-content;
+        min-width: 100%;
+        padding: 4px;
+        box-sizing: border-box;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+    }
+    .viewer-export-options button {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        text-align: left;
+    }
+    .viewer-export:not([open]) .viewer-export-options { display: none; }
+    .viewer-export-options button:hover { background: var(--bg-tertiary); }
+`;
+
 ipcMain.on("open-mermaid-popup", (event, data) => {
   const { svgContent, isDarkMode: requestedDarkMode } = data;
   const theme = popupTheme(ownedDialogs?.theme(mainWindow) ||
@@ -9414,6 +9490,7 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
     <title>Mermaid Diagram</title>
     <style>
         ${theme.css}
+        ${popupViewerControlsCss}
         body, html {
             margin: 0;
             padding: 0;
@@ -9424,47 +9501,11 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
         }
         .ui-overlay {
             position: absolute;
-            top: 20px;
-            left: 20px;
-            background: var(--bg-secondary);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,${isDarkMode ? "0.3" : "0.1"});
+            top: 12px;
+            left: 12px;
+            max-width: calc(100% - 24px);
             pointer-events: auto;
             z-index: 10;
-            border: 1px solid var(--border-color);
-        }
-        h1 {
-            margin: 0 0 10px 0;
-            font-size: 16px;
-            color: var(--text-primary);
-        }
-        p {
-            margin: 0 0 10px 0;
-            font-size: 12px;
-            color: var(--text-secondary);
-        }
-        button {
-            padding: 8px 12px;
-            background-color: var(--accent-main);
-            color: var(--on-accent-fg);
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: background 0.2s;
-            width: 100%;
-            margin-bottom: 8px;
-        }
-        button:last-child {
-            margin-bottom: 0;
-        }
-        button:hover {
-            background-color: var(--accent-hover);
-        }
-        button:disabled {
-            background-color: var(--bg-tertiary);
-            cursor: not-allowed;
         }
         #svg-container-wrapper {
             cursor: grab;
@@ -9484,11 +9525,12 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
     </style>
 </head>
 <body ${theme.attributes}>
-    <div class="ui-overlay">
-        <h1>Mermaid Diagram</h1>
-        <p>• Scroll to Zoom (at cursor)<br>• Click & Drag to Pan</p>
-        <button id="resetBtn">Reset View</button>
-        <button id="pdfBtn">Save as PDF</button>
+    <div class="ui-overlay viewer-controls" role="group" aria-label="View controls">
+        <div class="viewer-actions">
+            <button type="button" id="resetBtn">Reset View</button>
+            <button type="button" id="pdfBtn">Save as PDF</button>
+        </div>
+        <p class="viewer-help">Scroll to zoom at cursor; drag to pan</p>
     </div>
     <div id="svg-container-wrapper" style="width: 100%; height: 100%; position: relative;">
         <div id="viewport" style="transform-origin: 0 0;">
@@ -9621,6 +9663,7 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
 
             // Hide UI overlay for PDF
             const overlay = document.querySelector('.ui-overlay');
+            const originalOverlayDisplay = overlay.style.display;
             overlay.style.display = 'none';
 
             // Hide the normal view
@@ -9669,7 +9712,7 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
                 // Remove PDF container and restore normal view
                 pdfContainer.remove();
                 svgWrapper.style.display = '';
-                overlay.style.display = 'block';
+                overlay.style.display = originalOverlayDisplay;
 
                 if (result.success) {
                     pdfBtn.textContent = 'Saved!';
@@ -9788,12 +9831,6 @@ ipcMain.on("open-image-popup", (event, data) => {
   popupWindow.setMenu(null);
 
   const bg = "var(--bg-primary)";
-  const uiBg = "var(--bg-secondary)";
-  const uiBorder = "var(--border-color)";
-  const textColor = "var(--text-primary)";
-  const accentColor = "var(--accent-main)";
-  const accentHover = "var(--accent-hover)";
-  const subTextColor = "var(--text-secondary)";
 
   const nonce = makeNonce();
   const htmlContent = `<!DOCTYPE html>
@@ -9804,6 +9841,7 @@ ipcMain.on("open-image-popup", (event, data) => {
   <title>${escapeHtml(alt || "Image Viewer")}</title>
   <style>
     ${theme.css}
+    ${popupViewerControlsCss}
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       width: 100%; height: 100%; overflow: hidden;
@@ -9832,73 +9870,25 @@ ipcMain.on("open-image-popup", (event, data) => {
     }
     .ui-overlay {
       position: absolute;
-      top: 20px; left: 20px;
-      background: ${uiBg};
-      border: 1px solid ${uiBorder};
-      padding: 14px 16px;
-      border-radius: 10px;
-      box-shadow: 0 4px 12px rgba(0,0,0,${isDarkMode ? "0.4" : "0.12"});
+      top: 12px; left: 12px;
+      max-width: calc(100% - 24px);
       z-index: 10;
-      min-width: 160px;
-    }
-    .ui-overlay h1 {
-      font-size: 14px;
-      font-weight: 600;
-      color: ${accentColor};
-      margin-bottom: 6px;
-    }
-    .ui-overlay p {
-      font-size: 11px;
-      color: ${subTextColor};
-      margin-bottom: 10px;
-      line-height: 1.5;
-    }
-    .ui-overlay button {
-      display: block;
-      width: 100%;
-      padding: 7px 10px;
-      margin-bottom: 6px;
-      background: ${accentColor};
-      color: var(--on-accent-fg);
-      border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.18s;
-    }
-    .ui-overlay button:last-child { margin-bottom: 0; }
-    .ui-overlay button:hover { background: ${accentHover}; }
-    .ui-overlay button:disabled { opacity: 0.55; cursor: not-allowed; background: ${accentColor}; }
-    #zoom-label {
-      display: block;
-      text-align: center;
-      font-size: 12px;
-      color: ${textColor};
-      margin-bottom: 8px;
-      font-weight: 500;
-    }
-    .btn-secondary {
-      background: var(--bg-tertiary) !important;
-      color: var(--text-primary) !important;
-    }
-    .btn-secondary:hover { background: var(--border-color) !important; }
-    .divider {
-      border: none;
-      border-top: 1px solid var(--border-color);
-      margin: 8px 0;
     }
   </style>
 </head>
 <body ${theme.attributes}>
-  <div class="ui-overlay">
-    <h1>Image Viewer</h1>
-    <p>• Scroll to zoom (at cursor)<br>• Drag to pan</p>
-    <span id="zoom-label">100%</span>
-    <button id="resetBtn">Reset View</button>
-    <hr class="divider">
-    <button id="btn-png" class="btn-secondary">⬇ Save as PNG</button>
-    <button id="btn-jpg" class="btn-secondary">⬇ Save as JPG</button>
+  <div class="ui-overlay viewer-controls" role="group" aria-label="View controls">
+    <div class="viewer-actions">
+      <button type="button" id="resetBtn">Reset View</button>
+      <details class="viewer-export">
+        <summary>Save image</summary>
+        <div class="viewer-export-options">
+          <button type="button" id="btn-png">Save as PNG</button>
+          <button type="button" id="btn-jpg">Save as JPG</button>
+        </div>
+      </details>
+    </div>
+    <p class="viewer-help"><span id="zoom-label">100%</span> &middot; Scroll to zoom at cursor; drag to pan</p>
   </div>
   <div id="canvas">
     <div id="viewport">
@@ -10301,6 +10291,7 @@ ipcMain.on("open-table-popup", (event, data) => {
     <style>
         ${tabulatorCss}
         ${theme.css}
+        ${popupViewerControlsCss}
 
         /* Custom theme to match app colors */
         body, html {
@@ -10316,81 +10307,28 @@ ipcMain.on("open-table-popup", (event, data) => {
             display: flex;
             flex-direction: column;
             height: 100vh;
-            padding: 20px;
+            padding: 12px;
             box-sizing: border-box;
         }
 
         .header {
-            background: var(--bg-secondary);
-            padding: 20px;
-            border-radius: 8px 8px 0 0;
-            box-shadow: 0 2px 4px rgba(0,0,0,${isDarkMode ? "0.3" : "0.1"});
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0;
-            border: 1px solid var(--border-color);
-            border-bottom: none;
-        }
-
-        h1 {
-            margin: 0;
-            font-size: 20px;
-            color: var(--text-primary);
-        }
-
-        .controls {
-            display: flex;
-            gap: 10px;
-        }
-
-        button {
-            padding: 10px 16px;
-            background-color: var(--accent-main);
-            color: var(--on-accent-fg);
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 13px;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        button:hover {
-            background-color: var(--accent-hover);
-            transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(var(--accent-glow-rgb), 0.3);
-        }
-
-        button:active {
-            transform: translateY(0);
+            flex-shrink: 0;
+            margin-bottom: 8px;
         }
 
         .table-wrapper {
             flex: 1;
             background: var(--bg-secondary);
-            border-radius: 0 0 8px 8px;
+            border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,${isDarkMode ? "0.3" : "0.1"});
             overflow: hidden;
             display: flex;
             flex-direction: column;
             border: 1px solid var(--border-color);
-            border-top: none;
         }
 
         #data-table {
             flex: 1;
-        }
-
-        .info {
-            padding: 12px 20px;
-            background: var(--bg-tertiary);
-            color: var(--text-secondary);
-            font-size: 13px;
-            border-bottom: 1px solid var(--border-color);
         }
 
         /* Tabulator theme customization */
@@ -10479,37 +10417,21 @@ ipcMain.on("open-table-popup", (event, data) => {
 <body ${theme.attributes}>
     <div class="container">
         <div class="header">
-            <h1>Interactive Table Viewer</h1>
-            <div class="controls">
-                <button id="clearFiltersBtn">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                    Clear Filters
-                </button>
-                <button id="exportCsvBtn">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="7 10 12 15 17 10"></polyline>
-                        <line x1="12" y1="15" x2="12" y2="3"></line>
-                    </svg>
-                    Export CSV
-                </button>
-                <button id="exportJsonBtn">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="7 10 12 15 17 10"></polyline>
-                        <line x1="12" y1="15" x2="12" y2="3"></line>
-                    </svg>
-                    Export JSON
-                </button>
+            <div class="controls viewer-controls" role="group" aria-label="Table controls">
+                <div class="viewer-actions">
+                    <button type="button" id="clearFiltersBtn">Clear Filters</button>
+                    <details class="viewer-export">
+                        <summary>Export</summary>
+                        <div class="viewer-export-options">
+                            <button type="button" id="exportCsvBtn">Export CSV</button>
+                            <button type="button" id="exportJsonBtn">Export JSON</button>
+                        </div>
+                    </details>
+                </div>
+                <p class="viewer-help">Click headers to sort; filter boxes to search; pagination below; exports use filtered rows</p>
             </div>
         </div>
         <div class="table-wrapper">
-            <div class="info">
-                <strong>Tips:</strong> Click column headers to sort • Type in filter boxes to search • Use pagination at bottom • Export filtered data
-            </div>
             <div id="data-table"></div>
         </div>
     </div>

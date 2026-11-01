@@ -11,6 +11,9 @@ const { spawnSync } = require("child_process");
 const { createHash } = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const RETIRED_REVERTS = Object.freeze({
+  R195: "the raw Insert textarea was removed; shared visual-grid resizing is a different contract",
+});
 
 // THIS FILE SELF-EXECUTES AT REQUIRE TIME, and that is a loaded gun pointed at
 // the working tree. There is no exported API and no main() to call: everything
@@ -522,6 +525,456 @@ const SEARCH_LAYOUT_CONTROLS = [
 ];
 
 const REVERTS = [
+  // New column/toolbar source-only proposals; sensitivity has not been executed.
+  {
+    id: "R1185", what: "reverse logical gaps that share an empty physical slot",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "b.at - a.at || b.gap - a.gap",
+    to: "b.at - a.at",
+    suite: "test:table-cells-source",
+    // The unchanged fixture throws before its check; the suite catches that
+    // refusal here. Nearby exact-byte controls must still succeed.
+    expect: [/^cell source suite completed$/],
+    mustPass: [
+      /^lexical column slots preserve exact original bytes for pipe-less empty left$/,
+      /^lexical column slots preserve exact original bytes for pipe-less empty right\/backslash$/,
+      /^lexical column slots preserve exact original bytes for compact inner gap$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1186", what: "leave the visible Delete column button without its actual command",
+    file: RENDERER,
+    from: "tableCellDeleteColumn.addEventListener('click', () => changeTableCellColumns('remove'));",
+    to: "tableCellDeleteColumn.addEventListener('click', () => {});",
+    suite: "test:packaging",
+    expect: [/^Delete column is bound once and differs deliberately from insertion availability$/],
+    mustPass: [
+      /^shared structure toolbar ships six visible native named static-SVG buttons in the accepted order$/,
+      /^column-removal contracts extract the actual shared confirmation transaction and attribute-only labeler$/,
+      /^the shared-table source contracts locate complete live functions$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1187", what: "accept a changed column identity value after confirmation",
+    file: RENDERER,
+    from: "      item.id === id && item.originalIndex === originalIndex) &&",
+    to: "      (columnRemoval || item.id === id) && item.originalIndex === originalIndex) &&",
+    suite: "test:table-cells-source",
+    expect: [/^post-confirmation column witness rejects column id primitive without extra mutation disposal or source reads$/],
+    mustPass: [
+      /^post-confirmation column witness rejects column identity without extra mutation disposal or source reads$/,
+      /^post-confirmation column witness rejects column original index primitive without extra mutation disposal or source reads$/,
+      /^confirmation revalidation rejects ownership change without deletion$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1188", what: "treat a canceled column confirmation as affirmative consent",
+    file: RENDERER,
+    from: "answer.cause !== 'choice'",
+    to: "(!columnRemoval && answer.cause !== 'choice')",
+    suite: "test:table-cells-source",
+    expect: [/^only affirmative column removal choice can mutate a draft \{"choice":"remove","cause":"(escape|aborted)"\}$/],
+    mustPass: [
+      /^column Cancel restores usable controls without topology disposal serialization or document mutation$/,
+      /^post-confirmation column witness rejects column id primitive without extra mutation disposal or source reads$/,
+      /^confirmation revalidation rejects ownership change without deletion$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  // Shared-table candidates. In-memory checks do not certify a runtime proof.
+  {
+    id: "R1169", what: "accept unnamed table modes at the shared selection boundary",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "    if (!Object.values(Mode).includes(mode)) fail('tableCells.mode');",
+    to: "    if (false && !Object.values(Mode).includes(mode)) fail('tableCells.mode');",
+    suite: "test:table-cells-source",
+    expect: [/^unsupported mode refuses selection and insertion without changing source: (undefined|null|true|false|edit|create|unknown)$/],
+    mustPass: [
+      /^one immutable named enum describes all three table operations$/,
+      /^whole and selected modes retain explicit scope even with the same table identity$/,
+      /^Insert cannot borrow an existing-row target and Update cannot create a new table$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 7,
+  },
+  {
+    id: "R1170", what: "leave the shared table mode set mutable",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "  const Mode = Object.freeze({\n    INSERT: 'insert',\n" +
+      "    UPDATE_TABLE: 'update-table',\n    UPDATE_ROWS: 'update-rows',\n  });",
+    to: "  const Mode = {\n    INSERT: 'insert',\n" +
+      "    UPDATE_TABLE: 'update-table',\n    UPDATE_ROWS: 'update-rows',\n  };",
+    suite: "test:table-cells-source",
+    expect: [/^one immutable named enum describes all three table operations$/],
+    mustPass: [
+      /^whole and selected modes retain explicit scope even with the same table identity$/,
+      /^Create allows an editable required header with zero data rows$/,
+      /^unsupported mode refuses selection and insertion without changing source: unknown$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1171", what: "ship Create with an incorrect initial column count",
+    file: RENDERER,
+    from: "      tableCellColumns.value = '3';",
+    to: "      tableCellColumns.value = '2';",
+    suite: "test:packaging",
+    expect: [/^shared table setup ships three columns and two data rows with zero-row input allowed$/],
+    mustPass: [
+      /^the shared-table source contracts locate complete live functions$/,
+      /^shared table creation validates counts and builds an editable header before optional data rows$/,
+      /^Insert table and both Edit scopes launch the one shared visual popup$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1172", what: "grant row and column selection through opening autofocus",
+    file: RENDERER,
+    from: "  session.cells[0]?.input.focus();",
+    to: "  session.cells[0]?.input.focus();\n  selectTableCell(session, session.cells[0]);",
+    suite: "test:packaging",
+    expect: [/^shared table row and column actions require a highlighted cell rather than opening autofocus$/],
+    mustPass: [
+      /^the shared-table source contracts locate complete live functions$/,
+      /^shared Edit scope derives header permissions from the captured source rows$/,
+      /^selected-row table Update disables and rejects column insertion at both boundaries$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1173", what: "leave the shared column buttons registered without their real callbacks",
+    file: RENDERER,
+    from: "tableCellInsertLeft.addEventListener('click', () => changeTableCellColumns('left'));",
+    to: "tableCellInsertLeft.addEventListener('click', () => {});",
+    also: [{
+      from: "tableCellInsertRight.addEventListener('click', () => changeTableCellColumns('right'));",
+      to: "tableCellInsertRight.addEventListener('click', () => {});",
+    }],
+    suite: "test:packaging",
+    expect: [/^selected-row table Update disables and rejects column insertion at both boundaries$/],
+    mustPass: [
+      /^the shared-table source contracts locate complete live functions$/,
+      /^shared table row and column actions require a highlighted cell rather than opening autofocus$/,
+      /^shared table draft counts use live rows and columns in a read-only status$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1174", what: "give selected-row mode whole-table column authority",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "    if (target.mode !== Mode.UPDATE_TABLE) fail('tableCells.columnsScope');",
+    to: "    if (false && target.mode !== Mode.UPDATE_TABLE) fail('tableCells.columnsScope');",
+    suite: "test:table-cells-source",
+    expect: [/^selected mode cannot gain column permission even when it contains every row$/],
+    mustPass: [
+      /^whole and selected modes retain explicit scope even with the same table identity$/,
+      /^mixed row deletion\/insertion\/cell\/column transaction changes only its repeated table$/,
+      /^structural column contract refuses original reorder without source mutation$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1175", what: "hide unsupported original-column projection behind a generic invalid error",
+    file: path.join(SRC, "table-cell-editor.js"),
+    from: "      throw new Error('tableCells.columnProjection', { cause: error });",
+    to: "      throw error;",
+    suite: "test:table-cells-source",
+    expect: [/^an unsupported original-column projection refuses explicitly and never adopts its staging source$/],
+    mustPass: [
+      /^selected mode cannot gain column permission even when it contains every row$/,
+      /^mixed row deletion\/insertion\/cell\/column transaction changes only its repeated table$/,
+      /^multiple edge and same-gap columns preserve order and empty physical slots at BOM\/CRLF\/EOF$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1176", what: "discard the measured header glyph width in the row-label allocation",
+    file: RENDERER,
+    from: "  return Math.ceil(Math.max(minimum, textWidth / zoom + edges.reduce((sum, width) => sum + width, 0)));",
+    to: "  return Math.ceil(minimum);",
+    suite: "test:table-cells-source",
+    expect: [
+      /^initial labels reserve measured glyphs and padding instead of the distributed cell width$/,
+      /^initial label measurement uses the controller's unzoomed CSS pixels$/,
+    ],
+    mustPass: [
+      /^short labels retain the existing minimum without expanding a tiny popup$/,
+      /^unpainted label measurement refuses explicitly rather than publishing a zero-width layout$/,
+      /^complete bounded estimates establish their actual data-column reference ratio once$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1177", what: "silence unknown shared table failures while keeping a safe alert",
+    file: RENDERER,
+    from: "  if (!Object.hasOwn(UI_STRINGS, key)) console.error('Table cell editor failed:', error);",
+    to: "  if (false && !Object.hasOwn(UI_STRINGS, key)) console.error('Table cell editor failed:', error);",
+    suite: "test:packaging",
+    expect: [/^the shared table error helper logs unknown failures instead of hiding them$/],
+    mustPass: [
+      /^the shared table error helper was located in full and writes to the live alert$/,
+      /^the table dialog's validation error is built as a node, not assigned as markup$/,
+      /^the shared table error source oracle rejects markup and missing writes$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1178", what: "nest the column action inside the row action instead of exposing its own binding",
+    file: RENDERER,
+    from: "  }\n}\n\nfunction changeTableCellColumns(action) {",
+    to: "  }\n\nfunction changeTableCellColumns(action) {",
+    also: [{
+      from: "  }\n}\n\nfunction populateTableCellGrid(session, displayRows) {",
+      to: "  }\n}\n}\n\nfunction populateTableCellGrid(session, displayRows) {",
+    }],
+    suite: "test:table-cells-source",
+    expect: [/^row and column actions have separate top-level source bindings$/],
+    mustPass: [
+      /^row insertion and Update reject active composition before touching document authority$/,
+      /^row insertion and Update also reject the pending composition-end microtask$/,
+      /^the shared composition guard releases only after inline completion has had its microtask$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1179", what: "omit the project guide from the packaged shared-table documentation",
+    file: PKG,
+    from: '      {\n        "from": "docs/PROJECT-CHANGE-LIST.md",\n        "to": "docs/PROJECT-CHANGE-LIST.md"\n      },\n',
+    to: "",
+    suite: "test:packaging",
+    expect: [
+      /^every relative README link points at a file that ships beside it$/,
+      /^the packaged markdown link oracle includes the project guide$/,
+      /^every packaged markdown document links only to shipped local targets$/,
+    ],
+    mustPass: [
+      /^the README does link to local files, so this assertion has something to judge$/,
+      /^the shipped README fetches no images over the network when the app opens it$/,
+      /^the packaged guide link oracle rejects an absent relative document$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+  },
+  {
+    id: "R1180", what: "fit observed cell columns inside ResizeObserver delivery",
+    file: RENDERER,
+    from: "    if (fitOnResize) {\n      invalidateResizeLayout();\n      return;\n    }",
+    to: "    if (fitOnResize) {\n      if (!current()) return;\n      fitAvailableWidth();\n      position();\n      return;\n    }",
+    suite: "test:table-cells-source",
+    expect: [
+      /^cell resize delivery does not call ownership guards or change presentation$/,
+      /^cell resize deliveries coalesce into one owned frame$/,
+      /^pending resize refuses a pointerdown whose current hit is not its handle$/,
+      /^drag and resize reconciliation own separate pending frames$/,
+      /^Escape still consumes a pending resize drag before dialog dismissal$/,
+      /^composition setup retains a live drag and both pending frames$/,
+      /^composition reaches the root listener before resize reconciliation$/,
+      /^pointercancel setup retains a live drag and both pending frames$/,
+      /^pointercancel rolls back before the pending resize frame$/,
+      /^reset witness retains an actual queued resize callback$/,
+      /^an old resize callback cannot consume replacement controls or their newer ticket$/,
+      /^detached table setup retains an actual queued resize callback$/,
+      /^a detached table callback cannot consume its replacement table ticket$/,
+      /^cell resize delivery leaves unavailable-owner cleanup to its owned frame$/,
+      /^dispose witness retains an actual queued resize callback$/,
+      /^disposed resize callbacks cannot recreate rules controls listeners or frame work$/,
+    ],
+    mustPass: [
+      /^resize reconciliation setup owns live handles and an empty frame queue$/,
+      /^ordinary reader resize observation retains synchronous positioning$/,
+      /^untouched grids fit their initial proportions and fixed row label on actual width changes$/,
+      /^re-expansion restores reference proportions after columns hit their floors$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1181", what: "close a current menu for unrelated inner scrolling",
+    file: "src/context-menu-utils.js",
+    from: "      if (current && target !== doc && target !== doc.documentElement &&\n          target !== doc.body && target !== doc.defaultView &&\n          typeof target?.contains === 'function' &&\n          !nodes.some(node => target.contains(node))) return false;",
+    to: "",
+    suite: "test:table-cells-source",
+    expect: [
+      /^unrelated scrolling preserves a valid menu and returns no dismissal$/,
+      /^unrelated scrolling preserves an inactive recent path independently of the active document$/,
+      /^unrelated viewer scrolling preserves the clicked inactive tab path$/,
+      /^unrelated scrolling preserves the owned note command and list anchor$/,
+    ],
+    mustPass: [
+      /^menu presentation retains the exact browser and CommonJS helper surface$/,
+      /^recent-list scrolling dismisses and clears only its actual command payload$/,
+      /^the same tab-strip scroll dismisses a tab-anchored menu and clears its path$/,
+      /^equal note IDs in a new document cannot keep an old notes menu current$/,
+      /^viewport resize remains unconditional despite valid presentation$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+  },
+  {
+    id: "R1182", what: "leave document menus open after their active owner is removed",
+    file: TABS,
+    from: "        activeTabForMutations = null;\n        window.updateEditorHistoryControls?.();\n        dismissUpdatePrompt();\n        window.hideDocumentContextMenus?.();",
+    to: "        activeTabForMutations = null;\n        window.updateEditorHistoryControls?.();\n        dismissUpdatePrompt();",
+    suite: "test:editor-history",
+    expect: [/^committed owner removal dismisses menus before replacement can pause or refuse$/],
+    mustPass: [
+      /^closing the active owner disables controls before replacement can pause or refuse$/,
+      /^owner selection repaints after both active-owner assignments$/,
+      /^accepted editor input dismisses its actual menu without losing the fresh Undo step$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1183", what: "treat unrelated textarea wheel intent as a captured source mutation",
+    file: RENDERER,
+    from: "  cancelEditorScrollRestore(pendingEditorScrollRestore);\n  if (isEditMode && contextMenu.classList.contains('visible') &&",
+    to: "  cancelEditorScrollRestore(pendingEditorScrollRestore);\n  editorInteractionRevision++;\n  if (isEditMode) hideContextMenu();\n  if (isEditMode && contextMenu.classList.contains('visible') &&",
+    suite: "test:table-cells-source",
+    expect: [
+      /^textarea wheel preserves the actual preview menu capture and its unchanged authority$/,
+      /^editor wheel dismisses its source menu without discarding or rebasing captured authority$/,
+    ],
+    mustPass: [
+      /^wheel setup owns a real preview capture and matching pending restore ticket$/,
+      /^wheel marks the retained restore ticket cancelled before retiring its pending reference$/,
+      /^keydown still advances interaction authority and invalidates the earlier preview capture$/,
+      /^ordinary matching completion restores both editor scroll axes and retires its ticket$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1184", what: "restore editor scrolling from a cancelled or already consumed completion",
+    file: RENDERER,
+    from: "    if (context.editorScroll && context.editorScroll === pendingEditorScrollRestore &&\n        context.editorScroll.cancelled === false && isEditMode &&",
+    to: "    if (context.editorScroll && isEditMode &&",
+    suite: "test:table-cells-source",
+    expect: [
+      /^completion cannot restore editor scrolling over a newer wheel intent$/,
+      /^duplicate completion cannot revive a consumed editor-scroll ticket$/,
+      /^cancelled deferred work cannot move the editor on later completion$/,
+      /^a thawed duplicate cannot revive the ticket consumed by freeze refusal$/,
+    ],
+    mustPass: [
+      /^ordinary matching completion restores both editor scroll axes and retires its ticket$/,
+      /^older completion cannot consume a newer pending editor-scroll restore$/,
+      /^the newer ticket remains usable after its obsolete completion$/,
+      /^the actual refused-open guard preserves the prior accepted scroll ticket$/,
+      /^completion faults propagate while finally retiring the exact owned ticket$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+  },
+  {
+    id: "R1164", what: "leave document history controls enabled after their active owner closes",
+    file: TABS,
+    from: "      if (tab.id === activeTabId) {\n        activeTabForMutations = null;\n        window.updateEditorHistoryControls?.();\n        dismissUpdatePrompt();",
+    to: "      if (tab.id === activeTabId) {\n        activeTabForMutations = null;\n        dismissUpdatePrompt();",
+    suite: "test:editor-history",
+    expect: [/^closing the active owner disables controls before replacement can pause or refuse$/],
+    mustPass: [/^document buttons use the existing history and clear redo on a fresh push$/,
+      /^owner selection repaints after both active-owner assignments$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1165", what: "record the already-current typing state instead of the pre-change source",
+    file: RENDERER,
+    from: "  if (historyDebounceTimer === null) historyPushExact(before);",
+    to: "  if (historyDebounceTimer === null) historyPushExact(value);",
+    suite: "test:editor-history",
+    expect: [/^first document Undo reverses fresh typing before the idle deadline$/,
+      /^idle expiry never adds the already-current typing state$/,
+      /^typing after Undo clears Redo before idle expiry$/,
+      /^typing within the idle window remains one source change$/,
+      /^separate idle groups undo and redo actual source in order$/,
+      /^beforeinput-less changes use the initialized pre-edit checkpoint$/,
+      /^exact beforeinput preserves CRLF through typing Undo and Redo$/,
+      /^unchanged input neither creates Undo nor consumes available Redo$/,
+      /^snapshots retain only the pre-state and restoration retires the idle timer$/,
+      /^stale idle callbacks cannot end a replacement owner's typing group$/,
+      /^typing followed by an exact transaction keeps two real Undo steps$/,
+      /^composition retains one burst and blocks history until final input settles$/,
+      /^incoming editor seeds its own source before its owner becomes active$/,
+      /^accepted reload clears old history and seeds the next pre-input source$/],
+    mustPass: [/^document buttons use the existing history and clear redo on a fresh push$/,
+      /^closing the active owner disables controls before replacement can pause or refuse$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 14,
+  },
+  {
+    id: "R1166", what: "synthesize a current-state undo entry when retaining a pending editor",
+    file: RENDERER,
+    from: "  return { undo: state.history.undo.slice(), redo: state.history.redo.slice(),",
+    to: "  return { undo: [...state.history.undo, state.history.exactTypingSource], redo: state.history.redo.slice(),",
+    suite: "test:editor-history",
+    expect: [/^snapshots retain only the pre-state and restoration retires the idle timer$/],
+    mustPass: [/^first document Undo reverses fresh typing before the idle deadline$/,
+      /^typing followed by an exact transaction keeps two real Undo steps$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1167", what: "let an old idle callback close another owner's typing group",
+    file: RENDERER,
+    from: "    if (historyDebounceTimer !== timer || !isCurrentEditorHistory(context)) return;",
+    to: "    /* proof: stale idle callback may change the shared timer */",
+    suite: "test:editor-history",
+    expect: [/^stale idle callbacks cannot end a replacement owner's typing group$/],
+    mustPass: [/^first document Undo reverses fresh typing before the idle deadline$/,
+      /^old composition completion cannot release a replacement owner's guard$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1168", what: "let document Undo interrupt unfinished source-editor composition",
+    file: RENDERER,
+    from: "  if (editorHistoryComposing()) return;\n  if (!mayMutateRendererDocument('history-undo')) return;",
+    to: "  if (!mayMutateRendererDocument('history-undo')) return;",
+    suite: "test:editor-history",
+    expect: [/^composition retains one burst and blocks history until final input settles$/],
+    mustPass: [/^first document Undo reverses fresh typing before the idle deadline$/,
+      /^old composition completion cannot release a replacement owner's guard$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1160", what: "hide the theme-colour outline of the row action buttons",
+    file: CSS,
+    from: "  border: 1px solid var(--primary-color);\n}\n.table-cell-row-actions > .note-dialog-btn:focus-visible",
+    to: "  border: none;\n}\n.table-cell-row-actions > .note-dialog-btn:focus-visible",
+    suite: "test:table-cells-source",
+    expect: [/^shared row and column action buttons retain the thin current-theme border$/],
+    mustPass: [/^the shipping Update fast path cannot discard deletion-only operations$/,
+      /^all-body-only selection can delete every original with an empty final order$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1161", what: "drop a deletion-only Update through the old original-only fast path",
+    file: RENDERER,
+    from: "        !edits.length && !session.deletedRows.size && order.every(row => row.original)) {",
+    to: "        !edits.length && order.every(row => row.original)) {",
+    suite: "test:table-cells-source",
+    expect: [/^the shipping Update fast path cannot discard deletion-only operations$/],
+    mustPass: [/^shared row and column action buttons retain the thin current-theme border$/,
+      /^all-body-only selection can delete every original with an empty final order$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1162", what: "remove a row after its draft changed during confirmation",
+    file: RENDERER,
+    from: "before.input.innerHTML === before.html &&",
+    to: "(!columnRemoval || before.input.innerHTML === before.html) &&",
+    suite: "test:table-cells-source",
+    expect: [/^confirmation revalidation rejects draft content change without deletion$/],
+    mustPass: [/^confirmation revalidation rejects row order change without deletion$/,
+      /^confirmation revalidation rejects ownership change without deletion$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1163", what: "let an aborted old confirmation change a replacement editor",
+    file: RENDERER,
+    from: "    if (tableCellSession === session && session.confirmation === pending) {",
+    to: "    if (session.confirmation === pending) {",
+    suite: "test:table-cells-source",
+    expect: [/^an aborted old confirmation cannot touch a replacement session or its controls$/,
+      /^aborted column confirmation never unlocks disposes or writes a reopened session$/],
+    mustPass: [/^confirmation revalidation rejects ownership change without deletion$/,
+      /^the shipping Update fast path cannot discard deletion-only operations$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
   // SOURCE-ONLY proposals: no sensitivity run is claimed. Exact failure sets
   // must be qualified, not broadened, after an authorized baseline and reviews.
   // R1142-R1145 belong to the feature stream; these IDs start after that range.
@@ -964,8 +1417,8 @@ const REVERTS = [
   {
     id: "R1117", what: "drop partially intersected actual header and data rows",
     file: path.join(SRC, "table-cell-editor.js"),
-    from: "    const table = tables[0], rows = rowsOnly ? table.rows.filter(intersects) : table.rows;",
-    to: "    const table = tables[0], rows = rowsOnly ? table.rows.filter(row => start <= row.start && end >= row.end) : table.rows;",
+    from: "    const table = tables[0], rows = mode === Mode.UPDATE_ROWS ? table.rows.filter(intersects) : table.rows;",
+    to: "    const table = tables[0], rows = mode === Mode.UPDATE_ROWS ? table.rows.filter(row => start <= row.start && end >= row.end) : table.rows;",
     suite: "test:table-cells-rows",
     expect: [/^partial source boundaries include the intersected header and data rows$/],
     mustPass: [
@@ -1011,8 +1464,15 @@ const REVERTS = [
   {
     id: "R1120", what: "commit an unchanged rich-cell grid as a document edit",
     file: RENDERER,
-    from: "    if (!edits.length) {\n      closeTableCellEditor();\n      return;\n    }",
-    to: "    if (false && !edits.length) {\n      closeTableCellEditor();\n      return;\n    }",
+    from: "    if (session.mode !== TableCellMode.INSERT && !columnsChanged &&\n" +
+      "        !edits.length && !session.deletedRows.size && order.every(row => row.original)) {",
+    to: "    if (false && session.mode !== TableCellMode.INSERT && !columnsChanged &&\n" +
+      "        !edits.length && !session.deletedRows.size && order.every(row => row.original)) {",
+    // Both no-op exits protect the unchanged draft; removing only one is inert.
+    also: [{
+      from: "    if (candidate === session.exact) {\n      closeTableCellEditor();\n      return;\n    }",
+      to: "    if (false && candidate === session.exact) {\n      closeTableCellEditor();\n      return;\n    }",
+    }],
     suite: "test:table-cells-noop",
     expect: [/^unchanged cell Update closes without mutation history dirty state or Save$/],
     mustPass: [
@@ -3316,44 +3776,26 @@ const REVERTS = [
   },
   {
     id: "R449",
-    // SEC-29. Puts the table paths back on a bare DOMPurify.sanitize(), which
-    // is what all five of them used before: the global hooks still applied, so
-    // image handling stayed correct and only the CONFIG went missing - which is
-    // precisely why nobody noticed the <form> control was absent there.
-    //
-    // MEASURED against the vendored build's own allowlists: what the bare call
-    // loses is both of SANITIZE_CONFIG's deny-lists, not just FORBID_TAGS. Both
-    // `form` and `action` are in DOMPurify's defaults, so reverting restores the
-    // <form> AND its action attribute. (`formaction` is not in the defaults at
-    // all, so that entry is forward-defence and its loss is unobservable.) An
-    // earlier version of this comment claimed only FORBID_TAGS went missing;
-    // that was wrong, and the actionAttrs assertion below is what disproves it.
-    //
-    // Perturbing the shared helper rather than the five call sites is
-    // deliberate: one edit reproduces the flaw everywhere it existed, and the
-    // assertions below cover the two sinks that are actually reachable (the
-    // live viewer via the context menu, and the dialog's live preview).
-    //
-    // Amended for SEC-30: `download` was later added to that same shared
-    // FORBID_ATTR, and it IS in DOMPurify's defaults, so the bare call restores
-    // it too and a third assertion fails here. Listed rather than left as an
-    // unlisted failure because it is the same finding as the other two - one
-    // config omission, three controls lost - not collateral.
+    // Preparation rejects forms separately. Exercise the sanitizer and the
+    // actual rich cells, not the removed direct-render or Insert-preview paths.
     what: "put the table sanitize paths back on a bare DOMPurify.sanitize()",
     file: RENDERER,
     from: "  return DOMPurify.sanitize(html, TABLE_SANITIZE_CONFIG);",
     to: "  return DOMPurify.sanitize(html);",
     suite: "test:security",
     expect: [
-      /^SEC-29 a <form> nested in a table cell is stripped on the context-menu table path$/,
-      /^SEC-29 a <form> nested in a table cell is stripped in the table dialog preview$/,
-      /^SEC-30 the download attribute is stripped in the table dialog preview$/,
+      /^SEC-29 the shared table sanitizer strips forms and action attributes, not cell content$/,
+      /^SEC-29 shared rich-cell preparation strips action attributes and preserves supported content$/,
+      /^SEC-30 actual editable and read-only shared cells strip download, not the link$/,
     ],
     mustPass: [
       // The document pipeline has its own config and must be untouched by this
       // revert - that asymmetry is the whole point of the finding.
       /^SEC-11 <form action> and formaction are stripped, their content is not$/,
+      /^SEC-29 form cells are refused during preparation without changing the document or popup$/,
+      /^SEC-29 actual editable cells retain formatting, links and exact serialization authority$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
   },
   {
     id: "R451",
@@ -3366,11 +3808,7 @@ const REVERTS = [
     // that prevents the REQUEST. The will-download guard in main.js only fires
     // once a response has begun, so with the attribute back the beacon has
     // already left the machine before anything in the main process can object.
-    // Measured on the unfixed tree: a download anchor in #tableInsertPreview
-    // produced a live hit on a loopback server, while a plain anchor in the
-    // same click batch was blocked by will-navigate.
-    //
-    // The preview click guard stays in mustPass: it is a separate control on a
+    // The shared-cell click guard stays in mustPass: it is a separate control on a
     // separate layer, and it must keep passing while the strip is gone -
     // otherwise the two would be one control wearing two names.
     what: "drop `download` from the shared FORBID_ATTR deny-list",
@@ -3380,7 +3818,7 @@ const REVERTS = [
     suite: "test:security",
     expect: [
       /^SEC-30 the download attribute is stripped from document content in the viewer$/,
-      /^SEC-30 the download attribute is stripped in the table dialog preview$/,
+      /^SEC-30 actual editable and read-only shared cells strip download, not the link$/,
       // The alias check reads the list's contents, so it names the drift too.
       // Listed rather than left as an unexpected failure because it is the
       // whole point of that assertion: the table path inherits this by
@@ -3388,42 +3826,30 @@ const REVERTS = [
       /^SEC-29 the table config shares SANITIZE_CONFIG's deny-lists by reference, frozen$/,
     ],
     mustPass: [
-      /^SEC-30 clicks in the table dialog preview are inert$/,
+      /^SEC-30 shared-cell link clicks and auxiliary clicks are inert, not ordinary cell clicks$/,
       /^SEC-11 <form action> and formaction are stripped, their content is not$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
   },
   {
     id: "R452",
-    // SEC-30. Removes the capture-phase guard that makes the table dialog's
-    // preview non-interactive, leaving the element as it shipped: rendered
-    // document content, outside #viewer, with no click policy attached.
-    //
-    // Deliberately perturbs the handler BODY rather than deleting the
-    // addEventListener call, so the listener still exists and the revert cannot
-    // be caught by anything that merely counts listeners - only by an assertion
-    // that observes defaultPrevented on a real dispatched click.
-    //
-    // Behaviourally this revert is invisible to the attribute-strip assertions,
-    // which is why they are in mustPass: with `download` still stripped, a
-    // click here just becomes an ordinary navigation that main.js denies. That
-    // is the honest scope of this layer - it stops the preview being a
-    // clickable surface at all, it is not what stops the download.
-    what: "make the table preview click guard a no-op",
+    // Keep both listeners present; only their activation policy changes.
+    what: "make the shared-cell click and auxiliary-click guards no-ops",
     file: RENDERER,
-    from:
-      "  const blockPreviewActivation = (e) => {\n" +
-      "    e.preventDefault();\n" +
-      "  };",
-    to:
-      "  const blockPreviewActivation = (e) => {\n" +
-      "    void e;\n" +
-      "  };",
+    from: "tableCellDialog.addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault(); });",
+    to: "tableCellDialog.addEventListener('click', event => { void event; });",
+    also: [{
+      from: "tableCellDialog.addEventListener('auxclick', event => event.preventDefault());",
+      to: "tableCellDialog.addEventListener('auxclick', event => { void event; });",
+    }],
     suite: "test:security",
-    expect: [/^SEC-30 clicks in the table dialog preview are inert$/],
+    expect: [/^SEC-30 shared-cell link clicks and auxiliary clicks are inert, not ordinary cell clicks$/],
     mustPass: [
       /^SEC-30 the download attribute is stripped from document content in the viewer$/,
-      /^SEC-30 the download attribute is stripped in the table dialog preview$/,
+      /^SEC-30 actual editable and read-only shared cells strip download, not the link$/,
+      /^SEC-30 shared-cell click probes leave cells, source and the idle dialog unchanged$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "R453",
@@ -3512,179 +3938,95 @@ const REVERTS = [
   },
   {
     id: "R456",
-    // N10. Restores the line as it was inherited: the Turkish string, spliced
-    // in with innerHTML, wearing its hardcoded pink. Behaviourally identical to
-    // the original rather than byte-identical - the glyph is written as a
-    // \u26A0 escape, which the single-quoted JS string then evaluates to the
-    // same character.
-    //
-    // Both N10 checks are expected to fail, and for different reasons. The
-    // first sees the Turkish text and the inline style; the second cannot find
-    // a .table-insert-error element at all, so it has no colours to read. That
-    // second failure is the reason R457 exists as well - a revert that takes
-    // the element away cannot distinguish "themed" from "present".
-    what: "restore the Turkish innerHTML validation error",
+    // Change text only; the alert, theme and unknown-error log stay live.
+    what: "replace the shared table errors with a hardcoded Turkish message",
     file: RENDERER,
-    from:
-      "      const err = document.createElement('div');\n" +
-      "      err.className = 'table-insert-error';\n" +
-      "      err.setAttribute('role', 'alert');\n" +
-      "      err.textContent = i18n('table.invalidFormat');\n" +
-      "      tableInsertPreviewEl.replaceChildren(err);",
-    to:
-      "      tableInsertPreviewEl.innerHTML = '<div style=\"color:red;padding:10px;" +
-      "background:#ffe6e6;border-radius:4px;margin:8px 0;\">\\u26A0 Geçersiz tablo " +
-      "formatı. Markdown tablo sözdizimini kontrol edin (| ile ayrılmış sütunlar " +
-      "gerekli).</div>';",
+    from: "  tableCellError.textContent = Object.hasOwn(UI_STRINGS, key) ? i18n(key) : i18n('tableCells.commitFailed');",
+    to: "  tableCellError.textContent = 'Ge\u00E7ersiz tablo format\u0131.';",
     suite: "test:security",
     expect: [
-      /^N10 the table validation error is an English text node, not Turkish markup$/,
-      /^N10 the validation error is themed, and tracks the active theme$/,
+      /^N10 a shared rich-cell refusal reports the known English error as plain alert text$/,
+      /^N10 an unknown shared-cell error reports the safe fallback, not attacker markup$/,
     ],
     mustPass: [
-      // The surface this error is painted into is SEC-30's. Reverting the
-      // message must not disturb the guard on the box that holds it.
-      /^SEC-30 the download attribute is stripped in the table dialog preview$/,
-      /^SEC-30 clicks in the table dialog preview are inert$/,
+      /^N10 the shared error resolves the active theme's error token without a hardcoded fill$/,
+      /^N10 the unknown shared-cell error is logged, so the narrow mute is not vacuous$/,
+      /^SEC-30 shared-cell link clicks and auxiliary clicks are inert, not ordinary cell clicks$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
     id: "R457",
-    // N10, the theming half. Leaves the message English and node-built and
-    // restores the old hardcoded colour treatment IN FULL - fixed red ink,
-    // fixed pink fill, fixed pink border - which is the accident that actually
-    // happened upstream: text written once, against whatever theme the author
-    // had open. The fill line is load-bearing rather than decorative: the
-    // theming assertion reads backgroundColor as well as color, so the "no
-    // tinted fill, deliberately" half of the CSS comment is defended by this
-    // revert and not merely stated.
-    //
-    // The structural check is in mustPass and KEEPS PASSING here - an element
-    // with the right class and the right text, that is simply invisible on
-    // three of the five themes. Only reading the resolved colours under two
-    // themes can tell the difference.
-    what: "freeze the validation error's colours at the hardcoded pink",
+    // The shared cell alert has its own token; render-failure colors stay independent.
+    what: "freeze the shared table error's colours at the hardcoded pink",
     file: CSS,
-    from:
-      "  color: var(--danger-fg);\n" +
-      "  border: 1px solid var(--danger-fg);",
-    to:
-      "  color: red;\n" +
-      "  background: #ffe6e6;\n" +
-      "  border: 1px solid #ffe6e6;",
+    from: ".table-cell-error { color: var(--edit-error-fg); min-height: 1.3em; }",
+    to: ".table-cell-error { color: red; background: #ffe6e6; min-height: 1.3em; }",
     suite: "test:security",
     expect: [
-      /^N10 the validation error is themed, and tracks the active theme$/,
-      // WIDENED WHEN N12 LANDED, and the extra failure is an HONEST CONSEQUENCE
-      // rather than something to dodge. The rule this revert edits is now
-      // SHARED - `.table-insert-error, .render-error` - so restoring the
-      // hardcoded pink freezes the markdown render-failure banner too. That is
-      // the sharing working exactly as intended: one treatment, one place to
-      // get wrong, and a revert that says so on both surfaces at once. Naming
-      // only the N10 half would have understated what this edit really does.
-      /^N12 the render-failure banner is themed, and tracks the active theme$/,
-      // NOT WIDENED AGAIN WHEN N13 LANDED, and the reason is a structural limit
-      // of the harness rather than a judgement. `.mermaid-error` joined this
-      // same shared selector, so this edit really does freeze a THIRD surface -
-      // but a revert scores against ONE suite, and the assertion that would see
-      // it lives in test:mermaid. Naming it here would name a failure this run
-      // cannot observe. R481 is the mermaid-side proof of the same property,
-      // scored where it can be measured.
+      /^N10 the shared error resolves the active theme's error token without a hardcoded fill$/,
     ],
     mustPass: [
-      /^N10 the table validation error is an English text node, not Turkish markup$/,
-      // Both structural checks survive: the elements are still built from
-      // nodes and still carry no inline style attribute. Only the resolved
-      // colours moved.
+      /^N10 a shared rich-cell refusal reports the known English error as plain alert text$/,
+      /^N10 an unknown shared-cell error reports the safe fallback, not attacker markup$/,
+      /^N12 the render-failure banner is themed, and tracks the active theme$/,
       /^N12 a render failure reports as an escaped text node, not interpolated markup$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "R458",
-    // N10, the accessibility half. The one property in this fix with no VISUAL
-    // signal: delete it and the app looks identical and behaves identically to
-    // a sighted user, so nothing but an assistive technology or an assertion
-    // can notice. R456 would also fail the structural check, but only by
-    // removing the element entirely - that proves the check runs, not that
-    // this conjunct is load-bearing. This isolates it.
-    what: "drop the validation error's role=alert",
-    file: RENDERER,
-    from: "      err.setAttribute('role', 'alert');\n",
-    to: "",
+    what: "drop the live shared table error's role=alert",
+    file: HTML,
+    from: '      <p id="tableCellError" role="alert" class="table-cell-error"></p>',
+    to: '      <p id="tableCellError" class="table-cell-error"></p>',
     suite: "test:security",
     expect: [
-      /^N10 the table validation error is an English text node, not Turkish markup$/,
+      /^N10 a shared rich-cell refusal reports the known English error as plain alert text$/,
+      /^N10 an unknown shared-cell error reports the safe fallback, not attacker markup$/,
     ],
     mustPass: [
-      /^N10 the validation error is themed, and tracks the active theme$/,
+      /^N10 the shared error resolves the active theme's error token without a hardcoded fill$/,
+      /^N10 the unknown shared-cell error is logged, so the narrow mute is not vacuous$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
     id: "R459",
-    // N10 in test:packaging, half one of a complementary pair with R460.
-    // Reintroduces Turkish WITHOUT reintroducing innerHTML - the string stays
-    // node-built, only its text changes - so exactly one of the two new
-    // packaging oracles may fire.
-    //
-    // Block 8c3's stated discipline is that each leftover oracle is shown to
-    // be independent rather than a second spelling of its neighbour, and the
-    // Turkish sweep arrived without one: R456 does write Turkish into
-    // renderer.js, but its suite is test:security, so test:packaging is never
-    // run against it and the sweep was never observed failing.
+    // Change a live error string without changing its text-only write.
     what: "reintroduce Turkish text without reintroducing innerHTML",
     file: RENDERER,
     from:
-      "  'table.invalidFormat': '\\u26A0 Invalid table format. Check the markdown" +
-      " table syntax (columns separated by | are required).',",
-    to: "  'table.invalidFormat': '\\u26A0 Geçersiz tablo formatı.',",
+      "  'tableCells.cellType': 'This cell contains content that cannot be edited safely here. The document has not changed.',",
+    to: "  'tableCells.cellType': 'Ge\u00E7ersiz tablo format\u0131.',",
     suite: "test:packaging",
     expect: [/^no Turkish-specific letter survives in any shipped script$/],
     mustPass: [
-      // Still node-built, so the source oracle is untouched - that is the
-      // independence this pair exists to demonstrate.
       /^the table dialog's validation error is built as a node, not assigned as markup$/,
       /^the Turkish sweep's own character class actually matches Turkish$/,
-      /^the language switcher is gone from every shipped script$/,
+      /^the shipped-script list really was resolved from the packaging manifest$/,
+      /^the shared table error helper was located in full and writes to the live alert$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "R460",
-    // N10 in test:packaging, half two. The mirror: reintroduces the innerHTML
-    // assignment while keeping the text ENGLISH, so the Turkish sweep stays
-    // green and only the source oracle can object.
-    //
-    // The replacement is deliberately the WORST case rather than the historical
-    // one - correct class, correct role, correct English text, no surrounding
-    // whitespace - so that it satisfies every DOM-level conjunct in
-    // test:security's N10 checks: one child node, error first, no element
-    // children, no inline style, role=alert, right text, right glyph.
-    //
-    // That claim is MEASURED, not reasoned. A revert scores against one suite
-    // (`runSuite(r.suite)`), so this record alone cannot establish it. It was
-    // established separately: this exact replacement was applied to renderer.js
-    // by hand and `npm run test:security` run against it, which came back
-    // 145/145 - the DOM assertions cannot tell the two apart. That is the
-    // point. "Built as a node" is not observable from the DOM, and this revert
-    // is what proves the static oracle is the only thing that sees it.
-    what: "assign the validation error as markup again, in English",
+    // The source oracle rejects markup even when plain English paints identically.
+    what: "assign the shared table error as markup instead of text",
     file: RENDERER,
-    from:
-      "      const err = document.createElement('div');\n" +
-      "      err.className = 'table-insert-error';\n" +
-      "      err.setAttribute('role', 'alert');\n" +
-      "      err.textContent = i18n('table.invalidFormat');\n" +
-      "      tableInsertPreviewEl.replaceChildren(err);",
-    to:
-      "      tableInsertPreviewEl.innerHTML = '<div class=\"table-insert-error\"" +
-      " role=\"alert\">' + i18n('table.invalidFormat') + '</div>';",
+    from: "  tableCellError.textContent = Object.hasOwn(UI_STRINGS, key) ? i18n(key) : i18n('tableCells.commitFailed');",
+    to: "  tableCellError.innerHTML = Object.hasOwn(UI_STRINGS, key) ? i18n(key) : i18n('tableCells.commitFailed');",
     suite: "test:packaging",
     expect: [
       /^the table dialog's validation error is built as a node, not assigned as markup$/,
+      /^the shared table error source oracle rejects markup and missing writes$/,
     ],
     mustPass: [
       /^no Turkish-specific letter survives in any shipped script$/,
-      /^the insertTableFromDialog body was located in full, so the check below reads the whole function$/,
+      /^the shared table error helper was located in full and writes to the live alert$/,
+      /^the shared table error helper logs unknown failures instead of hiding them$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
     id: "R461",
@@ -6033,10 +6375,11 @@ const REVERTS = [
       /^SEC-29 the table config shares SANITIZE_CONFIG's deny-lists by reference, frozen$/,
     ],
     mustPass: [
-      /^SEC-29 a <form> nested in a table cell is stripped on the context-menu table path$/,
-      /^SEC-29 a <form> nested in a table cell is stripped in the table dialog preview$/,
+      /^SEC-29 the shared table sanitizer strips forms and action attributes, not cell content$/,
+      /^SEC-29 shared rich-cell preparation strips action attributes and preserves supported content$/,
       /^SEC-11 <form action> and formaction are stripped, their content is not$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "R147",
@@ -6671,16 +7014,16 @@ const REVERTS = [
     from: "  min-height: min(420px, 95vh);",
     to: "  min-height: 420px;",
     expect: [
-      /the mermaid template dialog fits inside a short window instead of spilling off it/,
-      /the mermaid template dialog's title bar is still on screen in a short window/,
+      /^the mermaid template dialog fits inside a short window instead of spilling off it$/,
+      /^the mermaid template dialog's title bar is still on screen in a short window$/,
     ],
-    // Narrow by construction: the insert-table dialog has its own smaller
-    // minimum and must be unaffected, or this is catching R184's defect instead.
+    // The cap still allows resizing and an actionable Mermaid footer.
     mustPass: [
-      /the insert-table dialog fits inside a short window instead of spilling off it/,
-      /the insert-table dialog's title bar is still on screen in a short window/,
-      /the mermaid template dialog's primary button can actually be pressed in a short window/,
+      /^the mermaid template dialog offers a corner grab handle$/,
+      /^the mermaid template dialog's primary button can actually be pressed in a short window$/,
+      /^an enlarged dialog keeps its footer buttons inside itself$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
     id: "R186",
@@ -6810,18 +7153,6 @@ const REVERTS = [
       /a drag whose pointerup went missing ends itself instead of resizing for ever/,
     ],
     mustPass: [/dragging the splitter really resizes the editor pane/],
-  },
-  {
-    id: "R195",
-    suite: "test:tables",
-    // Enlarging the Insert Table dialog has to give the extra room to the
-    // markdown box the reader is actually typing into. Without this the dialog
-    // grows and the textarea stays put, so the resize buys dead space.
-    what: "let the insert-table dialog grow without growing its markdown box",
-    file: CSS,
-    from: ".table-insert-dialog #tableInsertMarkdown {\n  flex: 1 1 auto;",
-    to: ".table-insert-dialog #tableInsertMarkdown {\n  flex: 0 0 auto;",
-    expect: [/enlarging the insert-table dialog enlarges the markdown box with it/],
   },
   {
     id: "R193",
@@ -22395,12 +22726,12 @@ const REVERTS = [
           id: "R876",
           what: "omit the immediate local sequence fence after the synchronous owned metadata port",
           file: RENDERER,
-          from: '  if (context.sequence !== fileOpenSequence) {\n' +
-            '    supersededFileOpenCompletionCount += 1;\n' +
-            '    return false;\n' +
-            '  }\n' +
-            "  if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {",
-          to: "  if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {",
+          from: '    if (context.sequence !== fileOpenSequence) {\n' +
+            '      supersededFileOpenCompletionCount += 1;\n' +
+            '      return false;\n' +
+            '    }\n' +
+            "    if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {",
+          to: "    if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {",
           suite: "test:packaging",
           expect: [/^post-render approved metadata uses the actual retained owner and fixed Main port between local completion fences$/],
           mustPass: [
@@ -22416,8 +22747,8 @@ const REVERTS = [
           id: "R877",
           what: "omit the immediate local freeze fence after the synchronous owned metadata port",
           file: RENDERER,
-          from: "  if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {",
-          to: '  if (false) {',
+          from: "    if (!mayMutateRendererDocument('ipc-file-opened-after-check')) {",
+          to: '    if (false) {',
           suite: "test:packaging",
           expect: [/^post-render approved metadata uses the actual retained owner and fixed Main port between local completion fences$/],
           mustPass: [
@@ -25400,6 +25731,11 @@ const anchorsOnly = argv.includes("--anchors");
 // one-second string sweep, this costs one suite run per distinct suite.
 const expectsOnly = argv.includes("--expects");
 const only = argv.filter((a) => a !== "--anchors" && a !== "--expects");
+const retired = only.filter((id) => Object.prototype.hasOwnProperty.call(RETIRED_REVERTS, id));
+if (retired.length) {
+  for (const id of retired) console.error(`RETIRED (not a proof): ${id} - ${RETIRED_REVERTS[id]}`);
+  process.exit(2);
+}
 const chosen = only.length ? REVERTS.filter((r) => only.includes(r.id)) : REVERTS;
 // An exception belongs only to the no-argument release run. `--anchors` and
 // `--expects` are audits, not release certification; explicit IDs are how a

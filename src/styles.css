@@ -1232,13 +1232,23 @@ body.splitter-dragging * {
   font-weight: 600;
   color: var(--secondary-color);
   font-size: 13px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-
 .editor-controls {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
+
+.editor-history-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.editor-toolbar-group { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.editor-toolbar-separator { color: var(--border-color); white-space: nowrap; user-select: none; }
+.editor-toolbar-group button { white-space: nowrap; flex-shrink: 0; }
+.editor-history-btn { min-width: 28px; height: 28px; padding: 4px; flex-shrink: 0; }
+.editor-history-btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 
 .unsaved-indicator {
   color: var(--danger-fg);
@@ -2475,7 +2485,8 @@ body > .container > .main-content > .content-wrapper > #indexPanel {
      paper, so this is a hide rather than an opacity pin. */
   .code-copy-btn,
   .mermaid-maximize-btn,
-  .table-maximize-btn {
+  .table-maximize-btn,
+  .table-column-controls {
     display: none !important;
   }
 
@@ -2535,6 +2546,18 @@ body > .container > .main-content > .content-wrapper > #indexPanel {
     max-width: 100% !important;
     margin-left: 0 !important;
     transform: none !important;
+  }
+
+  .markdown-body .mermaid-container.mermaid-breakout {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    transform: none !important;
+  }
+
+  .markdown-body .mermaid svg {
+    max-width: 100%;
+    height: auto;
   }
 }
 
@@ -2703,6 +2726,15 @@ body > .container > .main-content > .content-wrapper > #indexPanel {
   position: relative;
   display: inline-block;
   width: 100%;
+}
+
+.markdown-body .mermaid-container > .mermaid {
+  overflow: visible;
+}
+
+.markdown-body .mermaid-container > .mermaid > svg {
+  max-width: 100%;
+  height: auto;
 }
 
 .mermaid-maximize-btn {
@@ -4106,74 +4138,6 @@ body.dark-mode .context-menu {
   min-height: 120px;
 }
 
-/* ============================================
-   TABLE INSERT DIALOG
-   ============================================ */
-
-/* See the note on .mermaid-template-dialog above - same reasoning, same pair of
-   changes. This dialog measured 398px tall against a 390px viewport, so its
-   header was already off screen. */
-.table-insert-dialog {
-  width: 540px;
-  /* max-width: 90vw is inherited from .note-dialog and still clamps this. */
-  max-height: 95vh;
-  /* Clamped to the viewport for the reason recorded above. */
-  min-width: min(360px, 90vw);
-  min-height: min(320px, 95vh);
-  resize: both;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.table-insert-dialog .note-dialog-body {
-  flex: 1 1 auto;
-  overflow: auto;
-  min-height: 0;
-}
-
-/* The markdown box is what a reader enlarges this dialog to see more of. */
-.table-insert-dialog #tableInsertMarkdown {
-  flex: 1 1 auto;
-  min-height: 80px;
-}
-
-.table-dialog-controls {
-  display: flex;
-  gap: 20px;
-  align-items: center;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-
-.table-dialog-controls label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.table-num-input {
-  width: 70px !important;
-  padding: 4px 8px !important;
-  text-align: center;
-}
-
-.table-header-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.table-insert-preview {
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 10px;
-  background: var(--bg-secondary);
-  max-height: 180px;
-  overflow: auto;
-}
-
 /* Validation failure inside the preview box. Themed rather than hardcoded: the
    colours this replaced were a fixed red on a fixed light pink, unreadable on
    the three dark themes. Every theme defines --danger-fg.
@@ -4234,17 +4198,11 @@ body.dark-mode .context-menu {
    Worth recording because it is the visible half: the pink fill was measured
    at 11.62 / 13.81 / 13.06 against the dark themes' own --surface-raised, i.e.
    a light slab pasted onto a dark diagram panel. */
-.table-insert-error,
 .render-error,
 .mermaid-error {
   color: var(--danger-fg);
   border: 1px solid var(--danger-fg);
   border-radius: 4px;
-}
-
-.table-insert-error {
-  padding: 10px;
-  margin: 8px 0;
 }
 
 .render-error {
@@ -4256,25 +4214,6 @@ body.dark-mode .context-menu {
    N12's theming) and merging them would make one revert fail both banners. */
 .mermaid-error {
   padding: 20px;
-}
-
-.table-insert-preview table {
-  width: 100%;
-  table-layout: fixed;
-  font-size: 12px;
-  border-collapse: collapse;
-}
-
-.table-insert-preview th,
-.table-insert-preview td {
-  border: 1px solid var(--border-color);
-  padding: 4px 8px;
-  text-align: left;
-}
-
-.table-insert-preview th {
-  background: var(--table-header-bg);
-  color: var(--table-header-fg);
 }
 
 /* ============================================
@@ -4347,10 +4286,88 @@ body.dark-mode .context-menu {
      whole budget. Held in one custom property so width and max-width cannot
      drift apart. */
   --mv-breakout-applied: min(var(--table-breakout-width), var(--mv-breakout-budget, 100%));
+}
+
+.markdown-body .table-container.table-breakout,
+.markdown-body .mermaid-container.mermaid-breakout {
   width: var(--mv-breakout-applied);
   max-width: var(--mv-breakout-applied);
   margin-left: 50%;
   transform: translateX(-50%);
+}
+
+@media screen {
+  .markdown-body table.table-manually-sized,
+  .table-cell-grid table.table-manually-sized {
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .markdown-body table.table-manually-sized > :is(thead,tbody,tfoot) > tr > :is(th,td),
+  .table-cell-grid table.table-manually-sized > :is(thead,tbody,tfoot) > tr > :is(th,td) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+.table-column-controls {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  z-index: 3;
+}
+
+.table-column-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  transform: translateX(-100%);
+  pointer-events: auto;
+  cursor: col-resize;
+  touch-action: none;
+  opacity: 0;
+}
+
+.table-column-handle::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--primary-color);
+}
+
+.table-container:hover .table-column-handle,
+.table-cell-grid:hover .table-column-handle,
+.table-column-handle-dragging,
+.table-column-handle:focus-visible,
+.table-column-resizing .table-column-handle {
+  opacity: .6;
+}
+
+.table-column-handle:hover,
+.table-column-handle:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.table-column-handle:hover::after,
+.table-column-handle-dragging::after,
+.table-column-handle:focus-visible::after,
+.table-column-resizing .table-column-handle:focus::after {
+  box-sizing: border-box;
+  width: 4px;
+  border-left: 1px solid var(--primary-color);
+  border-right: 1px solid var(--primary-color);
+  background: transparent;
+}
+
+.table-column-resizing,
+.table-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 /* ============================================
@@ -4684,7 +4701,7 @@ pre[class*="language-"] {
   border-radius: 10px;
   padding: 0;
   margin: auto;
-  width: min(1100px, calc(100vw - 48px));
+  width: calc(100vw - 48px);
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 32px);
   min-width: min(480px, calc(100vw - 24px));
@@ -4693,27 +4710,66 @@ pre[class*="language-"] {
   overflow: auto;
 }
 .table-cell-dialog[open] { display: flex; flex-direction: column; }
+.table-cell-dialog.table-cell-setup-open { width: min(480px, calc(100vw - 24px)); }
+.table-cell-setup { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 20px; }
+.table-cell-setup label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.table-cell-setup input { width: 70px; padding: 4px 8px; }
+.table-cell-setup[hidden], .table-cell-grid[hidden], .table-cell-row-actions[hidden] { display: none; }
 .table-cell-dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .table-cell-dialog h2 { margin: 0; font-size: 18px; }
 .table-cell-dialog > p { margin: 8px 20px; font-size: 13px; }
-.table-cell-grid { flex: 1 1 auto; overflow: auto; min-height: 0; min-width: 0; margin: 8px 20px; overscroll-behavior: contain; }
+.table-cell-row-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 20px 0; flex-shrink: 0; }
+.table-cell-row-actions > .note-dialog-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 4px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--primary-color);
+}
+.table-cell-row-actions > .note-dialog-btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+/* Wrapping must not change the width budget used by column resizing. */
+.table-cell-grid { flex: 1 1 auto; overflow: auto; scrollbar-gutter: stable; min-height: 0; min-width: 0; margin: 8px 20px; overscroll-behavior: contain; }
 .table-cell-grid table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.table-cell-sizing-container { position: relative; }
 .table-cell-grid th, .table-cell-grid td {
   border: 1px solid var(--border-color);
   padding: 0;
-  min-width: 150px;
+  min-width: 48px;
   vertical-align: top;
+}
+
+.table-cell-column-scope[hidden] {
+  display: none;
+}
+
+.table-cell-counts,
+.table-cell-column-scope {
+  margin: 0 20px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.table-cell-grid :is(th, td).table-cell-selected {
+  outline: 2px solid var(--primary-color);
+  outline-offset: -2px;
 }
 .table-cell-grid th:first-child { min-width: 65px; padding: 8px; }
 .table-cell-grid thead { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); }
+.table-cell-grid th > div { overflow-wrap: anywhere; white-space: pre-wrap; }
 .table-cell-grid [contenteditable] {
   min-height: 38px;
   padding: 8px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.table-cell-grid [contenteditable]:focus { outline: 2px solid var(--primary-color); outline-offset: -2px; }
-.table-cell-grid img { max-width: 160px; max-height: 100px; }
+.table-cell-grid [contenteditable]:focus { outline: 1px dotted var(--primary-color); outline-offset: -1px; }
+.table-cell-grid .table-cell-selected [contenteditable]:focus { outline: none; }
+.table-cell-grid img { max-width: min(160px, 100%); max-height: 100px; height: auto; }
 .table-cell-grid a,
 .table-cell-grid a:visited {
   color: var(--accent-main);

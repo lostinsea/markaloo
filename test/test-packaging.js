@@ -1260,6 +1260,179 @@ async function main() {
       (inlineConsumers.match(/FoliaInlineFormatting\.attachInlineEditor\(/g) || []).length === 2 &&
       inlineSource.includes("function attachInlineEditor(") &&
       !inlineConsumers.includes("function formatTableCellEmphasis"));
+  {
+    const tableSource = stripJsComments(read("src/table-cell-editor.js"));
+    const rendererSource = stripJsComments(inlineConsumers);
+    const shell = indexHtml.replace(/<!--[\s\S]*?-->/g, "");
+    const dialog = (shell.match(/<dialog\b[^>]*\bid="tableCellDialog"[^>]*>[\s\S]*?<\/dialog>/) || [])[0] || "";
+    const bodyOf = (source, declaration, tail) => {
+      const marker = "\n" + declaration + " {";
+      const start = source.indexOf(marker);
+      const end = start < 0 ? -1 : source.indexOf("\n}", start);
+      if (start < 0 || end < 0 || source.indexOf(marker, start + marker.length) !== -1) return "";
+      const body = source.slice(start, end + 2);
+      return body.includes(tail) ? body : "";
+    };
+    const open = bodyOf(rendererSource, "function openTableCellEditor(mode)",
+      "console.error('Table cell editor could not open:', error)");
+    const create = bodyOf(rendererSource, "function startTableCellCreation()",
+      "showTableCellError(error)");
+    const populate = bodyOf(rendererSource, "function populateTableCellGrid(session, displayRows)",
+      "session.cells[0]?.input.focus()");
+    const refresh = bodyOf(rendererSource, "function refreshTableCellRows(session)",
+      "refreshTableCellRowActions()");
+    const actions = bodyOf(rendererSource, "function refreshTableCellRowActions()",
+      "tableCellColumnScope.hidden = session?.mode !== TableCellMode.UPDATE_ROWS");
+    const selected = bodyOf(rendererSource, "function currentSelectedTableCell(session)", "return cell");
+    const rows = bodyOf(rendererSource, "function changeTableCellRows(action)", "showTableCellError(error)");
+    const columns = bodyOf(rendererSource, "function changeTableCellColumns(action)", "showTableCellError(error)");
+    const confirmColumn = bodyOf(rendererSource, "function confirmTableCellColumnRemoval(session, cell)",
+      "confirmTableCellRemoval(session, cell, 'column')");
+    const confirmRow = bodyOf(rendererSource, "function confirmTableCellRowRemoval(session, cell)",
+      "confirmTableCellRemoval(session, cell, 'row')");
+    const confirmRemoval = bodyOf(rendererSource, "async function confirmTableCellRemoval(session, cell, kind)",
+      "tableCellGrid.inert = false");
+    const removeColumn = bodyOf(rendererSource, "function removeTableCellColumnDraft(session, cell)",
+      "session.sizing.removeColumn");
+    const iconLabel = bodyOf(rendererSource, "function labelTableCellAction(button, key)", "button.title = label");
+    const finish = bodyOf(rendererSource, "function finishTableCellDraftChange(session, focus, selected = null)",
+      "tableCellInsertBelow.focus");
+    // Model functions close at two-space indentation, unlike renderer functions.
+    const modelStructure = (tableSource.match(
+      /\n  function replaceStructure\([^\n]+\) \{[\s\S]*?\n  \}/) || [])[0] || "";
+    check("the shared-table source contracts locate complete live functions",
+      [open, create, populate, refresh, actions, selected, rows, columns, finish].every(body => body !== "") &&
+        modelStructure.includes("return candidate;") &&
+        bodyOf(rendererSource.replace("session.cells[0]?.input.focus();", ""),
+          "function populateTableCellGrid(session, displayRows)", "session.cells[0]?.input.focus()") === "" &&
+        bodyOf("", "function openTableCellEditor(mode)", "console.error") === "");
+    check("column-removal contracts extract the actual shared confirmation transaction and attribute-only labeler",
+      [confirmColumn, confirmRow, confirmRemoval, removeColumn, iconLabel].every(body => body !== "") &&
+      bodyOf(rendererSource.replace(confirmRemoval, confirmRemoval.replace("tableCellGrid.inert = false;", "")),
+        "async function confirmTableCellRemoval(session, cell, kind)", "tableCellGrid.inert = false") === "" &&
+      !/\.(?:innerHTML|textContent)\s*=/.test(iconLabel) &&
+      /button\.setAttribute\('aria-label', label\);/.test(iconLabel));
+    check("the shipped table model exports one frozen mode set used by the renderer",
+      isPackaged(files, "src/table-cell-editor.js") &&
+        shell.indexOf(tableScript) > shell.indexOf(inlineScript) &&
+        shell.indexOf('<script src="renderer.js"></script>') > shell.indexOf(tableScript) &&
+        shell.indexOf(tableScript, shell.indexOf(tableScript) + tableScript.length) === -1 &&
+        /const Mode = Object\.freeze\(\{\s*INSERT: 'insert',\s*UPDATE_TABLE: 'update-table',\s*UPDATE_ROWS: 'update-rows',?\s*\}\);/.test(tableSource) &&
+        /function validateMode\(mode\) \{\s*if \(!Object\.values\(Mode\)\.includes\(mode\)\) fail\('tableCells\.mode'\);/.test(tableSource) &&
+        /return \{ Mode, validateMode,/.test(tableSource) &&
+        /const TableCellMode = FoliaTableCells\.Mode;/.test(rendererSource));
+    check("Insert table and both Edit scopes launch the one shared visual popup",
+      dialog.includes('id="tableCellGrid"') && dialog.includes('id="tableCellError"') &&
+        (shell.match(/\bid="tableCellDialog"/g) || []).length === 1 &&
+        /const tableCellDialog = document\.getElementById\('tableCellDialog'\);/.test(rendererSource) &&
+        /ctxInsertTable && ctxInsertTable\.addEventListener\('click', \(\) => \{\s*hideContextMenu\(\);\s*openTableCellEditor\(TableCellMode\.INSERT\);\s*\}\);/.test(rendererSource) &&
+        /ctxEditTable\?\.addEventListener\('click', \(\) => openTableCellEditor\(TableCellMode\.UPDATE_TABLE\)\);/.test(rendererSource) &&
+        /ctxEditSelectedRows\?\.addEventListener\('click', \(\) => openTableCellEditor\(TableCellMode\.UPDATE_ROWS\)\);/.test(rendererSource) &&
+        /FoliaTableCells\.validateMode\(mode\);/.test(open) &&
+        !/\b(?:tableInsert\w*|openTableInsertDialog|insertTableFromDialog|buildTableMarkdown|renderTableInDOM)\b|table-insert-(?:dialog|overlay|preview|error)/.test(
+          shell + "\n" + rendererSource),
+      "the shared dialog, its three launch routes, or removal of the legacy UI changed");
+    const input = id => (dialog.match(new RegExp(`<input\\b[^>]*\\bid="${id}"[^>]*>`)) || [])[0] || "";
+    check("shared table setup ships three columns and two data rows with zero-row input allowed",
+      /type="number"/.test(input("tableCellColumns")) && /value="3"/.test(input("tableCellColumns")) &&
+        /min="1"/.test(input("tableCellColumns")) && /max="15"/.test(input("tableCellColumns")) &&
+        /step="1"/.test(input("tableCellColumns")) &&
+        /type="number"/.test(input("tableCellDataRows")) && /value="2"/.test(input("tableCellDataRows")) &&
+        /min="0"/.test(input("tableCellDataRows")) && /max="30"/.test(input("tableCellDataRows")) &&
+        /step="1"/.test(input("tableCellDataRows")) &&
+        /if \(mode === TableCellMode\.INSERT\) \{[\s\S]*tableCellColumns\.value = '3';\s*tableCellDataRows\.value = '2';/.test(open) &&
+        /tableCellStart\.addEventListener\('click', startTableCellCreation\);/.test(rendererSource));
+    check("shared table creation validates counts and builds an editable header before optional data rows",
+      /if \(session\.mode !== TableCellMode\.INSERT\) throw new Error\('tableCells\.mode'\);/.test(create) &&
+        /const columns = Number\(tableCellColumns\.value\), rows = Number\(tableCellDataRows\.value\);/.test(create) &&
+        /if \(!tableCellColumns\.value \|\| !tableCellDataRows\.value \|\|\s*!Number\.isSafeInteger\(columns\) \|\| columns < 1 \|\| columns > 15 \|\|\s*!Number\.isSafeInteger\(rows\) \|\| rows < 0 \|\| rows > 30\) throw new Error\('tableCells\.setupInvalid'\);/.test(create) &&
+        /const displayRows = \[\{ original: null, editable: true, header: true,[\s\S]*?\}\];\s*for \(let row = 0; row < rows; row\+\+\) displayRows\.push\(\{ original: null, editable: true, header: false,/.test(create) &&
+        /populateTableCellGrid\(session, displayRows\);/.test(create) &&
+        /tableCellUpdate\.disabled = true;[\s\S]*?tableCellDialog\.showModal\(\);/.test(open));
+    check("shared Edit scope derives header permissions from the captured source rows",
+      /case TableCellMode\.INSERT:\s*break;/.test(open) &&
+        /case TableCellMode\.UPDATE_ROWS:[\s\S]*?FoliaTableCells\.resolveSource\(model, selection\.start, selection\.end, mode\)[\s\S]*?FoliaTableCells\.resolvePreview\(model, selection\.range, viewer,[\s\S]*?break;/.test(open) &&
+        /case TableCellMode\.UPDATE_TABLE:[\s\S]*?FoliaTableCells\.resolveSourceLine\(model, selection\.sourceLine, mode\)[\s\S]*?FoliaTableCells\.resolvePreviewTable\(model, selection\.tableNode, viewer,[\s\S]*?break;/.test(open) &&
+        /const header = target\.table\.rows\[0\];\s*const displayRows = target\.rows\.includes\(header\) \? target\.rows : \[header, \.\.\.target\.rows\];\s*populateTableCellGrid\(session, displayRows\.map\(original =>\s*\(\{ original, header: original === header, editable: target\.rows\.includes\(original\) \}\)\)\);/.test(open));
+    check("shared table draft counts use live rows and columns in a read-only status",
+      /<p\b[^>]*id="tableCellCounts"[^>]*aria-live="polite"[^>]*>/.test(dialog) &&
+        /tableCellCounts\.textContent = i18n\('tableCells\.counts',\s*\{ rows: session\.rows\.filter\(row => !row\.header\)\.length, columns: session\.columns \}\);/.test(refresh) &&
+        /get columns\(\) \{ return this\.columnOrder\.length; \}/.test(open) &&
+        /refreshTableCellRows\(session\);/.test(populate) &&
+        /refreshTableCellRows\(session\);/.test(finish) &&
+        /finishTableCellDraftChange\(session, focus, focus\);/.test(rows) &&
+        /finishTableCellDraftChange\(session, focus, focus\);/.test(columns));
+    check("shared table row and column actions require a highlighted cell rather than opening autofocus",
+      /session\.selectedCell = null;[\s\S]*session\.cells\[0\]\?\.input\.focus\(\);/.test(populate) &&
+        !/selectTableCell\(/.test(populate) &&
+        /if \(!cell \|\| !session\.rows\.includes\(row\) \|\| !row\.cells\.includes\(cell\) \|\|[\s\S]*?!cell\.container\.classList\.contains\('table-cell-selected'\)\) \{\s*throw new Error\('tableCells\.selectCell'\);/.test(selected) &&
+        /const cell = currentSelectedTableCell\(session\), row = cell\.rowState;/.test(rows) &&
+        columns.indexOf("currentSelectedTableCell(session)") >= 0 &&
+        columns.indexOf("currentSelectedTableCell(session)") < columns.indexOf("createTableCell(session, row,") &&
+        /if \(session\.keyboardSelection\) selectTableCell\(session, cell\);/.test(rendererSource) &&
+        /if \(event\.isTrusted && event\.button === 0 && cell && session\?\.selection\.isCurrent\(\) &&\s*!session\.confirmation && !session\.sizing\?\.isComposing\(\)\) selectTableCell\(session, cell\);/.test(rendererSource));
+    check("selected-row table Update disables and rejects column insertion at both boundaries",
+      /tableCellInsertLeft\.disabled = tableCellInsertRight\.disabled =\s*disabled \|\| session\.mode === TableCellMode\.UPDATE_ROWS;/.test(actions) &&
+        /tableCellColumnScope\.hidden = session\?\.mode !== TableCellMode\.UPDATE_ROWS;/.test(actions) &&
+        /if \(session\.mode === TableCellMode\.UPDATE_ROWS\) throw new Error\('tableCells\.columnsScope'\);/.test(columns) &&
+        columns.indexOf("throw new Error('tableCells.columnsScope')") < columns.indexOf("createTableCell(session, row,") &&
+        /validateMode\(target\?\.mode\);\s*if \(target\.mode !== Mode\.UPDATE_TABLE\) fail\('tableCells\.columnsScope'\);/.test(modelStructure) &&
+        /tableCellInsertLeft\.addEventListener\('click', \(\) => changeTableCellColumns\('left'\)\);/.test(rendererSource) &&
+        /tableCellInsertRight\.addEventListener\('click', \(\) => changeTableCellColumns\('right'\)\);/.test(rendererSource));
+    const structureGroup = (dialog.match(
+      /<div\b[^>]*\bid="tableCellRowActions"[^>]*>[\s\S]*?<\/div>/) || [])[0] || "";
+    const iconButtons = [...structureGroup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)];
+    const structureIds = ["tableCellInsertAbove", "tableCellInsertBelow", "tableCellRemoveAdded",
+      "tableCellInsertLeft", "tableCellInsertRight", "tableCellDeleteColumn"];
+    const structureNames = ["Insert row above", "Insert row below", "Remove row",
+      "Insert column left", "Insert column right", "Delete column"];
+    const structureKeys = ["insertAbove", "insertBelow", "removeAdded", "insertLeft", "insertRight", "deleteColumn"];
+    const labelLoop = (rendererSource.match(
+      /for \(const \[button, key\] of \[\[tableCellInsertAbove,[\s\S]*?\]\]\) \{\s*labelTableCellAction\(button, key\);\s*\}/) || [])[0] || "";
+    check("shared structure toolbar ships six visible native named static-SVG buttons in the accepted order",
+      /role="group"/.test(structureGroup) &&
+      iconButtons.length === structureIds.length &&
+      iconButtons.every(([whole, attrs, content], index) =>
+        attrs.includes('id="' + structureIds[index] + '"') && /type="button"/.test(attrs) &&
+        labelLoop.includes("[" + structureIds[index] + ", 'tableCells." + structureKeys[index] + "']") &&
+        rendererSource.includes("'tableCells." + structureKeys[index] + "': '" + structureNames[index] + "'") &&
+        !/\bhidden\b|display:\s*none/.test(attrs) &&
+        /<svg\b[^>]*width="16"[^>]*height="16"[^>]*aria-hidden="true"[^>]*focusable="false"[^>]*>[\s\S]*<\/svg>/.test(content) &&
+        content.replace(/<svg\b[\s\S]*?<\/svg>/g, "").trim() === "" &&
+        !/<(?:script|use|image)\b|\bon\w+=|\b(?:src|href)=/.test(content) &&
+        (index < 3 || attrs.includes('aria-describedby="tableCellColumnScope"'))) &&
+      structureGroup.replace(/<button\b[\s\S]*?<\/button>/g, "").replace(/<\/?div\b[^>]*>/g, "").trim() === "" &&
+      /labelTableCellAction\(button, key\);/.test(rendererSource) &&
+      rendererSource.includes("'tableCells.rowActions': 'Table structure'") &&
+      /document\.getElementById\('tableCellRowActions'\)\.setAttribute\('aria-label', i18n\('tableCells\.rowActions'\)\);/.test(rendererSource));
+    check("Delete column is bound once and differs deliberately from insertion availability",
+      /const tableCellDeleteColumn = document\.getElementById\('tableCellDeleteColumn'\);/.test(rendererSource) &&
+      (rendererSource.match(/tableCellDeleteColumn\.addEventListener\('click', \(\) => changeTableCellColumns\('remove'\)\);/g) || []).length === 1 &&
+      /tableCellDeleteColumn\.disabled\s*=/.test(actions) &&
+      actions.includes("session.columns <= 1") && actions.includes("session.selectedCell") &&
+      columns.includes("confirmTableCellColumnRemoval(session,") &&
+      columns.includes("'remove'") && columns.includes("'tableCells.minimumColumns'") &&
+      actions.includes("session.mode === TableCellMode.UPDATE_ROWS") &&
+      rendererSource.includes("Columns change every row. Edit the whole table to insert or delete a column."));
+    check("column deletion uses explicit original accounting and the shared sizing removal transaction",
+      /deletedColumns = \[\]/.test(modelStructure) && modelStructure.includes("deletedColumns") &&
+      /deletedColumns: new Set\(\)/.test(open) && removeColumn.includes("session.deletedColumns") &&
+      removeColumn.includes("rollback()") && removeColumn.includes("apply()") &&
+      removeColumn.indexOf("session.sizing.removeColumn") < removeColumn.indexOf(".dispose()") &&
+      !/readSource\(|captureTableCellSelection\(/.test(confirmRemoval) &&
+      confirmRemoval.includes("new AbortController()") &&
+      confirmRemoval.includes("tableCellGrid.inert = true") &&
+      confirmRemoval.includes("tableCellUpdate.disabled = true") &&
+      confirmRemoval.includes("cause") && confirmRemoval.includes("'choice'") &&
+      confirmRemoval.includes("currentSelectedTableCell(session)"));
+    const compactCss = read("src/styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const compactButton = (compactCss.match(/\.table-cell-row-actions > \.note-dialog-btn \{([^}]*)\}/) || [])[1] || "";
+    check("compact structure icons use the scoped28px controls without replacing readable footer styles",
+      ["width: 28px", "min-width: 28px", "height: 28px", "padding: 4px",
+        "border: 1px solid var(--primary-color)"].every(property => compactButton.includes(property)) &&
+      /\.table-cell-row-actions \{[^}]*gap: 4px/.test(compactCss) &&
+      /\.table-cell-row-actions > \.note-dialog-btn:focus-visible \{[^}]*outline: 2px solid var\(--primary-color\)/.test(compactCss));
+  }
   const emojiMapScript = '<script src="emoji-map.js"></script>';
   const emojiParserScript = '<script src="emoji-parser.js"></script>';
   const utilsScript = '<script src="utils.js"></script>';
@@ -1366,7 +1539,7 @@ async function main() {
   );
   const uiPortCounts = {
     openFileDialog: 2, openImageDialog: 1, exportPdf: 2, pdfExportReady: 1,
-    openMermaidPopup: 2, openImagePopup: 1, openTablePopup: 2,
+    openMermaidPopup: 2, openImagePopup: 1, openTablePopup: 1,
     downloadUpdate: 1, installUpdate: 1, getVersion: 1,
     onPrepareForPdfExport: 1, onPdfExportResult: 1, oncePdfExportResult: 1,
     onImageSelected: 1,
@@ -3056,11 +3229,12 @@ async function main() {
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
-      "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js",
+      "test:document-editor": "npm run test:editor-history && node --check test/test-document-editor.js && electron test/test-document-editor.js",
+      "test:editor-history": "node test/test-editor-history-controls.js",
       "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
       "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
       "test:table-cells-source": "node --check src/table-cell-editor.js && node --check test/test-table-cell-editor.js && node test/test-table-cell-editor.js --source",
-      "test:table-cells-ui": "electron test/test-table-cell-editor.js --partition=input && electron test/test-table-cell-editor.js --partition=remaining",
+      "test:table-cells-ui": "electron test/test-table-cell-editor.js --partition=input && electron test/test-table-cell-editor.js --partition=remaining && electron test/test-table-cell-editor.js --partition=shared",
       "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     };
     const featureScripts = Object.keys(featureCommands);
@@ -3118,7 +3292,7 @@ async function main() {
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm run test:missing" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm test" }, "test")));
     const nestedCellRoutes = { ...fixtureScripts, ...featureCommands,
-      "test:features": featureScripts.filter(name => !["test:table-cells-source", "test:table-cells-ui"].includes(name))
+      "test:features": featureScripts.filter(name => !["test:editor-history", "test:table-cells-source", "test:table-cells-ui"].includes(name))
         .map(name => "npm run " + name).join(" && ") };
     check("feature gate follows the real cell source and UI subroutes and rejects omissions or duplication",
       beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
@@ -3130,6 +3304,12 @@ async function main() {
         "test:features": nestedCellRoutes["test:features"] + " && npm run test:table-cells-source" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
         "test:features": nestedCellRoutes["test:features"] + " && npm run test:table-cells-ui" }, "test")));
+    check("feature gate follows the editor history subroute and rejects omission or duplication",
+      beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:features": nestedCellRoutes["test:features"] + " && npm run test:editor-history" }, "test")));
     function phaseSelection(file, context) {
       const expressions = [...stripJsComments(read(file)).matchAll(/const phases = ([\s\S]*?);\r?\n/g)];
       if (expressions.length !== 1) return null;
@@ -4400,15 +4580,14 @@ async function main() {
       .sort();
     check(
       "exactly the dialogs the README names are the resizable ones",
-      resizable.length === 3
+      resizable.length === 2
         && resizable[0] === ".mermaid-template-dialog"
-        && resizable[1] === ".table-cell-dialog"
-        && resizable[2] === ".table-insert-dialog",
+        && resizable[1] === ".table-cell-dialog",
       JSON.stringify(resizable),
     );
     check(
       "the README names those dialogs rather than claiming all dialogs resize",
-      /The Mermaid, Insert table and Edit table dialogs are resizable/.test(readme),
+      /The Mermaid dialog and the shared Insert\/Edit table popup are resizable/.test(readme),
       "the dialog-resize claim was reworded, so it is no longer checked",
     );
   }
@@ -4877,6 +5056,39 @@ async function main() {
           dangling.length === 0,
           `${dangling.join(", ")} - not in extraResources (${extras.join(", ")})`,
         );
+        function missingDocumentLinks(destination, text, resources) {
+          return [...text.matchAll(/\]\(([^)\s]+)\)/g)]
+            .map(match => match[1])
+            .filter(link => !/^(https?:|mailto:|#|data:)/i.test(link))
+            .map(link => path.posix.normalize(path.posix.join(
+              path.posix.dirname(destination), link.replace(/#.*$/, ""))))
+            .filter(target => !resources.some(resource => {
+              const to = resource.to || resource.from;
+              const tail = target === to ? "" :
+                target.startsWith(to + "/") ? target.slice(to.length + 1) : null;
+              if (tail === null) return false;
+              const file = path.join(ROOT, resource.from, tail);
+              return fs.existsSync(file) && fs.statSync(file).isFile();
+            }));
+        }
+        const resources = (pkg.build.extraResources || []).map(resource =>
+          typeof resource === "string" ? { from: resource, to: resource } : resource);
+        const documents = resources.filter(resource => /\.md$/i.test(resource.from));
+        check("the packaged markdown link oracle includes the project guide",
+          documents.some(resource => resource.from === "docs/PROJECT-CHANGE-LIST.md"));
+        const missing = documents.flatMap(resource => missingDocumentLinks(
+          resource.to || resource.from, read(resource.from), resources)
+          .map(target => `${resource.from}: ${target}`));
+        check("every packaged markdown document links only to shipped local targets",
+          missing.length === 0, missing.join(", "));
+        check("the packaged guide link oracle rejects an absent relative document",
+          missingDocumentLinks("docs/PROJECT-CHANGE-LIST.md",
+            "[missing](CUSTOMIZATIONS.md)", resources).join() === "docs/CUSTOMIZATIONS.md" &&
+          missingDocumentLinks("docs/PROJECT-CHANGE-LIST.md",
+            "[missing](images/absent-document.md)", resources).join() === "docs/images/absent-document.md" &&
+          missingDocumentLinks("docs/PROJECT-CHANGE-LIST.md",
+            "[README](../README.md#installation) [online](https://github.com/lostinsea/markaloo) [anchor](#status)",
+            resources).length === 0);
       }
     }
 
@@ -6865,46 +7077,41 @@ async function main() {
       (allSrc.match(new RegExp(TURKISH_CHARS.source, "g")) || []).join(", "),
     );
 
-    // N10 built the table dialog's validation error as a node instead of
-    // assigning markup. That property is invisible from the DOM - an innerHTML
-    // assignment producing the same element is indistinguishable afterwards -
-    // so it can only be pinned at the source, here.
-    //
-    // Scoped to the one function AND the one element on purpose. The dialog's
-    // LEGITIMATE renderers (updateTablePreview, and openTableInsertDialog's
-    // edit path) assign sanitizeTableHtml() output into the preview through
-    // innerHTML, and insertTableFromDialog itself uses innerHTML on a DETACHED
-    // div to parse-test the markdown - so neither a file-wide nor a
-    // function-wide ban would be true. What must not come back is markup
-    // assigned into the LIVE preview from this function.
-    //
-    // The slice runs to the next COLUMN-0 "}", which is the function's own
-    // closing brace - every brace inside the body is indented, so a nested one
-    // cannot truncate it. MEASURED rather than assumed: the slice spans
-    // renderer.js:9235-9346, 112 lines, 4408 chars, i.e. the whole function.
-    // The vacuity guard pins BOTH ends, because "the body was located" and
-    // "the body was wholly located" are different claims and only the first is
-    // proven by a length floor: TAIL_MARKER sits at 86% of the body, so a
-    // future reformat that did introduce a column-0 brace mid-function would
-    // shrink the scope loudly instead of silently narrowing what is swept.
+    // The shared popup renders errors as text. Scope this to its live error
+    // helper; rich cell rendering still legitimately uses sanitized markup.
     {
-      const TAIL_MARKER = "showNotification('Table inserted', 1000)";
-      const start = rendererSrc.indexOf("\nfunction insertTableFromDialog() {");
-      const body =
-        start === -1 ? "" : rendererSrc.slice(start, rendererSrc.indexOf("\n}", start));
+      const clean = stripJsComments(rendererSrc);
+      const marker = "\nfunction showTableCellError(error) {";
+      const tail = "console.error('Table cell editor failed:', error)";
+      const start = clean.indexOf(marker);
+      const end = start < 0 ? -1 : clean.indexOf("\n}", start);
+      const body = end < 0 ? "" : clean.slice(start, end + 2);
+      const safeError = source =>
+        /tableCellError\.textContent = Object\.hasOwn\(UI_STRINGS, key\) \? i18n\(key\) : i18n\('tableCells\.commitFailed'\);/.test(source) &&
+        !/tableCellError\s*\.\s*(?:innerHTML|outerHTML|insertAdjacentHTML)\b/.test(source);
       check(
-        "the insertTableFromDialog body was located in full, so the check below reads the whole function",
+        "the shared table error helper was located in full and writes to the live alert",
         start !== -1 &&
-          body.length > 400 &&
-          body.includes("table-insert-error") &&
-          body.includes(TAIL_MARKER),
-        `start=${start} len=${body.length} tail=${body.includes(TAIL_MARKER)}`,
+          clean.indexOf(marker, start + marker.length) === -1 &&
+          body.includes(tail) &&
+          /const tableCellError = document\.getElementById\('tableCellError'\);/.test(clean) &&
+          /<p\b[^>]*id="tableCellError"[^>]*role="alert"[^>]*>/.test(htmlSrc) &&
+          /showTableCellError\(error\);/.test(clean.slice(end + 2)),
+        `start=${start} end=${end} tail=${body.includes(tail)}`,
       );
       check(
         "the table dialog's validation error is built as a node, not assigned as markup",
-        !/tableInsertPreviewEl\s*\.\s*innerHTML/.test(body),
-        (body.match(/.*tableInsertPreviewEl\s*\.\s*innerHTML.*/g) || []).join(" | "),
+        safeError(body),
+        (body.match(/.*tableCellError\s*\.\s*(?:innerHTML|outerHTML|insertAdjacentHTML).*/g) || []).join(" | "),
       );
+      check("the shared table error helper logs unknown failures instead of hiding them",
+        /const key = error instanceof Error \? error\.message : 'tableCells\.commitFailed';/.test(body) &&
+          /if \(!Object\.hasOwn\(UI_STRINGS, key\)\) console\.error\('Table cell editor failed:', error\);/.test(body));
+      check("the shared table error source oracle rejects markup and missing writes",
+        safeError(body) &&
+          !safeError(body.replace("tableCellError.textContent =", "tableCellError.innerHTML =")) &&
+          !safeError(body.replace(/tableCellError\.textContent = [^\n]+/, "")) &&
+          !safeError(""));
     }
 
     // N12 - the same property for renderMarkdownFull's tail catch. Node-
@@ -7019,10 +7226,56 @@ async function main() {
       .map(match => match[1]);
     const modelErrorKeys = new Set(errorKeys(cellModel + inlineModel));
     const rendererErrorKeys = source => [...stripJsComments(source)
-      .matchAll(/(?:throw\s+|(?:showTableCellError|reportError)\(\s*)new Error\(\s*['"](tableCells\.[\w]+)['"]\s*\)/g)]
+      .matchAll(/(?:throw\s+|(?:showTableCellError|reportError)\(\s*)new Error\(\s*['"](tableCells\.[\w]+)['"]\s*(?:,|\))/g)]
       .map(match => match[1]);
-    const rendererErrors = rendererErrorKeys(rendererSrc + inlineSource);
-    const dynamicConsumers = new Set([...modelErrorKeys, ...rendererErrors]);
+    const rendererErrors = rendererErrorKeys(rendererSrc + inlineSource + cellModel);
+    function indirectUiKeys(source) {
+      const clean = stripJsComments(source), keys = new Set();
+      const literals = expression => [...expression.matchAll(/['"](tableCells\.[\w]+)['"]/g)]
+        .map(match => match[1]);
+      for (const call of clean.matchAll(/\bi18n\(\s*([^(),;]+)(?=,|\))/g)) {
+        if (call[1].includes("?") && call[1].includes(":")) {
+          for (const key of literals(call[1])) keys.add(key);
+        }
+      }
+      for (const loop of clean.matchAll(/for \(const \[button, key\] of \[([\s\S]*?)\]\) \{\s*button\.textContent = i18n\(key\);\s*\}/g)) {
+        for (const key of literals(loop[1])) keys.add(key);
+      }
+      const labelers = [...clean.matchAll(/\nfunction labelTableCellAction\(button, key\) \{([\s\S]*?)\n\}/g)];
+      if (labelers.length === 1 && /const label = i18n\(key\);/.test(labelers[0][1]) &&
+          /button\.setAttribute\('aria-label', label\);/.test(labelers[0][1]) &&
+          /button\.title = label;/.test(labelers[0][1])) {
+        for (const loop of clean.matchAll(/for \(const \[button, key\] of \[([\s\S]*?)\]\) \{\s*labelTableCellAction\(button, key\);\s*\}/g)) {
+          for (const key of literals(loop[1])) keys.add(key);
+        }
+        for (const call of clean.matchAll(/\blabelTableCellAction\(\s*[\w.]+\s*,\s*([^;\r\n]+)\);/g)) {
+          for (const key of literals(call[1])) keys.add(key);
+        }
+      }
+      const title = clean.match(/const title = \{([\s\S]*?)\};\s*document\.getElementById\('tableCellTitle'\)\.textContent = i18n\(title\[mode\]\);/);
+      if (title) {
+        const entries = [...title[1].matchAll(/\[TableCellMode\.(INSERT|UPDATE_TABLE|UPDATE_ROWS)\]:\s*['"](tableCells\.[\w]+)['"]/g)];
+        if (entries.length === 3 && new Set(entries.map(entry => entry[1])).size === 3) {
+          for (const entry of entries) keys.add(entry[2]);
+        }
+      }
+      return keys;
+    }
+    const indirectConsumers = indirectUiKeys(rendererSrc);
+    const dynamicConsumers = new Set([...modelErrorKeys, ...rendererErrors, ...indirectConsumers]);
+    check("shared UI key indirection requires an actual translation consumer",
+      ["tableCells.createTitle", "tableCells.createHelp", "tableCells.recoverRows", "tableCells.insertLeft"]
+        .every(key => indirectConsumers.has(key)) &&
+      indirectUiKeys("const keys = { 'tableCells.unusedFixture': 'unused' };").size === 0 &&
+      indirectUiKeys("const title = { [TableCellMode.INSERT]: 'tableCells.unusedFixture' };").size === 0 &&
+      indirectUiKeys("for (const [button,key] of [[button,'tableCells.unusedFixture']]) { other(key); }").size === 0 &&
+      !indirectUiKeys(rendererSrc.replace("const label = i18n(key);", "const label = key;"))
+        .has("tableCells.insertLeft") &&
+      !indirectUiKeys(rendererSrc.replace("labelTableCellAction(button, key);", "other(key);"))
+        .has("tableCells.insertLeft") &&
+      !indirectUiKeys(rendererSrc.replace("const label = i18n(key);", "const label = key;"))
+        .has("tableCells.recoverRows") &&
+      indirectUiKeys("labelTableCellAction(button, 'tableCells.unusedFixture');").size === 0);
     check("cell model error keys are shipped literal failures with guarded translated renderer consumers",
       shippedScripts.includes("src/table-cell-editor.js") && shippedScripts.includes("src/inline-formatting.js") &&
       /const fail = key => \{\s*throw new Error\(key\);\s*\}/.test(cellModel) &&
@@ -7041,7 +7294,7 @@ async function main() {
     const withoutRows = (cellModel + inlineModel).replace(/\bfail\(\s*['"]tableCells\.rows['"]\s*\)/g, "void 0");
     check("dynamic UI consumer oracle rejects invented keys and notices removal of a real model error",
       hasConsumer("tableCells.rows", allSrc, dynamicConsumers) &&
-      !hasConsumer("tableCells.rows", allSrc, new Set([...errorKeys(withoutRows), ...rendererErrors])) &&
+      !hasConsumer("tableCells.rows", allSrc, new Set([...errorKeys(withoutRows), ...rendererErrors, ...indirectConsumers])) &&
       !hasConsumer("tableCells.unusedFixture", "const keys = { 'tableCells.unusedFixture': 'unused' };", dynamicConsumers));
     const withoutShortcut = inlineSource.replace(
       /reportError\(\s*new Error\(\s*['"]tableCells\.formatShortcuts['"]\s*\)\s*\)/g, "void 0");
@@ -7049,7 +7302,8 @@ async function main() {
       withoutShortcut !== inlineSource &&
       hasConsumer("tableCells.formatShortcuts", allSrc, dynamicConsumers) &&
       !hasConsumer("tableCells.formatShortcuts", withoutShortcut,
-        new Set([...modelErrorKeys, ...rendererErrorKeys(rendererSrc + withoutShortcut)])) &&
+        new Set([...modelErrorKeys, ...rendererErrorKeys(rendererSrc + withoutShortcut + cellModel), ...indirectConsumers])) &&
+      rendererErrorKeys("throw new Error('tableCells.columnProjection', { cause: original });").length === 1 &&
       rendererErrorKeys("new Error('tableCells.unusedFixture');").length === 0 &&
       rendererErrorKeys("other(new Error('tableCells.unusedFixture'));").length === 0 &&
       rendererErrorKeys("// showTableCellError(new Error('tableCells.unusedFixture'));").length === 0);

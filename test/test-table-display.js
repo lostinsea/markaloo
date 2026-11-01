@@ -426,6 +426,121 @@ async function run(win) {
   await exec("setIndexVisible(false);true");
   await sleep(1800);
 
+  async function waitForTableState(label, expression) {
+    for (let attempt = 0; attempt < 160; attempt++) {
+      if (await exec(expression)) return;
+      await sleep(50);
+    }
+    throw new Error("Table layout fixture did not reach " + label);
+  }
+
+  let tableFixtureSequence = 0;
+  async function ownTableFixture(label, source, edit = true) {
+    const prior = JSON.parse(await exec(`JSON.stringify({
+      id:window.CustomTabs.getActiveTabId(),edit:isEditMode,dirty:hasUnsavedWork(),
+      dialog:!!document.querySelector('dialog[open]')
+    })`));
+    if (prior.dirty || prior.dialog) throw new Error("Unsafe table fixture admission: " + label);
+    const file = path.join(__dirname, "..", "tmp",
+      "table-layout-" + ++tableFixtureSequence + "-" + label + ".md");
+    await admitTestDocument(win, file, source);
+    if (await exec("isEditMode") !== edit) {
+      await exec(edit ? "openEditorBtn.click();true" : "exitEditBtn.click();true");
+    }
+    await waitForTableState("owned source in the requested mode", `isEditMode===${edit}&&!undoRedoRendering&&
+      ${edit ? "editorScroll.isCurrentSource(markdownEditor.value)" : "!loadingScreen.classList.contains('active')"}&&
+      ${edit ? "window.CustomTabs.snapshotExactEditorContent()" : "originalMarkdown"}===${JSON.stringify(source)}`);
+    const owner = JSON.parse(await exec(`JSON.stringify((() => {
+      const tab=window.CustomTabs.getActiveTab();
+      return {id:tab.id,path:currentFilePath,content:tab.content,
+        current:currentDocumentActionOwner()===tab,undo:historySnapshot().undo.length,
+        identity:window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession())};
+    })())`));
+    if (!owner.current || !owner.identity || owner.path !== file ||
+        owner.content !== source || owner.undo !== 0) {
+      throw new Error("Table fixture has no exact clean document owner: " + JSON.stringify(owner));
+    }
+    return { prior, owner, file, source, edit };
+  }
+
+  async function restoreTableFixture(fixture, visualSource, readerRedo = null) {
+    await exec("if(tableCellDialog.open)tableCellCancel.click();true");
+    for (let attempt = 0; attempt < 8 && await exec("historySnapshot().undo.length>0"); attempt++) {
+      // Reader history uses strings. Its disabled editor button cannot drive Undo.
+      await exec(fixture.edit ? "undoButton.click();true" : "historyUndo();true");
+      await waitForTableState("document Undo", `isEditMode===${fixture.edit}&&!undoRedoRendering&&
+        ${fixture.edit ? "editorScroll.isCurrentSource(markdownEditor.value)" :
+          "originalMarkdown===" + JSON.stringify(fixture.source) +
+          "&&viewer.querySelectorAll('.table-container').length===1&&!loadingScreen.classList.contains('active')"}`);
+    }
+    const restored = await exec(`(() => {
+      const tab=window.CustomTabs.getActiveTab();
+      return tab.id===${JSON.stringify(fixture.owner.id)}&&currentDocumentActionOwner()===tab&&
+        currentFilePath===${JSON.stringify(fixture.file)}&&
+        JSON.stringify(window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession()))===
+          ${JSON.stringify(JSON.stringify(fixture.owner.identity))}&&
+        isEditMode===${fixture.edit}&&
+        ${fixture.edit ? "window.CustomTabs.snapshotExactEditorContent()" : "originalMarkdown"}===${JSON.stringify(fixture.source)}&&
+        tab.content===${JSON.stringify(fixture.source)}&&!hasUnsavedWork()&&historySnapshot().undo.length===0&&
+        ${fixture.edit ? "true" : "historySnapshot().redo.length===1&&historySnapshot().redo[0]===" + JSON.stringify(readerRedo)};
+    })()`);
+    if (!restored || fs.readFileSync(fixture.file, "utf8") !== fixture.source) {
+      throw new Error("Table fixture Undo did not restore its exact owner/source/disk: " + fixture.file);
+    }
+    await exec("window.CustomTabs.switchToTab(" + JSON.stringify(fixture.prior.id) + ")");
+    await waitForTableState("previous document", `window.CustomTabs.getActiveTabId()===${JSON.stringify(fixture.prior.id)}&&
+      !loadingScreen.classList.contains('active')`);
+    if (await exec("isEditMode") !== fixture.prior.edit) {
+      await exec("document.getElementById(isEditMode?'exitEditBtn':'toggleEdit').click();true");
+    }
+    await exec("renderMarkdown(" + JSON.stringify(visualSource) + ",'full')");
+  }
+
+  async function openOwnedTableGrid(mode, { columns = 3, rows = 2, first = 1, last = first } = {}) {
+    return JSON.parse(await exec(`JSON.stringify((() => {
+      const mode=FoliaTableCells.Mode[${JSON.stringify(mode)}];
+      if(mode===FoliaTableCells.Mode.INSERT){
+        getSelection().removeAllRanges();
+        markdownEditor.focus();
+        markdownEditor.setSelectionRange(markdownEditor.value.length,markdownEditor.value.length);
+      }else{
+        const tables=viewer.querySelectorAll('table'),table=tables[0];
+        if(tables.length!==1||!editorScroll.tableSource(table))throw Error('Table layout target is not one source-owned table');
+        table.scrollIntoView({block:'center'});
+        const selection=getSelection();selection.removeAllRanges();
+        if(mode===FoliaTableCells.Mode.UPDATE_ROWS){
+          const range=document.createRange();
+          range.setStartBefore(table.rows[${first}].cells[0]);
+          range.setEndAfter(table.rows[${last}].cells[table.rows[${last}].cells.length-1]);
+          selection.addRange(range);
+        }
+        const cell=table.rows[${first}].cells[0],rect=cell.getBoundingClientRect();
+        cell.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,
+          clientX:rect.left+4,clientY:rect.top+4}));
+      }
+      openTableCellEditor(mode);
+      if(!tableCellDialog.open||tableCellSession.mode!==mode||!tableCellSession.selection.isCurrent()){
+        throw Error('Owned table layout dialog did not open');
+      }
+      const defaults=mode!==FoliaTableCells.Mode.INSERT||
+        tableCellColumns.value==='3'&&tableCellDataRows.value==='2'&&tableCellDataRows.min==='0';
+      if(mode===FoliaTableCells.Mode.INSERT){
+        tableCellColumns.value=${JSON.stringify(String(columns))};
+        tableCellDataRows.value=${JSON.stringify(String(rows))};
+        tableCellStart.click();
+      }
+      if(!tableCellSession.ready)throw Error('Owned table layout grid did not start');
+      return {defaults,mode,selected:tableCellSession.selectedCell===null,
+        columns:tableCellSession.columns,rows:tableCellSession.rows.length};
+    })())`));
+  }
+
+  async function commitOwnedTableGrid() {
+    await exec("tableCellUpdate.click();true");
+    await waitForTableState("table transaction render", `!tableCellDialog.open&&!tableCellSession&&
+      editorScroll.isCurrentSource(markdownEditor.value)&&!loadingScreen.classList.contains('active')`);
+  }
+
   const m = JSON.parse(await exec(MEASURE));
   const [mixed, uniform, wide, unbreakable, huge] = m.tables;
   check("all seven sample tables rendered", m.tables.length === 7, m.tables.length);
@@ -1939,53 +2054,83 @@ async function run(win) {
     JSON.stringify(zoomProse),
   );
 
-  // --- 14. Tables built outside the render pipeline ------------------------
-  // renderTableInDOM backs the right-click Insert/Edit Table commands. It builds
-  // its own container rather than going through addTableMaximizeButtons, so it
-  // was the one path that never applied breakout: a table inserted from the
-  // context menu was the only kind that still got a horizontal scrollbar.
-  const inserted = JSON.parse(
-    await exec(`(async () => {
-      const md = ['| ' + Array.from({length: 14}, (_, i) => 'Column Header ' + i).join(' | ') + ' |',
-                  '|' + Array.from({length: 14}, () => '---').join('|') + '|',
-                  '| ' + Array.from({length: 14}, (_, i) => 'value-number-' + i).join(' | ') + ' |'].join('\\n');
-      const before = new Set(document.querySelectorAll('#viewer .table-container'));
-      renderTableInDOM(md, 'insert');
-      await new Promise(r => setTimeout(r, 250));
-      const all = [...document.querySelectorAll('#viewer .table-container')];
-      // Identified by identity, not by position: renderTableInDOM inserts after
-      // the right-click anchor when there is one, so the new container is not
-      // necessarily last and "last" silently measured a different table.
-      const c = all.find(x => !before.has(x));
-      if (!c) return JSON.stringify({ added: false });
-      const r = c.getBoundingClientRect();
-      const out = {
-        added: all.length === before.size + 1,
-        hasBreakout: c.classList.contains('table-breakout'),
-        containerWidth: Math.round(r.width),
-        viewerWidth: Math.round(document.getElementById('viewer').clientWidth),
-        preferred: Math.round(preferredTableWidth(c)),
-        budget: document.getElementById('viewer').style.getPropertyValue('--mv-breakout-budget'),
-        scrolls: c.scrollWidth > c.clientWidth + 1,
-        offWindow: r.left < -1 || r.right > window.innerWidth + 1,
+  // --- 14. Visual Create uses the normal render pipeline ------------------
+  // Unsaved editor exit requires discard consent. Measure the real preview:
+  // split view deliberately disables breakout, but must still fit wide tables.
+  const insertRows = [
+    Array.from({ length: 14 }, (_, i) => "Column Header " + i),
+    Array.from({ length: 14 }, (_, i) => "value-number-" + i),
+  ];
+  const insertMarkdown = [
+    "| " + insertRows[0].join(" | ") + " |",
+    "| " + insertRows[0].map(() => "---").join(" | ") + " |",
+    "| " + insertRows[1].join(" | ") + " |",
+  ].join("\n");
+  const referenceOffset = DOC.length + 2;
+  const insertSource = DOC + "\n\n" + insertMarkdown + "\n\n";
+  const insertExpected = insertSource + insertMarkdown;
+  const insertFixture = await ownTableFixture("create-wide", insertSource);
+  let inserted;
+  try {
+    const opening = await openOwnedTableGrid("INSERT", { columns: 14, rows: 1 });
+    check("visual Create opens with honest defaults and no automatically selected cell",
+      opening.defaults && opening.selected && opening.columns === 14 && opening.rows === 2,
+      JSON.stringify(opening));
+    await exec(`tableCellSession.rows.forEach((row,r)=>row.cells.forEach((cell,c)=>{
+      cell.input.textContent=${JSON.stringify(insertRows)}[r][c];
+    }));true`);
+    await commitOwnedTableGrid();
+    inserted = JSON.parse(await exec(`JSON.stringify((() => {
+      const all=[...viewer.querySelectorAll('.table-container')];
+      // Identical content is not identity. Both tables have exact source receipts.
+      const at=offset=>all.filter(c=>editorScroll.tableSource(c.querySelector('table'))?.start===offset);
+      const matches=at(${insertSource.length}),references=at(${referenceOffset});
+      const c=matches[0];
+      const reference=references[0];
+      if(!c||!reference)return {added:false};
+      c.scrollIntoView({block:'center'});
+      const r=c.getBoundingClientRect();
+      const ref=reference.getBoundingClientRect();
+      return {
+        added:matches.length===1&&references.length===1&&all.length===9,
+        exact:window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(insertExpected)},
+        undo:historySnapshot().undo.length,
+        split:contentWrapper.classList.contains('split-view'),
+        hasBreakout:c.classList.contains('table-breakout'),
+        referenceBreakout:reference.classList.contains('table-breakout'),
+        containerWidth:Math.round(r.width),viewerWidth:viewer.clientWidth,
+        preferred:Math.round(preferredTableWidth(c)),
+        referenceWidth:Math.round(ref.width),
+        referencePreferred:Math.round(preferredTableWidth(reference)),
+        wrap:c.querySelector('table').classList.contains('wrap-anyway'),
+        referenceWrap:reference.querySelector('table').classList.contains('wrap-anyway'),
+        budget:viewer.style.getPropertyValue('--mv-breakout-budget'),
+        scrolls:c.scrollWidth>c.clientWidth+1,
+        referenceScrolls:reference.scrollWidth>reference.clientWidth+1,
+        offWindow:r.left<-1||r.right>innerWidth+1,
+        outsideViewer:r.left<viewer.getBoundingClientRect().left-1||r.right>viewer.getBoundingClientRect().right+1
       };
-      c.remove();
-      return JSON.stringify(out);
-    })()`),
-  );
+    })())`));
+  } finally {
+    await restoreTableFixture(insertFixture, DOC);
+  }
   check(
     "the context-menu table path really inserted a table",
-    inserted.added === true,
+    inserted.added === true && inserted.exact === true && inserted.undo === 1,
     JSON.stringify(inserted),
   );
   check(
-    "a table inserted from the context menu is widened like any other",
-    inserted.hasBreakout === true && inserted.containerWidth > inserted.viewerWidth,
+    "a visually inserted wide table uses the same real preview layout as its source-rendered equivalent",
+    inserted.split === true && inserted.preferred > inserted.containerWidth &&
+      inserted.hasBreakout === false && inserted.referenceBreakout === false &&
+      inserted.containerWidth === inserted.referenceWidth && inserted.preferred === inserted.referencePreferred &&
+      inserted.wrap === inserted.referenceWrap,
     JSON.stringify(inserted),
   );
   check(
     "a table inserted from the context menu does not scroll sideways",
-    inserted.scrolls === false && inserted.offWindow === false,
+    inserted.scrolls === false && inserted.referenceScrolls === false &&
+      inserted.offWindow === false && inserted.outsideViewer === false,
     JSON.stringify(inserted),
   );
 
@@ -2194,19 +2339,37 @@ async function run(win) {
   // recreate the same trap by hand.
   {
     const dialogBounds = win.getBounds();
-    const openDialog = (overlayId) => `
+    const dialogSource = "# Shared table dialog\n\n| First | Second | Third |\n| --- | --- | --- |\n" +
+      Array.from({ length: 30 }, (_, row) => `| row ${row} | editable description ${row} | value ${row} |`).join("\n");
+    const dialogFixture = await ownTableFixture("dialogs", dialogSource);
+    try {
+    const dialogKinds = [
+      ["the mermaid template dialog", "mermaidTemplateOverlay"],
+      ["the Create table dialog", "INSERT"],
+      ["the Update Table dialog", "UPDATE_TABLE"],
+      ["the Update Rows dialog", "UPDATE_ROWS"],
+    ];
+    const openDialog = async (kind) => {
+      const shared = kind !== "mermaidTemplateOverlay";
+      if (shared) {
+        await exec("tableCellDialog.style.width='';tableCellDialog.style.height='';true");
+        await openOwnedTableGrid(kind, { rows: 30, first: 1, last: 30 });
+      }
+      return exec(`
       (async () => {
-        const overlay = document.getElementById(${JSON.stringify(overlayId)});
-        const dlg = overlay.querySelector('.note-dialog');
-        dlg.style.width = ''; dlg.style.height = '';
-        overlay.classList.add('visible');
+        const overlay = document.getElementById('mermaidTemplateOverlay');
+        const dlg = ${shared ? "tableCellDialog" : "overlay.querySelector('.note-dialog')"};
+        if(!${shared}) {
+          dlg.style.width = ''; dlg.style.height = '';
+          overlay.classList.add('visible');
+        }
         await new Promise(r => setTimeout(r, 400));
         const r = dlg.getBoundingClientRect();
         const hdr = dlg.querySelector('.note-dialog-header').getBoundingClientRect();
-        const btn = dlg.querySelector('.note-dialog-btn.primary');
+        const btn = dlg.querySelector('.note-dialog-footer .note-dialog-btn.primary');
         const br = btn.getBoundingClientRect();
         const hitEl = document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2);
-        const body = dlg.querySelector('.note-dialog-body');
+        const body = dlg.querySelector(${JSON.stringify(shared ? ".table-cell-grid" : ".note-dialog-body")});
         const out = {
           viewportH: window.innerHeight,
           dialogH: Math.round(r.height),
@@ -2216,6 +2379,8 @@ async function run(win) {
           primaryReachable: br.top >= 0 && br.bottom <= window.innerHeight,
           primaryHit: !!(hitEl && (hitEl === btn || btn.contains(hitEl))),
           bodyCanScroll: getComputedStyle(body).overflowY === 'auto' || getComputedStyle(body).overflowY === 'scroll',
+          bodyOverflows: body.scrollHeight > body.clientHeight + 1,
+          bodyH: body.getBoundingClientRect().height,
           resize: getComputedStyle(dlg).resize,
           // The resize grabber is drawn in the bottom-right corner of the
           // dialog's own box. If a footer button reaches into that corner the
@@ -2225,20 +2390,19 @@ async function run(win) {
             return !(q.right > r.right - 17 && q.bottom > r.bottom - 17);
           }),
         };
-        overlay.classList.remove('visible');
+        if(${shared})tableCellCancel.click();
+        else overlay.classList.remove('visible');
         return JSON.stringify(out);
       })()
-    `;
+    `);
+    };
 
     // 420px outer is a window a reader can produce by dragging an edge - there
     // is no minHeight on the BrowserWindow - and it is under every dialog's
     // natural height, which is what makes it the interesting size.
     await resizeWindow({ ...dialogBounds, width: 1200, height: 420 });
-    for (const [name, id] of [
-      ["the mermaid template dialog", "mermaidTemplateOverlay"],
-      ["the insert-table dialog", "tableInsertOverlay"],
-    ]) {
-      const d = JSON.parse(await exec(openDialog(id)));
+    for (const [name, id] of dialogKinds) {
+      const d = JSON.parse(await openDialog(id));
       check(
         `${name} fits inside a short window instead of spilling off it`,
         d.top >= 0 && d.bottom <= d.viewportH,
@@ -2256,7 +2420,7 @@ async function run(win) {
       );
       check(
         `${name} scrolls its own body rather than hiding content off screen`,
-        d.bodyCanScroll === true,
+        d.bodyCanScroll === true && (id === "mermaidTemplateOverlay" || d.bodyOverflows && d.bodyH > 0),
         JSON.stringify(d),
       );
       // Vacuity guard: if the window were not actually short, every assertion
@@ -2269,11 +2433,8 @@ async function run(win) {
     }
 
     await resizeWindow({ ...dialogBounds, width: 1400, height: 1000 });
-    for (const [name, id] of [
-      ["the mermaid template dialog", "mermaidTemplateOverlay"],
-      ["the insert-table dialog", "tableInsertOverlay"],
-    ]) {
-      const d = JSON.parse(await exec(openDialog(id)));
+    for (const [name, id] of dialogKinds) {
+      const d = JSON.parse(await openDialog(id));
       check(
         `${name} offers a corner grab handle`,
         d.resize === "both",
@@ -2372,36 +2533,49 @@ async function run(win) {
       JSON.stringify(preview),
     );
 
-    // Same property for the other resizable dialog. GPT-5.4's review caught
-    // that the table dialog's textarea plumbing was not pinned by anything:
-    // the dialog could grow while the markdown box the reader types into
-    // stayed put, so the resize bought nothing but dead space.
+    // Resize must enlarge the actual editable grid, not a removed Markdown box.
+    await openOwnedTableGrid("UPDATE_TABLE");
     const tableGrow = JSON.parse(
       await exec(`
         (async () => {
-          const overlay = document.getElementById('tableInsertOverlay');
-          const dlg = overlay.querySelector('.note-dialog');
-          overlay.classList.add('visible');
+          const dlg = tableCellDialog;
+          // The many-row fixture naturally reaches max-height. Start below it.
+          dlg.style.height = '500px';
           await new Promise(r => setTimeout(r, 300));
-          const ta = document.getElementById('tableInsertMarkdown');
-          const before = ta.getBoundingClientRect().height;
-          dlg.style.height = Math.round(dlg.getBoundingClientRect().height + 220) + 'px';
+          const grid = tableCellGrid;
+          const before = grid.getBoundingClientRect().height;
+          const dialogBefore = dlg.getBoundingClientRect().height;
+          const overflowBefore = grid.scrollHeight > grid.clientHeight + 1;
+          dlg.style.height = Math.round(dialogBefore + 220) + 'px';
           await new Promise(r => setTimeout(r, 300));
-          const after = ta.getBoundingClientRect().height;
+          const after = grid.getBoundingClientRect().height;
+          const rect = dlg.getBoundingClientRect();
+          const footer = dlg.querySelector('.note-dialog-footer').getBoundingClientRect();
           const out = {
             before: Math.round(before),
             after: Math.round(after),
             grew: after > before + 100,
+            dialogGrew: rect.height > dialogBefore + 100,
+            overflowBefore,
+            footerInside: footer.top >= rect.top && footer.bottom <= rect.bottom + 1,
+            onScreen: rect.top >= 0 && rect.bottom <= innerHeight,
+            editableCells: grid.querySelectorAll('[contenteditable="true"]').length,
           };
           dlg.style.height = '';
-          overlay.classList.remove('visible');
+          tableCellCancel.click();
           return JSON.stringify(out);
         })()
       `),
     );
     check(
-      "enlarging the insert-table dialog enlarges the markdown box with it",
-      tableGrow.grew === true,
+      "enlarging the shared table dialog enlarges its actual editable grid with it",
+      tableGrow.grew === true && tableGrow.dialogGrew === true &&
+        tableGrow.overflowBefore === true && tableGrow.editableCells === 93,
+      JSON.stringify(tableGrow),
+    );
+    check(
+      "the enlarged shared table grid keeps its footer and corner-resize controls on screen",
+      tableGrow.footerInside === true && tableGrow.onScreen === true,
       JSON.stringify(tableGrow),
     );
 
@@ -2437,19 +2611,14 @@ async function run(win) {
     // The short window is the case the whole section exists for, so it gets a
     // picture too.
     await resizeWindow({ ...dialogBounds, width: 1200, height: 420 });
-    await exec(`
-      (async () => {
-        document.getElementById('tableInsertOverlay').classList.add('visible');
-        await new Promise(r => setTimeout(r, 400));
-        return null;
-      })()
-    `);
+    await openOwnedTableGrid("UPDATE_TABLE");
     await sleep(600);
     await captureScreenshot(win, "dialog-short-window");
-    await exec(
-      `(() => { document.getElementById('tableInsertOverlay').classList.remove('visible'); return null; })()`,
-    );
-    await resizeWindow(dialogBounds);
+    await exec("tableCellCancel.click();true");
+    } finally {
+      await resizeWindow(dialogBounds);
+      await restoreTableFixture(dialogFixture, DOC);
+    }
   }
 
   // --- 17. The editor/viewer splitter -------------------------------------
@@ -3001,6 +3170,7 @@ async function run(win) {
     "| Mut heading one | Mut heading two |",
     "| --- | --- |",
     "| mutation cell one | mutation cell two |",
+    "| selected mutation one | selected mutation two |",
     "",
   ].join("\n");
   const MUT_MERMAID_CODE = ["graph TD;", "  MutA-->MutB;"].join("\n");
@@ -4291,38 +4461,124 @@ async function run(win) {
     JSON.stringify(deleg),
   );
 
-  // THE SIX DIRECT-MUTATION SITES, WHICH THE GUARD'S CONTRACT COVERS AND
-  // NOTHING PREVIOUSLY DROVE.
-  //
-  // viewerMutationGen exists so that ANY structural change to the viewer
-  // subtree stands a pending zoom anchor down. R432 proves the product reports
-  // the code-block wrap; it says nothing about the other paths that reparent or
-  // remove nodes without going through a render at all. Those were found by
-  // review to be HALF-COVERED: renderTableInDOM and renderMermaidInDOM each
-  // reported their `replace` branch and stayed silent on their `insert` branch,
-  // which appends straight into #viewer and displaces everything below it.
-  //
-  // A later review round found the COVERAGE half-covered in the mirror image:
-  // the four legs below drove insert and delete but never `replace`, so the
-  // two branches that had prompted the whole cell were themselves unpinned and
-  // could be deleted with every assertion staying green. Both replace branches
-  // are now driven (R445/R446), which is what makes this cell exhaustive over
-  // the function rather than over the accident that was found first.
-  //
-  // So this cell calls the REAL product functions - not copies of them - and
-  // requires the counter to move across each one. It reads the counter around
-  // each call individually rather than once at the end, because a single
-  // end-to-end delta would be satisfied by any ONE of the six reporting.
-  //
-  // Each site gets its own revert for the same reason R431 and R432 are two
-  // entries: one revert cannot distinguish which site went silent.
-  //
-  // The source document is saved and restored, and so is the rendered fixture -
-  // both delete functions REWRITE originalMarkdown, and the restore is in a
-  // finally because the poll-and-throw lesson from the wrapper cell above
-  // applies here with more force: this one perturbs global state, not just the
-  // DOM.
-  const mutSites = JSON.parse(
+  // Table Create/Update now adopt exact owned source and await a normal render.
+  // Their former synchronous delta of exactly one is no longer the contract:
+  // the render and its post-render wrappers can each report a mutation.
+  // Keep exact source, one document Undo per commit, one render request, and
+  // mutation invalidation per operation. The stale-anchor guard is tested above.
+  // Mermaid's separate direct-DOM paths and synchronous delete deltas stay pinned.
+  const mutationSource = "# Table mutation fixture\n\n" +
+    Array.from({ length: 60 }, (_, i) => "Retained paragraph " + i + " keeps the reading position observable.\n\n").join("");
+  const tableMutSites = { ran: [] };
+  const insertedMutationSource = mutationSource + MUT_TABLE_MD.trimEnd();
+  const replacedMutationSource = insertedMutationSource.replace("mutation cell one", "replacement mutation cell one");
+  const selectedMutationSource = replacedMutationSource.replace("selected mutation two", "selected replacement two");
+  const mutationState = () => exec(`JSON.stringify((() => {
+    const tab=window.CustomTabs.getActiveTab();
+    return {gen:viewerMutationGeneration(),render:renderGeneration,count:viewer.querySelectorAll('.table-container').length,
+      exact:window.CustomTabs.snapshotExactEditorContent(),cache:tab.content,undo:historySnapshot().undo.length,
+      owner:tab.id,current:currentDocumentActionOwner()===tab,
+      identity:window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession())};
+  })())`).then(JSON.parse);
+  async function recordTableCommit(site, before, expected, fixture) {
+    const after = await mutationState();
+    tableMutSites[site + "Delta"] = after.gen - before.gen;
+    tableMutSites[site + "RenderDelta"] = after.render - before.render;
+    tableMutSites[site + "Exact"] = after.exact === expected && after.cache === expected && after.undo === 1 &&
+      after.owner === fixture.owner.id && after.current &&
+      JSON.stringify(after.identity) === JSON.stringify(fixture.owner.identity) &&
+      fs.readFileSync(fixture.file, "utf8") === fixture.source;
+    tableMutSites.ran.push(site);
+    return after;
+  }
+  async function mutateOwnedTableFixture(label, source, action) {
+    const fixture = await ownTableFixture(label, source);
+    try {
+      await action(fixture);
+    } finally {
+      await exec("delete window.__tableMutationOld;true");
+      await restoreTableFixture(fixture, ZOOM_ANCHOR_TABLE_DOC);
+    }
+  }
+  await mutateOwnedTableFixture("mutation-insert", mutationSource, async fixture => {
+    await openOwnedTableGrid("INSERT", { columns: 2, rows: 2 });
+    await exec(`tableCellSession.rows.forEach((row,r)=>row.cells.forEach((cell,c)=>{
+      cell.input.textContent=${JSON.stringify([
+        ["Mut heading one", "Mut heading two"],
+        ["mutation cell one", "mutation cell two"],
+        ["selected mutation one", "selected mutation two"],
+      ])}[r][c];
+    }));true`);
+    const beforeInsert = await mutationState();
+    await commitOwnedTableGrid();
+    const afterInsert = await recordTableCommit("tableInsert", beforeInsert, insertedMutationSource, fixture);
+    tableMutSites.tableInsertAdded = afterInsert.count - beforeInsert.count;
+  });
+  // Updates start from independently authored source, not an insertion used as setup.
+  await mutateOwnedTableFixture("mutation-whole", insertedMutationSource, async fixture => {
+    await openOwnedTableGrid("UPDATE_TABLE");
+    await exec(`window.__tableMutationOld=viewer.querySelector('.table-container');
+      tableCellSession.rows[1].cells[0].input.textContent='replacement mutation cell one';true`);
+    const beforeReplace = await mutationState();
+    await commitOwnedTableGrid();
+    const afterReplace = await recordTableCommit("tableReplace", beforeReplace, replacedMutationSource, fixture);
+    tableMutSites.tableReplaceSwapped = afterReplace.count === beforeReplace.count &&
+      await exec("!viewer.contains(window.__tableMutationOld)");
+  });
+  await mutateOwnedTableFixture("mutation-selected", replacedMutationSource, async fixture => {
+    await openOwnedTableGrid("UPDATE_ROWS", { first: 2, last: 2 });
+    await exec(`window.__tableMutationOld=viewer.querySelector('.table-container');
+      tableCellSession.rows[1].cells[1].input.textContent='selected replacement two';true`);
+    const beforeSelected = await mutationState();
+    await commitOwnedTableGrid();
+    const afterSelected = await recordTableCommit("tableSelected", beforeSelected, selectedMutationSource, fixture);
+    tableMutSites.tableSelectedSwapped = afterSelected.count === beforeSelected.count &&
+      await exec("!viewer.contains(window.__tableMutationOld)");
+  });
+  // Preserve the legacy reader Delete path. Edit-mode deletion is not covered here.
+  const deleteFixture = await ownTableFixture("mutation-reader-delete", selectedMutationSource, false);
+  const deletedReaderSource = mutationSource.slice(0, -1);
+  try {
+    const readerSetup = await exec(`(() => {
+      const tab=window.CustomTabs.getActiveTab(),history=historySnapshot();
+      return !isEditMode&&!contentWrapper.classList.contains('split-view')&&
+        originalMarkdown===${JSON.stringify(selectedMutationSource)}&&tab.content===originalMarkdown&&
+        currentDocumentActionOwner()===tab&&tab.id===${JSON.stringify(deleteFixture.owner.id)}&&
+        viewer.querySelectorAll('.table-container').length===1&&history.undo.length===0&&history.redo.length===0;
+    })()`);
+    check("table deletion starts from one clean source-owned reader table, not an editor buffer",
+      readerSetup, deleteFixture.file);
+    if (!readerSetup) throw new Error("Reader table deletion setup did not establish its mode/source/history");
+    const deleted = JSON.parse(await exec(`JSON.stringify((() => {
+      const container=viewer.querySelector('.table-container'),table=container?.querySelector('table');
+      if(!table)throw Error('Owned table deletion target is missing');
+      const before=viewerMutationGeneration();
+      deleteTableFromSource(table,[...table.querySelectorAll('th')].map(cell=>cell.textContent.trim()),
+        [...table.querySelectorAll('td')].map(cell=>cell.textContent.trim()));
+      const tab=window.CustomTabs.getActiveTab(),history=historySnapshot();
+      // Reader Delete changes the live store; tab content folds on a later snapshot.
+      return {delta:viewerMutationGeneration()-before,removed:!viewer.contains(container),
+        count:viewer.querySelectorAll('.table-container').length,reader:!isEditMode,
+        exact:originalMarkdown===${JSON.stringify(deletedReaderSource)},
+        cache:tab.content,baseline:tab.originalContent,path:currentFilePath,owner:tab.id,
+        current:currentDocumentActionOwner()===tab,
+        identity:window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession()),
+        undo:history.undo.length,undoSource:history.undo[0],redo:history.redo.length};
+    })())`));
+    tableMutSites.tableDeleteDelta = deleted.delta;
+    tableMutSites.tableDeleteRemoved = deleted.removed && deleted.count === 0;
+    tableMutSites.tableDeleteExact = deleted.reader && deleted.exact && deleted.undo === 1 &&
+      deleted.undoSource === selectedMutationSource && deleted.redo === 0 &&
+      deleted.cache === selectedMutationSource && deleted.baseline === selectedMutationSource &&
+      deleted.owner === deleteFixture.owner.id && deleted.path === deleteFixture.file && deleted.current &&
+      JSON.stringify(deleted.identity) === JSON.stringify(deleteFixture.owner.identity) &&
+      fs.readFileSync(deleteFixture.file, "utf8") === selectedMutationSource;
+    tableMutSites.ran.push("tableDelete");
+  } finally {
+    await restoreTableFixture(deleteFixture, ZOOM_ANCHOR_TABLE_DOC, deletedReaderSource);
+  }
+
+  const mermaidMutSites = JSON.parse(
     await exec(`
       (async () => {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -4330,63 +4586,6 @@ async function run(win) {
         const savedSource = window.originalMarkdown;
         const out = { ran: [] };
         try {
-          // 1. TABLE INSERT. Synchronous, and appends a .table-container to
-          // #viewer via the else branch of renderTableInDOM.
-          const beforeTI = gen();
-          const nBefore = viewer.querySelectorAll('.table-container').length;
-          window.renderTableInDOM(${JSON.stringify(MUT_TABLE_MD)}, 'insert');
-          out.tableInsertDelta = gen() - beforeTI;
-          out.tableInsertAdded =
-            viewer.querySelectorAll('.table-container').length - nBefore;
-          out.ran.push('tableInsert');
-
-          // 1b. TABLE REPLACE - the context-menu "Edit Table" path, and the
-          // branch review found UNPINNED: nothing in this file called
-          // renderTableInDOM with mode='replace', so its noteViewerMutation()
-          // could be deleted and every assertion here would stay green.
-          //
-          // Replaces with the SAME markdown deliberately. The delete leg below
-          // scores against MUT_TABLE_MD, and a different replacement would
-          // leave it nothing to find. IDENTITY, not content, is the oracle:
-          // the old container must be gone from the viewer and the count must
-          // not have moved, which distinguishes a replace from an insert.
-          const preTR = viewer.querySelectorAll('.table-container');
-          const oldTC = preTR[preTR.length - 1];
-          const oldTableEl = oldTC ? oldTC.querySelector('table') : null;
-          if (!oldTableEl) {
-            out.tableReplaceDelta = null;
-          } else {
-            const beforeTR = gen();
-            window.renderTableInDOM(${JSON.stringify(MUT_TABLE_MD)}, 'replace', oldTableEl);
-            out.tableReplaceDelta = gen() - beforeTR;
-            out.tableReplaceSwapped =
-              !viewer.contains(oldTC) &&
-              viewer.querySelectorAll('.table-container').length === preTR.length;
-            out.ran.push('tableReplace');
-          }
-
-          // 2. TABLE DELETE. Driven against the container just inserted, with
-          // the source pointed at the same markdown so the product's own
-          // scoring can find it. Anchoring the delete on the inserted table
-          // keeps this independent of the fixture's 12 tables.
-          const inserted = viewer.querySelectorAll('.table-container');
-          const lastC = inserted[inserted.length - 1];
-          const tEl = lastC ? lastC.querySelector('table') : null;
-          if (!tEl) {
-            out.tableDeleteDelta = null;
-          } else {
-            window.originalMarkdown = ${JSON.stringify(MUT_TABLE_MD)};
-            const heads = Array.prototype.map.call(
-              tEl.querySelectorAll('th'), (e) => e.textContent.trim());
-            const cells = Array.prototype.map.call(
-              tEl.querySelectorAll('td'), (e) => e.textContent.trim());
-            const beforeTD = gen();
-            window.deleteTableFromSource(tEl, heads, cells);
-            out.tableDeleteDelta = gen() - beforeTD;
-            out.tableDeleteRemoved = !viewer.contains(lastC);
-            out.ran.push('tableDelete');
-          }
-
           // 3. MERMAID INSERT. Async, but the insert happens BEFORE the
           // mermaid render is attempted, so this does not depend on mermaid
           // succeeding - which is deliberate: the contract is about the DOM
@@ -4401,8 +4600,8 @@ async function run(win) {
           out.ran.push('mermaidInsert');
 
           // 3b. MERMAID REPLACE - the context-menu "Edit Diagram" path, the
-          // other branch review found unpinned. Same identity oracle as the
-          // table replace above, and the same reason for reusing the source:
+          // other branch review found unpinned. Use identity rather than text,
+          // and the same reason for reusing the source:
           // the delete leg reads MUT_MERMAID_DOC.
           const preMR = viewer.querySelectorAll('.mermaid-container');
           const oldMC = preMR[preMR.length - 1];
@@ -4441,48 +4640,49 @@ async function run(win) {
       })()
     `),
   );
+  const mutSites = { ...tableMutSites, ...mermaidMutSites,
+    ran: [...tableMutSites.ran, ...mermaidMutSites.ran] };
   console.log("note: direct mutation sites " + JSON.stringify(mutSites));
   // Soundness first: an assertion that the counter moved means nothing if the
   // product function never mutated anything. Each leg has to be shown to have
   // actually inserted or removed the node it claims to.
   check(
-    "each direct viewer-mutation path under test really inserted or removed the node it reports",
-    mutSites.ran.length === 6 &&
+    "each table transaction and direct viewer-mutation path really changes its intended node",
+    mutSites.ran.length === 7 &&
       mutSites.tableInsertAdded === 1 &&
       mutSites.tableReplaceSwapped === true &&
+      mutSites.tableSelectedSwapped === true &&
       mutSites.tableDeleteRemoved === true &&
       mutSites.mermaidInsertAdded === 1 &&
       mutSites.mermaidReplaceSwapped === true &&
       mutSites.mermaidDeleteRemoved === true,
     JSON.stringify(mutSites),
   );
-  // Six separate assertions, one per site, so a revert naming one of them
-  // cannot be satisfied by another going silent.
-  //
-  // THE FOUR SYNCHRONOUS SITES ARE PINNED AT EXACTLY 1, not >= 1. A `>=` on a
-  // counter reports a DISJUNCTION - "something bumped" - rather than the site
-  // the assertion is named for. renderTableInDOM, deleteTableFromSource and
-  // deleteMermaidFromSource are all plain `function`s, so no task boundary
-  // opens between the two reads and the coalesced breakout pass (which bumps
-  // per wrap) provably cannot land inside the window.
-  //
-  // The two mermaid RENDER legs stay at >= 1 for exactly that reason inverted:
-  // renderMermaidInDOM is `async` and awaits ensureMermaid()/queueMermaidWork(),
-  // so a 120ms-debounced breakout pass CAN land mid-call and add a second bump.
-  // Measured at 1 today; pinning it there would be pinning the scheduler.
+  // Separate observations prevent one successful operation hiding another.
+  // Async render legs can include post-render wrappers; synchronous deletes cannot.
   check(
-    "inserting a table into the DOM is reported as a viewer mutation",
-    mutSites.tableInsertDelta === 1,
+    "visual table insertion adopts exact owned source once and invalidates the previous viewer layout",
+    mutSites.tableInsertDelta >= 1 && mutSites.tableInsertRenderDelta === 1 && mutSites.tableInsertExact === true,
     JSON.stringify(mutSites),
   );
   check(
-    "replacing a table in the DOM is reported as a viewer mutation",
-    mutSites.tableReplaceDelta === 1,
+    "whole-table Update adopts only the changed source once and invalidates the previous viewer layout",
+    mutSites.tableReplaceDelta >= 1 && mutSites.tableReplaceRenderDelta === 1 && mutSites.tableReplaceExact === true,
+    JSON.stringify(mutSites),
+  );
+  check(
+    "selected-row Update preserves unselected source and invalidates the previous viewer layout",
+    mutSites.tableSelectedDelta >= 1 && mutSites.tableSelectedRenderDelta === 1 && mutSites.tableSelectedExact === true,
     JSON.stringify(mutSites),
   );
   check(
     "deleting a table from the DOM is reported as a viewer mutation",
     mutSites.tableDeleteDelta === 1,
+    JSON.stringify(mutSites),
+  );
+  check(
+    "reader table deletion preserves its owner, disk baseline and exact recoverable source history",
+    mutSites.tableDeleteExact === true,
     JSON.stringify(mutSites),
   );
   check(

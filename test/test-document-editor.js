@@ -359,7 +359,7 @@ async function run() {
     check("discard restores the owning document's clean flag rather than the other tab's dirty flag",
       await exec("!hasUnsavedChanges"));
     check("undo cannot resurrect edits discarded after returning to their owning document",
-      await exec(`!historySnapshot().undo.includes(${JSON.stringify(alphaText)})`));
+      await exec(`!historySnapshot().undo.concat(historySnapshot().redo).some(entry=>(typeof entry==='string'?entry:entry.source)===${JSON.stringify(alphaText)})`));
     return finish();
   }
   await capture("alpha-editor-restored");
@@ -416,10 +416,10 @@ async function run() {
   await select(alpha, "Alpha");
   check("returning restores the owning draft and its pending history without a cross-tab undo entry",
     await exec(`markdownEditor.value===${JSON.stringify(rapidAlpha)}&&
-      historySnapshot().undo.at(-1)===${JSON.stringify(rapidAlpha)}&&
+      (typeof historySnapshot().undo.at(-1)==='string'?historySnapshot().undo.at(-1):historySnapshot().undo.at(-1)?.source)===${JSON.stringify(alphaText)}&&
       !JSON.stringify(historySnapshot()).includes('Unsaved witness Beta')`));
   if (proof === "deferred") return finish();
-  await exec("historyUndo();historyUndo();true");
+  await exec("historyUndo();true");
   await wait("real restored Undo", `markdownEditor.value===${JSON.stringify(alphaText)}`);
   await exec("historyRedo();true");
   await wait("real restored Redo", `markdownEditor.value===${JSON.stringify(rapidAlpha)}`);
@@ -607,7 +607,7 @@ async function run() {
     await choice("proceed");
     await wait("second discard", `!isEditMode&&currentReloadSnapshot()===${JSON.stringify(freshAlpha)}`);
     check("discard after an older Exit completes restores the new session's undo checkpoint",
-      await exec(`!historySnapshot().undo.includes(${JSON.stringify(secondDraft)})&&!hasUnsavedChanges`));
+      await exec(`!historySnapshot().undo.concat(historySnapshot().redo).some(entry=>(typeof entry==='string'?entry:entry.source)===${JSON.stringify(secondDraft)})&&!hasUnsavedChanges`));
   } finally {
     await exec("window.__editorExitGate.release();window.__editorExitGate.restore();delete window.__editorExitGate;true");
   }

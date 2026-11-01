@@ -12,17 +12,49 @@ const baseline = process.argv.includes("--baseline");
 const dirtyOpenProbe = process.argv.includes("--probe-dirty-open");
 const proof = process.env.FOLIA_CELL_PROOF;
 const groups = ["selection", "rows", "splice", "inline", "menus", "provenance",
-  "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "formatting", "many"];
+  "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "formatting", "many", "shared"];
 const uiGroups = groups.slice(4);
-const uiPartitions = { input: ["input"], remaining: uiGroups.filter(name => name !== "input") };
+const uiPartitions = { input: ["input"], remaining: uiGroups.filter(name => !["input", "shared"].includes(name)),
+  shared: ["shared"] };
+const ownedHidden = process.argv.includes("--owned-hidden");
+const coreArgs = process.argv.filter(arg => arg === "--core-function" || arg.startsWith("--core-function="));
+const coreFunction = coreArgs.length !== 0;
+const openingArgs = process.argv.filter(arg => arg === "--opening-presentation" || arg.startsWith("--opening-presentation="));
+const openingPresentation = openingArgs.length !== 0;
+const detailArgs = process.argv.filter(arg => arg === "--detail-presentation" || arg.startsWith("--detail-presentation="));
+const detailPresentation = detailArgs.length !== 0;
+const focusedFunction = coreFunction || openingPresentation || detailPresentation;
+const invocationUiGroups = detailPresentation ? ["detail"] : openingPresentation ? ["opening"] : uiGroups;
 const partitionArgs = process.argv.filter(arg => arg === "--partition" || arg.startsWith("--partition="));
 const partition = partitionArgs[0]?.slice("--partition=".length);
+const ownedGroup = ownedHidden && !!proof && uiGroups.includes(proof) &&
+  partitionArgs.length === 0 && !focusedFunction;
 if (partitionArgs.length > 1 || partition !== undefined &&
     (!Object.hasOwn(uiPartitions, partition) || sourceOnly || perfOnly || baseline || dirtyOpenProbe || proof)) {
   throw new Error("Use one UI partition without source, performance, probe or proof modes");
 }
-const expectedUiGroups = partition ? uiPartitions[partition] : proof ? uiGroups.filter(name => name === proof) : uiGroups;
+if (coreFunction && (coreArgs.length !== 1 || coreArgs[0] !== "--core-function" ||
+    openingPresentation || detailPresentation || !ownedHidden || partition !== "shared" ||
+    sourceOnly || perfOnly || baseline || dirtyOpenProbe || proof)) {
+  throw new Error("--core-function requires only the owned hidden shared partition");
+}
+if (openingPresentation && (openingArgs.length !== 1 || openingArgs[0] !== "--opening-presentation" ||
+    coreFunction || detailPresentation || !ownedHidden || partition !== "shared" ||
+    sourceOnly || perfOnly || baseline || dirtyOpenProbe || proof)) {
+  throw new Error("--opening-presentation requires only the owned hidden shared partition");
+}
+if (detailPresentation && (detailArgs.length !== 1 || detailArgs[0] !== "--detail-presentation" ||
+    coreFunction || openingPresentation || !ownedHidden || partition !== "shared" ||
+    sourceOnly || perfOnly || baseline || dirtyOpenProbe || proof)) {
+  throw new Error("--detail-presentation requires only the owned hidden shared partition");
+}
+const expectedUiGroups = detailPresentation ? ["detail"] : openingPresentation ? ["opening"] : coreFunction ? ["noop", "shared"] :
+  partition ? uiPartitions[partition] : proof ? uiGroups.filter(name => name === proof) : uiGroups;
 if (proof && !groups.includes(proof)) throw new Error("Unknown FOLIA_CELL_PROOF: " + proof);
+if (ownedHidden && (sourceOnly || perfOnly || baseline || dirtyOpenProbe ||
+    partition !== "shared" && (!ownedGroup || focusedFunction))) {
+  throw new Error("--owned-hidden requires the shared UI partition or one existing owned UI group");
+}
 if (baseline && !perfOnly) throw new Error("--baseline requires --perf");
 if (dirtyOpenProbe && (sourceOnly || perfOnly || proof || process.argv.some(arg => arg.startsWith("--app-root=")))) {
   throw new Error("--probe-dirty-open requires the ordinary local UI suite without other modes");
@@ -30,6 +62,7 @@ if (dirtyOpenProbe && (sourceOnly || perfOnly || proof || process.argv.some(arg 
 const results = [];
 const transcript = [];
 const executed = new Set();
+let corePhase = "setup", coreFailFast = false;
 const selected = name => {
   if (proof && proof !== name) return false;
   if (partition && uiGroups.includes(name) && !expectedUiGroups.includes(name)) return false;
@@ -37,10 +70,13 @@ const selected = name => {
   return true;
 };
 function check(name, ok, detail) {
-  results.push({ name, ok: !!ok, ...(detail === undefined ? {} : { detail }) });
+  results.push({ name, ok: !!ok, ...(detail === undefined ? {} : { detail }),
+    ...(focusedFunction ? { phase: corePhase } : {}) });
   const line = `${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : "  -> " + JSON.stringify(detail)}`;
   transcript.push(line);
   console.log(line);
+  if ((focusedFunction || ownedGroup) && coreFailFast && !ok)
+    throw new Error((focusedFunction ? "Focused assertion failed: " : "Owned group assertion failed: ") + name);
 }
 function summary() {
   const failed = results.filter(result => !result.ok).length;
@@ -76,20 +112,25 @@ const hashes = () => Object.fromEntries(productFiles.map(file => [file, sha(path
 
 // This route uses the shipping helper and shipping parser, not an imitation
 // lexer. It remains usable without Electron; absent vendoring fails explicitly.
-async function sourceTests() {
+async function sourceTests(core = false) {
   dialogGuardSourceTests();
   dialogCleanupSourceTests();
-  const partitioned = Object.values(uiPartitions).flat();
-  check("cell UI partitions cover every declared scenario exactly once",
-    partitioned.length === uiGroups.length && new Set(partitioned).size === uiGroups.length &&
-    uiGroups.every(name => partitioned.includes(name)));
   const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "inline-formatting.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
   const cells = context.window.FoliaTableCells;
+  if (sourceOnly && !proof) {
+    await sharedNativeSetupSourceTests();
+    await columnSizingSourceTests(cells);
+    await rowRemovalSessionSourceTests(cells);
+  }
+  const partitioned = Object.values(uiPartitions).flat();
+  check("cell UI partitions cover every declared scenario exactly once",
+    partitioned.length === uiGroups.length && new Set(partitioned).size === uiGroups.length &&
+    uiGroups.every(name => partitioned.includes(name)));
   check("cell source helper exports the production operations",
-    ["index", "resolveSource", "resolvePreview", "replaceCells", "spliceInput", "serializeCell"].every(key => typeof cells[key] === "function"));
-  if (selected("inline")) {
+    ["index", "resolveSource", "resolvePreview", "replaceCells", "replaceRows", "spliceInput", "serializeCell"].every(key => typeof cells[key] === "function"));
+  if (!core && selected("inline")) {
     const text = data => ({ nodeType: 3, data });
     const element = (tag, children, attributes = []) => ({ nodeType: 1, tagName: tag.toUpperCase(),
       localName: tag, childNodes: children, attributes,
@@ -139,6 +180,15 @@ async function sourceTests() {
   parserContext.exports = parserContext.module.exports;
   vm.runInContext(fs.readFileSync(vendor, "utf8"), parserContext);
   const marked = parserContext.module.exports.marked || parserContext.module.exports;
+  const protect = (source, mask) => source
+    .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
+    .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
+  if (core) {
+    structuralRowSourceTests(cells, marked, protect);
+    sharedTableSourceTests(cells, marked, protect);
+    await rowRemovalSessionSourceTests(cells);
+    return;
+  }
   const shared = context.window.FoliaInlineFormatting;
   const caretSource = shared.attachInlineEditor.toString();
   const nativeInputHandlers = caretSource.slice(caretSource.indexOf("listen(element, 'beforeinput'"),
@@ -218,9 +268,10 @@ async function sourceTests() {
       .every(([source, start, end]) =>
         shared.rawMarkdownPolicy({ source, start, end, marked }).frames("**bold**").length === 0));
   const defaultTokenizer = marked.defaults.tokenizer;
-  const protect = (source, mask) => source
-    .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
-    .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
+  if (sourceOnly && !proof) {
+    structuralRowSourceTests(cells, marked, protect);
+    sharedTableSourceTests(cells, marked, protect);
+  }
   const model = cells.index("\uFEFF" + original, marked, protect);
   const start = lf("\uFEFF" + original.slice(0, secondOffset)).length;
   const tableEnd = start + lf(table).length;
@@ -229,8 +280,8 @@ async function sourceTests() {
     model.tables[0].start === lf("\uFEFF" + prefix).length && model.tables[1].start === start &&
     model.tables[1].rows.length === 4 && model.tables[1].rows[2].cells[1].text === "emoji 😀 and escaped | pipe",
     model.tables.map(item => ({ start: item.start, writable: item.writable, rows: item.rows.length })));
-  function failure(from, to, rowsOnly) {
-    try { cells.resolveSource(model, from, to, rowsOnly); return "accepted"; }
+  function failure(from, to, mode) {
+    try { cells.resolveSource(model, from, to, mode); return "accepted"; }
     catch (error) { return error.message; }
   }
   if (selected("selection")) {
@@ -241,7 +292,7 @@ async function sourceTests() {
       return { start, end: newline < 0 ? text.length : newline };
     };
     for (const [label, start] of [["BOM header", 0], ["trailing-space row", clickedModel.view.text.indexOf("| 😀")]]) {
-      const target = cells.resolveSourceLine(clickedModel, physicalLine(clickedModel.view.text, start));
+      const target = cells.resolveSourceLine(clickedModel, physicalLine(clickedModel.view.text, start), cells.Mode.UPDATE_TABLE);
       check("click resolver accepts a real physical " + label + " without changing source offsets",
         target.table === clickedModel.tables[0] && target.rows.length === 2);
     }
@@ -252,23 +303,23 @@ async function sourceTests() {
       ["multiple lines", { start: 0, end: clickedModel.view.text.lastIndexOf("\n") }],
     ]) {
       let error;
-      try { cells.resolveSourceLine(clickedModel, line); }
+      try { cells.resolveSourceLine(clickedModel, line, cells.Mode.UPDATE_TABLE); }
       catch (caught) { error = caught.message; }
       check("click resolver refuses " + label + " instead of borrowing a table", error === "tableCells.click", error);
     }
     check("collapsed caret inside a real table is not an explicit table selection",
-      failure(start + 3, start + 3, false) === "tableCells.select");
+      failure(start + 3, start + 3, cells.Mode.UPDATE_TABLE) === "tableCells.select");
     check("source resolver refuses none and multiple actual tables",
-      failure(0, 2, false) === "tableCells.select" &&
-      failure(model.tables[0].start, tableEnd, false) === "tableCells.multiple");
-    const target = cells.resolveSource(model, start - 25, lf("\uFEFF" + original).length, false);
+      failure(0, 2, cells.Mode.UPDATE_TABLE) === "tableCells.select" &&
+      failure(model.tables[0].start, tableEnd, cells.Mode.UPDATE_TABLE) === "tableCells.multiple");
+    const target = cells.resolveSource(model, start - 25, lf("\uFEFF" + original).length, cells.Mode.UPDATE_TABLE);
     check("source prose around one duplicate resolves its exact owning table",
       target.table === model.tables[1] && target.rows.length === 4);
     for (const [label, body] of [
       ["ragged", "| A | B |\n| - | - |\n| one |\n"],
     ]) {
       let error;
-      try { const m = cells.index(body, marked, protect); cells.resolveSource(m, 0, body.length, false); }
+      try { const m = cells.index(body, marked, protect); cells.resolveSource(m, 0, body.length, cells.Mode.UPDATE_TABLE); }
       catch (caught) { error = caught.message; }
       check("source resolver rejects unsupported " + label + " table", error === "tableCells.unsupported", error);
     }
@@ -302,19 +353,19 @@ async function sourceTests() {
   if (selected("rows")) {
     const rows = model.tables[1].rows;
     let partial;
-    try { partial = cells.resolveSource(model, rows[0].start + 3, rows[1].start + 4, true); }
+    try { partial = cells.resolveSource(model, rows[0].start + 3, rows[1].start + 4, cells.Mode.UPDATE_ROWS); }
     catch (error) { partial = { error: error.message }; }
     check("partial source boundaries include the intersected header and data rows",
       partial.rows?.length === 2 && partial.rows[0] === rows[0] && partial.rows[1] === rows[1], partial.error);
     const delimiter = start + lf(table).indexOf("| :---");
     check("delimiter-only selection has no editable row",
-      failure(delimiter, delimiter + "| :--- | ---: | :---: |".length, true) === "tableCells.rows");
-    const full = cells.resolveSource(model, rows[2].start + 2, rows[2].end - 2, false);
+      failure(delimiter, delimiter + "| :--- | ---: | :---: |".length, cells.Mode.UPDATE_ROWS) === "tableCells.rows");
+    const full = cells.resolveSource(model, rows[2].start + 2, rows[2].end - 2, cells.Mode.UPDATE_TABLE);
     check("full action from a source row subset loads its entire owning table",
       full.table === model.tables[1] && full.rows.length === 4);
   }
   if (selected("splice")) {
-    const target = cells.resolveSource(model, start, tableEnd, false);
+    const target = cells.resolveSource(model, start, tableEnd, cells.Mode.UPDATE_TABLE);
     const candidate = cells.replaceCells(target, [{ cell: target.rows[2].cells[1], text: richCell }], marked, protect);
     check("source splice preserves all other exact bytes including BOM Unicode mixed endings and EOF",
       candidate === "\uFEFF" + expectedEdited, { expectedHash: crypto.createHash("sha256").update("\uFEFF" + expectedEdited).digest("hex"),
@@ -330,7 +381,7 @@ async function sourceTests() {
           const expected = bom + ["| Header | Value |", "| - | - |", "| same | keep |",
             "| target | <span>new</span> |"].join(ending) + terminal;
           const indexed = cells.index(before, marked, protect);
-          const owner = cells.resolveSource(indexed, 0, lf(before).length, false);
+          const owner = cells.resolveSource(indexed, 0, lf(before).length, cells.Mode.UPDATE_TABLE);
           endingCases.push(cells.replaceCells(owner, [{ cell: owner.rows[2].cells[1],
             text: "<span>new</span>" }], marked, protect) === expected);
         }
@@ -370,12 +421,2532 @@ async function sourceTests() {
   }
 }
 
+function sharedTableSourceTests(cells, marked, protect) {
+  const { Mode } = cells;
+  const errorOf = action => {
+    try { action(); return "accepted"; } catch (error) { return error.message; }
+  };
+  check("one immutable named enum describes all three table operations",
+    Object.isFrozen(Mode) && Object.keys(Mode).join(",") === "INSERT,UPDATE_TABLE,UPDATE_ROWS" &&
+    new Set(Object.values(Mode)).size === 3);
+  const body = "| A | B |\n| :--- | ---: |\n| x | y |";
+  const indexed = cells.index(body, marked, protect), row = indexed.tables[0].rows[1];
+  const whole = cells.resolveSource(indexed, 2, 3, Mode.UPDATE_TABLE);
+  const selectedRows = cells.resolveSource(indexed, row.cells[0].start, row.cells[0].end, Mode.UPDATE_ROWS);
+  check("whole and selected modes retain explicit scope even with the same table identity",
+    whole.mode === Mode.UPDATE_TABLE && selectedRows.mode === Mode.UPDATE_ROWS &&
+    whole.rows.length === 2 && selectedRows.rows.length === 1 && selectedRows.rows[0] === row);
+  for (const mode of [undefined, null, true, false, "edit", "create", "unknown"]) {
+    check("unsupported mode refuses selection and insertion without changing source: " + String(mode),
+      errorOf(() => cells.resolveSource(indexed, 2, 3, mode)) === "tableCells.mode" &&
+      errorOf(() => cells.insertTable(indexed, 0, [["H"]], marked, protect, mode)) === "tableCells.mode" &&
+      indexed.source === body);
+  }
+  check("Insert cannot borrow an existing-row target and Update cannot create a new table",
+    errorOf(() => cells.resolveSource(indexed, 2, 3, Mode.INSERT)) === "tableCells.mode" &&
+    errorOf(() => cells.insertTable(indexed, 0, [["H"]], marked, protect, Mode.UPDATE_TABLE)) === "tableCells.mode");
+  const empty = cells.index("", marked, protect);
+  check("Create allows an editable required header with zero data rows",
+    cells.insertTable(empty, 0, [["Header 1", "Header 2"]], marked, protect, Mode.INSERT).source ===
+      "| Header 1 | Header 2 |\n| --- | --- |");
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const bom of ["", "\uFEFF"]) {
+      for (const terminal of ["", ending]) {
+        const prefix = bom + "# Before 😀" + ending + ending, suffix = "# After β" + terminal;
+        const source = prefix + suffix, model = cells.index(source, marked, protect);
+        const cursor = lf(prefix).length, rows = [["Header", "Code"], ["🙂", "`value`"]];
+        const actual = cells.insertTable(model, cursor, rows, marked, protect, Mode.INSERT);
+        const inserted = ["| Header | Code |", "| --- | --- |", "| 🙂 | `value` |"].join(ending);
+        check("Create preserves exact outside bytes and normalized cursor " + JSON.stringify({ ending, bom, terminal }),
+          actual.source === prefix + inserted + ending + ending + suffix &&
+          actual.cursor === cursor + lf(inserted).length + 2 && model.source === source);
+      }
+    }
+  }
+  for (const [label, source, offset] of [
+    ["mid paragraph", "Before ordinary prose after.", 7],
+    ["code fence", "```text\nbody\n```", 10],
+    ["Mermaid fence", "```mermaid\nflowchart LR\nA-->B\n```", 12],
+    ["before BOM", "\uFEFF# Heading", 0],
+  ]) {
+    const model = cells.index(source, marked, protect);
+    check("Create refuses invalid embedding " + label + " without changing its input",
+      errorOf(() => cells.insertTable(model, offset, [["H"]], marked, protect, Mode.INSERT)) ===
+        "tableCells.insertPosition" && model.source === source);
+  }
+  const makeColumns = (count, at) => {
+    const columns = Array.from({ length: count }, (_, originalIndex) => ({ id: "old-" + originalIndex, originalIndex }));
+    columns.splice(at, 0, { id: "new" });
+    return columns;
+  };
+  const snapshot = (target, at, value = "") => target.rows.map(original => {
+    const values = original.cells.map(cell =>
+      target.model.source.slice(target.model.view.offsets[cell.start], target.model.view.offsets[cell.end]));
+    values.splice(at, 0, value);
+    return { original, cells: values };
+  });
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const terminal of ["", ending]) {
+      for (const at of [0, 1, 2]) {
+        const prefix = "\uFEFF# Before 😀" + ending + ending;
+        const lines = ["| A | B |", "| :--- | ---: |", "| x | y |"];
+        const source = prefix + lines.join(ending) + terminal;
+        const model = cells.index(source, marked, protect);
+        const target = cells.resolveSource(model, lf(prefix).length + 2, lf(prefix).length + 3, Mode.UPDATE_TABLE);
+        const order = snapshot(target, at);
+        const output = cells.replaceStructure(target, [], order, makeColumns(2, at), marked, protect);
+        const parsed = cells.index(output, marked, protect).tables[0];
+        const expected = target.rows.map(original => {
+          const values = original.cells.map(cell => cell.text); values.splice(at, 0, ""); return values;
+        });
+        const alignment = ["left", "right"]; alignment.splice(at, 0, null);
+        check("column insertion preserves empty cells/alignment/BOM/endings " + JSON.stringify({ ending, terminal, at }),
+          JSON.stringify(parsed.rows.map(row => row.cells.map(cell => cell.text))) === JSON.stringify(expected) &&
+          JSON.stringify(parsed.token.align) === JSON.stringify(alignment) && output.startsWith(prefix) &&
+          output.endsWith(terminal || "|") && model.source === source &&
+          (ending === "\n" || !output.replaceAll(ending, "").includes("\n")));
+      }
+    }
+  }
+  for (const [label, source, at, value, expected] of [
+    ["pipe-less empty left", "A | B\n:--- | ---:\nx | y", 0, "", "|  |A | B\n| --- |:--- | ---:\n|  |x | y"],
+    ["pipe-less empty right/backslash", "A | B\n:--- | ---:\nx | y\\", 2, "",
+      "A | B |  |\n:--- | ---: | --- |\nx | y\\ |  |"],
+    ["compact inner gap", "A|B\n---|---\nx|y", 1, "new", "A| new |B\n---| --- |---\nx| new |y"],
+  ]) {
+    const model = cells.index(source, marked, protect), target = cells.resolveSource(model, 0, source.length, Mode.UPDATE_TABLE);
+    const output = cells.replaceStructure(target, [], snapshot(target, at, value), makeColumns(2, at), marked, protect);
+    check("lexical column slots preserve exact original bytes for " + label, output === expected, { expected, output });
+  }
+  const prefix = "Before\n\n", table = "| Name | Value |\n| :--- | ---: |\n| A | keep |\n| B | keep |";
+  const source = prefix + table + "\n\n" + table + "\n\nAfter";
+  const model = cells.index(source, marked, protect), target = cells.resolveSource(model, prefix.length, prefix.length + 3, Mode.UPDATE_TABLE);
+  const [header, a, b] = target.rows;
+  const output = cells.replaceStructure(target, [{ cell: b.cells[1], text: "changed" }], [
+    { original: header, cells: ["Name", "Heading", "Value"] },
+    { id: "added", cells: ["X", "new", "keep"] },
+    { original: b, cells: ["B", "new", "changed"] },
+  ], makeColumns(2, 1), marked, protect, [a]);
+  check("mixed row deletion/insertion/cell/column transaction changes only its repeated table",
+    output === prefix + "| Name | Heading | Value |\n| :--- | --- | ---: |\n| X | new | keep |\n| B | new | changed |" +
+      "\n\n" + table + "\n\nAfter" && model.source === source);
+  const selected = { ...target, mode: Mode.UPDATE_ROWS };
+  check("selected mode cannot gain column permission even when it contains every row",
+    errorOf(() => cells.replaceStructure(selected, [], snapshot(selected, 1), makeColumns(2, 1), marked, protect)) ===
+      "tableCells.columnsScope" && model.source === source);
+  for (const [label, columns] of [
+    ["duplicate id", [{ id: "x", originalIndex: 0 }, { id: "x" }, { id: "b", originalIndex: 1 }]],
+    ["original reorder", [{ id: "b", originalIndex: 1 }, { id: "new" }, { id: "a", originalIndex: 0 }]],
+    ["missing original", [{ id: "a", originalIndex: 0 }, { id: "new" }]],
+  ]) {
+    check("structural column contract refuses " + label + " without source mutation",
+      errorOf(() => cells.replaceStructure(target, [], snapshot(target, 1), columns, marked, protect)) ===
+        "tableCells.invalid" && model.source === source);
+  }
+  const compact = "\uFEFFA|B\r\n---|---\r\n|x||";
+  const compactModel = cells.index(compact, marked, protect);
+  const compactTarget = cells.resolveSource(compactModel, 1, 2, Mode.UPDATE_TABLE);
+  const multiple = [{ id: "left" }, { id: "a", originalIndex: 0 }, { id: "middle-1" },
+    { id: "middle-2" }, { id: "b", originalIndex: 1 }, { id: "right" }];
+  const multipleRows = compactTarget.rows.map(original => ({
+    original, cells: ["", original.cells[0].text, "", "two", original.cells[1].text, ""],
+  }));
+  const multiOutput = cells.replaceStructure(compactTarget, [], multipleRows, multiple, marked, protect);
+  check("multiple edge and same-gap columns preserve order and empty physical slots at BOM/CRLF/EOF",
+    multiOutput === "\uFEFF|  |A|  | two |B |  |\r\n| --- |---| --- | --- |--- | --- |\r\n|  |x|  | two | |  |" &&
+    compactModel.source === compact, multiOutput);
+  const projectionSource = "A | B\n--- | ---\nx | y";
+  const projectionModel = cells.index(projectionSource, marked, protect);
+  const projectionTarget = cells.resolveSource(projectionModel, 0, 1, Mode.UPDATE_TABLE);
+  const projectionRows = snapshot(projectionTarget, 0, "new");
+  projectionRows[0].cells[1] = projectionRows[0].cells[2] = "";
+  check("an unsupported original-column projection refuses explicitly and never adopts its staging source",
+    errorOf(() => cells.replaceStructure(projectionTarget,
+      projectionTarget.rows[0].cells.map(cell => ({ cell, text: "" })), projectionRows,
+      makeColumns(2, 0), marked, protect)) === "tableCells.columnProjection" &&
+      projectionModel.source === projectionSource);
+  const deletionBase = "A|B|C\n:---|:---:|---:\na|b|c";
+  const deletionFixtures = [
+    ["middle original", deletionBase, [1], [0, 2], "A|C\n:---|---:\na|c"],
+    ["first original", deletionBase, [0], [1, 2], "|B|C\n|:---:|---:\n|b|c"],
+    ["last original", deletionBase, [2], [0, 1], "A|B|\n:---|:---:|\na|b|"],
+    ["separated original runs", deletionBase, [0, 2], [1], "|B|\n|:---:|\n|b|"],
+    ["equal-count replacement", deletionBase, [1], [0, "new", 2],
+      "A| N |C\n:---| --- |---:\na| n |c"],
+    ["original gap not retained rank", "A|B|C|D\n---|---|---|---\na|b|c|d",
+      [0, 1], [2, "new", 3], "|C| N |D\n|---| --- |---\n|c| n |d"],
+    ["all originals removed", "A|B\n---|---\na|b", [0, 1], ["new"],
+      "| N |\n| --- |\n| n |"],
+    ["blank surviving first edge", "A||C\n---|---|---\na||c", [0], [1, 2],
+      "||C\n|---|---\n||c"],
+    ["blank surviving last edge", "A||C\n---|---|---\na||c", [2], [0, 1],
+      "A||\n---|---|\na||"],
+    ["odd terminal backslash", "A|B\n---|---\na|q\\", [0], [1],
+      "|B|\n|---|\n|q\\ |"],
+    ["raw padded slots", "| A | B | C |\n| --- | --- | --- |\n| a | b | c |",
+      [0, 2], [1], "| B |\n| --- |\n| b |"],
+    ["even terminal backslashes", "A|B\n---|---\na|q\\\\", [0], [1],
+      "|B|\n|---|\n|q\\\\|"],
+    ["captured indentation", "  A | B|C\n  --- | ---|---\n  a | b|c", [0], [1, 2],
+      "  | B|C\n  | ---|---\n  | b|c"],
+    ["header only", "A|B|C\n:---|:---:|---:", [1], [0, 2], "A|C\n:---|---:"],
+    ["escaped raw pipe ownership", "A|B|C\n---|---|---\na\\\\\\|x|b|c\\|z", [1], [0, 2],
+      "A|C\n---|---\na\\\\\\|x|c\\|z"],
+    ["discarded raw source is not unescaped twice", "A|B|C\n---|---|---\na\\\\\\|x|b|c\\|z", [0], [1, 2],
+      "|B|C\n|---|---\n|b|c\\|z"],
+  ];
+  const deletionSetup = (source, final, tableIndex = 0) => {
+    const model = cells.index(source, marked, protect), table = model.tables[tableIndex];
+    if (!table?.writable) throw new Error("Column deletion fixture is not a writable table: " + tableIndex);
+    const target = { mode: Mode.UPDATE_TABLE, model, table, rows: table?.rows };
+    const columns = final.map((originalIndex, position) => typeof originalIndex === "number"
+      ? { id: "old-" + originalIndex, originalIndex } : { id: "new-" + position });
+    const order = (target.rows || []).map((original, rowIndex) => ({
+      original, cells: final.map(index => typeof index === "number" ?
+        source.slice(model.view.offsets[original.cells[index].start], model.view.offsets[original.cells[index].end]) :
+        rowIndex === 0 ? "N" : "n"),
+    }));
+    return { target, columns, order };
+  };
+  for (const [label, source, deleted, final, expected] of deletionFixtures) {
+    const { target, columns, order } = deletionSetup(source, final);
+    check("column deletion fixture is genuinely writable and fully accounted: " + label,
+      target.table?.writable && target.rows.length >= 1 && columns.length >= 1 &&
+      final.filter(index => typeof index === "number").length + deleted.length ===
+        target.table.rows[0].cells.length);
+    const output = cells.replaceStructure(target, [], order, columns, marked, protect, [], deleted);
+    const result = cells.index(output, marked, protect).tables[0];
+    check("column deletion preserves authored exact bytes: " + label,
+      output === expected && target.model.source === source &&
+      result.writable && result.rows[0].cells.length === columns.length &&
+      JSON.stringify(result.rows.map(row => row.cells.map(cell => cell.text))) ===
+        JSON.stringify(order.map(row => row.cells.map(text => text.trim().replace(/\\\|/g, "|")))),
+      { expected, output });
+  }
+  for (const endings of [["\n", "\n"], ["\r\n", "\r\n"], ["\r", "\r"], ["\r\n", "\r"]]) {
+    for (const bom of ["", "\uFEFF"]) for (const terminal of ["", endings[1]]) {
+      const prefix = bom + "# Before 😀" + endings[0] + endings[0];
+      const sourceTable = "A|B|C" + endings[0] + ":---|:---:|---:" + endings[1] + "a|b|c";
+      const neighbor = "\n\nNearby β\n\n" + sourceTable + terminal;
+      const source = prefix + sourceTable + neighbor;
+      const { target, columns, order } = deletionSetup(source, [0, 2]);
+      check("ending/BOM column-deletion setup has two distinct table identities " +
+        JSON.stringify({ endings, bom, terminal }),
+        target.model.tables.length === 2 && target.table !== target.model.tables[1] &&
+        target.table.writable);
+      const output = cells.replaceStructure(target, [], order, columns, marked, protect, [], [1]);
+      const expected = prefix + "A|C" + endings[0] + ":---|---:" + endings[1] + "a|c" + neighbor;
+      check("column deletion preserves mixed endings BOM EOF and nearby tables " +
+        JSON.stringify({ endings, bom, terminal }),
+        output === expected && target.model.source === source, { expected, output });
+    }
+  }
+  {
+    const old = "| A | B | C |\r\n| :--- | :---: | ---: |\r\n| a | b | c |\r\n| d | e | f |";
+    const source = "\uFEFFBefore\r\n\r\n" + old + "\r\n\r\n" + old + "\r\rAfter";
+    const { target, columns } = deletionSetup(source, [0, "new", 2], 1);
+    const [header, removed, survivor] = target.rows;
+    const order = [{ original: header, cells: ["A", "N", "C"] },
+      { id: "added", cells: ["x", "n", "z"] }, { original: survivor, cells: ["d", "n", "edited"] }];
+    const expected = "\uFEFFBefore\r\n\r\n" + old + "\r\n\r\n" +
+      "| A | N | C |\r\n| :--- | --- | ---: |\r\n| x | n | z |\r\n| d | n | edited |\r\rAfter";
+    check("mixed deleted-column row/edit setup names an original removal and surviving edit separately",
+      removed !== survivor && target.table === target.model.tables[1] && columns.length === 3);
+    const output = cells.replaceStructure(target, [{ cell: survivor.cells[2], text: "edited" }],
+      order, columns, marked, protect, [removed], [1]);
+    check("mixed row deletion addition cell edit and equal-count columns retain exact outside bytes",
+      output === expected && target.model.source === source, { expected, output });
+  }
+  for (const at of [0, 1, 3]) {
+    const { target } = deletionSetup(deletionBase, [0, 1, 2]);
+    const inserted = cells.replaceStructure(target, [], snapshot(target, at, "new"),
+      makeColumns(3, at), marked, protect);
+    const final = Array.from({ length: 4 }, (_, index) => index).filter(index => index !== at);
+    const removal = deletionSetup(inserted, final);
+    const output = cells.replaceStructure(removal.target, [], removal.order, removal.columns,
+      marked, protect, [], [at]);
+    check("removing a previously inserted physical first middle or last column preserves its survivors " + at,
+      removal.target.table.rows[0].cells[at].text === "new" &&
+      JSON.stringify(cells.index(output, marked, protect).tables[0].rows.map(row =>
+        row.cells.map(cell => cell.text))) === JSON.stringify(target.rows.map(row => row.cells.map(cell => cell.text))));
+    const restoredDraft = deletionSetup(deletionBase, [0, 1, 2]);
+    check("discarding a new first middle or last draft column never adopts its insertion staging bytes " + at,
+      inserted !== deletionBase && target.model.source === deletionBase &&
+      cells.replaceStructure(restoredDraft.target, [], restoredDraft.order, restoredDraft.columns,
+        marked, protect, [], []) === deletionBase);
+  }
+  for (const [label, mutate] of [
+    ["undeclared omission", item => { item.deleted = []; }],
+    ["duplicate deletion", item => { item.deleted = [1, 1]; }],
+    ["retained/deleted overlap", item => { item.deleted = [0, 1]; }],
+    ["negative deleted index", item => { item.deleted = [-1, 1]; }],
+    ["fractional deleted index", item => { item.deleted = [1.5]; }],
+    ["unsafe deleted index", item => { item.deleted = [Number.MAX_SAFE_INTEGER + 1]; }],
+    ["out-of-range deleted index", item => { item.deleted = [3]; }],
+    ["duplicate retained index", item => { item.columns[1].originalIndex = 0; }],
+    ["duplicate identity", item => { item.columns[1].id = item.columns[0].id; }],
+    ["removed-cell edit", item => { item.edits = [{ cell: item.target.rows[1].cells[1], text: "forbidden" }]; }],
+    ["zero final columns", item => { item.columns = []; item.order.forEach(row => { row.cells = []; }); item.deleted = [0, 1, 2]; }],
+  ]) {
+    const item = { ...deletionSetup(deletionBase, [0, 2]), deleted: [1], edits: [] };
+    mutate(item);
+    check("explicit original-column accounting refuses " + label + " without source adoption",
+      errorOf(() => cells.replaceStructure(item.target, item.edits, item.order, item.columns,
+        marked, protect, [], item.deleted)) === "tableCells.invalid" && item.target.model.source === deletionBase);
+  }
+  {
+    const item = deletionSetup(deletionBase, [0, 2]);
+    item.target.mode = Mode.UPDATE_ROWS;
+    check("selected-row deletion bookkeeping refuses even before a cell-only no-op",
+      errorOf(() => cells.replaceStructure(item.target, [], item.order, item.columns, marked, protect, [], [1])) ===
+        "tableCells.columnsScope" && item.target.model.source === deletionBase);
+    const originalWidth = deletionSetup(deletionBase, [0, 1, 2]);
+    originalWidth.target.mode = Mode.UPDATE_ROWS;
+    check("selected-row explicit deletion cannot hide behind an unchanged column count",
+      errorOf(() => cells.replaceStructure(originalWidth.target, [], originalWidth.order,
+        originalWidth.columns, marked, protect, [], [1])) === "tableCells.columnsScope");
+    const projected = deletionSetup(projectionSource, ["new", 1]);
+    projected.order[0].cells[1] = "";
+    check("unsupported equal-count deletion replacement preserves the projection refusal",
+      errorOf(() => cells.replaceStructure(projected.target,
+        [{ cell: projected.target.rows[0].cells[1], text: "" }], projected.order, projected.columns,
+        marked, protect, [], [0])) === "tableCells.columnProjection" &&
+        projected.target.model.source === projectionSource);
+  }
+}
+
+function structuralRowSourceTests(cells, marked, protect) {
+  const row = value => `| ${value} | keep |`;
+  const added = (id, value) => ({ id, cells: [value, "keep"] });
+  const own = original => ({ original });
+  const setup = (source, selectedRows = [2, 3], tableIndex = 0) => {
+    const model = cells.index(source, marked, protect), table = model.tables[tableIndex];
+    if (!table?.writable) throw new Error("Structural fixture is not a writable table");
+    return { mode: cells.Mode.UPDATE_ROWS, model, table, rows: selectedRows.map(index => table.rows[index]) };
+  };
+  const apply = (target, order, edits = [], protection = protect, deleted = []) =>
+    cells.replaceRows(target, edits, order, marked, protection, deleted);
+  const rejects = (target, order, edits = [], protection = protect, deleted = []) => {
+    try { apply(target, order, edits, protection, deleted); return false; }
+    catch (error) { return error.message === "tableCells.invalid"; }
+  };
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const bom of ["", "\uFEFF"]) {
+      for (const terminal of ["", ending]) {
+        const prefix = bom + "# Before" + ending + ending;
+        const lines = ["| Name | Value |", "| :--- | ---: |", ...["A", "B", "C", "D"].map(row)];
+        const suffix = terminal;
+        const source = prefix + lines.join(ending) + suffix;
+        const target = setup(source), [b, c] = target.rows;
+        const order = [added("x", "X"), own(b), added("y", "Y"), own(c), added("z", "Z")];
+        const edits = [{ cell: b.cells[0], text: "B edited" }, { cell: c.cells[1], text: "`code`" }];
+        const expected = prefix + [lines[0], lines[1], row("A"), row("X"), row("B edited"),
+          row("Y"), "| C | `code` |", row("Z"), row("D")].join(ending) + suffix;
+        check("structural selected-row replacement preserves exact outside bytes for " +
+          JSON.stringify({ ending, bom: !!bom, terminal: !!terminal }),
+        apply(target, order, edits) === expected && target.model.source === source);
+        const label = JSON.stringify({ ending, bom: !!bom, terminal: !!terminal });
+        check("deletion-only selected rows preserve exact outside bytes for " + label,
+          apply(target, [], [], protect, [b, c]) ===
+            prefix + [lines[0], lines[1], row("A"), row("D")].join(ending) + terminal);
+        check("mixed deletion insertion and surviving-cell edits preserve exact bytes for " + label,
+          apply(target, [added("x", "X"), own(c), added("y", "Y")],
+            [{ cell: c.cells[1], text: "`edited` 😀" }], protect, [b]) ===
+            prefix + [lines[0], lines[1], row("A"), row("X"), "| C | `edited` 😀 |",
+              row("Y"), row("D")].join(ending) + terminal);
+        const all = setup(source, [0, 1, 2, 3, 4]);
+        check("removing all body rows keeps the header delimiter and prior ending for " + label,
+          apply(all, [own(all.rows[0])], [], protect, all.rows.slice(1)) ===
+            prefix + lines[0] + ending + lines[1] + ending);
+        const tail = setup(source, [4]);
+        check("replacing a deleted tail preserves terminal-ending presence for " + label,
+          apply(tail, [added("x", "X"), added("y", "Y")], [], protect, tail.rows) ===
+            prefix + [...lines.slice(0, -1), row("X"), row("Y")].join(ending) + terminal);
+      }
+    }
+  }
+  const lines = ["| Name | Value |", "| --- | --- |", ...["A", "B", "C", "D"].map(row)];
+  const base = lines.join("\n"), target = setup(base), [b, c] = target.rows;
+  for (const [label, order, expected] of [
+    ["before", [added("x", "X"), own(b), own(c)], [row("X"), row("B"), row("C")]],
+    ["middle", [own(b), added("x", "X"), own(c)], [row("B"), row("X"), row("C")]],
+    ["after", [own(b), own(c), added("x", "X")], [row("B"), row("C"), row("X")]],
+    ["same gap visible order", [own(b), added("b", "second"), added("a", "first"),
+      added("c", "third"), own(c)], [row("B"), row("second"), row("first"), row("third"), row("C")]],
+  ]) {
+    check("structural insertion at " + label + " keeps selected original order and outside rows",
+      apply(target, order) === [lines[0], lines[1], row("A"), ...expected, row("D")].join("\n"));
+  }
+  const partial = cells.resolveSource(target.model, b.cells[0].start + 1, c.cells[1].end - 1, cells.Mode.UPDATE_ROWS);
+  check("partial highlighted cell boundaries still authorize complete original rows",
+    partial.rows[0] === b && partial.rows[1] === c &&
+    apply(partial, [added("x", "X"), own(b), own(c)]) ===
+      [lines[0], lines[1], row("A"), row("X"), row("B"), row("C"), row("D")].join("\n"));
+  const full = setup(base, [0, 1, 2, 3, 4]), header = full.rows[0];
+  check("whole-table insertion below its editable header leaves the delimiter in place",
+    apply(full, [own(header), added("x", "X"), ...full.rows.slice(1).map(own)]) ===
+      [lines[0], lines[1], row("X"), ...lines.slice(2)].join("\n"));
+  check("whole-table structural Update combines header and body edits with an inserted row",
+    apply(full, [own(header), ...full.rows.slice(1).map(own), added("tail", "tail 😀")],
+      [{ cell: header.cells[0], text: "Renamed" }, { cell: full.rows[2].cells[0], text: "edited" }]) ===
+      ["| Renamed | Value |", lines[1], row("A"), row("edited"), row("C"), row("D"), row("tail 😀")].join("\n"));
+  const headerOnly = setup(base, [0]);
+  check("header-only selection inserts before the unselected first body row",
+    apply(headerOnly, [own(headerOnly.rows[0]), added("x", "X")]) ===
+      [lines[0], lines[1], row("X"), ...lines.slice(2)].join("\n"));
+  check("an insertion cannot precede an editable header",
+    rejects(headerOnly, [added("x", "X"), own(headerOnly.rows[0])]));
+  for (const ending of ["\n", "\r\n", "\r"]) {
+    for (const terminal of ["", ending]) {
+      const source = "| A | B |" + ending + "| :--- | ---: |   " + terminal;
+      const empty = setup(source, [0]);
+      check("header with no body inserts after physical delimiter whitespace for " + JSON.stringify({ ending, terminal }),
+        apply(empty, [own(empty.rows[0]), added("x", "X")]) ===
+          "| A | B |" + ending + "| :--- | ---: |   " + ending + row("X") + terminal);
+    }
+  }
+  const trailing = "| A | B |\r\n| --- | --- |\r\n| old | value | \t\r\n\r\nAfter prose";
+  const finalRow = setup(trailing, [1]);
+  check("insertion after the final row retains its trailing whitespace terminator and prose",
+    apply(finalRow, [own(finalRow.rows[0]), added("x", "X")]) ===
+      "| A | B |\r\n| --- | --- |\r\n| old | value | \t\r\n| X | keep |\r\n\r\nAfter prose");
+  const mixed = "\uFEFF| A | B |\r\n| --- | --- |\r| A | keep |\n| B | keep |\r\n| C | keep |\n";
+  const mixedTarget = setup(mixed, [2]);
+  check("mixed line endings use the adjacent gap ending without changing any existing bytes",
+    apply(mixedTarget, [added("x", "X"), own(mixedTarget.rows[0]), added("y", "Y")]) ===
+      "\uFEFF| A | B |\r\n| --- | --- |\r| A | keep |\n| X | keep |\n| B | keep |\r\n| Y | keep |\r\n| C | keep |\n");
+  const duplicateSource = base + "\n\nMiddle 😀\r\n\r\n" + base + "\n\nAfter";
+  const second = setup(duplicateSource, [2, 3], 1);
+  check("a second identical table keeps the first table and all surrounding prose exact",
+    apply(second, [own(second.rows[0]), added("x", "X"), own(second.rows[1])]) ===
+      base + "\n\nMiddle 😀\r\n\r\n" +
+      [lines[0], lines[1], row("A"), row("B"), row("X"), row("C"), row("D")].join("\n") + "\n\nAfter");
+  const repeated = setup([lines[0], lines[1], row("same"), row("same"), row("same")].join("\n"), [2]);
+  check("repeated identical rows keep their source identity instead of matching text",
+    apply(repeated, [added("x", "X"), own(repeated.rows[0])]) ===
+      [lines[0], lines[1], row("same"), row("X"), row("same"), row("same")].join("\n"));
+  for (const source of ["A | B\n--- | ---\nold | value", "| A | B |\n| --- | --- |\n| old | |"]) {
+    const item = setup(source, [1]), original = item.rows[0];
+    const empty = original.cells[1].text === "";
+    check("combined final-cell editing and row insertion keeps newlines outside the old row " + JSON.stringify({ empty }),
+      apply(item, [own(original), added("x", "X")], [{ cell: original.cells[1], text: "changed" }]) ===
+        (empty ? "| A | B |\n| --- | --- |\n| old | changed|" :
+          "A | B\n--- | ---\nold | changed") + "\n| X | keep |");
+  }
+  const one = setup("| A |\n| --- |\n| old |", [1]);
+  check("a blank one-column inserted row is a real row and needs no changed original cell",
+    apply(one, [own(one.rows[0]), { id: "blank", cells: [""] }]) === "| A |\n| --- |\n| old |\n|  |");
+  check("blank multi-column inserted rows remain rectangular",
+    apply(target, [own(b), { id: "blank", cells: ["", ""] }, own(c)]) ===
+      [lines[0], lines[1], row("A"), row("B"), "|  |  |", row("C"), row("D")].join("\n"));
+  const richSource = "[r]: https://example.invalid/a\n\n| A | B |\n| --- | --- |\n| old | keep |";
+  const rich = setup(richSource, [1]);
+  check("new rows preserve serialized rich formatting code escaped pipes and reference context",
+    apply(rich, [own(rich.rows[0]), { id: "rich", cells: ["**bold** and `a\\|b`", "[ref][r] 😀"] }]) ===
+      richSource + "\n| **bold** and `a\\|b` | [ref][r] 😀 |");
+  const legacy = { ...target, rows: [target.table.rows[1], target.table.rows[3]] };
+  const legacyEdits = [{ cell: legacy.rows[0].cells[0], text: "edited" }];
+  check("no additions dispatch to the old cell-only path before structural contiguity checks",
+    apply(legacy, legacy.rows.map(own), legacyEdits) === cells.replaceCells(legacy, legacyEdits, marked, protect) &&
+    apply(target, target.rows.map(own)) === base);
+  const badCases = [
+    ["missing original", target, [own(b), added("x", "X")]],
+    ["duplicate original", target, [own(b), own(b), added("x", "X"), own(c)]],
+    ["reordered originals", target, [own(c), added("x", "X"), own(b)]],
+    ["foreign original", target, [own(target.table.rows[1]), added("x", "X"), own(c)]],
+    ["readonly context header anchor", target, [own(target.table.rows[0]), own(b), added("x", "X"), own(c)]],
+    ["noncontiguous scope", legacy, [own(legacy.rows[0]), added("x", "X"), own(legacy.rows[1])]],
+    ["wrong table owner", { ...target, table: { ...target.table } }, [own(b), added("x", "X"), own(c)]],
+    ["readonly table", { ...target, model: { ...target.model, tables: [] } }, [own(b), added("x", "X"), own(c)]],
+    ["duplicate new identity", target, [own(b), added("x", "X"), added("x", "Y"), own(c)]],
+    ["wrong columns", target, [own(b), { id: "x", cells: ["one"] }, own(c)]],
+    ["literal newline", target, [own(b), added("x", "two\nrows"), own(c)]],
+    ["literal CR", target, [own(b), added("x", "two\rrows"), own(c)]],
+    ["unescaped pipe", target, [own(b), added("x", "a|b"), own(c)]],
+    ["even escaped pipe", target, [own(b), added("x", "a\\\\|b"), own(c)]],
+    ["missing new identity", target, [own(b), { cells: ["x", "y"] }, own(c)]],
+    ["out-of-scope edit", target, [own(b), added("x", "X"), own(c)],
+      [{ cell: target.table.rows[1].cells[0], text: "wrong" }]],
+    ["duplicate edited cell", target, [own(b), added("x", "X"), own(c)],
+      [{ cell: b.cells[0], text: "x" }, { cell: b.cells[0], text: "y" }]],
+  ];
+  for (const [name, scope, order, edits] of badCases) {
+    check("structural transaction rejects " + name + " without changing its snapshot",
+      rejects(scope, order, edits) && target.model.source === base);
+  }
+  check("candidate reparse verifies exact cell content rather than only row and column counts",
+    rejects(target, [own(b), added("probe", "PROBE"), own(c)], [],
+      (source, mask) => protect(source.replace("PROBE", "OTHER"), mask)));
+  for (const [label, order, deleted, edits = []] of [
+    ["undeclared omission", [own(c)], []],
+    ["undeclared empty order", [], []],
+    ["retained and deleted overlap", [own(b), own(c)], [b]],
+    ["duplicate deletion", [own(c)], [b, b]],
+    ["foreign deletion", [own(b), own(c)], [target.table.rows[1]]],
+    ["true header deletion", [own(b), own(c)], [target.table.rows[0]]],
+    ["edit on deleted original", [own(c)], [b], [{ cell: b.cells[0], text: "edited" }]],
+    ["reordered originals without additions", [own(c), own(b)], []],
+  ]) {
+    check("removal authority rejects " + label + " without mutating its model",
+      rejects(target, order, edits, protect, deleted) && target.model.source === base);
+  }
+  check("header deletion is rejected even when the header belongs to the target",
+    rejects(full, full.rows.slice(1).map(own), [], protect, [header]));
+  check("all-body-only selection can delete every original with an empty final order",
+    apply({ ...full, rows: full.rows.slice(1) }, [], [], protect, full.rows.slice(1)) ===
+      lines[0] + "\n" + lines[1] + "\n");
+  check("deletion with an inserted replacement still rejects a changed shipping reparse",
+    rejects(target, [added("probe", "PROBE"), own(c)], [],
+      (source, mask) => protect(source.replace("PROBE", "OTHER"), mask), [b]));
+  const endingDeletion = "\uFEFF| A | B |\r\n| :--- | ---: |\r| same | keep | \t\n" +
+    "| same | keep | \t\r\n| end | keep | \t\r\n\r\nAfter 😀";
+  const endingTarget = setup(endingDeletion, [2]);
+  check("deleting an identical mixed-ending row includes physical whitespace and only its terminator",
+    apply(endingTarget, [], [], protect, endingTarget.rows) ===
+      endingDeletion.replace("| same | keep | \t\r\n", ""));
+  for (const [source, expected] of [
+    ["A | B\n--- | ---\nold | value\nremove | value", "A | B\n--- | ---\nold | changed\n| X | keep |"],
+    ["| A | B |\n| --- | --- |\n| old | |\n| remove | value |",
+      "| A | B |\n| --- | --- |\n| old | changed|\n| X | keep |"],
+  ]) {
+    const item = setup(source, [1, 2]);
+    check("final-cell editing including zero-width spans stays before a deleted tail's replacement",
+      apply(item, [own(item.rows[0]), added("x", "X")],
+        [{ cell: item.rows[0].cells[1], text: "changed" }], protect, [item.rows[1]]) === expected);
+  }
+  const oneRemoval = setup("| A |\n| --- |\n| old |", [1]);
+  check("deleting a sole one-column body row leaves a valid header-only table",
+    apply(oneRemoval, [], [], protect, oneRemoval.rows) === "| A |\n| --- |\n");
+  check("deleting from the second identical table preserves every other table and prose byte",
+    apply(second, [own(second.rows[1])], [], protect, [second.rows[0]]) ===
+      base + "\n\nMiddle 😀\r\n\r\n" +
+      [lines[0], lines[1], row("A"), row("C"), row("D")].join("\n") + "\n\nAfter");
+  const ragged = cells.index("A | B | C\n--- | --- | ---\na | b |", marked, protect);
+  check("padded pipe-less empty trailing cells retain their existing unsupported-shape boundary",
+    ragged.tables.length === 1 && !ragged.tables[0].writable);
+}
+
+async function rowRemovalSessionSourceTests(cells) {
+  const renderer = fs.readFileSync(path.join(ROOT, "src", "renderer.js"), "utf8");
+  const start = renderer.indexOf("function refreshTableCellRows(session)");
+  const update = renderer.indexOf("async function updateTableCells()");
+  const translationContext = vm.createContext({});
+  vm.runInContext(renderer.slice(renderer.indexOf("const UI_STRINGS = {"),
+    renderer.indexOf("\nconst TIMING = {")), translationContext);
+  let focused, dialog, answer, current = true, composing = false, writable = true, exact = "snapshot", authority = 0;
+  let sourceReads = 0, translations = [], dialogRequests = 0, documentWrites = 0, recapturedConsent = 0;
+  const errors = [];
+  const control = () => ({ disabled: false, attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; }, focus() { focused = this; } });
+  const above = control(), below = control(), remove = control(), updateButton = control();
+  const left = control(), right = control(), deleteColumn = control();
+  const classList = () => {
+    const values = new Set();
+    return { add: value => values.add(value), remove: value => values.delete(value), contains: value => values.has(value) };
+  };
+  const scope = {}, grid = { inert: false }, modal = { open: true };
+  const sourceRows = Array.from({ length: 5 }, () => ({
+    cells: [{ start: 0, end: 4, text: "snap" }, { start: 4, end: 8, text: "shot" }],
+  }));
+  const makeRow = (original, editable = true, columnCount = 2) => {
+    const row = { id: original ? "row-" + sourceRows.indexOf(original) : "new-row",
+      original, editable, header: original === sourceRows[0],
+      label: {}, element: { children: [], remove() { this.removed = true; },
+        insertBefore(child, next) {
+          if (child.parentElement) child.parentElement.children =
+            child.parentElement.children.filter(item => item !== child);
+          child.parentElement = this;
+          const at = this.children.indexOf(next);
+          this.children.splice(at < 0 ? this.children.length : at, 0, child);
+        } }, cells: [] };
+    row.label.parentElement = row.element; row.element.children.push(row.label);
+    row.cells = Array.from({ length: columnCount }, (_, column) => {
+      const input = { innerHTML: "initial", textContent: column === 0 ? "Name" : "Value",
+        setAttribute() {}, removeAttribute() {},
+        focus() { focused = this; }, scrollIntoView() {} };
+      const container = { classList: classList(), parentElement: row.element,
+        remove() { this.parentElement.children = this.parentElement.children.filter(child => child !== this);
+          this.parentElement = null; } };
+      row.element.children.push(container);
+      return { input, cell: original?.cells[column], initial: input.innerHTML, rowState: row, column,
+        container, provenance: { source: original?.cells[column]?.text || "" },
+        engine: { readSource() { sourceReads++; return "initial"; },
+          dispose() { this.disposed = true; } } };
+    });
+    return row;
+  };
+  const context = vm.createContext({
+    AbortController, console: { error() {} },
+    document: { getElementById: () => scope },
+    tableCellGrid: grid, tableCellDialog: modal, tableCellUpdate: updateButton,
+    tableCellInsertAbove: above, tableCellInsertBelow: below, tableCellRemoveAdded: remove,
+    tableCellInsertLeft: left, tableCellInsertRight: right, tableCellDeleteColumn: deleteColumn, tableCellCounts: {},
+    tableCellColumnScope: {}, TableCellMode: cells.Mode, FoliaTableCells: cells,
+    tableCellError: { textContent: "" },
+    i18n: (key, params) => {
+      translations.push({ key, params });
+      return /^tableCells\.(?:columnNumber|columnHeader|deleteColumn)/.test(key)
+        ? translationContext.i18n(key, params) : key;
+    },
+    showTableCellError: error => errors.push(error.message),
+    historyPushExact() { documentWrites++; }, setDocumentDirtyFromContent() { documentWrites++; },
+    retainCurrentDocumentEditor() { documentWrites++; },
+    mayMutateRendererDocument: () => { authority++; return writable; },
+    createTableCellRow: session => {
+      const row = makeRow(null);
+      for (const cell of row.cells) cell.columnState = session.columnOrder[cell.column];
+      return row;
+    },
+    attachTableCellInput: cell => cell.engine,
+    window: {
+      CustomTabs: { snapshotExactEditorContent: () => exact,
+        captureDialogContext() { recapturedConsent++; throw new Error("Confirmation recaptured consent"); },
+        adoptExactEditorContent() { documentWrites++; return true; } },
+      MarkalooDialogs: { show(spec) {
+        dialogRequests++;
+        dialog = spec;
+        return new Promise(resolve => {
+          answer = resolve;
+          spec.signal.addEventListener("abort", () => resolve({ choice: spec.cancelId, cause: "aborted" }), { once: true });
+        });
+      } },
+    },
+  });
+  const labelStart = renderer.indexOf("function labelTableCellAction(button, key)");
+  if (labelStart >= 0) vm.runInContext(renderer.slice(labelStart, renderer.indexOf("\n}", labelStart) + 2), context);
+  vm.runInContext(renderer.slice(start, renderer.indexOf("\nfunction openTableCellEditor(", start)) +
+    "\n" + renderer.slice(update, renderer.indexOf("\nctxEditTable?.addEventListener", update)), context);
+  const fixture = () => {
+    current = writable = true; composing = false; exact = "snapshot"; errors.length = 0; dialog = null;
+    translations = []; sourceReads = documentWrites = recapturedConsent = 0;
+    modal.open = true; grid.inert = false;
+    const header = makeRow(sourceRows[0], false), b = makeRow(sourceRows[2]), c = makeRow(sourceRows[3]);
+    const session = {
+      target: { model: { source: "snapshot" }, table: { rows: sourceRows }, rows: sourceRows.slice(2, 4) },
+      mode: cells.Mode.UPDATE_ROWS, ready: true,
+      get columns() { return this.columnOrder.length; },
+      columnOrder: [{ id: "a", originalIndex: 0 }, { id: "b", originalIndex: 1 }],
+      selection: { isCurrent: () => current }, exact, rows: [header, b, c], cells: [],
+      deletedRows: new Set(), deletedColumns: new Set(), body: { insertBefore() {} },
+      sizing: { cancel() {}, refresh() {}, dispose() {}, isComposing: () => composing },
+      activeCell: b.cells[1],
+    };
+    session.model = session.target.model;
+    session.model.view = { text: exact, offsets: Array.from({ length: exact.length + 1 }, (_, index) => index) };
+    session.model.tables = [session.target.table];
+    session.nextRowId = session.nextColumnId = 1;
+    session.target.mode = session.mode;
+    grid.contains = input => session.rows.some(row => row.cells.some(cell => cell.input === input));
+    for (const row of session.rows) for (const cell of row.cells) cell.columnState = session.columnOrder[cell.column];
+    context.tableCellSession = session;
+    context.refreshTableCellRows(session);
+    context.selectTableCell(session, b.cells[1]);
+    return { session, header, b, c };
+  };
+  let { session, header, b, c } = fixture();
+  let pending = context.changeTableCellRows("remove");
+  const previousAuthority = authority;
+  await context.updateTableCells();
+  context.changeTableCellRows("below");
+  check("a selected body row is not mistaken for its read-only context header",
+    dialog.buttons.length === 2 && dialog.defaultId === "cancel" && dialog.cancelId === "cancel" &&
+    dialog.buttons.some(button => button.id === "remove") && dialog.isCurrent());
+  check("pending removal makes the grid inert and refuses duplicate row actions and Update",
+    grid.inert && [above, below, remove, updateButton].every(button => button.disabled) &&
+    session.rows.length === 3 && authority === previousAuthority);
+  answer({ choice: "cancel", cause: "choice" }); await pending;
+  check("Cancel preserves original rows cell engines and source authority",
+    !grid.inert && !updateButton.disabled && session.rows[1] === b && session.rows[2] === c &&
+    !b.cells[0].engine.disposed && !session.deletedRows.size && focused === b.cells[1].input);
+  context.selectTableCell(session, header.cells[0]);
+  pending = context.changeTableCellRows("remove");
+  check("the true read-only header stays actionable for an informational refusal",
+    dialog.buttons.length === 1 && dialog.buttons[0].id === "close" &&
+    dialog.message === "tableCells.headerMessage");
+  answer({ choice: "close", cause: "choice" }); await pending;
+  check("header refusal never removes the header or changes deletion authority",
+    session.rows[0] === header && !header.element.removed && !session.deletedRows.size);
+  context.selectTableCell(session, b.cells[1]);
+  pending = context.changeTableCellRows("remove");
+  answer({ choice: "remove", cause: "choice" }); await pending;
+  check("confirmed original removal retains surviving cell identity and targets the next row in the same column",
+    session.rows[1] === c && session.deletedRows.has(sourceRows[2]) &&
+    b.cells.every(cell => cell.engine.disposed) && c.cells.every(cell => !cell.engine.disposed) &&
+    focused === c.cells[1].input && session.activeCell === c.cells[1]);
+  context.changeTableCellRows("below");
+  check("fallback focus after removal does not grant a new insertion selection",
+    !session.selectedCell && session.rows.length === 2 && errors.at(-1) === "tableCells.selectCell");
+  errors.length = 0;
+  context.selectTableCell(session, c.cells[1]);
+  pending = context.changeTableCellRows("remove");
+  answer({ choice: "remove", cause: "choice" }); await pending;
+  check("deleting the last selected body row keeps the context header and a usable scope insertion gap",
+    session.rows.length === 1 && session.rows[0] === header && !session.cells.length &&
+    !session.activeCell && !session.selectedCell && !above.disabled && !below.disabled && remove.disabled &&
+    focused === below && scope.textContent.includes("tableCells.emptyScope"));
+  context.changeTableCellRows("below");
+  check("empty selected scope refuses unanchored recovery without changing its captured gap",
+    session.rows.length === 1 && errors.at(-1) === "tableCells.selectCell");
+  context.selectTableCell(session, header.cells[1]);
+  context.changeTableCellRows("below");
+  const inserted = session.rows[1];
+  check("inserting into an emptied selection stays in that selected scope and retains its column",
+    inserted.editable && !inserted.original && session.deletedRows.size === 2 &&
+    focused === inserted.cells[1].input && session.activeCell === inserted.cells[1]);
+  pending = context.changeTableCellRows("remove");
+  check("even an empty added row requires the ordinary safe-default confirmation",
+    dialog.buttons.length === 2 && dialog.defaultId === "cancel" && session.rows.includes(inserted));
+  answer({ choice: "remove", cause: "escape" }); await pending;
+  check("a non-choice dismissal can never authorize removal", session.rows.includes(inserted));
+  pending = context.changeTableCellRows("remove");
+  answer({ choice: "remove", cause: "choice" }); await pending;
+  check("confirmed added-row removal does not invent an original deletion",
+    !session.rows.includes(inserted) && session.deletedRows.size === 2);
+  for (const [label, invalidate] of [
+    ["ownership change", () => { current = false; }],
+    ["exact source change", () => { exact = "changed"; }],
+    ["draft content change", () => { b.cells[0].input.innerHTML = "changed"; }],
+    ["row order change", () => { session.rows.reverse(); }],
+    ["document mutation refusal", () => { writable = false; }],
+    ["composition during confirmation", () => { composing = true; }],
+  ]) {
+    ({ session, header, b, c } = fixture());
+    pending = context.changeTableCellRows("remove");
+    invalidate();
+    answer({ choice: "remove", cause: "choice" }); await pending;
+    check("confirmation revalidation rejects " + label + " without deletion",
+      session.rows.includes(b) && !session.deletedRows.size && !b.element.removed &&
+      errors.length === 1 && !grid.inert);
+  }
+  ({ session, header, b, c } = fixture());
+  pending = context.changeTableCellRows("remove");
+  const old = session, oldDialog = dialog;
+  context.tableCellSession = null; old.confirmation.controller.abort();
+  ({ session } = fixture()); grid.inert = true;
+  await pending;
+  check("an aborted old confirmation cannot touch a replacement session or its controls",
+    !oldDialog.isCurrent() && grid.inert && !session.deletedRows.size && errors.length === 0);
+  check("closing the shipping editor aborts its pending confirmation before clearing the grid",
+    /session\?\.confirmation\?\.controller\.abort\(\)/.test(renderer.slice(
+      renderer.indexOf("function closeTableCellEditor()"), renderer.indexOf("function showTableCellError("))));
+  const columnFixture = (mode = cells.Mode.UPDATE_TABLE, count = 3) => {
+    const item = fixture(), session = item.session;
+    const originals = Array.from({ length: 3 }, () => ({
+      cells: Array.from({ length: count }, (_, index) => ({
+        start: Math.floor(index * exact.length / count), end: Math.floor((index + 1) * exact.length / count),
+        text: exact.slice(Math.floor(index * exact.length / count), Math.floor((index + 1) * exact.length / count)),
+      })),
+    }));
+    session.mode = mode;
+    session.target = mode === cells.Mode.INSERT ? null :
+      { mode, model: { source: exact }, table: { rows: originals }, rows: originals.slice() };
+    session.model = { source: exact,
+      view: { text: exact, offsets: Array.from({ length: exact.length + 1 }, (_, index) => index) },
+      tables: session.target ? [session.target.table] : [] };
+    if (session.target) session.target.model = session.model;
+    session.columnOrder = Array.from({ length: count }, (_, originalIndex) =>
+      mode === cells.Mode.INSERT ? { id: "new-" + originalIndex } :
+        { id: "original-" + originalIndex, originalIndex });
+    session.rows = originals.map((original, index) => {
+      const row = makeRow(mode === cells.Mode.INSERT ? null : original, true, count);
+      row.id = "column-row-" + index; row.header = index === 0;
+      for (const cell of row.cells) cell.columnState = session.columnOrder[cell.column];
+      return row;
+    });
+    session.sizing.removeColumn = (index, transaction) => {
+      if (!Number.isSafeInteger(index) || index < 0 || index >= session.columns ||
+          typeof transaction.apply !== "function" || typeof transaction.rollback !== "function")
+        throw new Error("Bad removal transaction");
+      transaction.apply();
+    };
+    context.refreshTableCellRows(session);
+    context.selectTableCell(session, session.rows[1].cells[Math.min(1, count - 1)]);
+    return { session, selected: session.selectedCell, rows: session.rows.slice(),
+      columns: session.columnOrder.slice(), header: session.rows[0] };
+  };
+  const draftWitness = session => ({
+    exact, authority, sourceReads, documentWrites, recapturedConsent,
+    deletedRows: [...session.deletedRows], deletedColumns: [...session.deletedColumns],
+    columns: session.columnOrder.slice(), rows: session.rows.slice(),
+    nodes: session.rows.map(row => row.cells.map(cell => ({
+      cell, input: cell.input, container: cell.container, engine: cell.engine,
+      html: cell.input.innerHTML, disposed: cell.engine?.disposed,
+    }))),
+  });
+  const unchanged = (session, before) => exact === before.exact && authority === before.authority &&
+    sourceReads === before.sourceReads && documentWrites === before.documentWrites &&
+    recapturedConsent === before.recapturedConsent &&
+    JSON.stringify([...session.deletedRows]) === JSON.stringify(before.deletedRows) &&
+    JSON.stringify([...session.deletedColumns]) === JSON.stringify(before.deletedColumns) &&
+    session.columnOrder.length === before.columns.length &&
+    session.columnOrder.every((column, index) => column === before.columns[index]) &&
+    session.rows.length === before.rows.length && session.rows.every((row, index) => row === before.rows[index] &&
+      row.cells.length === before.nodes[index].length && row.cells.every((cell, column) => {
+        const old = before.nodes[index][column];
+        return cell === old.cell && cell.input === old.input && cell.container === old.container &&
+          cell.engine === old.engine && cell.input.innerHTML === old.html && cell.engine?.disposed === old.disposed;
+      }));
+  for (const label of [" Current header ", "", "Duplicate", "<img src=x onerror=bad()> $&"]) {
+    const item = columnFixture();
+    item.header.cells[1].input.textContent = label;
+    item.header.cells[1].input.innerHTML = "<strong>different markup label</strong>";
+    item.header.cells[0].input.textContent = "Duplicate";
+    const before = draftWitness(item.session);
+    pending = context.changeTableCellColumns("remove");
+    const messageCalls = translations.filter(call => call.params && Object.hasOwn(call.params, "column"));
+    const identifying = messageCalls.find(call => Object.values(call.params).includes(2));
+    check("column confirmation uses current one-based position and plain draft header " + JSON.stringify(label),
+      dialog && identifying && (label.trim() === "" ||
+        messageCalls.some(call => Object.values(call.params).includes(label.trim()))) &&
+      dialog.message === "Delete Column 2" + (label.trim() ? ": " + label.trim() : "") +
+        "? The document changes only when you choose Update the document." &&
+      !messageCalls.some(call => Object.values(call.params).includes("<strong>different markup label</strong>")) &&
+      dialog.defaultId === "cancel" && dialog.cancelId === "cancel" &&
+      dialog.buttons.some(button => button.id === "remove" && button.style === "danger") &&
+      dialog.isCurrent() && sourceReads === 0, { messageCalls });
+    const lockedAuthority = authority, requests = dialogRequests;
+    await context.updateTableCells();
+    context.changeTableCellColumns("remove"); context.changeTableCellColumns("left");
+    context.changeTableCellRows("below");
+    check("pending column confirmation locks all six commands and Update without duplicate requests",
+      grid.inert && [above, below, remove, left, right, deleteColumn, updateButton].every(button => button.disabled) &&
+      dialogRequests === requests && authority === lockedAuthority && sourceReads === 0);
+    answer({ choice: "cancel", cause: "choice" }); await pending;
+    before.authority = authority;
+    check("column Cancel restores usable controls without topology disposal serialization or document mutation",
+      unchanged(item.session, before) && !grid.inert && !updateButton.disabled &&
+      focused === item.selected.input && !item.session.confirmation);
+  }
+  for (const response of [{ choice: "remove", cause: "escape" }, { choice: "remove", cause: "aborted" },
+    { choice: "close", cause: "choice" }, { choice: "cancel", cause: "choice" }]) {
+    const item = columnFixture();
+    pending = context.changeTableCellColumns("remove");
+    const before = draftWitness(item.session);
+    answer(response); await pending;
+    before.authority = authority;
+    check("only affirmative column removal choice can mutate a draft " + JSON.stringify(response),
+      unchanged(item.session, before) && !grid.inert && !errors.length);
+  }
+  for (const [label, prepare] of [
+    ["no deliberate selection", item => context.selectTableCell(item.session, null)],
+    ["selected rows", item => { item.session.mode = item.session.target.mode = cells.Mode.UPDATE_ROWS; }],
+    ["minimum one", () => {}],
+    ["composition before request", () => { composing = true; }],
+    ["not ready", item => { item.session.ready = false; }],
+    ["submitting", item => { item.session.submitting = true; }],
+    ["applied", item => { item.session.applied = true; }],
+  ]) {
+    const item = columnFixture(cells.Mode.UPDATE_TABLE, label === "minimum one" ? 1 : 3);
+    prepare(item);
+    context.refreshTableCellRowActions();
+    const before = draftWitness(item.session), requests = dialogRequests;
+    await context.changeTableCellColumns("remove");
+    before.authority = authority;
+    check("column removal independently refuses " + label + " with no dialog or draft/source mutation",
+      dialogRequests === requests && unchanged(item.session, before) && !grid.inert &&
+      (label === "composition before request" || deleteColumn.disabled));
+  }
+  for (const [label, invalidate] of [
+    ["owner", () => { current = false; }],
+    ["exact source", () => { exact = "changed source"; }],
+    ["captured exact reference", item => { item.session.exact = "changed capture"; }],
+    ["mode", item => { item.session.mode = item.session.target.mode = cells.Mode.UPDATE_ROWS; }],
+    ["target reference", item => { item.session.target = { ...item.session.target }; }],
+    ["model reference", item => { item.session.model = { ...item.session.model }; }],
+    ["model raw source", item => { item.session.model.source = "changed raw source"; }],
+    ["model view reference", item => { item.session.model.view = { ...item.session.model.view }; }],
+    ["target model reference", item => { item.session.target.model = { ...item.session.target.model }; }],
+    ["target table reference", item => { item.session.target.table = { ...item.session.target.table }; }],
+    ["target rows reference", item => { item.session.target.rows = item.session.target.rows.slice(); }],
+    ["target row membership", item => { item.session.target.rows[1] = { ...item.session.target.rows[1] }; }],
+    ["column array reference", item => { item.session.columnOrder = item.session.columnOrder.slice(); }],
+    ["column order", item => { item.session.columnOrder.reverse(); }],
+    ["column identity", item => { item.session.columnOrder[1] = { ...item.columns[1] }; }],
+    ["column id primitive", item => { item.columns[1].id += "-changed"; }],
+    ["column original index primitive", item => { item.columns[1].originalIndex = 2; }],
+    ["row order", item => { item.session.rows.reverse(); }],
+    ["row array reference", item => { item.session.rows = item.session.rows.slice(); }],
+    ["row id primitive", item => { item.rows[1].id += "-changed"; }],
+    ["row header role", item => { item.rows[1].header = true; }],
+    ["row editable role", item => { item.rows[1].editable = false; }],
+    ["row element reference", item => { item.rows[1].element = { ...item.rows[1].element }; }],
+    ["row label reference", item => { item.rows[1].label = { ...item.rows[1].label }; }],
+    ["fixed label node identity", item => { item.rows[1].element.children[0] = { ...item.rows[1].label }; }],
+    ["same HTML native cell node", item => {
+      item.rows[1].element.children[1] = { ...item.rows[1].element.children[1] };
+    }],
+    ["row original reference", item => { item.rows[1].original = { ...item.rows[1].original }; }],
+    ["original source cell array", item => { item.rows[1].original.cells = item.rows[1].original.cells.slice(); }],
+    ["original source member", item => { item.rows[1].original.cells[0] = { ...item.rows[1].original.cells[0] }; }],
+    ["original source start", item => { item.rows[1].original.cells[0].start++; }],
+    ["original source end", item => { item.rows[1].original.cells[0].end++; }],
+    ["original source text", item => { item.rows[1].original.cells[0].text = "changed source text"; }],
+    ["row cell array reference", item => { item.rows[1].cells = item.rows[1].cells.slice(); }],
+    ["same HTML cell replacement", item => { item.rows[2].cells[0] = { ...item.rows[2].cells[0] }; }],
+    ["same HTML input replacement", item => { item.rows[2].cells[0].input = { ...item.rows[2].cells[0].input }; }],
+    ["container reference", item => { item.rows[2].cells[0].container = { ...item.rows[2].cells[0].container }; }],
+    ["engine reference", item => { item.rows[2].cells[0].engine = { ...item.rows[2].cells[0].engine }; }],
+    ["original source cell reference", item => { item.rows[2].cells[0].cell = {}; }],
+    ["initial HTML", item => { item.rows[2].cells[0].initial = "changed initial"; }],
+    ["provenance reference", item => { item.rows[2].cells[0].provenance = { ...item.rows[2].cells[0].provenance }; }],
+    ["cell row-state reference", item => { item.rows[2].cells[0].rowState = { ...item.rows[2] }; }],
+    ["cell column-state reference", item => { item.rows[2].cells[0].columnState = { ...item.columns[0] }; }],
+    ["selected cell position", item => { item.selected.column = 0; }],
+    ["body HTML", item => { item.rows[2].cells[0].input.innerHTML = "changed body"; }],
+    ["header HTML", item => { item.header.cells[1].input.innerHTML = "changed header"; }],
+    ["cell count", item => { item.rows[2].cells.pop(); }],
+    ["row count", item => { item.session.rows.pop(); }],
+    ["deleted row bookkeeping", item => { item.session.deletedRows.add(item.rows[2].original); }],
+    ["deleted row set reference", item => { item.session.deletedRows = new Set(item.session.deletedRows); }],
+    ["deleted column bookkeeping", item => { item.session.deletedColumns.add(0); }],
+    ["deleted column set reference", item => { item.session.deletedColumns = new Set(item.session.deletedColumns); }],
+    ["aggregate editable array reference", item => { item.session.cells = item.session.cells.slice(); }],
+    ["aggregate editable membership", item => { item.session.cells.pop(); }],
+    ["selection reference", item => { item.session.selection = { ...item.session.selection }; }],
+    ["different selected cell", item => context.selectTableCell(item.session, item.rows[1].cells[0])],
+    ["cleared selection", item => context.selectTableCell(item.session, null)],
+    ["selection marker", item => item.selected.container.classList.remove("table-cell-selected")],
+    ["body owner", item => { item.session.body = { ...item.session.body }; }],
+    ["next row identity", item => { item.session.nextRowId++; }],
+    ["next column identity", item => { item.session.nextColumnId++; }],
+    ["composition after request", () => { composing = true; }],
+    ["document mutation refusal", () => { writable = false; }],
+  ]) {
+    const item = columnFixture();
+    pending = context.changeTableCellColumns("remove");
+    check("column witness request is actually pending before invalidation " + label,
+      !!item.session.confirmation && grid.inert && typeof answer === "function");
+    invalidate(item);
+    const before = draftWitness(item.session);
+    answer({ choice: "remove", cause: "choice" }); await pending;
+    before.authority = authority;
+    check("post-confirmation column witness rejects " + label + " without extra mutation disposal or source reads",
+      unchanged(item.session, before) && !grid.inert && errors.length === 1 && sourceReads === 0,
+      { errors });
+  }
+  for (const mode of [cells.Mode.INSERT, cells.Mode.UPDATE_TABLE]) for (const at of [0, 1, 2]) {
+    const item = columnFixture(mode);
+    context.selectTableCell(item.session, item.rows[1].cells[at]);
+    const removed = item.rows.map(row => row.cells[at]);
+    const surviving = item.rows.map(row => row.cells.filter((cell, index) => index !== at));
+    const survivor = item.rows[1].cells[at === 2 ? 1 : at + 1], beforeSource = exact;
+    pending = context.changeTableCellColumns("remove");
+    answer({ choice: "remove", cause: "choice" }); await pending;
+    check("confirmed first middle last original/new draft column removal preserves every surviving node/engine " + mode + "/" + at,
+      item.session.columns === 2 && item.session.columnOrder.every(column => column !== item.columns[at]) &&
+      item.rows.every((row, rowIndex) => row.cells.length === 2 && row.cells.every((cell, index) =>
+        cell === surviving[rowIndex][index] && cell.column === index &&
+        cell.container.parentElement === row.element && !cell.engine.disposed)) &&
+      removed.every(cell => cell.engine.disposed && !cell.container.parentElement) &&
+      item.session.deletedColumns.size === (mode === cells.Mode.INSERT ? 0 : 1) &&
+      (mode === cells.Mode.INSERT || item.session.deletedColumns.has(at)) &&
+      focused === survivor.input && item.session.activeCell === survivor && !item.session.selectedCell &&
+      exact === beforeSource && sourceReads === 0 && documentWrites === 0 && recapturedConsent === 0 &&
+      !errors.length, { errors });
+    const requests = dialogRequests;
+    await context.changeTableCellColumns("remove");
+    check("fallback focus from confirmed column removal grants no second destructive selection " + mode + "/" + at,
+      dialogRequests === requests && item.session.columns === 2 && deleteColumn.disabled);
+  }
+  for (const mode of [cells.Mode.INSERT, cells.Mode.UPDATE_TABLE]) {
+    const item = columnFixture(mode, 2);
+    item.session.rows.splice(1);
+    if (item.session.target) {
+      item.session.target.table.rows = [item.header.original];
+      item.session.target.rows = [item.header.original];
+    }
+    context.refreshTableCellRows(item.session);
+    context.selectTableCell(item.session, item.header.cells[1]);
+    pending = context.changeTableCellColumns("remove");
+    check("header-only column removal is a destructive column choice, never a row-header informational refusal " + mode,
+      dialog.buttons.length === 2 && dialog.defaultId === "cancel" &&
+      dialog.buttons.some(button => button.id === "remove") && item.session.rows.length === 1);
+    answer({ choice: "remove", cause: "choice" }); await pending;
+    check("header-only column deletion preserves the required header and minimum one column " + mode,
+      item.session.rows.length === 1 && item.session.rows[0] === item.header && item.header.header &&
+      item.header.editable && item.session.columns === 1 && item.header.cells.length === 1 &&
+      deleteColumn.disabled && !item.session.selectedCell && documentWrites === 0 && sourceReads === 0);
+  }
+  for (const failure of ["apply", "layout"]) {
+    const item = columnFixture(), before = draftWitness(item.session);
+    let failedAt = 0;
+    if (failure === "apply") {
+      const container = item.rows[1].cells[1].container;
+      container.remove = function () { failedAt++; throw new Error("apply failed"); };
+    }
+    item.session.sizing.removeColumn = (index, transaction) => {
+      try {
+        transaction.apply();
+        failedAt++; throw new Error("layout failed");
+      } catch (error) { transaction.rollback(); throw error; }
+    };
+    pending = context.changeTableCellColumns("remove");
+    answer({ choice: "remove", cause: "choice" }); await pending;
+    before.authority = authority;
+    check("failed confirmed draft-column transaction restores topology identities deletion membership and live controls " + failure,
+      failedAt === 1 && unchanged(item.session, before) && !grid.inert && !updateButton.disabled && errors.length === 1 &&
+      item.rows.every(row => row.cells.every(cell => cell.container.parentElement === row.element)) &&
+      !deleteColumn.disabled);
+  }
+  {
+    const item = columnFixture();
+    pending = context.changeTableCellColumns("remove");
+    const oldDialog = dialog;
+    context.tableCellSession = null; item.session.confirmation.controller.abort();
+    const replacement = columnFixture();
+    grid.inert = true;
+    const before = draftWitness(replacement.session);
+    await pending;
+    check("aborted column confirmation never unlocks disposes or writes a reopened session",
+      oldDialog.signal.aborted && !oldDialog.isCurrent() && grid.inert &&
+      unchanged(replacement.session, before) && !errors.length);
+  }
+  ({ session, header, b, c } = fixture());
+  session.rows.splice(1, 1); session.deletedRows.add(b.original); context.refreshTableCellRows(session);
+  let adopted = 0, forwarded = false;
+  const history = [], owner = {};
+  session.selection.tab = owner; session.selection.mode = session.selection.sequence = 0;
+  Object.assign(context, {
+    marked: {}, protectTableSource() {},
+    markdownEditor: { value: "snapshot" }, editorModeRevision: 0, fileOpenSequence: 0,
+    currentDocumentActionOwner: () => owner, editorScroll: { isCurrentSource: () => true },
+    FoliaTableCells: {
+      ...cells,
+      normalise: value => value,
+      replaceRows(target, edits, order, parser, protect, deleted) {
+        forwarded = target === session.target && edits.length === 0 &&
+          order.length === 1 && order[0].original === c.original &&
+          deleted.length === 1 && deleted[0] === b.original;
+        return "deleted candidate";
+      },
+    },
+    closeTableCellEditor() { modal.open = false; context.tableCellSession = null; },
+    cancelEditorDeferredWork() {}, historyPushExact: value => history.push(value),
+    setDocumentDirtyFromContent() {}, retainCurrentDocumentEditor() {}, renderMarkdown: async () => {},
+  });
+  context.window.CustomTabs.adoptExactEditorContent = value => {
+    adopted++; return value === "deleted candidate";
+  };
+  await context.updateTableCells();
+  check("the shipping Update fast path cannot discard deletion-only operations",
+    forwarded && adopted === 1 && context.markdownEditor.value === "deleted candidate" &&
+    history.length === 1 && history[0] === "snapshot" && !modal.open);
+  for (const replacement of [false, true]) for (const stale of [false, true]) {
+    const item = columnFixture(), label = (replacement ? "equal-count" : "delete-only") + (stale ? "/stale" : "/adopt");
+    item.session.selection.tab = owner; item.session.selection.mode = item.session.selection.sequence = 0;
+    const deleted = item.columns[1];
+    item.session.columnOrder.splice(1, 1); item.session.deletedColumns.add(deleted.originalIndex);
+    for (const row of item.rows) { row.cells[1].container.remove(); row.cells.splice(1, 1); }
+    if (replacement) {
+      const added = { id: "replacement" };
+      item.session.columnOrder.splice(1, 0, added);
+      for (const row of item.rows) {
+        const cell = makeRow(null, true, 1).cells[0];
+        cell.rowState = row; cell.columnState = added; cell.column = 1;
+        cell.container.remove(); row.element.insertBefore(cell.container, row.cells[1].container);
+        row.cells.splice(1, 0, cell);
+      }
+    }
+    context.refreshTableCellRows(item.session);
+    let calls = 0, adoptions = 0;
+    const candidate = "column candidate " + label, priorHistory = history.length;
+    context.markdownEditor.value = exact;
+    context.FoliaTableCells = { ...cells, normalise: value => value,
+      replaceStructure(target, edits, order, columns, parser, protection, deletedRows, deletedColumns) {
+        calls++;
+        check("shipping column Update forwards complete original-coordinate deletion accounting " + label,
+          target === item.session.target && edits.length === 0 && order.length === item.rows.length &&
+          columns === item.session.columnOrder && columns.length === (replacement ? 3 : 2) &&
+          deletedRows.length === 0 && deletedColumns.length === 1 && deletedColumns[0] === 1 &&
+          order.every((entry, index) => entry.original === item.rows[index].original &&
+            entry.cells.length === columns.length));
+        if (stale) current = false;
+        return candidate;
+      },
+    };
+    context.window.CustomTabs.adoptExactEditorContent = value => { adoptions++; return value === candidate; };
+    await context.updateTableCells();
+    check("shipping " + label + " column Update keeps exact adoption and one Undo/no-op fences",
+      calls === 1 && (stale
+        ? adoptions === 0 && history.length === priorHistory && context.markdownEditor.value === "snapshot" &&
+          modal.open && !item.session.applied && errors.length === 1
+        : adoptions === 1 && history.length === priorHistory + 1 && history.at(-1) === "snapshot" &&
+          context.markdownEditor.value === candidate && !modal.open));
+  }
+  for (const mutate of [
+    item => { item.session.deletedColumns.add(1); },
+    item => { item.session.columnOrder[1] = { id: "new" }; },
+    item => { item.session.columnOrder.reverse(); },
+    item => { item.session.columnOrder.pop(); },
+  ]) {
+    const item = columnFixture(cells.Mode.UPDATE_ROWS);
+    mutate(item);
+    const before = draftWitness(item.session), priorHistory = history.length;
+    await context.updateTableCells();
+    before.authority = authority;
+    check("selected-row topology refusal precedes no-op source serialization history and adoption",
+      unchanged(item.session, before) && history.length === priorHistory && sourceReads === 0 &&
+      modal.open && errors.length === 1 && errors[0] === "tableCells.columnsScope");
+  }
+  {
+    const item = columnFixture();
+    const beforeHistory = history.length;
+    const added = { id: "temporary-new" };
+    item.session.columnOrder.splice(1, 0, added);
+    for (const row of item.rows) {
+      const cell = makeRow(null, true, 1).cells[0];
+      cell.rowState = row; cell.columnState = added; cell.column = 1;
+      cell.container.remove(); row.element.insertBefore(cell.container, row.cells[1].container);
+      row.cells.splice(1, 0, cell);
+    }
+    context.refreshTableCellRows(item.session);
+    context.selectTableCell(item.session, item.rows[1].cells[1]);
+    pending = context.changeTableCellColumns("remove");
+    answer({ choice: "remove", cause: "choice" }); await pending;
+    check("new-only deletion no-op setup actually confirms removal without an original deletion record",
+      item.session.columns === 3 && item.session.deletedColumns.size === 0 &&
+      item.session.columnOrder.every((column, index) => column.originalIndex === index));
+    await context.updateTableCells();
+    check("removing only a new column can return to the unchanged original topology no-op",
+      !modal.open && history.length === beforeHistory && sourceReads === 0);
+  }
+  const css = fs.readFileSync(path.join(ROOT, "src", "styles.css"), "utf8");
+  check("shared row and column action buttons retain the thin current-theme border",
+    /\.table-cell-row-actions > \.note-dialog-btn \{[^}]*border: 1px solid var\(--primary-color\)/.test(css));
+}
+
+async function columnSizingSourceTests(cells) {
+  const styles = lf(fs.readFileSync(path.join(ROOT, "src", "styles.css"), "utf8"));
+  const imageRule = styles.match(/\.table-cell-grid img \{([^}]*)\}/)?.[1];
+  check("cell image thumbnails keep their size limit while fitting the available cell width",
+    imageRule?.includes("max-width: min(160px, 100%)") && imageRule.includes("max-height: 100px") &&
+    imageRule.includes("height: auto"));
+  check("cell data minimum matches the shared reader floor without changing row labels or editable padding",
+    styles.match(/\.table-cell-grid th, \.table-cell-grid td \{([^}]*)\}/)?.[1].includes("min-width: 48px") &&
+    styles.includes(".table-cell-grid th:first-child { min-width: 65px; padding: 8px; }") &&
+    styles.match(/\.table-cell-grid \[contenteditable\] \{([^}]*)\}/)?.[1].includes("padding: 8px"));
+  check("the native resizable dialog uses window width and reserves a stable grid scrollbar budget",
+    styles.match(/\.table-cell-dialog \{([^}]*)\}/)?.[1].includes("width: calc(100vw - 48px)") &&
+    styles.match(/\.table-cell-dialog \{([^}]*)\}/)?.[1].includes("resize: both") &&
+    styles.match(/\.table-cell-grid \{([^}]*)\}/)?.[1].includes("scrollbar-gutter: stable"));
+  const renderer = lf(fs.readFileSync(path.join(ROOT, "src", "renderer.js"), "utf8"));
+  const begin = renderer.indexOf("let nextTableSizingId = 0;");
+  const end = renderer.indexOf("\nconst tableColumnSizing = createTableColumnSizing(", begin);
+  if (begin < 0 || end <= begin) throw new Error("Missing production column-sizing factory");
+  let document;
+  const node = tag => {
+    const listeners = new Map(), listenerCapture = new WeakMap(), classes = new Set(), captures = new Set();
+    const element = {
+      localName: tag, children: [], style: {}, attributes: {}, parentElement: null, scrollLeft: 0, scrollTop: 0,
+      classList: { add: (...names) => names.forEach(name => classes.add(name)),
+        remove: (...names) => names.forEach(name => classes.delete(name)), contains: name => classes.has(name) },
+      appendChild(child) { child.parentElement = this; this.children.push(child); return child; },
+      remove() {
+        if (this.parentElement) this.parentElement.children =
+          this.parentElement.children.filter(child => child !== this);
+        this.parentElement = null;
+      },
+      contains(child) {
+        for (let at = child; at; at = at.parentElement) if (at === this) return true;
+        return false;
+      },
+      closest(selector) {
+        for (let at = this; at; at = at.parentElement) {
+          if (selector === "table" ? at.localName === "table" : at.className === selector.slice(1)) return at;
+        }
+        return null;
+      },
+      querySelector(selector) {
+        if (selector === "table") {
+          for (const child of this.children) {
+            if (child.localName === "table") return child;
+            const found = child.querySelector(selector);
+            if (found) return found;
+          }
+          return null;
+        }
+        return selector === ":scope > table" ? this.children.find(child => child.localName === "table") : null;
+      },
+      setAttribute(name, value) { this.attributes[name] = value; },
+      addEventListener(type, fn, options) {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type).add(fn);
+        listenerCapture.set(fn, options === true || options?.capture === true);
+      },
+      removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
+      emit(type, extra = {}) {
+        const event = { target: this, button: 0, isPrimary: true, pointerId: 7, clientX: 263,
+          preventDefault() { this.defaultPrevented = true; },
+          stopPropagation() { this.stopped = true; }, stopImmediatePropagation() { this.stopped = true; },
+          ...extra };
+        for (const fn of [...(listeners.get(type) || [])]) {
+          if (type === "blur" && event.target !== this && !listenerCapture.get(fn)) continue;
+          fn(event);
+        }
+        return event;
+      },
+      listenerCount: () => [...listeners.values()].reduce((sum, set) => sum + set.size, 0),
+      focus() { document.activeElement = this; },
+      setPointerCapture(id) { captures.add(id); },
+      hasPointerCapture: id => captures.has(id),
+      releasePointerCapture(id) { captures.delete(id); },
+      getBoundingClientRect() { return { ...this.bounds }; },
+    };
+    return element;
+  };
+  let labelMeasurements = 0;
+  document = Object.assign(node("document"), { head: node("head"), createElement: node,
+    createRange() {
+      let label;
+      return { selectNodeContents(node) { label = node; },
+        getBoundingClientRect() { labelMeasurements++; return { width: label.textWidth ?? 40 }; } };
+    } });
+  const window = node("window"), frames = new Map(), timers = new Map(), observers = [];
+  let nextFrame = 0, nextTimer = 0;
+  class ResizeObserver {
+    constructor(callback) { this.callback = callback; this.observed = new Set(); observers.push(this); }
+    observe(target) { this.observed.add(target); }
+    disconnect() { this.observed.clear(); }
+  }
+  const context = vm.createContext({ document, window, ResizeObserver, queueMicrotask,
+    getComputedStyle: element => ({ zoom: "1", minWidth: "65px", paddingLeft: "8px", paddingRight: "8px",
+      borderLeftWidth: "1px", borderRightWidth: "1px", ...element.computedStyle }),
+    requestAnimationFrame: callback => { frames.set(++nextFrame, callback); return nextFrame; },
+    cancelAnimationFrame: id => frames.delete(id),
+    setTimeout: (callback, delay) => {
+      if (delay !== 0) throw new Error("Popup settlement must use the next task, not a timed wait");
+      timers.set(++nextTimer, callback); return nextTimer;
+    },
+    clearTimeout: id => timers.delete(id) });
+  vm.runInContext(renderer.slice(begin, end), context);
+  const openingRows = texts => texts.map(row => ({ cells: row.map(text => ({ text })) }));
+  const estimateOpening = texts => context.estimateTableCellOpening(openingRows(texts), 1800).width;
+  check("short displayed cells open at the control minimum instead of nearly filling the window",
+    estimateOpening([["Name", "Value"], ["one", "two"]]) === 480);
+  check("displayed source lengths influence the opening estimate before the comfort cap",
+    estimateOpening([Array(4).fill("x".repeat(20))]) === 819);
+  check("the comfort cap applies only to initial width and the current viewport gutter",
+    estimateOpening([Array(4).fill("x".repeat(40))]) === 960 &&
+    context.estimateTableCellOpening(openingRows([Array(4).fill("x".repeat(20))]), 600).width === 552);
+  let inspected = 0;
+  const countedRows = (rows, columns, length) => Array.from({ length: rows }, () => ({
+    cells: Array.from({ length: columns }, () => ({
+      get text() { inspected++; return { length }; },
+    })),
+  }));
+  const withinBudget = context.estimateTableCellOpening(countedRows(24, 5, 10), 1800);
+  check("the bounded estimator genuinely reads displayed lengths within its row and cell budgets",
+    withinBudget.width === 597 && withinBudget.weights.every(width => width === 98) && inspected === 120);
+  inspected = 0;
+  check("an oversized displayed row scope uses conservative demands without cell reads",
+    context.estimateTableCellOpening(countedRows(25, 4, 20), 1800).width === 960 && inspected === 0);
+  inspected = 0;
+  check("oversized column counts are rejected before allocation or cell inspection",
+    context.estimateTableCellOpening(countedRows(1, 129, 20), 1800).width === 960 && inspected === 0);
+  inspected = 0;
+  check("the cell budget stops before reading an additional cell",
+    context.estimateTableCellOpening(countedRows(22, 6, 1), 1800).width === 960 && inspected === 128);
+  inspected = 0;
+  check("the character budget uses the same fallback without scanning later rows",
+    context.estimateTableCellOpening(countedRows(9, 4, 256), 1800).width === 960 && inspected === 33);
+  inspected = 0;
+  check("a long paragraph or URL stops per-cell work and does not request fullscreen width",
+    context.estimateTableCellOpening(countedRows(2, 4, 257), 1800).width === 960 && inspected === 1);
+  const completeHeavy = context.estimateTableCellOpening(openingRows([Array(3).fill("x".repeat(256))]), 1800);
+  const unknownHeavy = context.estimateTableCellOpening(openingRows([Array(3).fill("x".repeat(257))]), 1800);
+  check("crossing the per-cell limit cannot turn a substantial three-column scope into a smaller opening",
+    completeHeavy.width === 960 && unknownHeavy.width === completeHeavy.width &&
+    completeHeavy.weights.every(weight => weight === 240) && unknownHeavy.weights === null);
+  check("unknown content fills the narrow opening budget rather than keeping the small fallback",
+    context.estimateTableCellOpening(openingRows([Array(3).fill("x".repeat(400))]), 700).width === 652);
+  check("fully inspected short displayed scopes retain their own bounded per-column weights",
+    JSON.stringify(context.estimateTableCellOpening(openingRows([["a", "x".repeat(20)]]), 1800).weights) ===
+      JSON.stringify([96, 178]));
+  check("oversized column metadata uses a uniform-demand sentinel rather than an unbounded allocation",
+    context.estimateTableCellOpening(countedRows(1, 129, 20), 1800).weights === null);
+  check("opening estimates are supplied from the displayed rows before the shared controller starts",
+    renderer.includes("const opening = estimateTableCellOpening(displayRows.map(row => row.original ||") &&
+    renderer.includes("root: tableCellGrid, dialog: tableCellDialog, initialWidth: opening.width, initialWeights: opening.weights,") &&
+    styles.includes(".table-cell-grid th > div { overflow-wrap: anywhere; white-space: pre-wrap; }"));
+  const fixture = id => {
+    const root = node("div"), container = node("div"), table = node("table"), row = node("tr");
+    root.ownerDocument = document;
+    root.clientWidth = 443;
+    root.id = id; container.className = "sizing-box"; table.offsetLeft = table.offsetTop = 0;
+    table.offsetHeight = 120; table.bounds = { left: 0, width: 443 };
+    table.rows = [row]; row.cells = [83, 180, 180].map((width, index) => {
+      const cell = node("td");
+      cell.bounds = { width, right: [83, 263, 443][index] }; cell.colSpan = cell.rowSpan = 1;
+      row.appendChild(cell); return cell;
+    });
+    const input = row.cells[1].appendChild(node("div"));
+    input.innerHTML = "<strong>keep caret and text</strong>";
+    Object.defineProperty(table, "innerHTML", {
+      get: () => "sealed cell markup", set() { throw new Error("Sizing rewrote cell markup"); },
+    });
+    root.appendChild(container); container.appendChild(table); table.appendChild(row);
+    return { root, container, table, input };
+  };
+  const grid = fixture("tableCellGrid"), dialog = node("dialog");
+  dialog.open = true;
+  let current = true;
+  const completedWidths = [];
+  const options = { root: grid.root, containerSelector: ".sizing-box", fitOnResize: true,
+    firstColumn: 1, focusOnPointer: false, keyboardRoot: dialog, cancelOnScroll: true,
+    isCurrent: () => current,
+    onDragChange: resizing => { if (!resizing) completedWidths.push(sizing.wanted(grid.table)); } };
+  const sizing = context.createTableColumnSizing(options);
+  document.activeElement = grid.input;
+  grid.root.emit("pointerover", { target: grid.table });
+  const handles = grid.container.children[1].children, handle = handles[0];
+  const widths = () => document.head.children.find(style => style.textContent?.startsWith("#tableCellGrid "))?.textContent || "";
+  const flush = () => { for (const [id, callback] of [...frames]) { frames.delete(id); callback(); } };
+  const flushTimers = () => { for (const [id, callback] of [...timers]) { timers.delete(id); callback(); } };
+  const drag = amount => {
+    handle.emit("pointerdown");
+    handle.emit("pointermove", { clientX: 263 + amount });
+    handle.emit("pointerup", { clientX: 263 + amount });
+  };
+  check("cell sizing uses the production shared factory and excludes the row-label grip",
+    handles.length === 2 && handle.attributes["aria-label"] === "Resize column 1" &&
+    renderer.includes("root: viewer, containerSelector: '.table-container'") &&
+    renderer.includes("session.sizing = createTableCellSizing({") &&
+    renderer.includes("root: tableCellGrid, dialog: tableCellDialog, initialWidth: opening.width, initialWeights: opening.weights,") &&
+    renderer.includes("root, containerSelector: '.table-cell-sizing-container'") &&
+    renderer.includes("minimumWidth = 48, firstColumn = 0") &&
+    renderer.includes("firstColumn: 1, initialFixedWidths: [labelWidth], fitOnResize: true, initialWeights, keyboardRoot: dialog"));
+  drag(96);
+  check("cell pointer sizing keeps input focus and markup and writes only screen-scoped widths",
+    document.activeElement === grid.input && grid.input.innerHTML === "<strong>keep caret and text</strong>" &&
+    grid.table.innerHTML === "sealed cell markup" && sizing.wanted(grid.table) === 539 &&
+    document.head.children[0].media === "screen" &&
+    widths().includes("nth-child(1){box-sizing:border-box;width:83px;}") &&
+    widths().includes("nth-child(2){box-sizing:border-box;width:276px;}"));
+  const cellKey = handle.emit("keydown", { key: "Home" });
+  check("cell-focused arrows and Home do not belong to resize handles",
+    !cellKey.defaultPrevented && sizing.wanted(grid.table) === 539);
+  handle.focus();
+  grid.table.rows[0].cells[1].bounds.width = 90;
+  handle.emit("keydown", { key: "ArrowLeft", shiftKey: true });
+  check("focused grip keyboard sizing keeps the data minimum and fixed row-label width",
+    sizing.wanted(grid.table) === 311 && widths().includes("nth-child(1){box-sizing:border-box;width:83px;}") &&
+    widths().includes("nth-child(2){box-sizing:border-box;width:48px;}"));
+  grid.table.rows[0].cells[1].bounds.width = 180;
+  handle.emit("keydown", { key: "Home" });
+  check("focused grip Home removes presentation widths without editing cells",
+    sizing.wanted(grid.table) === null && document.head.children.length === 0);
+  document.activeElement = grid.input;
+  drag(-1000);
+  check("cell pointer sizing also enforces the data minimum", sizing.wanted(grid.table) === 311);
+  handle.emit("dblclick");
+  handle.emit("pointerdown"); handle.emit("pointermove", { clientX: 359 }); flush();
+  const escaped = dialog.emit("keydown", { key: "Escape" });
+  check("drag Escape cancels sizing before modal close without moving editing focus",
+    escaped.defaultPrevented && escaped.stopped && dialog.open &&
+    sizing.wanted(grid.table) === null && document.activeElement === grid.input && !handle.hasPointerCapture(7));
+  check("drag-end layout hooks run only after canceled widths have been restored",
+    completedWidths.at(-1) === null);
+  handle.emit("pointerdown"); handle.emit("pointermove", { clientX: 359 }); flush();
+  dialog.emit("scroll");
+  check("an old scroll notification with unchanged coordinates cannot cancel a new drag",
+    sizing.isDragging(grid.container) && handle.hasPointerCapture(7));
+  dialog.scrollTop = 20;
+  dialog.emit("scroll");
+  check("modal scrolling cancels a drag rather than applying stale pointer coordinates",
+    sizing.wanted(grid.table) === null && !handle.hasPointerCapture(7));
+  grid.root.emit("compositionstart", { target: grid.input });
+  const refused = handle.emit("pointerdown");
+  check("composition refuses a resize without stealing focus", refused.defaultPrevented &&
+    !sizing.cancel() && document.activeElement === grid.input);
+  let engineCompleted = false;
+  queueMicrotask(() => { engineCompleted = true; });
+  grid.root.emit("compositionend", { target: grid.input });
+  handle.emit("pointerdown");
+  const stillComposing = !sizing.cancel();
+  await Promise.resolve();
+  handle.emit("pointerdown");
+  check("resize resumes only after queued inline composition completion",
+    stillComposing && engineCompleted && sizing.cancel());
+  grid.root.emit("compositionstart", { target: grid.input });
+  grid.root.emit("compositionend", { target: grid.input });
+  grid.root.emit("compositionstart", { target: grid.input });
+  await Promise.resolve();
+  handle.emit("pointerdown");
+  check("an old composition completion cannot clear a new composition guard", !sizing.cancel());
+  grid.root.emit("compositionend", { target: grid.input });
+  await Promise.resolve();
+  const compositionErrors = [];
+  let guardedMutations = 0;
+  const guardedSession = { mode: cells.Mode.UPDATE_ROWS, ready: true, selection: { isCurrent: () => true }, sizing: {
+    cancel() {}, refresh() {}, isComposing: () => sizing.isComposing(),
+  } };
+  const guards = vm.createContext({ tableCellSession: guardedSession,
+    FoliaTableCells: cells, TableCellMode: cells.Mode,
+    showTableCellError: error => compositionErrors.push(error.message), refreshTableCellRowActions() {},
+    mayMutateRendererDocument: () => { guardedMutations++; return true; },
+    window: { CustomTabs: { snapshotExactEditorContent() { guardedMutations++; } } } });
+  const rowGuardStart = renderer.indexOf("function changeTableCellRows(action)");
+  const mutationGuardStart = renderer.indexOf("function requireTableCellMutation(session, action)");
+  vm.runInContext(renderer.slice(mutationGuardStart, renderer.indexOf("\nfunction finishTableCellDraftChange(", mutationGuardStart)), guards);
+  const updateGuardStart = renderer.indexOf("async function updateTableCells()");
+  vm.runInContext(renderer.slice(rowGuardStart, renderer.indexOf("\nfunction openTableCellEditor(", rowGuardStart)) +
+    "\n" + renderer.slice(updateGuardStart, renderer.indexOf("\nctxEditTable?.addEventListener", updateGuardStart)), guards);
+  check("row and column actions have separate top-level source bindings",
+    typeof guards.changeTableCellRows === "function" &&
+    typeof guards.changeTableCellColumns === "function");
+  grid.root.emit("compositionstart", { target: grid.input });
+  guards.changeTableCellRows("below");
+  const composingUpdate = guards.updateTableCells();
+  check("row insertion and Update reject active composition before touching document authority",
+    compositionErrors.length === 2 && compositionErrors.every(key => key === "tableCells.composing") &&
+    guardedMutations === 0);
+  grid.root.emit("compositionend", { target: grid.input });
+  guards.changeTableCellRows("below");
+  const pendingUpdate = guards.updateTableCells();
+  check("row insertion and Update also reject the pending composition-end microtask",
+    compositionErrors.length === 4 && compositionErrors.every(key => key === "tableCells.composing") &&
+    guardedMutations === 0);
+  await Promise.all([composingUpdate, pendingUpdate]);
+  check("the shared composition guard releases only after inline completion has had its microtask",
+    !sizing.isComposing());
+  drag(96);
+  const reader = fixture("viewer");
+  const readerSizing = context.createTableColumnSizing({ root: reader.root, containerSelector: ".sizing-box" });
+  reader.root.emit("pointerover", { target: reader.table });
+  const readerHandle = reader.container.children[1].children[0];
+  readerHandle.emit("pointerdown");
+  readerHandle.emit("pointerup", { clientX: 279 });
+  const readerWidth = readerSizing.wanted(reader.table);
+  check("reader and modal widths have separate rules state and column policies",
+    reader.container.children[1].children.length === 3 && readerWidth === 459 &&
+    sizing.wanted(grid.table) === 539 && document.head.children.length === 2 &&
+    document.head.children[0].textContent.split("{")[0] !== document.head.children[1].textContent.split("{")[0]);
+  sizing.reset();
+  check("resetting editor widths does not clear reader widths", sizing.wanted(grid.table) === null &&
+    readerSizing.wanted(reader.table) === readerWidth && document.head.children.length === 1);
+  grid.root.emit("pointerover", { target: grid.table });
+  const staleHandle = grid.container.children[1].children[0];
+  staleHandle.emit("pointerdown"); staleHandle.emit("pointermove", { clientX: 359 });
+  current = false; flush();
+  check("stale ownership releases capture and removes modal controls styles listeners and observers",
+    !staleHandle.hasPointerCapture(7) && grid.container.children.length === 1 &&
+    grid.root.listenerCount() === 0 && dialog.listenerCount() === 0 &&
+    observers[0].observed.size === 0 && frames.size === 0 && document.head.children.length === 1);
+  sizing.dispose(); readerSizing.dispose();
+  const reopened = fixture("tableCellGrid");
+  const reopenedSizing = context.createTableColumnSizing({ ...options, root: reopened.root, isCurrent: () => true });
+  reopened.root.emit("pointerover", { target: reopened.table });
+  check("reopening starts with fresh presentation state and live handles",
+    reopenedSizing.wanted(reopened.table) === null && reopened.container.children[1].children.length === 2);
+  reopenedSizing.dispose();
+  {
+    const probe = fixture("resizeGrid");
+    let live = true, ownershipReads = 0;
+    const controller = context.createTableColumnSizing({ ...options, root: probe.root,
+      initialWeights: null, isCurrent: () => { ownershipReads++; return live; }, onDragChange() {} });
+    probe.root.emit("pointerover", { target: probe.table });
+    const observer = observers.at(-1), previousHit = document.elementFromPoint;
+    let overlay = probe.container.children[1], grip = overlay.children[0];
+    const rule = () => document.head.children.find(style => style.textContent?.startsWith("#resizeGrid "));
+    const presentation = () => JSON.stringify({
+      rule: rule()?.textContent, overlay: overlay.style,
+      handles: overlay.children.map(item => item.attributes), ownershipReads,
+    });
+    const values = () => [...(rule()?.textContent || "").matchAll(
+      /nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)].map(match => Number(match[1]));
+    try {
+      check("resize reconciliation setup owns live handles and an empty frame queue",
+        overlay.children.length === 2 && observer.observed.has(probe.root) &&
+        observer.observed.has(probe.table) && frames.size === 0);
+      const beforeDelivery = presentation();
+      probe.root.clientWidth = 600;
+      probe.table.offsetHeight = 155;
+      observer.callback();
+      check("cell resize delivery does not call ownership guards or change presentation",
+        presentation() === beforeDelivery);
+      probe.root.clientWidth = 720;
+      observer.callback(); observer.callback();
+      check("cell resize deliveries coalesce into one owned frame", frames.size === 1);
+      flush();
+      check("one resize frame fits the latest budget and updates the existing overlay",
+        controller.wanted(probe.table) === 720 && overlay.style.height === "155px" &&
+        values()[0] === 83 && !probe.table.classList.contains("table-manually-sized"));
+
+      document.elementFromPoint = () => probe.input;
+      probe.root.clientWidth = 740; observer.callback();
+      grip.emit("pointerdown", { clientY: 20 });
+      check("pending resize refuses a pointerdown whose current hit is not its handle",
+        !grip.hasPointerCapture(7) && controller.wanted(probe.table) === 740 && frames.size === 0);
+      document.elementFromPoint = () => grip;
+      probe.root.clientWidth = 760; observer.callback();
+      grip.emit("pointerdown", { clientY: 20 });
+      check("pending resize accepts the same owned handle after a current hit",
+        grip.hasPointerCapture(7) && controller.wanted(probe.table) === 760);
+      grip.emit("pointermove", { clientX: 359 });
+      probe.root.clientWidth = 820; observer.callback();
+      check("drag and resize reconciliation own separate pending frames", frames.size === 2);
+      grip.emit("pointerup", { clientX: 359 });
+      check("pending resize release restores proportions without committing stale pointer movement",
+        !grip.hasPointerCapture(7) && frames.size === 0 && controller.wanted(probe.table) === 820 &&
+        JSON.stringify(values()) === JSON.stringify([83, 368.5, 368.5]) &&
+        !probe.table.classList.contains("table-manually-sized"));
+
+      grip.emit("pointerdown");
+      probe.root.clientWidth = 840; observer.callback();
+      const escape = dialog.emit("keydown", { key: "Escape" });
+      check("Escape still consumes a pending resize drag before dialog dismissal",
+        escape.defaultPrevented && escape.stopped && !grip.hasPointerCapture(7) &&
+        controller.wanted(probe.table) === 820 && frames.size === 1);
+      flush();
+      check("Escape reconciliation retains automatic width intent and sealed cell content",
+        controller.wanted(probe.table) === 840 && !probe.table.classList.contains("table-manually-sized") &&
+        probe.table.innerHTML === "sealed cell markup" &&
+        probe.input.innerHTML === "<strong>keep caret and text</strong>");
+      grip.emit("pointerdown");
+      grip.emit("pointermove", { clientX: 359 });
+      probe.root.clientWidth = 860; observer.callback();
+      check("composition setup retains a live drag and both pending frames",
+        grip.hasPointerCapture(7) && frames.size === 2 && controller.wanted(probe.table) === 840);
+      probe.root.emit("compositionstart", { target: probe.input });
+      check("composition reaches the root listener before resize reconciliation",
+        controller.isComposing() && !grip.hasPointerCapture(7) &&
+        frames.size === 1 && controller.wanted(probe.table) === 840);
+      flush();
+      check("composition cancels pointer work while the owned resize frame still fits",
+        !grip.hasPointerCapture(7) && frames.size === 0 && controller.wanted(probe.table) === 860 &&
+        !probe.table.classList.contains("table-manually-sized"));
+      probe.root.emit("compositionend", { target: probe.input });
+      check("composition end retains its guard until the existing microtask checkpoint", controller.isComposing());
+      await Promise.resolve();
+      check("composition guard releases at the existing microtask checkpoint", !controller.isComposing());
+      grip.emit("pointerdown");
+      grip.emit("pointermove", { clientX: 359 });
+      probe.root.clientWidth = 880; observer.callback();
+      check("pointercancel setup retains a live drag and both pending frames",
+        grip.hasPointerCapture(7) && frames.size === 2 && controller.wanted(probe.table) === 860);
+      grip.emit("pointercancel");
+      check("pointercancel rolls back before the pending resize frame",
+        !grip.hasPointerCapture(7) && frames.size === 1 && controller.wanted(probe.table) === 860);
+      flush();
+      check("pointercancel reconciliation preserves automatic proportions and fixed labels",
+        controller.wanted(probe.table) === 880 && values()[0] === 83 &&
+        Math.abs(values()[1] - values()[2]) < .001 &&
+        !probe.table.classList.contains("table-manually-sized"));
+
+      probe.table.rows[0].cells[1].bounds.width = 300;
+      probe.table.rows[0].cells[2].bounds.width = 300;
+      probe.root.clientWidth = 683; observer.callback();
+      grip.focus();
+      grip.emit("keydown", { key: "ArrowRight" });
+      check("keyboard resize reconciles the host budget before committing its current cell width",
+        frames.size === 0 && controller.wanted(probe.table) === 699 &&
+        JSON.stringify(values()) === JSON.stringify([83, 316, 300]));
+      probe.root.clientWidth = 900; observer.callback();
+      grip.emit("keydown", { key: "Home" });
+      check("Home consumes pending fitting then clears manual width intent",
+        frames.size === 0 && controller.wanted(probe.table) === null &&
+        !probe.table.classList.contains("table-manually-sized"));
+
+      probe.root.clientWidth = 1000; observer.callback();
+      const oldFrame = [...frames.values()][0];
+      check("reset witness retains an actual queued resize callback", typeof oldFrame === "function");
+      controller.reset();
+      check("reset cancels its pending resize frame and controls", frames.size === 0 && probe.container.children.length === 1);
+      probe.root.emit("pointerover", { target: probe.table });
+      overlay = probe.container.children[1]; grip = overlay.children[0];
+      probe.root.clientWidth = 1100; observer.callback();
+      const replacement = presentation();
+      if (typeof oldFrame === "function") oldFrame();
+      check("an old resize callback cannot consume replacement controls or their newer ticket",
+        typeof oldFrame === "function" && presentation() === replacement && frames.size === 1);
+      flush();
+      check("replacement controls retain their own live resize reconciliation",
+        controller.wanted(probe.table) === 1100 && frames.size === 0);
+
+      probe.root.clientWidth = 1110; observer.callback();
+      const detachedFrame = [...frames.values()][0];
+      check("detached table setup retains an actual queued resize callback", typeof detachedFrame === "function");
+      probe.table.remove();
+      controller.refresh();
+      check("detached table reconciliation clears controls rules and pending work",
+        !rule() && frames.size === 0 && probe.container.children.length === 0 &&
+        observer.observed.size === 0);
+      const replacementTable = fixture("replacementTable");
+      probe.table = replacementTable.table; probe.input = replacementTable.input;
+      probe.container.appendChild(probe.table);
+      probe.root.emit("pointerover", { target: probe.table });
+      overlay = probe.container.children[1]; grip = overlay.children[0];
+      probe.root.clientWidth = 1120; observer.callback();
+      const replacementTableView = presentation();
+      if (typeof detachedFrame === "function") detachedFrame();
+      check("a detached table callback cannot consume its replacement table ticket",
+        typeof detachedFrame === "function" && presentation() === replacementTableView && frames.size === 1);
+      flush();
+      check("replacement table reconciliation fits only the current owned table",
+        controller.wanted(probe.table) === 1120 && frames.size === 0);
+      live = false;
+      const beforeStaleDelivery = presentation();
+      probe.root.clientWidth = 1140; observer.callback();
+      check("cell resize delivery leaves unavailable-owner cleanup to its owned frame",
+        presentation() === beforeStaleDelivery && probe.root.listenerCount() > 0);
+      flush();
+      check("unavailable-owner reconciliation disposes rules controls observations and pending work",
+        !rule() && probe.container.children.length === 1 && probe.root.listenerCount() === 0 &&
+        observer.observed.size === 0 && frames.size === 0);
+    } finally {
+      controller.dispose();
+      if (previousHit === undefined) delete document.elementFromPoint;
+      else document.elementFromPoint = previousHit;
+    }
+    const disposed = fixture("disposedResizeGrid");
+    const disposedController = context.createTableColumnSizing({ ...options, root: disposed.root,
+      isCurrent: () => true, onDragChange() {} });
+    disposed.root.emit("pointerover", { target: disposed.table });
+    const disposedObserver = observers.at(-1);
+    disposed.root.clientWidth = 600; disposedObserver.callback();
+    const disposedFrame = [...frames.values()][0];
+    check("dispose witness retains an actual queued resize callback", typeof disposedFrame === "function");
+    disposedController.dispose();
+    if (typeof disposedFrame === "function") disposedFrame();
+    check("disposed resize callbacks cannot recreate rules controls listeners or frame work",
+      typeof disposedFrame === "function" && frames.size === 0 && document.head.children.length === 0 &&
+      disposed.container.children.length === 1 && disposed.root.listenerCount() === 0 &&
+      disposedObserver.observed.size === 0);
+    const reader = fixture("readerResizeGrid");
+    const readerController = context.createTableColumnSizing({ ...options, root: reader.root,
+      fitOnResize: false, isCurrent: () => true, onDragChange() {} });
+    reader.root.emit("pointerover", { target: reader.table });
+    reader.table.offsetHeight = 155; observers.at(-1).callback();
+    check("ordinary reader resize observation retains synchronous positioning",
+      frames.size === 0 && reader.container.children[1].style.height === "155px" &&
+      readerController.wanted(reader.table) === null);
+    readerController.dispose();
+  }
+  const fitting = fixture("tableCellGrid");
+  let fittingCurrent = true;
+  const fittingSizing = context.createTableColumnSizing({ ...options, root: fitting.root,
+    isCurrent: () => fittingCurrent, onDragChange: () => {} });
+  fitting.root.emit("pointerover", { target: fitting.table });
+  const fittingHandle = fitting.container.children[1].children[0];
+  const fittingObserver = observers.at(-1);
+  check("natural column redistribution is observed even when the table and grid boxes stay unchanged",
+    [...fitting.table.rows[0].cells].every(cell => fittingObserver.observed.has(cell)));
+  const fit = width => { fitting.root.clientWidth = width; fittingObserver.callback(); flush(); };
+  const fittedWidths = () => {
+    const style = document.head.children.find(item => item.textContent?.startsWith("#tableCellGrid "));
+    return [...(style?.textContent || "").matchAll(/nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)]
+      .map(match => Number(match[1]));
+  };
+  fit(600);
+  check("untouched grids fit their initial proportions and fixed row label on actual width changes",
+    fittingSizing.wanted(fitting.table) === 600 &&
+    JSON.stringify(fittedWidths()) === JSON.stringify([83, 258.5, 258.5]));
+  fit(443);
+  fittingHandle.emit("pointerdown");
+  fittingHandle.emit("pointerup", { clientX: 131 });
+  const manuallyNarrow = fittedWidths();
+  fittingObserver.callback(); flush();
+  check("a manual 48px column is not immediately fitted back by table observation",
+    manuallyNarrow[1] === 48 && fittingSizing.wanted(fitting.table) === 311);
+  fit(683);
+  const grown = fittedWidths();
+  check("available grid growth fits data proportions and keeps the row label fixed",
+    Math.abs(fittingSizing.wanted(fitting.table) - 683) < .001 && grown[0] === 83 &&
+    Math.abs(grown[2] / grown[1] - 180 / 48) < .001);
+  fit(227);
+  check("constrained proportions redistribute space instead of overflowing a feasible budget",
+    JSON.stringify(fittedWidths()) === JSON.stringify([83, 48, 96]));
+  fit(150);
+  check("infeasible budgets retain every data floor and overflow instead of shrinking the row label",
+    JSON.stringify(fittedWidths()) === JSON.stringify([83, 48, 48]));
+  fit(683);
+  check("re-expansion restores reference proportions after columns hit their floors",
+    fittedWidths().every((value, index) => Math.abs(value - grown[index]) < .001));
+  fit(227);
+  fittingHandle.emit("pointerdown");
+  fittingHandle.emit("pointermove", { clientX: 359 }); flush();
+  fitting.root.clientWidth = 800;
+  window.emit("resize");
+  fittingObserver.callback(); flush();
+  const canceledFit = fittedWidths();
+  check("window resize cancels dragging then fits restored reference proportions without swallowing the new budget",
+    !fittingHandle.hasPointerCapture(7) && Math.abs(fittingSizing.wanted(fitting.table) - 800) < .001 &&
+    Math.abs(canceledFit[2] / canceledFit[1] - 180 / 48) < .001);
+  fittingHandle.focus();
+  fittingHandle.emit("keydown", { key: "Home" });
+  check("Home clears reference proportions and returns to natural fill",
+    fittingSizing.wanted(fitting.table) === null);
+  fit(900);
+  check("a reset grid captures fresh natural proportions for subsequent width changes",
+    fittingSizing.wanted(fitting.table) === 900 &&
+    JSON.stringify(fittedWidths()) === JSON.stringify([83, 408.5, 408.5]));
+  fittingHandle.emit("keydown", { key: "Home" });
+  fitting.table.rows[0].cells[1].bounds.width = 100;
+  fitting.table.rows[0].cells[2].bounds.width = 260;
+  fittingObserver.callback(); flush();
+  fit(1100);
+  check("cell-layout observation refreshes natural proportions before a later host-width change",
+    Math.abs(fittingSizing.wanted(fitting.table) - 1100) < .001 &&
+    Math.abs(fittedWidths()[2] / fittedWidths()[1] - 2.6) < .001);
+  fittingHandle.emit("pointerdown"); fittingHandle.emit("pointerup", { clientX: 359 });
+  fittingCurrent = false; fit(1000);
+  check("stale resize observation disposes width rules controls listeners and pending fitting",
+    document.head.children.length === 0 && fitting.root.listenerCount() === 0 &&
+    fittingObserver.observed.size === 0);
+  fittingSizing.dispose();
+  const automatic = fixture("automaticGrid");
+  automatic.table.rows[0].cells[1].bounds.width = 90;
+  automatic.table.rows[0].cells[2].bounds.width = 270;
+  const automaticSizing = context.createTableColumnSizing({ ...options, root: automatic.root,
+    initialWeights: null, isCurrent: () => true, onDragChange() {} });
+  automatic.root.emit("pointerover", { target: automatic.table });
+  const automaticObserver = observers.at(-1), automaticHandle = automatic.container.children[1].children[0];
+  const automaticWidths = () => [...document.head.children.find(style =>
+    style.textContent?.startsWith("#automaticGrid ")).textContent.matchAll(
+    /nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)].map(match => Number(match[1]));
+  check("automatic initialization fits equal unknown demands instead of inheriting narrow browser columns",
+    JSON.stringify(automaticWidths()) === JSON.stringify([83, 180, 180]) &&
+    !automatic.table.classList.contains("table-manually-sized") &&
+    automatic.table.innerHTML === "sealed cell markup");
+  automatic.root.clientWidth = 683; automaticObserver.callback(); flush();
+  check("automatic opening references retain their balanced data split and fixed row label on growth",
+    JSON.stringify(automaticWidths()) === JSON.stringify([83, 300, 300]) &&
+    !automatic.table.classList.contains("table-manually-sized"));
+  automatic.root.clientWidth = 150; automaticObserver.callback(); flush();
+  automatic.root.clientWidth = 683; automaticObserver.callback(); flush();
+  check("initial preference weights survive temporary minimum-width clamps",
+    JSON.stringify(automaticWidths()) === JSON.stringify([83, 300, 300]));
+  automaticHandle.emit("pointerdown"); automaticHandle.emit("pointermove", { clientX: 359 }); flush();
+  dialog.emit("keydown", { key: "Escape" });
+  check("canceling a first manual drag restores the automatic state rather than recording manual intent",
+    JSON.stringify(automaticWidths()) === JSON.stringify([83, 300, 300]) &&
+    !automatic.table.classList.contains("table-manually-sized"));
+  automaticHandle.emit("pointerdown"); automaticHandle.emit("pointerup", { clientX: -1000 });
+  automaticObserver.callback(); flush();
+  check("an explicit manual drag can still choose48px without automatic preferences overriding it",
+    automaticWidths()[1] === 48 && automatic.table.classList.contains("table-manually-sized"));
+  automaticSizing.dispose();
+  const weighted = fixture("weightedGrid");
+  const weightedSizing = context.createTableColumnSizing({ ...options, root: weighted.root,
+    initialWeights: [96, 240], isCurrent: () => true, onDragChange() {} });
+  weighted.root.emit("pointerover", { target: weighted.table });
+  const weightedStyle = document.head.children.find(style => style.textContent?.startsWith("#weightedGrid "));
+  const weightedWidths = [...weightedStyle.textContent.matchAll(
+    /nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)].map(match => Number(match[1]));
+  check("complete bounded estimates establish their actual data-column reference ratio once",
+    Math.abs(weightedWidths[2] / weightedWidths[1] - 2.5) < .001 && weightedWidths[0] === 83 &&
+    weightedStyle.media === "screen" && weightedStyle.textContent.includes("table-layout:fixed"));
+  weightedSizing.dispose();
+  for (const manual of [false, true]) for (const failure of [null, "apply", "layout"]) {
+    const id = "removeSizing" + Number(manual) + (failure || "success"), probe = fixture(id);
+    const row = probe.table.rows[0], extra = node("td");
+    extra.bounds = { width: 288, right: 659 }; extra.colSpan = extra.rowSpan = 1;
+    row.cells.push(extra); row.appendChild(extra);
+    probe.root.clientWidth = 659; probe.table.bounds.width = 659;
+    for (const [index, width] of [83, 96, 192, 288].entries()) {
+      row.cells[index].bounds.width = width;
+      row.cells[index].bounds.right = [83, 179, 371, 659][index];
+    }
+    let armedLayout = false, applied = 0, rolledBack = 0, layoutFailures = 0;
+    const controller = context.createTableColumnSizing({ ...options, root: probe.root,
+      initialWeights: [96, 192, 288], initialFixedWidths: [83],
+      isCurrent: () => true, onDragChange() {}, onLayout() {
+        if (armedLayout) { armedLayout = false; layoutFailures++; throw new Error("forced removal layout"); }
+      } });
+    probe.root.emit("pointerover", { target: probe.table });
+    const observer = observers.at(-1);
+    const rule = () => document.head.children.find(style => style.textContent?.startsWith("#" + id + " "));
+    const widths = () => [...(rule()?.textContent || "").matchAll(
+      /nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)].map(match => Number(match[1]));
+    let grip = probe.container.children[1].children[0];
+    if (manual) { grip.focus(); grip.emit("keydown", { key: "ArrowRight" }); }
+    const oldCells = row.cells.slice(), oldChildren = row.children.slice(), oldRule = rule().textContent;
+    const oldWidths = widths(), oldManual = probe.table.classList.contains("table-manually-sized");
+    const transaction = {
+      apply() {
+        applied++; row.cells.splice(2, 1); oldCells[2].remove();
+        if (failure === "apply") throw new Error("forced removal apply");
+        if (failure === "layout") armedLayout = true;
+      },
+      rollback() {
+        rolledBack++; row.cells = oldCells.slice(); row.children = oldChildren.slice();
+        for (const child of row.children) child.parentElement = row;
+      },
+    };
+    check("column sizing removal setup owns three data handles and live exact node references " + id,
+      typeof controller.removeColumn === "function" && typeof controller.insertColumn === "function" &&
+      probe.container.children[1].children.length === 3 && oldWidths.length === 4 &&
+      oldWidths[0] === 83 && oldManual === manual && observer.observed.has(oldCells[2]));
+    let error;
+    try { controller.removeColumn(1, transaction); } catch (caught) { error = caught.message; }
+    if (failure) {
+      check("column sizing " + failure + " rollback restores widths manual state topology and live handles " + id,
+        applied === 1 && rolledBack === 1 && error === "forced removal " + failure &&
+        (failure !== "layout" || layoutFailures === 1) && rule().textContent === oldRule &&
+        row.cells.length === oldCells.length && row.cells.every((cell, index) =>
+          cell === oldCells[index] && cell.parentElement === row) &&
+        probe.container.children[1].children.length === 3 &&
+        probe.table.classList.contains("table-manually-sized") === oldManual &&
+        probe.input.innerHTML === "<strong>keep caret and text</strong>");
+    } else {
+      check("column sizing removal preserves fixed label and surviving weighted nodes without engine/markup replacement " + id,
+        !error && applied === 1 && rolledBack === 0 && row.cells.length === 3 &&
+        row.cells[0] === oldCells[0] && row.cells[1] === oldCells[1] && row.cells[2] === oldCells[3] &&
+        !oldCells[2].parentElement && widths()[0] === 83 &&
+        widths().slice(1).every(width => width >= 48) &&
+        Math.abs(widths()[2] / widths()[1] - oldWidths[3] / oldWidths[1]) < .001 &&
+        probe.table.classList.contains("table-manually-sized") === oldManual &&
+        probe.container.children[1].children.length === 2 &&
+        probe.input === oldCells[1].children[0] && probe.table.innerHTML === "sealed cell markup");
+    }
+    const count = row.cells.length - 1, rejected = [];
+    for (const index of [-1, count, .5, Number.MAX_SAFE_INTEGER + 1]) {
+      const before = rule().textContent;
+      try { controller.removeColumn(index, transaction); } catch (caught) { rejected.push(caught.message); }
+      check("column sizing invalid removal index never invokes the transaction " + id + "/" + index,
+        applied === 1 && rule().textContent === before);
+    }
+    check("column sizing rejects all invalid indices through its production contract " + id,
+      rejected.length === 4 && rejected.every(key => key === "tableCells.invalid"));
+    grip = probe.container.children[1].children[0];
+    grip.focus(); const resetEvent = grip.emit("keydown", { key: "Home" });
+    // Fixed-label controllers rebuild automatic opening weights on Home;
+    // clearing manual intent does not leave their screen rule absent.
+    check("column-removal reset clears manual widths but not surviving cell nodes " + id,
+      resetEvent.defaultPrevented && !!rule() && Math.abs(controller.wanted(probe.table) - probe.root.clientWidth) < .001 &&
+      widths()[0] === 83 && widths().length === count + 1 && Math.abs(widths().at(-1) / widths()[1] - 3) < .001 &&
+      !probe.table.classList.contains("table-manually-sized") && row.cells[1] === oldCells[1],
+      { handled: !!resetEvent.defaultPrevented, wanted: controller.wanted(probe.table),
+        rulePresent: !!rule(), manual: probe.table.classList.contains("table-manually-sized"),
+        sameCell: row.cells[1] === oldCells[1], focused: document.activeElement === grip });
+    probe.root.clientWidth = 700; observer.callback(); flush();
+    const resetWidths = widths();
+    check("column-removal reset weights retain or restore the exact original demand basis " + id,
+      resetWidths[0] === 83 && resetWidths.length === count + 1 &&
+      Math.abs(resetWidths.at(-1) / resetWidths[1] - 3) < .001);
+    probe.root.clientWidth = 100; observer.callback(); flush();
+    check("column removal keeps the fixed row label and48px data floor at infeasible host widths " + id,
+      widths()[0] === 83 && widths().slice(1).every(width => width === 48));
+    probe.root.clientWidth = 700; observer.callback(); flush();
+    check("column-removal surviving proportions recover after a minimum-width clamp " + id,
+      widths().every((width, index) => Math.abs(width - resetWidths[index]) < .001));
+    while (row.cells.length > 2) {
+      const at = row.cells.length - 2, cell = row.cells.at(-1);
+      controller.removeColumn(at, {
+        apply() { row.cells.pop(); cell.remove(); },
+        rollback() { row.cells.push(cell); row.appendChild(cell); },
+      });
+    }
+    let lastApplied = 0, minimumError;
+    const minimumWidths = widths();
+    try { controller.removeColumn(0, { apply() { lastApplied++; }, rollback() {} }); }
+    catch (caught) { minimumError = caught.message; }
+    check("column sizing refuses removal of the last data column but never the fixed row label " + id,
+      minimumError === "tableCells.invalid" && lastApplied === 0 && row.cells.length === 2 &&
+      row.cells[0] === oldCells[0] && row.cells[1] === oldCells[1] &&
+      JSON.stringify(widths()) === JSON.stringify(minimumWidths) &&
+      probe.container.children[1].children.length === 1);
+    controller.dispose();
+    check("column-removal sizing cleanup retains original input and clears owned rules observers controls " + id,
+      !rule() && observer.observed.size === 0 && probe.container.children.length === 1 &&
+      probe.root.listenerCount() === 0 && probe.input.innerHTML === "<strong>keep caret and text</strong>");
+  }
+  window.innerWidth = 1000; window.innerHeight = 800;
+  const popup = node("dialog"), popupGrid = fixture("proportionalGrid");
+  const label = popupGrid.table.rows[0].cells[0];
+  const measuredBefore = labelMeasurements;
+  label.textWidth = 58.6875;
+  check("initial labels reserve measured glyphs and padding instead of the distributed cell width",
+    context.measureTableCellLabelWidth(popupGrid.root) === 77 &&
+    labelMeasurements === measuredBefore + 1);
+  label.textWidth = 117.375;
+  popupGrid.root.computedStyle = { zoom: "2" };
+  check("initial label measurement uses the controller's unzoomed CSS pixels",
+    context.measureTableCellLabelWidth(popupGrid.root) === 77);
+  delete popupGrid.root.computedStyle;
+  label.textWidth = 40;
+  check("short labels retain the existing minimum without expanding a tiny popup",
+    context.measureTableCellLabelWidth(popupGrid.root) === 65);
+  label.textWidth = 0;
+  let invalidLabel = false;
+  try { context.measureTableCellLabelWidth(popupGrid.root); }
+  catch (error) { invalidLabel = error.message === "tableCells.layoutFailed"; }
+  check("unpainted label measurement refuses explicitly rather than publishing a zero-width layout", invalidLabel);
+  label.textWidth = 40;
+  popup.style.width = "800px"; popup.style.height = "600px";
+  popup.bounds = { width: 952, height: 320 };
+  let popupCurrent = true;
+  const popupSizing = context.createTableCellSizing({
+    root: popupGrid.root, dialog: popup, isCurrent: () => popupCurrent,
+  });
+  check("each popup opening resets native dimensions to the preferred relative width and natural height",
+    Math.abs(parseFloat(popup.style.width) - 95.2) < .001 && popup.style.width.endsWith("vw") &&
+    popup.style.height === "");
+  const beginPopup = (x = 900, y = 300) => popup.emit("pointerdown",
+    { isTrusted: true, clientX: x, clientY: y });
+  const endPopup = (x, y, type = "pointerup") => {
+    window.emit(type, { clientX: x, clientY: y }); flushTimers();
+  };
+  beginPopup();
+  popup.style.width = "640px"; popup.style.height = "320px";
+  popup.bounds = { width: 640, height: 320 };
+  window.emit("blur", { target: popupGrid.table.rows[0].cells[1].children[0] });
+  check("a cell losing focus cannot abort native dialog preference capture",
+    popup.style.width === "640px");
+  window.emit("pointerup", { clientX: 588, clientY: 300 });
+  check("native preference settlement queues one post-event task without waiting for paint",
+    timers.size === 1 && frames.size === 0 && popup.style.width === "640px");
+  flushTimers();
+  check("native width-only intent records width proportion but discards the incidental pixel height",
+    popup.style.width === "64vw" && popup.style.height === "");
+  popup.bounds.height = 440;
+  popupSizing.refresh();
+  check("content reflow cannot establish a popup height preference",
+    popup.style.height === "" && popup.style.width === "64vw");
+  window.innerWidth = 1600; window.innerHeight = 1000; window.emit("resize");
+  check("app-window changes leave preferred relative declarations untouched",
+    popup.style.width === "64vw" && popup.style.height === "");
+  popup.bounds = { width: 1024, height: 440 };
+  beginPopup();
+  popup.style.width = "1024px"; popup.style.height = "600px";
+  popup.bounds.height = 600;
+  endPopup(900, 460);
+  check("native height-only intent records a height proportion without replacing the width preference",
+    popup.style.width === "64vw" && popup.style.height === "60vh");
+  window.innerWidth = 700; window.innerHeight = 400;
+  popup.bounds = { width: 480, height: 320 }; window.emit("resize");
+  window.innerWidth = 1600; window.innerHeight = 1000; window.emit("resize");
+  check("temporary viewport and minimum clamps do not replace either preferred proportion",
+    popup.style.width === "64vw" && popup.style.height === "60vh");
+  popup.bounds = { width: 1024, height: 600 };
+  beginPopup();
+  popup.style.width = "800px"; popup.style.height = "600px"; popup.bounds.width = 800;
+  endPopup(676, 300);
+  check("width-only resizing preserves an already chosen height proportion",
+    popup.style.width === "50vw" && popup.style.height === "60vh");
+  beginPopup();
+  popup.style.width = "700px"; popup.style.height = "500px";
+  popup.bounds = { width: 700, height: 500 };
+  window.innerWidth = 900; window.emit("resize");
+  window.innerWidth = 1600; window.emit("resize");
+  endPopup(800, 200);
+  check("a viewport change invalidates native preference inference even if the viewport returns before release",
+    popup.style.width === "50vw" && popup.style.height === "60vh");
+  beginPopup();
+  popup.style.width = "600px"; popup.style.height = "400px";
+  popup.bounds = { width: 600, height: 400 };
+  endPopup(700, 100, "pointercancel");
+  check("canceled native gestures restore preferences instead of learning their partial size",
+    popup.style.width === "50vw" && popup.style.height === "60vh");
+  beginPopup();
+  popup.style.width = "550px";
+  window.emit("pointerup", { clientX: 650, clientY: 300 });
+  popupCurrent = false; popupSizing.refresh(); flush(); flushTimers();
+  check("stale popup sizing disposes the shared controller and pending normalization",
+    popup.listenerCount() === 0 && popupGrid.root.listenerCount() === 0 &&
+    frames.size === 0 && timers.size === 0 && popup.style.width === "550px");
+  popupSizing.dispose();
+  const compactPopup = node("dialog"), compactGrid = fixture("compactGrid");
+  const compactSizing = context.createTableCellSizing({
+    root: compactGrid.root, dialog: compactPopup, isCurrent: () => true, initialWidth: 480,
+  });
+  check("a content-sized opening becomes the initial relative preference without pinning height",
+    compactPopup.style.width === "30vw" && compactPopup.style.height === "");
+  compactSizing.dispose();
+  check("disposing every instance leaves no owned widths observers listeners or frames",
+    document.head.children.length === 0 && window.listenerCount() === 0 &&
+    observers.every(observer => observer.observed.size === 0) && frames.size === 0 && timers.size === 0);
+
+  const menuWindow = Object.assign(node("window"), { innerWidth: 900, innerHeight: 700 });
+  const menuDocument = { defaultView: menuWindow, nodeType: 9 };
+  const menuNode = tag => {
+    const element = Object.assign(node(tag), {
+      nodeType: 1, ownerDocument: menuDocument, offsetWidth: 180, offsetHeight: 120, dataset: {},
+      getAttribute(name) { return this.attributes[name] ?? null; },
+    });
+    Object.defineProperty(element, "isConnected", {
+      get: () => menuDocument.documentElement.contains(element),
+    });
+    return element;
+  };
+  menuDocument.documentElement = menuNode("html");
+  menuDocument.body = menuNode("body");
+  menuDocument.documentElement.appendChild(menuDocument.body);
+  const related = menuNode("div"), unrelated = menuNode("div"), anchor = menuNode("td");
+  const endpointScroller = menuNode("div"), endpoint = menuNode("span"), menu = menuNode("menu");
+  menuDocument.body.appendChild(related); menuDocument.body.appendChild(unrelated);
+  menuDocument.body.appendChild(endpointScroller); menuDocument.body.appendChild(menu);
+  related.appendChild(anchor); endpointScroller.appendChild(endpoint);
+  const menuContext = vm.createContext({ window: menuWindow, module: { exports: {} } });
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "context-menu-utils.js"), "utf8"), menuContext);
+  const menuUtils = menuWindow.FoliaContextMenu;
+  check("menu presentation retains the exact browser and CommonJS helper surface",
+    menuContext.module.exports === menuUtils &&
+    Object.keys(menuUtils).sort().join(",") === "hideContextMenu,positionContextMenu");
+  let presentationCurrent = true;
+  const presentation = { anchor, contextNodes: [endpoint], isCurrent: () => presentationCurrent };
+  const openMenu = value => menuUtils.positionContextMenu(menu, 40, 60, value);
+  const scroll = target => ({ type: "scroll", target });
+  check("menu scroll controls have connected distinct ancestor endpoint and sibling targets",
+    anchor.isConnected && endpoint.isConnected && related.contains(anchor) &&
+    endpointScroller.contains(endpoint) && !endpointScroller.contains(anchor) &&
+    !unrelated.contains(anchor) && !unrelated.contains(endpoint));
+  openMenu(presentation);
+  check("unrelated scrolling preserves a valid menu and returns no dismissal",
+    !menuUtils.hideContextMenu(menu, scroll(unrelated)) && menu.classList.contains("visible"));
+  for (const target of [anchor, related, endpointScroller, menuDocument,
+    menuDocument.documentElement, menuDocument.body, menuWindow]) {
+    openMenu(presentation);
+    check("anchor context or root scrolling dismisses the menu " +
+      (target.localName || "document"),
+      menuUtils.hideContextMenu(menu, scroll(target)) && !menu.classList.contains("visible"));
+  }
+  openMenu(presentation);
+  presentationCurrent = false;
+  check("semantic invalidation dismisses on unrelated scrolling despite connected anchors",
+    anchor.isConnected && menuUtils.hideContextMenu(menu, scroll(unrelated)) &&
+    !menu.classList.contains("visible"));
+  presentationCurrent = true;
+  openMenu(presentation); anchor.remove();
+  check("a removed anchor cannot retain its menu on unrelated scrolling",
+    !anchor.isConnected && menuUtils.hideContextMenu(menu, scroll(unrelated)));
+  related.appendChild(anchor);
+  openMenu(presentation); endpoint.remove();
+  check("a replaced selection endpoint invalidates the captured menu context",
+    !endpoint.isConnected && menuUtils.hideContextMenu(menu, scroll(unrelated)));
+  endpointScroller.appendChild(endpoint);
+  openMenu(presentation);
+  check("explicit dismissal reports only a real visible hide",
+    menuUtils.hideContextMenu(menu) && !menuUtils.hideContextMenu(menu));
+  openMenu();
+  check("reopening without metadata does not reuse the previous presentation",
+    menuUtils.hideContextMenu(menu, scroll(unrelated)));
+  openMenu(presentation);
+  const registrations = menuWindow.listenerCount();
+  openMenu(presentation); openMenu(presentation);
+  check("repeated menu openings do not add capture listeners",
+    menuWindow.listenerCount() === registrations);
+  const ownScroll = menuWindow.emit("scroll", { type: "scroll", target: menu });
+  const siblingScroll = menuWindow.emit("scroll", { type: "scroll", target: unrelated });
+  check("existing menu scroll protection remains local and does not suppress unrelated events",
+    ownScroll.stopped === true && !siblingScroll.stopped);
+  check("viewport resize remains unconditional despite valid presentation",
+    menuUtils.hideContextMenu(menu, { type: "resize", target: menuWindow }));
+
+  const editor = Object.assign(menuNode("textarea"), {
+    value: "source", selectionStart: 2, selectionEnd: 4, selectionDirection: "forward",
+  });
+  menuDocument.body.appendChild(editor);
+  const noteMenu = menuNode("menu"); menuDocument.body.appendChild(noteMenu);
+  const capturedSelection = {}, capturedRange = {}, clicked = anchor;
+  let documentOwner = {};
+  const menuScope = vm.createContext({
+    window: menuWindow, currentDocumentActionOwner: () => documentOwner,
+    currentFilePath: "one.md", fileOpenSequence: 7, editorModeRevision: 2,
+    editorInteractionRevision: 3, isEditMode: true, originalMarkdown: "disk",
+    markdownEditor: editor, contextMenu: menu, notesPanelContextMenu: noteMenu,
+    notesPanelContextNoteId: "4", rightClickTarget: clicked,
+    tableMenuSelection: capturedSelection, savedRange: capturedRange,
+    hideContextMenuHelper: menuUtils.hideContextMenu, positionContextMenu: menuUtils.positionContextMenu,
+  });
+  const extract = (start, end) => {
+    const from = renderer.indexOf(start), to = renderer.indexOf(end, from);
+    if (from < 0 || to <= from) throw new Error("Missing menu production source: " + start);
+    return renderer.slice(from, to);
+  };
+  vm.runInContext(extract("function documentMenuPresentation(", "\nfunction showContextMenu(") +
+    extract("function hideContextMenu(event)", "\n// Show context menu on right-click") +
+    extract("function showNotesPanelContextMenu(", "\ndocument.addEventListener('click'"), menuScope);
+  const editorPresentation = menuScope.documentMenuPresentation(editor);
+  check("editor menu freshness captures live editor source rather than the renderer cache",
+    editorPresentation.isCurrent() && editor.value !== menuScope.originalMarkdown);
+  editor.value = "changed";
+  check("same-node source changes invalidate editor presentation without geometry or DOM replacement",
+    editor.isConnected && !editorPresentation.isCurrent());
+  editor.value = "source"; menuScope.editorInteractionRevision++;
+  check("editing then restoring identical source cannot revive an older interaction context",
+    !editorPresentation.isCurrent());
+  const currentDocument = menuScope.documentMenuPresentation(anchor);
+  documentOwner = {};
+  check("a new document owner invalidates a connected preview target", !currentDocument.isCurrent());
+  let tableCurrent = true;
+  const tablePresentation = menuScope.documentMenuPresentation(anchor, [], () => tableCurrent);
+  tableCurrent = false;
+  check("menu presentation honors captured table authority without recapturing consent",
+    !tablePresentation.isCurrent());
+  openMenu(presentation);
+  menuScope.hideContextMenu();
+  check("main-menu dismissal preserves captured table selection range and click target",
+    menuScope.tableMenuSelection === capturedSelection && menuScope.savedRange === capturedRange &&
+    menuScope.rightClickTarget === clicked);
+  let mutations = 0, scrollChanges = 0;
+  menuWindow.CustomTabs = { noteActiveContentMutation() { mutations++; } };
+  menuScope.editorScroll = { changed() { scrollChanges++; } };
+  vm.runInContext(extract("function noteActiveContentMutation()", "\nfunction withFileTrackingResumeHeld("), menuScope);
+  openMenu(presentation); menuUtils.positionContextMenu(noteMenu, 40, 60);
+  menuScope.noteActiveContentMutation();
+  check("accepted source mutation immediately closes document menus and forwards existing revisions",
+    !menu.classList.contains("visible") && !noteMenu.classList.contains("visible") &&
+    menuScope.notesPanelContextNoteId === null && mutations === 1 && scrollChanges === 1);
+
+  const recentMenu = menuNode("menu"), recentRoot = menuNode("div"), recentItem = menuNode("div");
+  const pathNode = menuNode("span"); pathNode.textContent = "inactive.md";
+  menuDocument.body.appendChild(recentMenu); menuDocument.body.appendChild(recentRoot);
+  recentRoot.appendChild(recentItem); recentItem.appendChild(pathNode);
+  recentItem.querySelector = selector => selector === ".tools-menu-recent-path" ? pathNode : null;
+  Object.assign(menuScope, { recentContextMenu: recentMenu, recentContextFilePath: null,
+    fileMenuRecent: recentRoot });
+  vm.runInContext(extract("function showRecentContextMenu(", "\n// Hide recent context menu"), menuScope);
+  menuScope.showRecentContextMenu(40, 60, "inactive.md", recentItem);
+  menuScope.currentFilePath = "other.md";
+  check("unrelated scrolling preserves an inactive recent path independently of the active document",
+    !menuScope.hideRecentContextMenu(scroll(unrelated)) &&
+    recentMenu.classList.contains("visible") && menuScope.recentContextFilePath === "inactive.md");
+  menuScope.showRecentContextMenu(40, 60, "inactive.md", recentItem);
+  check("recent-list scrolling dismisses and clears only its actual command payload",
+    menuScope.hideRecentContextMenu(scroll(recentRoot)) && menuScope.recentContextFilePath === null);
+  menuScope.showRecentContextMenu(40, 60, "inactive.md", recentItem);
+  pathNode.textContent = "replaced.md";
+  check("same-node recent-record changes invalidate presentation before a different path can be used",
+    menuScope.hideRecentContextMenu(scroll(unrelated)) && menuScope.recentContextFilePath === null);
+
+  const tabMenu = menuNode("menu"), tabRoot = menuNode("div"), tabAnchor = menuNode("div");
+  menuDocument.body.appendChild(tabMenu); menuDocument.body.appendChild(tabRoot);
+  tabRoot.appendChild(tabAnchor);
+  const inactiveTab = { id: 2, filePath: "inactive.md" };
+  const tabScope = vm.createContext({
+    tabContextMenu: tabMenu, tabContextPath: null, tabs: [inactiveTab], activeTabId: 1,
+    tabsElement: tabRoot, positionTabMenu: menuUtils.positionContextMenu,
+    hideTabMenuEl: menuUtils.hideContextMenu,
+  });
+  const tabsSource = lf(fs.readFileSync(path.join(ROOT, "src", "custom-tabs.js"), "utf8"));
+  const tabFrom = tabsSource.indexOf("  function showTabContextMenu(");
+  const tabTo = tabsSource.indexOf("\n  if (tabContextMenu) {", tabFrom);
+  if (tabFrom < 0 || tabTo <= tabFrom) throw new Error("Missing production tab-menu wrappers");
+  vm.runInContext(tabsSource.slice(tabFrom, tabTo), tabScope);
+  tabScope.showTabContextMenu(40, 60, inactiveTab, tabAnchor);
+  check("unrelated viewer scrolling preserves the clicked inactive tab path",
+    !tabScope.hideTabContextMenu(scroll(related)) &&
+    tabMenu.classList.contains("visible") && tabScope.tabContextPath === inactiveTab.filePath);
+  tabScope.showTabContextMenu(40, 60, inactiveTab, tabAnchor);
+  check("the same tab-strip scroll dismisses a tab-anchored menu and clears its path",
+    tabScope.hideTabContextMenu(scroll(tabRoot)) && tabScope.tabContextPath === null);
+  tabScope.showTabContextMenu(40, 60, inactiveTab, tabAnchor);
+  inactiveTab.filePath = "renamed.md";
+  check("a changed tab record invalidates its connected old command anchor",
+    tabScope.hideTabContextMenu(scroll(unrelated)) && tabScope.tabContextPath === null);
+
+  const noteRoot = menuNode("div"), noteItem = menuNode("div"), noteElement = menuNode("span");
+  menuDocument.body.appendChild(noteRoot); noteRoot.appendChild(noteItem);
+  related.appendChild(noteElement); noteItem.dataset.noteId = "4";
+  noteElement.setAttribute("data-note-id", "4");
+  Object.assign(menuScope, { notesList: noteRoot, viewer: related });
+  menuScope.showNotesPanelContextMenu(40, 60, "4", noteItem, noteElement);
+  check("unrelated scrolling preserves the owned note command and list anchor",
+    !menuScope.hideNotesPanelContextMenu(scroll(unrelated)) &&
+    noteMenu.classList.contains("visible") && menuScope.notesPanelContextNoteId === "4");
+  menuScope.showNotesPanelContextMenu(40, 60, "4", noteItem, noteElement);
+  menuScope.currentFilePath = "new-document.md";
+  check("equal note IDs in a new document cannot keep an old notes menu current",
+    menuScope.hideNotesPanelContextMenu(scroll(unrelated)) &&
+    menuScope.notesPanelContextNoteId === null);
+
+  const editorMenu = menuScope.documentMenuPresentation(editor);
+  menuUtils.positionContextMenu(menu, 40, 60, editorMenu);
+  menuUtils.positionContextMenu(noteMenu, 40, 60);
+  menuScope.rightClickTarget = editor;
+  menuScope.hideDocumentContextMenus(true);
+  check("preview replacement leaves an unchanged source menu open but dismisses notes presentation",
+    menu.classList.contains("visible") && !noteMenu.classList.contains("visible"));
+  menuScope.rightClickTarget = anchor;
+  menuScope.hideDocumentContextMenus(true);
+  check("preview replacement dismisses a preview-anchored menu immediately",
+    !menu.classList.contains("visible"));
+
+  let sizingRefreshes = 0, consentCaptures = 0, allowedCompletion = true, clearedTimers = 0;
+  const previewTable = menuNode("table");
+  related.appendChild(previewTable); anchor.remove(); previewTable.appendChild(anchor);
+  const selectedRange = { startContainer: anchor, endContainer: anchor,
+    cloneRange() { return this; } };
+  const nativeSelection = { rangeCount: 1, getRangeAt: () => selectedRange,
+    anchorNode: anchor, anchorOffset: 0, focusNode: anchor, focusOffset: 1 };
+  menuWindow.getSelection = () => nativeSelection;
+  menuWindow.CustomTabs.captureDialogContext = tab => {
+    const intent = ++consentCaptures;
+    return () => consentCaptures === intent && menuScope.currentDocumentActionOwner() === tab;
+  };
+  Object.assign(menuScope, { document: menuDocument, tableMenuPointerSelection: null,
+    pendingEditorScrollRestore: null, previewDebounceTimer: 1,
+    tableCellSession: { sizing: { refresh() { sizingRefreshes++; } } },
+    editorScroll: { sourceLineAt: () => 1 },
+    clearTimeout() { clearedTimers++; }, cancelEditorHistoryGroup() {},
+    updateEditorHistoryControls() {}, contentWrapper: related,
+    mayMutateRendererDocument: () => allowedCompletion,
+    supersededFileOpenCompletionCount: 0, frozenFileOpenCompletionCount: 0,
+    markReloadConflict() {}, reportAdoptionTrackingConflict() {}, showNotification() {},
+    diskVersionsEqual: (left, right) => left === right,
+  });
+  vm.runInContext(extract("function cancelEditorScrollRestore(", "\nfunction retainCurrentDocumentEditor(") +
+    extract("for (const type of ['input', 'keydown', 'pointerdown'])", "\nfunction recordEditorInputHistory(") +
+    extract("function captureTableMenuSelection(", "\nfunction restoreTableMenuSelection(") +
+    extract("function beginFileOpen(", "\nfunction completeFileOpen(") +
+    extract("function completeFileOpen(", "\n// Upstream fallback"), menuScope);
+  const pendingOpen = (top = 37, left = 9) => Object.freeze({
+    sequence: menuScope.fileOpenSequence, editorInteraction: menuScope.editorInteractionRevision,
+    editorScroll: menuScope.prepareEditorScrollRestore({ open: true, scrollTop: top, scrollLeft: left }),
+    postRenderScroll: { type: "caller" }, path: "one.md",
+  });
+  const captureMenu = target => {
+    menuScope.rightClickTarget = target;
+    menuScope.captureTableMenuSelection(40, 60, { isTrusted: false });
+    const selection = menuScope.tableMenuSelection;
+    menuUtils.positionContextMenu(menu, 40, 60,
+      menuScope.documentMenuPresentation(target, [target], selection.isCurrent));
+    return selection;
+  };
+  const previewCapture = captureMenu(anchor), wheelOpen = pendingOpen();
+  const beforeWheel = menuScope.editorInteractionRevision;
+  check("wheel setup owns a real preview capture and matching pending restore ticket",
+    previewCapture.origin === "preview" && previewCapture.tableNode === previewTable &&
+    previewCapture.range === selectedRange && previewCapture.isCurrent() &&
+    menu.classList.contains("visible") && Object.isFrozen(wheelOpen) &&
+    menuScope.pendingEditorScrollRestore === wheelOpen.editorScroll && !wheelOpen.editorScroll.cancelled);
+  editor.emit("wheel", { type: "wheel" });
+  check("textarea wheel preserves the actual preview menu capture and its unchanged authority",
+    menu.classList.contains("visible") && menuScope.tableMenuSelection === previewCapture &&
+    previewCapture.isCurrent() && menuScope.editorInteractionRevision === beforeWheel &&
+    consentCaptures === 1 && sizingRefreshes === 1);
+  check("wheel marks the retained restore ticket cancelled before retiring its pending reference",
+    wheelOpen.editorScroll.cancelled && menuScope.pendingEditorScrollRestore === null);
+  editor.scrollTop = 13; editor.scrollLeft = 4;
+  check("completion cannot restore editor scrolling over a newer wheel intent",
+    menuScope.completeFileOpen(wheelOpen) && editor.scrollTop === 13 && editor.scrollLeft === 4);
+  menuScope.hideContextMenu(scroll(related));
+  check("actual preview-context scroll still dismisses the wheel-retained menu",
+    !menu.classList.contains("visible") && menuScope.tableMenuSelection === previewCapture);
+  const sourceCapture = captureMenu(editor), beforeSourceWheel = menuScope.editorInteractionRevision;
+  editor.emit("wheel", { type: "wheel" });
+  check("editor wheel dismisses its source menu without discarding or rebasing captured authority",
+    !menu.classList.contains("visible") && menuScope.tableMenuSelection === sourceCapture &&
+    sourceCapture.isCurrent() && menuScope.editorInteractionRevision === beforeSourceWheel);
+  for (const type of ["input", "keydown", "pointerdown"]) {
+    const captured = captureMenu(anchor), revision = menuScope.editorInteractionRevision;
+    editor.emit(type, { type });
+    check(type + " still advances interaction authority and invalidates the earlier preview capture",
+      menuScope.editorInteractionRevision === revision + 1 && !captured.isCurrent() &&
+      !menu.classList.contains("visible"));
+  }
+  const ordinaryOpen = pendingOpen();
+  check("ordinary matching completion restores both editor scroll axes and retires its ticket",
+    menuScope.completeFileOpen(ordinaryOpen) && editor.scrollTop === 37 && editor.scrollLeft === 9 &&
+    ordinaryOpen.editorScroll.cancelled && menuScope.pendingEditorScrollRestore === null);
+  editor.scrollTop = 14; editor.scrollLeft = 5;
+  check("duplicate completion cannot revive a consumed editor-scroll ticket",
+    menuScope.completeFileOpen(ordinaryOpen) && editor.scrollTop === 14 && editor.scrollLeft === 5);
+  editor.scrollTop = 14; editor.scrollLeft = 5;
+  const deferredOpen = pendingOpen();
+  menuScope.cancelEditorDeferredWork();
+  check("existing deferred-work cancellation also retires the renderer scroll ticket",
+    deferredOpen.editorScroll.cancelled && menuScope.pendingEditorScrollRestore === null &&
+    menuScope.previewDebounceTimer === null && clearedTimers === 1);
+  check("cancelled deferred work cannot move the editor on later completion",
+    menuScope.completeFileOpen(deferredOpen) && editor.scrollTop === 14 && editor.scrollLeft === 5);
+  const olderOpen = pendingOpen();
+  menuScope.fileOpenSequence++;
+  const newerOpen = pendingOpen(42, 11);
+  check("accepted replacement cancels the older ticket and installs only its own returned object",
+    olderOpen.editorScroll.cancelled && menuScope.pendingEditorScrollRestore === newerOpen.editorScroll);
+  const missingTicketSafe = [undefined, null].every(editorScroll =>
+    !menuScope.completeFileOpen({ ...olderOpen, editorScroll }) &&
+    menuScope.pendingEditorScrollRestore === newerOpen.editorScroll &&
+    newerOpen.editorScroll.cancelled === false);
+  check("an older completion without a scroll ticket cannot retire the newer pending object",
+    missingTicketSafe);
+  check("older completion cannot consume a newer pending editor-scroll restore",
+    !menuScope.completeFileOpen(olderOpen) && menuScope.pendingEditorScrollRestore === newerOpen.editorScroll &&
+    newerOpen.editorScroll.cancelled === false);
+  check("the newer ticket remains usable after its obsolete completion",
+    menuScope.completeFileOpen(newerOpen) && editor.scrollTop === 42 && editor.scrollLeft === 11);
+  const refusedOpen = pendingOpen(43, 12), refusedSequence = menuScope.fileOpenSequence;
+  allowedCompletion = false;
+  check("the actual refused-open guard preserves the prior accepted scroll ticket",
+    menuScope.beginFileOpen({ path: "refused.md", content: "not accepted" }) === null &&
+    menuScope.pendingEditorScrollRestore === refusedOpen.editorScroll &&
+    refusedOpen.editorScroll.cancelled === false && menuScope.fileOpenSequence === refusedSequence);
+  allowedCompletion = true;
+  check("refused open does not prevent ordinary completion of its prior owner",
+    menuScope.completeFileOpen(refusedOpen) && editor.scrollTop === 43 && editor.scrollLeft === 12);
+  const frozenOpen = pendingOpen();
+  allowedCompletion = false;
+  check("freeze refusal retires only its own pending completion ticket",
+    !menuScope.completeFileOpen(frozenOpen) && frozenOpen.editorScroll.cancelled &&
+    menuScope.pendingEditorScrollRestore === null);
+  allowedCompletion = true;
+  editor.scrollTop = 15;
+  check("a thawed duplicate cannot revive the ticket consumed by freeze refusal",
+    menuScope.completeFileOpen(frozenOpen) && editor.scrollTop === 15);
+  const mismatchOpen = pendingOpen();
+  menuWindow.folia = { checkOwnedTabDiskSnapshot: () => ({ matches: false }) };
+  check("approved-snapshot refusal retires its own pending completion ticket",
+    !menuScope.completeFileOpen({ ...mismatchOpen, approvedPathKey: "owner",
+      approvedOwner: { pathKey: "owner" } }) &&
+    mismatchOpen.editorScroll.cancelled && menuScope.pendingEditorScrollRestore === null);
+  const throwingOpen = pendingOpen();
+  let propagated = false;
+  try { menuScope.completeFileOpen(throwingOpen, () => { throw new Error("controlled completion fault"); }); }
+  catch (error) { propagated = error.message === "controlled completion fault"; }
+  check("completion faults propagate while finally retiring the exact owned ticket",
+    propagated && throwingOpen.editorScroll.cancelled && menuScope.pendingEditorScrollRestore === null);
+  const fileOpenSource = extract("function beginFileOpen(", "\nfunction completeFileOpen(");
+  check("accepted scroll-ticket installation remains after every open refusal and committed cancellation",
+    fileOpenSource.indexOf("prepareEditorScrollRestore(incomingEditor)") > fileOpenSource.lastIndexOf("return null;") &&
+    fileOpenSource.indexOf("prepareEditorScrollRestore(incomingEditor)") >
+      fileOpenSource.indexOf("hideDocumentContextMenus();\n  cancelEditorDeferredWork();"));
+}
+
+async function sharedNativeSetupSourceTests() {
+  const source = fs.readFileSync(__filename, "utf8").replace(/\r\n/g, "\n");
+  const helpers = [...source.matchAll(/^  const page = (.+);$/gm)];
+  const submissions = ["__sharedKeep", "__columnKeep"].map(witness =>
+    [...source.matchAll(new RegExp("^( +)await (page\\(\\(\\) => \\{\\n[ ]+window\\." +
+      witness + "=[\\s\\S]*?\\n\\1\\}\\));$", "gm"))]);
+  const extracted = helpers.length === 1 && submissions.every(matches => matches.length === 1);
+  check("shared native setup extracts the actual page helper and both submitted callbacks", extracted);
+  if (!extracted) throw new Error("Missing or ambiguous shared native setup submissions");
+  const scripts = [], promises = [], ranges = [], operations = [];
+  let selectedRange = null;
+  const selection = {
+    removeAllRanges() { operations.push(["remove"]); selectedRange = null; },
+    addRange(range) { operations.push(["add", range]); selectedRange = range; },
+  };
+  const document = { createRange() {
+    const range = {
+      selectNodeContents(input) { this.target = input; operations.push(["contents", this, input]); },
+      collapse(start) { this.start = start; operations.push(["collapse", this, start]); },
+    };
+    ranges.push(range);
+    return range;
+  } };
+  const fixture = name => ({ rows: ["header", "body"].map(row => ({ cells: [{ input: {
+    innerHTML: name + ":" + row, listeners: [],
+    addEventListener(type, listener) { this.listeners.push({ type, listener }); },
+  } }] })) });
+  const fixtures = ["Create", "delete-only", "equal-count"].map(fixture);
+  const inputs = fixtures.flatMap(session => session.rows.map(row => row.cells[0].input));
+  check("shared native setup fixtures have distinct header and body inputs without inherited listeners",
+    new Set(inputs).size === inputs.length && inputs.every(input => input.listeners.length === 0));
+  const seedRange = Object.freeze({ existing: "range" }), seedSelection = Object.freeze({ existing: "selection" });
+  const context = vm.createContext({ document, getSelection: () => selection, seedRange, seedSelection,
+    exec: code => {
+      scripts.push(code);
+      const pending = Promise.resolve().then(() => vm.runInContext(code, context, { timeout: 1000 }));
+      promises.push(pending);
+      return pending;
+    } });
+  vm.runInContext("globalThis.window=globalThis;const range=seedRange;const selection=seedSelection;" +
+    "globalThis.page=" + helpers[0][1] + ";", context);
+  const globalsUntouched = () => vm.runInContext(
+    "range===seedRange&&selection===seedSelection&&!Object.hasOwn(window,'range')&&!Object.hasOwn(window,'selection')",
+    context);
+  check("shared native setup context really contains pre-existing lexical range and selection", globalsUntouched());
+  for (const [index, session] of fixtures.entries()) {
+    const create = index === 0, name = create ? "Create" : index === 1 ? "delete-only" : "equal-count";
+    const cell = session.rows[create ? 0 : 1].cells[0], other = session.rows[create ? 1 : 0].cells[0];
+    const keep = create ? "__sharedKeep" : "__columnKeep";
+    const html = create ? "__sharedKeepHTML" : "__columnOldHTML";
+    const events = create ? "__sharedInputEvents" : "__columnNativeEvents";
+    const beforeHTML = cell.input.innerHTML, beforeRanges = ranges.length, beforeOperations = operations.length;
+    context.tableCellSession = session;
+    const pending = vm.runInContext(submissions[create ? 0 : 1][0][2], context, { timeout: 1000 });
+    check("actual shared native setup awaits its original submitted renderer promise " + name,
+      pending === promises[index] && typeof pending?.then === "function" &&
+      cell.input.listeners.length === 0 && ranges.length === beforeRanges && operations.length === beforeOperations);
+    const result = await pending;
+    const listener = cell.input.listeners[0], range = ranges[beforeRanges];
+    check("actual shared native setup retains exact cell HTML and listener ownership " + name,
+      result === true && context[keep] === cell && context[html] === beforeHTML &&
+      cell.input.innerHTML === beforeHTML && cell.input.listeners.length === 1 &&
+      listener?.type === "beforeinput" && typeof listener.listener === "function" &&
+      other.input.listeners.length === 0 && Array.isArray(context[events]) && context[events].length === 0);
+    const actual = operations.slice(beforeOperations);
+    check("actual shared native setup selects only its current input with unchanged lexical globals " + name,
+      ranges.length === beforeRanges + 1 && selectedRange === range && range?.target === cell.input &&
+      range.start === false && actual.length === 4 &&
+      actual[0][0] === "contents" && actual[0][1] === range && actual[0][2] === cell.input &&
+      actual[1][0] === "collapse" && actual[1][1] === range && actual[1][2] === false &&
+      actual[2][0] === "remove" && actual[3][0] === "add" && actual[3][1] === range &&
+      globalsUntouched());
+    listener?.listener({ isTrusted: false, inputType: "scope-probe" });
+    check("actual shared native setup listener records the untrusted VM control on its own witness " + name,
+      JSON.stringify(context[events]) === JSON.stringify([{ trusted: false, type: "scope-probe" }]));
+  }
+  check("actual page submissions repeat the column payload in one context without leaking lexical bindings",
+    scripts.length === fixtures.length && promises.length === fixtures.length &&
+    scripts[0] !== scripts[1] && scripts[1] === scripts[2] &&
+    context.__sharedKeep === fixtures[0].rows[0].cells[0] &&
+    context.__columnKeep === fixtures[2].rows[1].cells[0] && globalsUntouched());
+  // Removing only the invocation scope must reproduce the historical failure,
+  // including the replacement loop; a standalone syntax check cannot see it.
+  const bare = scripts.slice(0, 2).map(code => {
+    const body = code.match(/^\(\(\) => \{([\s\S]*)\}\)\(\.\.\.\[\]\)$/)?.[1];
+    if (!body || !/return true;\s*$/.test(body)) throw new Error("Unexpected submitted native setup wrapper");
+    const unscoped = body.replace(/return true;\s*$/, "true;");
+    new vm.Script(unscoped);
+    return unscoped;
+  });
+  for (const [name, first] of [["Create then column", 0], ["column replacement repeat", 1]]) {
+    const session = fixture(name);
+    const canary = vm.createContext({ document, getSelection: () => selection, tableCellSession: session });
+    vm.runInContext("globalThis.window=globalThis;", canary);
+    const completed = vm.runInContext(bare[first], canary, { timeout: 1000 });
+    const range = vm.runInContext("range", canary), beforeRanges = ranges.length;
+    const beforeOperations = operations.length, beforeKeep = canary.__columnKeep;
+    const beforeEvents = canary.__columnNativeEvents;
+    let error;
+    try { vm.runInContext(bare[1], canary, { timeout: 1000 }); }
+    catch (fault) { error = { name: fault.name, message: fault.message }; }
+    check("unscoped actual native setup canary fails specifically on range redeclaration " + name,
+      completed === true && range.target === session.rows[first].cells[0].input &&
+      error?.name === "SyntaxError" && error.message === "Identifier 'range' has already been declared" &&
+      ranges.length === beforeRanges && operations.length === beforeOperations &&
+      canary.__columnKeep === beforeKeep && canary.__columnNativeEvents === beforeEvents &&
+      session.rows[first].cells[0].input.listeners.length === 1 &&
+      session.rows[1 - first].cells[0].input.listeners.length === 0 &&
+      vm.runInContext("range", canary) === range && vm.runInContext("1+1", canary) === 2, error);
+  }
+  const sharedStart = source.indexOf("\n  async function shared(");
+  const mouseStart = source.indexOf("\n    async function mouse(", sharedStart);
+  const mouseEnd = source.indexOf("\n    async function noSelection(", mouseStart);
+  const setupStart = source.indexOf("await exec(`window.__columnRemoved=", sharedStart) + "await exec(`".length;
+  const setupEnd = source.indexOf("`);", setupStart);
+  const guardStart = source.indexOf('check("Delete icon is visible enabled focusable and deliberately selected for native click "', sharedStart);
+  const guardBody = source.indexOf("await exec(`", guardStart) + "await exec(`".length;
+  const guardEnd = source.indexOf("`));", guardBody);
+  const actionEnd = source.indexOf("const pendingDraft", guardEnd);
+  const confirmBody = source.indexOf("await exec(`__columnClicks.some(Boolean)", guardEnd) + "await exec(`".length;
+  const confirmEnd = source.indexOf("`));", confirmBody);
+  const pointerSubjects = sharedStart >= 0 && mouseStart > sharedStart && mouseEnd > mouseStart &&
+    setupStart > sharedStart && setupEnd > setupStart && guardStart > setupEnd &&
+    guardBody > guardStart && guardEnd > guardBody && actionEnd > guardEnd &&
+    confirmBody > guardEnd && confirmEnd > confirmBody;
+  check("shared pointer Source checks extract actual Delete setup guard action and existing native mouse helper", pointerSubjects);
+  if (!pointerSubjects) throw new Error("Missing shared Delete pointer subjects");
+  class Button {}
+  const clicks = [], scrolls = [], commands = [], waits = [], checks = [];
+  let visible = true, marked = true, inGrid = true, hit = true, settles = 0;
+  const button = Object.assign(new Button(), { tabIndex: 0, disabled: false,
+    getClientRects: () => visible ? [{}] : [],
+    scrollIntoView: options => scrolls.push(options),
+    getBoundingClientRect: () => ({ left: 100, top: 200, width: 28, height: 28 }),
+    contains: node => node === button,
+    addEventListener: (type, listener) => { if (type === "click") clicks.push(listener); },
+    focus() { throw new Error("Delete pointer setup must not force focus"); },
+    click() { throw new Error("Programmatic Delete activation is not the native pointer path"); } });
+  const column = {}, cell = { input: {}, columnState: column,
+    container: { classList: { contains: name => marked && name === "table-cell-selected" } } };
+  const session = { rows: [{ cells: [{}, {}, {}] }, { cells: [{}, cell, {}] }],
+    selectedCell: cell, columnOrder: [{}, column, {}], confirmation: null };
+  const signal = {}, grid = { inert: false, contains: input => inGrid && input === cell.input };
+  const pointer = vm.createContext({ tableCellSession: session, tableCellDeleteColumn: button,
+    HTMLButtonElement: Button, tableCellGrid: grid, tableCellUpdate: { disabled: false },
+    document: { elementFromPoint: () => hit ? button : null } });
+  vm.runInContext("globalThis.window=globalThis;", pointer);
+  const guard = () => vm.runInContext(source.slice(guardBody, guardEnd), pointer);
+  check("shared pointer Source guard proves a visible enabled focusable deliberately selected original column",
+    guard() === true && session.confirmation === null && grid.inert === false);
+  const invalid = [
+    ["disabled", () => { button.disabled = true; }, () => { button.disabled = false; }],
+    ["not focusable", () => { button.tabIndex = -1; }, () => { button.tabIndex = 0; }],
+    ["not visible", () => { visible = false; }, () => { visible = true; }],
+    ["no deliberate selection", () => { session.selectedCell = null; }, () => { session.selectedCell = cell; }],
+    ["wrong selected cell", () => { session.selectedCell = session.rows[1].cells[0]; }, () => { session.selectedCell = cell; }],
+    ["unmarked selection", () => { marked = false; }, () => { marked = true; }],
+    ["detached input", () => { inGrid = false; }, () => { inGrid = true; }],
+    ["wrong column identity", () => { session.columnOrder[1] = {}; }, () => { session.columnOrder[1] = column; }],
+  ];
+  for (const [name, corrupt, restore] of invalid) {
+    corrupt();
+    check("shared pointer Source guard refuses " + name, guard() === false);
+    restore();
+  }
+  const driver = vm.createContext({ name: "delete-only",
+    exec: code => Promise.resolve(vm.runInContext(code, pointer, { timeout: 1000 })),
+    bounded: (label, pending) => pending, settle: async () => { settles++; },
+    key() { throw new Error("Delete must use native pointer input from the start"); },
+    wait: async (label, expression) => {
+      waits.push({ label, expression });
+      if (!vm.runInContext(expression, pointer)) throw new Error("Controlled Source confirmation was not established");
+    },
+    check: (name, ok) => checks.push({ name, ok }),
+    win: { webContents: { debugger: { sendCommand: async (method, input) => {
+      commands.push({ method, input });
+      if (input.type === "mouseReleased") {
+        for (const listener of clicks) listener({ isTrusted: true });
+        session.confirmation = { controller: { signal } }; grid.inert = true;
+        pointer.tableCellUpdate.disabled = true;
+        pointer.__columnConfirmation = { signal, defaultId: "cancel", cancelId: "cancel",
+          message: "Delete Column 2: B? The document changes only when you choose Update the document." };
+      }
+    } } } } });
+  vm.runInContext(source.slice(mouseStart, mouseEnd) + "\nglobalThis.runPointer=async()=>{" +
+    source.slice(guardEnd + "`));".length, actionEnd) + "};", driver);
+  for (const name of ["delete-only", "equal-count"]) {
+    driver.name = name;
+    commands.length = waits.length = checks.length = scrolls.length = 0; settles = 0;
+    session.confirmation = null; grid.inert = false; pointer.tableCellUpdate.disabled = false;
+    vm.runInContext(source.slice(setupStart, setupEnd), pointer);
+    await driver.runPointer();
+    check("shared pointer Source actual case uses only the existing hit-tested native left-click path " + name,
+      commands.length === 2 && commands.map(command => command.input.type).join(",") === "mousePressed,mouseReleased" &&
+      commands.every(command => command.method === "Input.dispatchMouseEvent" &&
+        command.input.button === "left" && command.input.clickCount === 1 && command.input.x === 112 && command.input.y === 212) &&
+      scrolls.length === 1 && scrolls[0].block === "nearest" && scrolls[0].inline === "nearest" && settles === 1 &&
+      waits.length === 1 && waits[0].label === "column native click confirmation " + name &&
+      checks.length === 1 && checks[0].ok && checks[0].name === "native click invokes Delete's registered safe-default confirmation " + name);
+  }
+  const confirmation = () => vm.runInContext(source.slice(confirmBody, confirmEnd), pointer);
+  pointer.__columnClicks = [false];
+  check("shared pointer Source confirmation refuses an untrusted activation witness", confirmation() === false);
+  pointer.__columnClicks = [true]; pointer.__columnConfirmation.signal = {};
+  check("shared pointer Source confirmation refuses a foreign pending signal", confirmation() === false);
+  pointer.__columnConfirmation.signal = signal;
+  check("shared pointer Source confirmation retains the exact controlled pending signal and safe choice", confirmation() === true);
+  hit = false; commands.length = waits.length = 0; settles = 0;
+  let refused;
+  try { await driver.runPointer(); } catch (error) { refused = error.message; }
+  check("shared pointer Source existing hit-test refusal sends no native input and has no wait retry or fallback",
+    refused === "Shared control is not hit-testable" && commands.length === 0 && waits.length === 0 && settles === 0);
+}
+
 function dialogGuardSourceTests() {
   const messages = [], calls = [];
-  const document = { readyState: "loading", getElementById: () => cell };
-  class Dialog {
+  let clock = 0, timerId = 0;
+  const timers = new Map(), document = { readyState: "loading",
+    getElementById: id => id === "tableCellDialog" ? cell : id === "ctxEditTable" ? item : null };
+  class Element {
+    constructor(id) {
+      this.id = id; this.ownerDocument = document; this.isConnected = true; this.listeners = new Map();
+    }
+    contains(node) { return node === this; }
+    addEventListener(type, fn) {
+      if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+      this.listeners.get(type).add(fn);
+    }
+    removeEventListener(type, fn) { this.listeners.get(type)?.delete(fn); }
+    emit(type, action, options = {}) {
+      const event = Object.assign(new MouseEvent(), { type, target: this, currentTarget: this,
+        eventPhase: 2, isTrusted: true, button: 0 }, options);
+      try {
+        for (const fn of [...(this.listeners.get(type) || [])]) fn(event);
+        action?.(event);
+      } finally { event.currentTarget = null; event.eventPhase = 0; }
+      return event;
+    }
+  }
+  class MouseEvent {}
+  class Dialog extends Element {
     constructor(id, text) {
-      this.id = id; this.textContent = text; this.ownerDocument = document; this.isConnected = true;
+      super(id); this.textContent = text;
       this.open = false;
     }
     querySelector() { return { textContent: this.id === "appMessageDialog" ? "Discard unsaved changes?" : "Edit table" }; }
@@ -384,10 +2955,14 @@ function dialogGuardSourceTests() {
     showModal() { calls.push(this.id + ":showModal"); }
   }
   const cell = new Dialog("tableCellDialog", "Edit table");
+  const item = new Element("ctxEditTable");
   const dirtyOpen = new Dialog("appMessageDialog",
     "You have unsaved changes. Discard them and open another file?");
-  const window = {}, context = vm.createContext({ window, top: window, document,
+  const window = new Element("owned-window"), context = vm.createContext({ window, top: window, document,
     location: { href: "file:///owned/src/index.html" }, HTMLDialogElement: Dialog,
+    HTMLElement: Element, MouseEvent, performance: { now: () => clock },
+    setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
+    clearTimeout: id => timers.delete(id),
     console: { info() {}, error(message) { messages.push(message); } } });
   const script = rendererDialogGuardScript(731, "CELL_GUARD_REFUSED:", "CELL_GUARD_STAGE:");
   vm.runInContext(script, context);
@@ -416,6 +2991,109 @@ function dialogGuardSourceTests() {
   guard.runCellDialog(() => {});
   check("unused feature-dialog allowance cannot leak into a later action",
     refuses(() => cell.showModal()));
+  const scope = { owner: 1, source: "owned source", selection: {}, table: {} };
+  const arm = (overrides = {}) => {
+    const expected = { ...scope };
+    return guard.armCellInput({ dialog: cell, item,
+      isCurrent: () => Object.keys(expected).every(key => scope[key] === expected[key]), ...overrides });
+  };
+  const activate = action => {
+    item.emit("mousedown");
+    return item.emit("click", action);
+  };
+  for (const [label, overrides] of [
+    ["cloned dialog", { dialog: new Dialog("tableCellDialog", "clone") }],
+    ["wrong dialog", { dialog: dirtyOpen }],
+    ["cloned item", { item: new Element("ctxEditTable") }],
+    ["missing authority", { isCurrent: null }],
+  ]) check("cell input guard refuses " + label, refuses(() => arm(overrides)));
+  for (const node of [cell, item]) {
+    node.isConnected = false;
+    check("cell input guard refuses disconnected " + node.id, refuses(() => arm()));
+    node.isConnected = true;
+    node.ownerDocument = {};
+    check("cell input guard refuses wrong document for " + node.id, refuses(() => arm()));
+    node.ownerDocument = document;
+  }
+  let ticket = arm();
+  check("arming cell input alone grants no modal and refuses overlapping admission",
+    refuses(() => cell.showModal()) && refuses(() => arm()) &&
+    refuses(() => guard.runCellDialog(() => cell.showModal())));
+  guard.finishCellInput(ticket);
+  check("synchronous allowance refuses an overlapping input ticket",
+    refuses(() => guard.runCellDialog(() => arm())));
+  for (const key of Object.keys(scope)) {
+    ticket = arm();
+    const original = scope[key];
+    check("cell input guard rechecks stale " + key + " at native admission",
+      refuses(() => activate(() => { scope[key] = {}; cell.showModal(); })));
+    scope[key] = original;
+    guard.finishCellInput(ticket);
+  }
+  for (const node of [cell, item]) {
+    ticket = arm();
+    check("cell input guard rechecks disconnected " + node.id + " at native admission",
+      refuses(() => activate(() => { node.isConnected = false; cell.showModal(); })));
+    node.isConnected = true;
+    guard.finishCellInput(ticket);
+    ticket = arm();
+    check("cell input guard rechecks document for " + node.id + " at native admission",
+      refuses(() => activate(() => { node.ownerDocument = {}; cell.showModal(); })));
+    node.ownerDocument = document;
+    guard.finishCellInput(ticket);
+  }
+  for (const [label, events] of [
+    ["untrusted input", () => {
+      item.emit("mousedown", null, { isTrusted: false }); item.emit("click", () => cell.showModal());
+    }],
+    ["untrusted click", () => {
+      item.emit("mousedown"); item.emit("click", () => cell.showModal(), { isTrusted: false });
+    }],
+    ["wrong item", () => {
+      item.emit("mousedown"); item.emit("click", () => cell.showModal(), { target: new Element("other") });
+    }],
+    ["wrong dispatch listener", () => {
+      item.emit("mousedown"); item.emit("click", () => cell.showModal(), { currentTarget: new Element("other") });
+    }],
+    ["wrong button", () => {
+      item.emit("mousedown", null, { button: 2 }); item.emit("click", () => cell.showModal());
+    }],
+    ["post-dispatch input", () => { activate(); cell.showModal(); }],
+    ["nonmodal request", () => activate(() => cell.show())],
+    ["unrelated request", () => activate(() => dirtyOpen.showModal())],
+  ]) {
+    ticket = arm();
+    check("cell input guard refuses " + label, refuses(events));
+    guard.finishCellInput(ticket);
+  }
+  ticket = arm();
+  check("cell input guard enforces expiry even before its timer runs",
+    refuses(() => activate(() => { clock += 5000; cell.showModal(); })));
+  for (const fn of [...timers.values()]) fn();
+  check("expired cell input leaves no pending ticket or listeners",
+    !guard.cellInputState().pending && [...item.listeners.values()].every(set => !set.size));
+  guard.cancelCellInput();
+  ticket = arm();
+  const allowedBefore = calls.length;
+  activate(() => {
+    cell.showModal();
+    check("cell input guard consumes before one native call and refuses reuse",
+      calls.length === allowedBefore + 1 && guard.cellInputState().consumed &&
+      refuses(() => cell.showModal()));
+  });
+  guard.finishCellInput(ticket);
+  check("completed cell input leaves no admission after cleanup",
+    !guard.cellInputState().pending && !timers.size &&
+    [...item.listeners.values()].every(set => !set.size) && refuses(() => cell.showModal()));
+  ticket = arm();
+  guard.cancelCellInput();
+  check("cancelled cell input leaves no admission and refuses a stale completion token",
+    refuses(() => cell.showModal()) && refuses(() => guard.finishCellInput(ticket)));
+  ticket = arm();
+  window.emit("pagehide");
+  check("document replacement revokes cell input and removes its listeners and timer",
+    !guard.cellInputState().pending && !timers.size &&
+    [...item.listeners.values()].every(set => !set.size) && refuses(() => cell.showModal()));
   vm.runInContext(script, context);
   check("dialog guard repeated installation preserves its exact functions and marker",
     window.__cellDialogGuard === guard &&
@@ -463,7 +3141,8 @@ function rendererDialogGuardScript(id, marker, guardStage) {
       if(existing) {
         const value=existing.value;
         if(!value||value.contentsId!==${id}||value.documentURL!==location.href||!value.executed||
-            typeof value.runCellDialog!=='function'||
+            !['runCellDialog','armCellInput','finishCellInput','cancelCellInput','cellInputState']
+              .every(kind=>typeof value[kind]==='function')||
             !['alert','confirm','prompt'].every(kind=>window[kind]?.cellGuardContentsId===${id})||
             !['show','showModal'].every(kind=>HTMLDialogElement.prototype[kind]?.cellGuardContentsId===${id})) {
           throw new Error('Conflicting document prompt guard');
@@ -481,14 +3160,37 @@ function rendererDialogGuardScript(id, marker, guardStage) {
         Object.defineProperty(guarded,'cellGuardContentsId',{value:${id}});
         Object.defineProperty(window,kind,{configurable:true,writable:true,value:guarded});
       }
-      let expectedDialog=null,originalCalls=0;
+      let expectedDialog=null,originalCalls=0,inputTicket=null,inputSequence=0;
+      const releaseInput=ticket=>{
+        if(!ticket||inputTicket!==ticket)return;
+        ticket.item.removeEventListener('mousedown',ticket.observe,true);
+        ticket.item.removeEventListener('click',ticket.observe,true);
+        clearTimeout(ticket.timer);
+        inputTicket=null;
+      };
+      const currentInput=ticket=>ticket&&!ticket.consumed&&performance.now()<ticket.expires&&
+        ticket.dialog===document.getElementById('tableCellDialog')&&
+        ticket.item===document.getElementById('ctxEditTable')&&
+        ticket.dialog.isConnected&&ticket.item.isConnected&&
+        ticket.dialog.ownerDocument===document&&ticket.item.ownerDocument===document&&
+        ticket.isCurrent()===true;
       for(const kind of ['show','showModal']) {
         const original=HTMLDialogElement.prototype[kind];
         const guarded=function(...args) {
-          if(this!==expectedDialog) {
+          const ticket=inputTicket,event=ticket?.event;
+          const inputAllowed=!expectedDialog&&kind==='showModal'&&this===ticket?.dialog&&
+            event?.isTrusted===true&&event.currentTarget===ticket.item&&event.eventPhase!==0&&
+            currentInput(ticket);
+          if(this!==expectedDialog&&!inputAllowed) {
             return refuse('html:'+JSON.stringify({method:kind,id:this.id,
               title:this.querySelector('h2')?.textContent??null,text:this.textContent.slice(0,500),
               phase:'before-original',originalCalls,open:this.open,modal:this.matches(':modal')}));
+          }
+          if(inputAllowed) {
+            ticket.consumed=true;
+            ticket.item.removeEventListener('mousedown',ticket.observe,true);
+            ticket.item.removeEventListener('click',ticket.observe,true);
+            clearTimeout(ticket.timer);
           }
           expectedDialog=null;
           originalCalls++;
@@ -499,15 +3201,48 @@ function rendererDialogGuardScript(id, marker, guardStage) {
       }
       const runCellDialog=action=>{
         const dialog=document.getElementById('tableCellDialog');
-        if(expectedDialog||typeof action!=='function'||!(dialog instanceof HTMLDialogElement)||
+        if(expectedDialog||inputTicket||typeof action!=='function'||!(dialog instanceof HTMLDialogElement)||
             !dialog.isConnected||dialog.ownerDocument!==document) {
           return refuse('invalid-cell-dialog-authorization');
         }
         expectedDialog=dialog;
         try{return action()}finally{expectedDialog=null}
       };
+      const armCellInput=request=>{
+        const dialog=request?.dialog,item=request?.item;
+        if(expectedDialog||inputTicket||!(dialog instanceof HTMLDialogElement)||
+            !(item instanceof HTMLElement)||typeof request.isCurrent!=='function'||
+            dialog!==document.getElementById('tableCellDialog')||
+            item!==document.getElementById('ctxEditTable')||!dialog.isConnected||!item.isConnected||
+            dialog.ownerDocument!==document||item.ownerDocument!==document||request.isCurrent()!==true) {
+          return refuse('invalid-cell-input-authorization');
+        }
+        const ticket={id:++inputSequence,dialog,item,isCurrent:request.isCurrent,
+          expires:performance.now()+5000,pressed:false,event:null,consumed:false};
+        ticket.observe=event=>{
+          if(!(event instanceof MouseEvent)||!event.isTrusted||event.button!==0||
+              !item.contains(event.target)||!currentInput(ticket))return;
+          if(event.type==='mousedown')ticket.pressed=true;
+          else if(event.type==='click'&&ticket.pressed)ticket.event=event;
+        };
+        inputTicket=ticket;
+        item.addEventListener('mousedown',ticket.observe,true);
+        item.addEventListener('click',ticket.observe,true);
+        ticket.timer=setTimeout(()=>releaseInput(ticket),5000);
+        return ticket.id;
+      };
+      const finishCellInput=id=>{
+        if(!inputTicket||inputTicket.id!==id)return refuse('invalid-cell-input-completion');
+        const consumed=inputTicket.consumed;
+        releaseInput(inputTicket);
+        return consumed;
+      };
+      const cancelCellInput=()=>releaseInput(inputTicket);
+      window.addEventListener('pagehide',cancelCellInput);
       Object.defineProperty(window,'__cellDialogGuard',{value:Object.freeze({
-        contentsId:${id},documentURL:location.href,executed:true,runCellDialog
+        contentsId:${id},documentURL:location.href,executed:true,runCellDialog,
+        armCellInput,finishCellInput,cancelCellInput,
+        cellInputState:()=>({pending:!!inputTicket,consumed:!!inputTicket?.consumed,originalCalls})
       })});
       report('installed');
     } catch(error) {
@@ -744,6 +3479,7 @@ require("./test-userdata-isolation");
   let chooser, win, sentinel, fileSequence = 0, actorCleanup = null, finishing = false, shellControl = null;
   let admissionFixture = null, observedCellDialog = null, maximumLiveTabs = 0;
   const performanceSources = new Map();
+  const detailMeasurements = [];
   const fixtures = [];
   const rawFile = path.join(evidence, "raw-ui" + (proof ? "-" + proof : "") + ".log");
   fs.writeFileSync(rawFile, "");
@@ -761,7 +3497,14 @@ require("./test-userdata-isolation");
     catch { /* Main has not reached readiness. */ }
     fs.writeFileSync(path.join(evidence, "last-run.json"), JSON.stringify({
       stage, detail, proof: proof || null, partition: partition || null, perfOnly, dirtyOpenProbe,
-      uiGroups: { declared: uiGroups, expected: expectedUiGroups, executed: uiGroups.filter(name => executed.has(name)) },
+      ...(coreFunction ? { coreFunction: true, phase: corePhase,
+        opening: "Normal CDP whole-table only; disclosed synchronous guarded Create/Selected Rows" } : {}),
+      ...(openingPresentation ? { openingPresentation: true, phase: corePhase,
+        opening: "Normal CDP whole-table only; exact CDP-emulated CSS viewport before each fixture" } : {}),
+      ...(detailPresentation ? { detailPresentation: true, phase: corePhase,
+        opening: "Normal CDP whole-table; one disclosed guarded synchronous preview SelectedRows case" } : {}),
+      uiGroups: { declared: invocationUiGroups, expected: expectedUiGroups,
+        executed: invocationUiGroups.filter(name => executed.has(name)) },
       fixtureCount: fileSequence, maximumLiveTabs, tabCountSampling: "after fixture admission",
       fixtureChooser: chooser || null,
       product, suiteSha256: sha(__filename),
@@ -865,6 +3608,11 @@ require("./test-userdata-isolation");
     throw new Error("Timed out waiting for " + label);
   }
   async function settle() {
+    if (ownedHidden) {
+      await bounded("owned hidden Chromium frame", win.webContents.capturePage(undefined,
+        { stayHidden: true, stayAwake: true }));
+      return;
+    }
     await exec("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r(true))))");
   }
   async function waitMain(label, predicate) {
@@ -1097,7 +3845,9 @@ require("./test-userdata-isolation");
       if (candidates.length > 1) throw new Error("More than one window loaded the actual Main index.html");
       win = candidates[0];
       const guard = win && earlyElectron.guards.get(win.webContents.id);
-      if (guard?.acknowledged && guard.finishedURL === expectedMainURL && win.isVisible()) {
+      const surfaceReady = win && (ownedHidden
+        ? !win.isVisible() && !win.isFocused() : win.isVisible());
+      if (guard?.acknowledged && guard.finishedURL === expectedMainURL && surfaceReady) {
         const witness = await bounded("initial Main document guard witness", exec(`(() => ({
           contentsId:window.__cellDialogGuard?.contentsId??null,
           documentURL:window.__cellDialogGuard?.documentURL??null,
@@ -1119,7 +3869,7 @@ require("./test-userdata-isolation");
       }
       await sleep(25);
     }
-    throw new Error("Actual Main document, guard acknowledgements and visible window were not ready within 10000ms");
+    throw new Error("Actual Main document, guard acknowledgements and required window surface were not ready within 10000ms");
   }
   function shellGuardsInstalled() {
     return shell.openExternal === guardedExternal && shell.openPath === guardedPath;
@@ -1148,7 +3898,7 @@ require("./test-userdata-isolation");
       }, control.href);
       try {
         shellControl = control;
-        win.focus();
+        if (!ownedHidden) win.focus();
         win.webContents.sendInputEvent({ type: "mouseMove", ...point });
         win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
         win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
@@ -1449,8 +4199,14 @@ require("./test-userdata-isolation");
         selection.removeAllRanges(); selection.addRange(range);
         return this.rightClick(table.rows[first || 0].cells[0]);
       },
-      action(rowsOnly) {
-        const button = document.getElementById(rowsOnly ? "ctxEditSelectedRows" : "ctxEditTable");
+      action(mode) {
+        FoliaTableCells.validateMode(mode);
+        const buttons = {
+          [FoliaTableCells.Mode.INSERT]: "ctxInsertTable",
+          [FoliaTableCells.Mode.UPDATE_TABLE]: "ctxEditTable",
+          [FoliaTableCells.Mode.UPDATE_ROWS]: "ctxEditSelectedRows",
+        };
+        const button = document.getElementById(buttons[mode]);
         const visible = button.getClientRects().length > 0 && getComputedStyle(button).display !== "none";
         window.__cellDialogGuard.runCellDialog(() => button.click());
         return { visible, opened: tableCellDialog.open, count: this.inputs().length,
@@ -1611,14 +4367,95 @@ require("./test-userdata-isolation");
   }
   const state = () => exec("__cells.state()");
   const commonState = () => exec("__cells.commonState()");
-  async function openGrid(index = 1, rowsOnly = false, first, last) {
+  let tableModes;
+  async function openGrid(index = 1, mode = tableModes.UPDATE_TABLE, first, last) {
     const menu = first === undefined
       ? await page(index => __cells.preview(index), index)
       : await page((index, first, last) => __cells.preview(index, first, last), index, first, last);
-    const opened = await page(rows => __cells.action(rows), rowsOnly);
+    const opened = await page(mode => __cells.action(mode), mode);
     check("cell dialog setup has a real selected table and visible menu action", menu && opened.visible && opened.opened, opened);
     if (!menu || !opened.visible || !opened.opened) throw new Error("Cell grid setup failed: " + JSON.stringify(opened));
     return opened;
+  }
+  async function openCoreGrid(index = 1, mode = tableModes.UPDATE_TABLE, first, last) {
+    if (mode !== tableModes.UPDATE_TABLE) return openGrid(index, mode, first, last);
+    if (first !== undefined || last !== undefined) throw new Error("Whole-table input cannot acquire row-selection authority");
+    const target = `viewer.querySelectorAll('table')[${JSON.stringify(index)}].rows[0].cells[0]`;
+    async function point(expression) {
+      return exec(`(() => {
+        const node=${expression};
+        if(!node?.isConnected)throw Error('Missing core input target');
+        node.scrollIntoView({block:'nearest',inline:'nearest'});
+        const r=node.getBoundingClientRect(),x=Math.round(r.left+Math.min(12,r.width/2)),
+          y=Math.round(r.top+Math.min(12,r.height/2));
+        if(!r.width||!r.height||!node.contains(document.elementFromPoint(x,y)))
+          throw Error('Core input target is not hit-testable');
+        return {x,y};
+      })()`);
+    }
+    const before = await exec(`(() => {
+      const table=viewer.querySelectorAll('table')[${JSON.stringify(index)}];
+      if(!table?.isConnected)throw Error('Missing core table');
+      const exact=window.CustomTabs.snapshotExactEditorContent(),descriptor=editorScroll.tableSource(table);
+      const model=FoliaTableCells.index(exact,marked,protectTableSource);
+      const expected=FoliaTableCells.resolvePreviewTable(model,table,viewer,node=>editorScroll.tableSource(node),FoliaTableCells.Mode.UPDATE_TABLE);
+      window.__coreInput={table,exact,descriptor,owner:currentDocumentActionOwner(),
+        source:markdownEditor.value,path:currentFilePath,expected};
+      return {edit:isEditMode,mapped:!!descriptor,rows:expected.rows.length,columns:expected.table.rows[0].cells.length};
+    })()`);
+    check("core normal input establishes its exact mapped whole-table target", before.edit && before.mapped && before.rows > 0 && before.columns > 0, before);
+    const right = await point(target);
+    await bounded("core pointer movement", win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...right }));
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await bounded("core table context input", win.webContents.debugger.sendCommand("Input.dispatchMouseEvent",
+        { type, ...right, button: "right", clickCount: 1 }));
+    }
+    const left = await point("ctxEditTable");
+    await bounded("core menu pointer movement", win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...left }));
+    const menu = await exec(`(() => {
+      const b=__coreInput,s=tableMenuSelection,n=ctxEditTable;b.selection=s;
+      return {visible:contextMenu.classList.contains('visible')&&n.getClientRects().length>0&&getComputedStyle(n).display!=='none',
+        table:s?.tableNode===b.table,owner:s?.tab===b.owner,source:s?.source===b.source,current:s?.isCurrent()};
+    })()`);
+    check("core normal menu is visible with the expected table owner and source before activation",
+      Object.values(menu).every(value => value === true), menu);
+    const ticket = await exec(`(() => {
+      const b=__coreInput;
+      return window.__cellDialogGuard.armCellInput({dialog:tableCellDialog,item:ctxEditTable,
+        isCurrent:()=>isEditMode&&b.table.isConnected&&currentFilePath===b.path&&
+          currentDocumentActionOwner()===b.owner&&markdownEditor.value===b.source&&
+          window.CustomTabs.snapshotExactEditorContent()===b.exact&&tableMenuSelection===b.selection&&
+          b.selection.tableNode===b.table&&b.selection.isCurrent()&&
+          editorScroll.tableSource(b.table)?.start===b.descriptor.start&&
+          editorScroll.tableSource(b.table)?.end===b.descriptor.end});
+    })()`);
+    try {
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await bounded("core trusted menu activation", win.webContents.debugger.sendCommand("Input.dispatchMouseEvent",
+          { type, ...left, button: "left", clickCount: 1 }));
+      }
+      const opened = await exec(`(() => {
+        const b=__coreInput,s=tableCellSession;
+        return {opened:tableCellDialog.open,modal:tableCellDialog.matches(':modal'),
+          error:tableCellError.textContent,notification:document.getElementById('notificationMessage').textContent,
+          mode:s?.mode===FoliaTableCells.Mode.UPDATE_TABLE,owner:s?.selection.tab===b.owner,
+          selection:s?.selection===b.selection,table:s?.selection.tableNode===b.table,
+          exact:s?.exact===b.exact&&s?.model.source===b.expected.model.source,
+          target:s?.target.table.start===b.expected.table.start&&s?.target.table.end===b.expected.table.end&&
+            JSON.stringify(s?.target.rows.map(row=>row.cells.map(cell=>cell.text)))===
+              JSON.stringify(b.expected.rows.map(row=>row.cells.map(cell=>cell.text))),
+          consumed:window.__cellDialogGuard.cellInputState().consumed};
+      })()`);
+      check("core trusted activation opens only the exact whole-table modal and consumes its ticket",
+        opened.opened && opened.modal && !opened.error && !opened.notification &&
+        ["mode", "owner", "selection", "table", "exact", "target", "consumed"].every(key => opened[key] === true), opened);
+      check("core normal-input admission finishes before editing", await exec(
+        `window.__cellDialogGuard.finishCellInput(${JSON.stringify(ticket)})===true&&
+          !window.__cellDialogGuard.cellInputState().pending`));
+      return opened;
+    } finally {
+      await exec("window.__cellDialogGuard.cancelCellInput();delete window.__coreInput;true");
+    }
   }
   async function cancel() {
     if (!win || win.isDestroyed()) return;
@@ -1672,7 +4509,9 @@ require("./test-userdata-isolation");
     }
     const captureName = process.env.FOLIA_CELL_EVIDENCE
       ? path.relative(ROOT, evidence) + "-" + name : "table-cell-editor-" + name;
-    const file = await captureScreenshot(win, captureName);
+    const file = ownedHidden
+      ? await bounded("owned hidden Chromium screenshot", captureScreenshot(win, captureName, true))
+      : await captureScreenshot(win, captureName);
     const valid = !!file && fs.existsSync(file) && fs.statSync(file).size > 100;
     check("cell screenshot is freshly captured for " + name, valid, file);
     const preserved = path.join(evidence, name + ".png");
@@ -1888,12 +4727,15 @@ require("./test-userdata-isolation");
       await exec("document.fonts.ready.then(()=>true)");
       await settle();
       const actual = await page(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }));
+      const admitted = actual.width === width && Math.abs(actual.height - height) <= heightRounding &&
+        debuggerAPI.isAttached();
       check("cell " + label + " viewport renders " +
         (emulated ? "its exact reference size" : "its exact width and measured native height"),
-        actual.width === width && Math.abs(actual.height - height) <= heightRounding && debuggerAPI.isAttached(),
+        admitted,
         { requested: { width, height }, mode: emulated ? "CDP-emulated reference" : "native content size",
           heightRounding, actual, nativeContentSize: win.getContentSize() });
-      await run();
+      if (!admitted) throw new Error("Cell viewport did not admit the requested dimensions: " + label);
+      await run(actual);
     } catch (error) {
       errors.push({ phase: "setup or scenario", error: error.stack });
     }
@@ -1930,6 +4772,10 @@ require("./test-userdata-isolation");
       const footer = tableCellDialog.querySelector('.note-dialog-footer');
       const copy = footer.querySelector('.table-cell-footer-copy');
       const actions = footer.querySelector('.table-cell-footer-actions');
+      const rowActions = document.getElementById('tableCellRowActions');
+      const setup = document.getElementById('tableCellSetup');
+      const counts = document.getElementById('tableCellCounts');
+      const columnScope = document.getElementById('tableCellColumnScope');
       const text = node => {
         const range = document.createRange();
         range.selectNodeContents(node);
@@ -1939,7 +4785,29 @@ require("./test-userdata-isolation");
           rects: [...range.getClientRects()].map(box => box.toJSON()) };
       };
       const buttons = [tableCellUpdate, document.getElementById('tableCellCancel')];
-      return { dialog: rect(tableCellDialog), header: rect(header), grid: rect(tableCellGrid),
+      return { dialog: rect(tableCellDialog), header: rect(header), rowActions: rect(rowActions), grid: rect(tableCellGrid),
+        mode: tableCellSession.mode, setupHidden: setup.hidden && !setup.getClientRects().length,
+        counts: text(counts), columnScope: text(columnScope), rowActionsVisible: text(rowActions).visible,
+        rowActionsRole: rowActions.getAttribute('role'), rowActionsName: rowActions.getAttribute('aria-label'),
+        countsLive: counts.getAttribute('aria-live'),
+        structureLocked: !tableCellSession.ready || !!tableCellSession.submitting ||
+          !!tableCellSession.applied || !!tableCellSession.confirmation,
+        deliberateSelection: !!tableCellSession.selectedCell &&
+          tableCellSession.selectedCell.container.classList.contains('table-cell-selected'),
+        rowButtons: [...rowActions.children].map(node => {
+          const svg = node.querySelector(':scope > svg'), box = node.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return { id:node.id, tag:node.tagName, text:node.textContent, bounds:rect(node),
+            name:node.getAttribute('aria-label'),title:node.getAttribute('title'),
+            describedBy:node.getAttribute('aria-describedby'),
+            svg:!!svg && svg.getAttribute('aria-hidden')==='true' &&
+              svg.getClientRects().length>0 && svg.getBoundingClientRect().width>0 &&
+              svg.getBoundingClientRect().height>0,
+            usable:box.width>0&&box.height>0&&!!hit&&node.contains(hit),
+            visible:node.getClientRects().length>0,disabled:node.disabled };
+        }),
+        bandOrder: [header,rowActions,counts,columnScope,tableCellGrid].every((node,index,all) =>
+          !index || !!(all[index-1].compareDocumentPosition(node)&Node.DOCUMENT_POSITION_FOLLOWING)),
         footer: rect(footer), copy: rect(copy), actions: rect(actions),
         buttons: buttons.map(rect),
         usableButtons: buttons.every(button => {
@@ -1955,10 +4823,40 @@ require("./test-userdata-isolation");
         helpInCopy: copy.contains(document.getElementById('tableCellHelp')),
         scopeFont: parseFloat(getComputedStyle(document.getElementById('tableCellScope')).fontSize),
         helpFont: parseFloat(getComputedStyle(document.getElementById('tableCellHelp')).fontSize),
+        countsMarginBottom: parseFloat(getComputedStyle(document.getElementById('tableCellCounts')).marginBottom),
+        columnScopeMarginBottom: parseFloat(getComputedStyle(document.getElementById('tableCellColumnScope')).marginBottom),
+        gridMarginTop: parseFloat(getComputedStyle(tableCellGrid).marginTop),
         resize: getComputedStyle(tableCellDialog).resize };
     });
   }
-  function readableCellFooter(layout, expectedScope, inline) {
+  function cellControlBands(layout, dataRows, columns) {
+    const selectedRows = layout.mode === tableModes.UPDATE_ROWS;
+    const buttons = ['tableCellInsertAbove','tableCellInsertBelow','tableCellRemoveAdded',
+      'tableCellInsertLeft','tableCellInsertRight','tableCellDeleteColumn'];
+    const names = ['Insert row above','Insert row below','Remove row',
+      'Insert column left','Insert column right','Delete column'];
+    const bands = selectedRows
+      ? [layout.header,layout.rowActions,layout.counts.bounds,layout.columnScope.bounds,layout.grid]
+      : [layout.header,layout.rowActions,layout.counts.bounds,layout.grid];
+    return layout.setupHidden && layout.rowActionsVisible && layout.rowActionsRole === 'group' &&
+      layout.rowActionsName === 'Table structure' &&
+      layout.counts.visible && layout.counts.rects.length>0 && layout.countsLive === 'polite' &&
+      layout.counts.content === `Data rows: ${dataRows} | Columns: ${columns}` &&
+      layout.columnScope.visible === selectedRows && (!selectedRows || layout.columnScope.rects.length>0 &&
+        layout.columnScope.content === 'Columns change every row. Edit the whole table to insert or delete a column.') &&
+      layout.bandOrder && JSON.stringify(layout.rowButtons.map(button=>button.id)) === JSON.stringify(buttons) &&
+      layout.rowButtons.every((button,index)=>button.tag==='BUTTON'&&button.visible&&button.svg&&button.usable&&
+        button.name===names[index]&&button.title===names[index]) &&
+      layout.rowButtons.slice(3,5).every(button=>button.disabled===(selectedRows||layout.structureLocked)) &&
+      layout.rowButtons[5].disabled===(selectedRows||layout.structureLocked||!layout.deliberateSelection||columns<=1) &&
+      (!selectedRows||layout.rowButtons.slice(3).every(button=>button.describedBy==='tableCellColumnScope')) &&
+      bands.every((band,index)=>band.width>0&&band.height>0&&(!index || band.top>=bands[index-1].bottom)) &&
+      layout.rowActions.top-layout.header.bottom<=12 &&
+      (selectedRows ? layout.columnScopeMarginBottom : layout.countsMarginBottom)===8 &&
+      layout.gridMarginTop===8 &&
+      Math.abs(layout.grid.top-bands.at(-2).bottom-16)<=1;
+  }
+  function readableCellFooter(layout, expectedScope, inline, dataRows) {
     const inside = (box, outer) => box.width > 0 && box.height > 0 &&
       box.left >= outer.left - 1 && box.right <= outer.right + 1 &&
       box.top >= outer.top - 1 && box.bottom <= outer.bottom + 1;
@@ -1976,27 +4874,35 @@ require("./test-userdata-isolation");
       layout.buttons.every(button => inside(button, layout.actions) && button.height >= 32) &&
       layout.buttons[0].width >= 192 && layout.buttons[1].width >= 88 &&
       Math.abs(layout.buttons[0].top - layout.buttons[1].top) <= 1 &&
-      layout.grid.top >= layout.header.bottom && layout.grid.top - layout.header.bottom <= 12;
+      cellControlBands(layout, dataRows, 3);
   }
   async function resizeCellDialog(dx, dy) {
     const layout = await cellLayout();
     const start = { x: Math.floor(layout.dialog.right - 5), y: Math.floor(layout.dialog.bottom - 5) };
     const end = { x: Math.max(1, Math.min(layout.viewport.width - 2, start.x + dx)),
       y: Math.max(1, Math.min(layout.viewport.height - 2, start.y + dy)) };
-    win.webContents.sendInputEvent({ type: "mouseMove", ...start });
-    win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...start });
+    const send = async (type, point) => {
+      win.webContents.sendInputEvent({ type, ...point,
+        ...(type==="mouseMove"?{}:{button:"left",clickCount:1}) });
+    };
     let previous = start;
     try {
+      if (detailPresentation) {
+        const hit = await page(point => tableCellDialog.contains(document.elementFromPoint(point.x,point.y)),start);
+        check("detail corner is an actual dialog hit target",hit,start);
+      }
+      await send("mouseMove", start);
+      await send("mouseDown", start);
       await settle();
       for (let step = 1; step <= 4; step++) {
         const point = { x: Math.round(start.x + (end.x - start.x) * step / 4),
           y: Math.round(start.y + (end.y - start.y) * step / 4) };
-        win.webContents.sendInputEvent({ type: "mouseMove", ...point,
-          movementX: point.x - previous.x, movementY: point.y - previous.y });
+        const movement = { movementX:point.x-previous.x,movementY:point.y-previous.y };
         previous = point;
+        await send("mouseMove", { ...point, ...movement });
       }
     } finally {
-      win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...previous });
+      await send("mouseUp", previous);
     }
     await settle();
     return cellLayout();
@@ -2008,30 +4914,20 @@ require("./test-userdata-isolation");
       original.slice(secondOffset, secondOffset + table.length) === table &&
       original.indexOf(table) === prefix.length && original.lastIndexOf(table) === secondOffset);
   }
-  async function menus() {
-    await fresh("menus");
-    const mode = await exec(`(() => {
-      __cells.preview(0);
-      const edit=[ctxEditTable,ctxEditSelectedRows].every(e=>e.getClientRects().length);
-      hideContextMenu(); exitEditBtn.click();
-      __cells.rightClick(viewer.querySelector('td'));
-      const view=[ctxEditTable,ctxEditSelectedRows].every(e=>!e.getClientRects().length);
-      hideContextMenu(); openEditorBtn.click(); return {edit,view};
-    })()`);
-    check("cell menus are offered in edit mode and hidden in reading mode", mode.edit && mode.view, mode);
-    for (const origin of ["preview", "source"]) {
-      for (const rowsOnly of [false, true]) {
-        if (origin === "preview") await page(() => __cells.preview(1, 2, 2));
-        else await page((from, to) => __cells.source(from, to),
-          lf(original.slice(0, secondOffset + table.indexOf("| second"))).length + 2,
-          lf(original.slice(0, secondOffset + table.indexOf("| third"))).length - 2);
-        const opened = await page(rows => __cells.action(rows), rowsOnly);
-        check(origin + " actual menu " + (rowsOnly ? "selected rows" : "full table") + " uses its owning table",
-          opened.visible && opened.opened && opened.count === (rowsOnly ? 3 : 12), opened);
-        await cancel();
-      }
-    }
-    await openGrid();
+  async function detailCapture(name, measurement) {
+    const record = { name, ...measurement };
+    detailMeasurements.push(record);
+    const file = path.join(evidence, "shared-detail-measurements.json");
+    fs.writeFileSync(file, JSON.stringify(detailMeasurements, null, 2));
+    await screenshot(name);
+    const captured = screenshots.at(-1);
+    record.capture = { file:captured.file,sha256:captured.sha256 };
+    fs.writeFileSync(file, JSON.stringify(detailMeasurements, null, 2));
+  }
+  async function richPresentation(open = openGrid, isolated = false) {
+    const probe = async () => {
+    if (isolated) await fresh("detail-rich");
+    await open();
     const rich = await exec(`(async () => {
       const inputs=__cells.inputs(), cell=inputs[3], ref=inputs[5];
       const image=ref.querySelector('img');
@@ -2052,13 +4948,21 @@ require("./test-userdata-isolation");
             !serial.includes('data-folia-cell-');
         })};
     })()`);
+    if (isolated) await detailCapture("detail-rich-grid", { rich, layout:await cellLayout() });
     check("cell dialog is a native focused formatted grid with links code images and no raw-source editor",
       rich.count === 12 && rich.strong === "alpha" && rich.code === "code" && rich.emphasis === "emphasis" &&
       rich.link === "same" && rich.image && rich.imageVisible && rich.source === 0 && rich.focus && rich.native, rich);
     check("real DOM rich-cell safety validation is repeatedly idempotent", rich.safe);
+    };
+    if (isolated) await withCellViewport("detail rich",1188,770,true,probe);
+    else await probe();
     const originalTheme = await exec("({dark:document.body.classList.contains('dark-mode'),scheme:document.body.getAttribute('data-theme')})");
+    const openingWidth = await exec("tableCellDialog.style.width");
+    // Opening is content-sized; wide-footer coverage needs an explicitly wide fixture.
+    if (!isolated) await exec("tableCellDialog.style.width='96vw';true");
     try {
       await withCellViewport("wide reference", 1188, 770, true, async () => {
+        if (isolated) await exec("tableCellDialog.style.width='96vw';true");
         for (const theme of ["light", "dark"]) {
           await page(dark => {
             document.body.removeAttribute("data-theme");
@@ -2066,20 +4970,26 @@ require("./test-userdata-isolation");
           }, theme === "dark");
           await settle();
           const surface = await dialogSurface();
+          const capturedLayout = isolated ? await cellLayout() : null;
+          if (isolated) await detailCapture("detail-reference-" + theme, { surface,layout:capturedLayout });
           check("cell dialog has an opaque themed centered contained surface in " + theme + " mode",
             surface.opaque && surface.themedText && surface.centered && surface.contained, surface);
-          const layout = await cellLayout();
-          check("cell reference dialog actually reaches its qualified wide width in " + theme + " mode",
-            Math.abs(layout.dialog.width - 1100) <= 1, layout);
-          check("cell help shares the compact button bar and leaves the grid directly below the header in " + theme + " mode",
+          const layout = capturedLayout || await cellLayout();
+          const preferredWidth = await exec("parseFloat(tableCellDialog.style.width) / 100");
+          check("cell reference dialog uses its preferred window share while retaining a qualified wide surface in " + theme + " mode",
+            layout.dialog.width >= 1100 &&
+            Math.abs(layout.dialog.width - Math.min(layout.viewport.width - 24,
+              Math.max(480, layout.viewport.width * preferredWidth))) <= 1, layout);
+          check("cell help shares the compact button bar and the grid follows its row controls in " + theme + " mode",
             layout.scopeInCopy && layout.helpInCopy && layout.copy.right <= layout.actions.left - 4 &&
             layout.copy.height <= layout.actions.height + 2 &&
             layout.scopeFont === 12 && layout.helpFont === 12 &&
-            layout.grid.top >= layout.header.bottom && layout.grid.top - layout.header.bottom <= 12, layout);
-          await gridLinkStyles(theme);
+            cellControlBands(layout,3,3), layout);
+          if (!isolated) await gridLinkStyles(theme);
         }
       });
-      await withCellViewport("hosted narrow", 1008, 681, false, async () => {
+      await withCellViewport("hosted narrow", 1008, isolated ? 680 : 681, isolated, async () => {
+        if (isolated) await exec("tableCellDialog.style.width='96vw';true");
         for (const theme of ["light", "dark"]) {
           await page(dark => {
             document.body.removeAttribute("data-theme");
@@ -2087,12 +4997,14 @@ require("./test-userdata-isolation");
           }, theme === "dark");
           await settle();
           const layout = await cellLayout();
+          if (isolated) await detailCapture("detail-hosted-" + theme, { layout });
           check("hosted-size cell footer keeps complete readable help beside usable actions in " + theme + " mode",
-            readableCellFooter(layout, "4 rows, 3 columns. Only these cells will be updated.", true), layout);
-          await screenshot("hosted-grid-" + theme);
+            readableCellFooter(layout, "4 rows, 3 columns. Only these cells will be updated.", true,3), layout);
+          if (!isolated) await screenshot("hosted-grid-" + theme);
         }
       });
     } finally {
+      await exec("tableCellDialog.style.width=" + JSON.stringify(openingWidth) + ";true");
       await page(theme => {
         document.body.classList.toggle("dark-mode", theme.dark);
         if (theme.scheme === null) document.body.removeAttribute("data-theme");
@@ -2100,6 +5012,98 @@ require("./test-userdata-isolation");
       }, originalTheme);
       await settle();
     }
+  }
+  async function menus() {
+    await fresh("menus");
+    const mode = await exec(`(() => {
+      __cells.preview(0);
+      const edit=[ctxEditTable,ctxEditSelectedRows].every(e=>e.getClientRects().length);
+      hideContextMenu(); exitEditBtn.click();
+      __cells.rightClick(viewer.querySelector('td'));
+      const view=[ctxEditTable,ctxEditSelectedRows].every(e=>!e.getClientRects().length);
+      hideContextMenu(); openEditorBtn.click(); return {edit,view};
+    })()`);
+    check("cell menus are offered in edit mode and hidden in reading mode", mode.edit && mode.view, mode);
+    for (const origin of ["preview", "source"]) {
+      for (const mode of [tableModes.UPDATE_TABLE, tableModes.UPDATE_ROWS]) {
+        if (origin === "preview") await page(() => __cells.preview(1, 2, 2));
+        else await page((from, to) => __cells.source(from, to),
+          lf(original.slice(0, secondOffset + table.indexOf("| second"))).length + 2,
+          lf(original.slice(0, secondOffset + table.indexOf("| third"))).length - 2);
+        const opened = await page(mode => __cells.action(mode), mode);
+        check(origin + " actual menu " + (mode === tableModes.UPDATE_ROWS ? "selected rows" : "full table") + " uses its owning table",
+          opened.visible && opened.opened && opened.count === (mode === tableModes.UPDATE_ROWS ? 3 : 12), opened);
+        await cancel();
+      }
+    }
+    for (const origin of ["preview", "source"]) {
+      const select = async () => origin === "preview" ? page(() => __cells.preview(1)) :
+        page((from, to) => __cells.source(from, to),
+          lf(original.slice(0, secondOffset)).length,
+          lf(original.slice(0, secondOffset + table.length)).length);
+      await select();
+      const retained = await page(() => {
+        const selection = tableMenuSelection, scroller = document.getElementById("tabsContainer");
+        const anchor = rightClickTarget;
+        const before = contextMenu.classList.contains("visible");
+        const current = selection?.isCurrent() === true;
+        let delivered = false;
+        const observe = event => { if (event.target === scroller) delivered = true; };
+        document.addEventListener("scroll", observe, true);
+        try {
+          scroller.dispatchEvent(new Event("scroll"));
+          return { before, current, distinct: !scroller.contains(anchor),
+            open: contextMenu.classList.contains("visible"),
+            same: tableMenuSelection === selection, delivered };
+        } finally { document.removeEventListener("scroll", observe, true); }
+      });
+      check(origin + " unrelated tab-strip scrolling preserves the valid table menu and captured selection",
+        retained.before && retained.current && retained.distinct && retained.open &&
+        retained.same && retained.delivered, retained);
+      const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+      check(origin + " retained menu still opens its exact owning table",
+        opened.visible && opened.opened && opened.count === 12, opened);
+      await cancel();
+      await select();
+      const wheel = await page(() => {
+        const selection = tableMenuSelection, before = contextMenu.classList.contains("visible");
+        const currentBefore = selection?.isCurrent() === true;
+        const revision = editorInteractionRevision, source = markdownEditor.value;
+        const sourceTop = markdownEditor.scrollTop, previewTop = contentWrapper.scrollTop;
+        let delivered = false;
+        const observe = () => { delivered = true; };
+        markdownEditor.addEventListener("wheel", observe);
+        try {
+          markdownEditor.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true }));
+          return { before, currentBefore,
+            currentAfter: selection?.isCurrent() === true,
+            open: contextMenu.classList.contains("visible"), same: tableMenuSelection === selection,
+            unchanged: revision === editorInteractionRevision && source === markdownEditor.value,
+            noScroll: sourceTop === markdownEditor.scrollTop && previewTop === contentWrapper.scrollTop,
+            delivered };
+        } finally { markdownEditor.removeEventListener("wheel", observe); }
+      });
+      check(origin + " textarea wheel keeps captured authority without unrelated preview dismissal",
+        wheel.before && wheel.currentBefore && wheel.currentAfter && wheel.same && wheel.unchanged &&
+        wheel.noScroll && wheel.delivered && wheel.open === (origin === "preview"), wheel);
+      if (origin === "preview") {
+        const wheelOpened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+        check("preview menu retained after textarea wheel still opens its exact owning table",
+          wheelOpened.visible && wheelOpened.opened && wheelOpened.count === 12, wheelOpened);
+        await cancel();
+      }
+      await select();
+      const dismissed = await page(() => {
+        const before = contextMenu.classList.contains("visible"), selection = tableMenuSelection;
+        const scroller = rightClickTarget === markdownEditor ? markdownEditor : viewer;
+        scroller.dispatchEvent(new Event("scroll"));
+        return { before, related: scroller.contains(rightClickTarget),
+          open: contextMenu.classList.contains("visible"), same: tableMenuSelection === selection };
+      });
+      check(origin + " scrolling the actual menu context dismisses without discarding captured table authority",
+        dismissed.before && dismissed.related && !dismissed.open && dismissed.same, dismissed);
+    }
+    await richPresentation();
     await exec(`(() => {
       const link=tableCellGrid.querySelector('a');
       link.click();link.dispatchEvent(new MouseEvent('auxclick',{button:1,bubbles:true,cancelable:true}));
@@ -2115,7 +5119,7 @@ require("./test-userdata-isolation");
     const invalid = await page((from, to) => {
       const out = [];
       for (const range of [[from + 4, from + 4], [0, 3], [0, to]]) {
-        __cells.source(...range); const opened = __cells.action(true);
+        __cells.source(...range); const opened = __cells.action(FoliaTableCells.Mode.UPDATE_ROWS);
         out.push(opened); if (opened.opened) tableCellCancel.click();
       }
       return out;
@@ -2126,7 +5130,7 @@ require("./test-userdata-isolation");
         : "Select a table or its rows first. The selection must contain exactly one table.")), invalid);
     const delimiter = lf(original.slice(0, secondOffset)).length + lf(table).indexOf("| :---");
     const separator = await page((from, to) => {
-      __cells.source(from, to); return __cells.action(true);
+      __cells.source(from, to); return __cells.action(FoliaTableCells.Mode.UPDATE_ROWS);
     }, delimiter, delimiter + "| :--- | ---: | :---: |".length);
     check("textarea delimiter-only menu reports the exact missing-row error", !separator.opened &&
       separator.error === "Select at least one header or data row, not only the separator line.", separator);
@@ -2134,10 +5138,10 @@ require("./test-userdata-isolation");
       const tables=viewer.querySelectorAll('table'),range=document.createRange(),selection=getSelection(),out=[];
       range.selectNodeContents(tables[0].rows[2].cells[0]);range.collapse(true);
       selection.removeAllRanges();selection.addRange(range);
-      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(true));
+      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(FoliaTableCells.Mode.UPDATE_ROWS));
       range.setStartBefore(tables[0]);range.setEndAfter(tables[1]);
       selection.removeAllRanges();selection.addRange(range);
-      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(true));
+      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(FoliaTableCells.Mode.UPDATE_ROWS));
       return out;
     })()`);
     check("preview selected-row caret and multi-table ranges refuse rather than falling back to the clicked duplicate",
@@ -2152,7 +5156,7 @@ require("./test-userdata-isolation");
       await fresh("unsupported-" + label, "# Unsupported\n\n" + source);
       const refused = await page(() => {
         __cells.source("# Unsupported\n\n".length, markdownEditor.value.length);
-        return __cells.action(false);
+        return __cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
       });
       check("actual textarea menu rejects unsupported " + label + " structure", !refused.opened &&
         refused.error === "This table cannot be edited as cells. Use a regular Markdown table with the same number of cells in every row.", refused);
@@ -2160,7 +5164,7 @@ require("./test-userdata-isolation");
     const commented = await page(table => {
       const source="<!-- <table><tr><td>not actual HTML</td></tr></table> -->\n\n"+table;
       const model=FoliaTableCells.index(source,marked,protectTableSource);
-      const resolved=FoliaTableCells.resolveSource(model,0,source.length,false);
+      const resolved=FoliaTableCells.resolveSource(model,0,source.length,FoliaTableCells.Mode.UPDATE_TABLE);
       return {others:model.otherTables.length,tables:model.tables.length,rows:resolved.rows.length};
     }, lf(table));
     check("commented HTML table text does not count as another actual table",
@@ -2181,7 +5185,7 @@ require("./test-userdata-isolation");
       const setup=range.intersectsNode(table)&&range.intersectsNode(rule)&&
         !!range.cloneContents().querySelector('hr');
       __cells.rightClick(table.rows[1].cells[0]);
-      return {setup,tableCount:viewer.querySelectorAll('table').length,action:__cells.action(true)};
+      return {setup,tableCount:viewer.querySelectorAll('table').length,action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
     })()`);
     check("mixed preview fixture selects an actual table and nontext horizontal-rule sibling",
       selected.setup && selected.tableCount === 1 && selected.action.visible, selected);
@@ -2209,7 +5213,7 @@ require("./test-userdata-isolation");
     await page((from, to, at) => __cells.source(from, to, at),
       lf(leading.slice(0, leading.indexOf("Leading prose"))).length,
       lf(leading + table + trailing).length, lf(leading).length);
-    const opened = await page(() => __cells.action(false));
+    const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
     check("source click selects the exact regular table independently of the preserved prose selection",
       opened.opened && opened.count === 12, opened);
     if (!opened.opened) return;
@@ -2239,7 +5243,7 @@ require("./test-userdata-isolation");
       setup.count === 2 && setup.first && setup.second === "Name" && setup.split, setup);
     const action = await page((from, to) => {
       __cells.source(from, to);
-      return __cells.action(true);
+      return __cells.action(FoliaTableCells.Mode.UPDATE_ROWS);
     }, opening.length, opening.length + rows.length + lf(table).length);
     check("source selection inside a split raw table through a Markdown table cannot silently admit only the latter",
       action.visible && !action.opened &&
@@ -2333,7 +5337,7 @@ require("./test-userdata-isolation");
       const table=viewer.querySelectorAll('table')[1], body=table.innerHTML;
       table.rows[1].cells[0].textContent='forged visual value';
       const noReceipt=editorScroll.tableSource(table)===null;
-      __cells.preview(1); const opened=__cells.action(false);
+      __cells.preview(1); const opened=__cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
       if(opened.opened)tableCellCancel.click();
       table.innerHTML=body;
       return {noReceipt,opened};
@@ -2345,7 +5349,7 @@ require("./test-userdata-isolation");
     await wait("restored table provenance", "!!editorScroll.tableSource(viewer.querySelectorAll('table')[1])");
     const clone = await exec(`(() => {
       const original=viewer.querySelectorAll('table')[1], clone=original.cloneNode(true);
-      original.replaceWith(clone); __cells.preview(1); const result=__cells.action(false);
+      original.replaceWith(clone); __cells.preview(1); const result=__cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
       if(result.opened)tableCellCancel.click(); clone.replaceWith(original); return result;
     })()`);
     check("text-identical cloned table has no edit authority from text or ordinal", !clone.opened &&
@@ -2370,23 +5374,26 @@ require("./test-userdata-isolation");
         toast.getAnimations().every(animation=>!animation.pending&&animation.playState==='finished');
     })()`, 8300);
   }
-  async function noop() {
+  async function noop(open = openGrid) {
     const fixture = await fresh("noop");
     const before = await state(), beforeSaves = saves.length, disk = fs.readFileSync(fixture.file);
-    await openGrid();
+    await open();
     await update();
     const after = await state();
     check("unchanged cell Update closes without mutation history dirty state or Save",
       !await exec("tableCellDialog.open") && JSON.stringify(after) === JSON.stringify(before) &&
       saves.length === beforeSaves && fs.readFileSync(fixture.file).equals(disk), { before, after });
-    await openGrid();
+    await open();
     await exec("__cells.inputs()[3].textContent='cancelled';tableCellCancel.click();true");
-    check("cell Cancel discards edits without any document transaction", JSON.stringify(await state()) === JSON.stringify(after));
-    await openGrid();
+    check("cell Cancel discards edits without any document transaction",
+      JSON.stringify(await state()) === JSON.stringify(after) && saves.length === beforeSaves &&
+      fs.readFileSync(fixture.file).equals(disk));
+    await open();
     await key("Escape");
     check("native Escape cancels the cell dialog and restores preview focus",
       await exec("!tableCellDialog.open&&document.activeElement===viewer") &&
-      JSON.stringify(await state()) === JSON.stringify(after));
+      JSON.stringify(await state()) === JSON.stringify(after) && saves.length === beforeSaves &&
+      fs.readFileSync(fixture.file).equals(disk));
   }
   async function input() {
     const offset = secondOffset + table.indexOf("| plain |") + 2;
@@ -3646,7 +6653,7 @@ require("./test-userdata-isolation");
         range.selectNode(scope==='table'?table:table.rows[1]);
         getSelection().removeAllRanges();getSelection().addRange(range);
         __cells.rightClick(table.rows[1].cells[0]);
-        return {collapsed:range.collapsed,text:range.toString(),action:__cells.action(true)};
+        return {collapsed:range.collapsed,text:range.toString(),action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
       }, scope);
       check(scope + " empty-text selected-rows setup has a real noncollapsed range without selected text",
         !selected.collapsed && !selected.text.trim(), selected);
@@ -3660,7 +6667,7 @@ require("./test-userdata-isolation");
     const sourceWhitespace = await page(() => {
       const start=markdownEditor.value.lastIndexOf('| | |')+1;
       __cells.source(start,start+1);
-      return {text:markdownEditor.value.slice(start,start+1),action:__cells.action(true)};
+      return {text:markdownEditor.value.slice(start,start+1),action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
     });
     check("Markdown whitespace selection really selects a nonempty blank inside the table row",
       sourceWhitespace.text === " ", sourceWhitespace);
@@ -3671,7 +6678,7 @@ require("./test-userdata-isolation");
     const sourceSyntax = await page(() => {
       const start=markdownEditor.value.lastIndexOf('| | |'),end=start+'| | |'.length;
       __cells.source(start,end);
-      return {text:markdownEditor.value.slice(start,end),action:__cells.action(true)};
+      return {text:markdownEditor.value.slice(start,end),action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
     });
     check("Markdown syntax-only row selection really contains pipes without any cell text",
       sourceSyntax.text === "| | |" && sourceSyntax.text.trim().length > 0, sourceSyntax);
@@ -3687,7 +6694,7 @@ require("./test-userdata-isolation");
       getSelection().removeAllRanges();getSelection().addRange(range);
       __cells.rightClick(table.rows[1].cells[0]);
       return {collapsed:range.collapsed,text:range.toString(),images:range.cloneContents().querySelectorAll('img').length,
-        action:__cells.action(true)};
+        action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
     });
     check("image-only selected-rows setup selects a real image without text",
       !imageSelection.collapsed && !imageSelection.text.trim() && imageSelection.images === 1, imageSelection);
@@ -3730,7 +6737,7 @@ require("./test-userdata-isolation");
         check(origin + " " + selectionKind + " click actor reaches the independently located second table",
           setup.hit && (origin !== "markdown" || setup.mapped?.start === second), setup);
         await nativeClick(setup.point);
-        const opened = await page(() => __cells.action(false));
+        const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
         check(origin + " " + selectionKind + " Edit table uses the actual clicked table without manufacturing a selection",
           opened.opened && opened.count === 4 &&
           await exec("__cells.inputs()[0].textContent==='C'&&__cells.inputs()[1].textContent==='D'") &&
@@ -3753,7 +6760,7 @@ require("./test-userdata-isolation");
         if(origin==='markdown')__cells.source(0,markdownEditor.value.length,0);
         else {const range=document.createRange();range.selectNode(table);selection.addRange(range);
           __cells.rightClick(viewer.querySelector('h1'));}
-        return __cells.action(false);
+        return __cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
       }, origin);
       check(origin + " outside-table click never falls back to an unrelated table selection",
         !outside.opened && outside.error === "Right-click inside a table to edit it.", outside);
@@ -3768,7 +6775,7 @@ require("./test-userdata-isolation");
         return {x:Math.round(rect.left+8),y:Math.round(rect.top+rect.height/2)};
       }, origin);
       await nativeClick(missingPoint);
-      const missingRows = await page(() => __cells.action(true));
+      const missingRows = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_ROWS));
       check(origin + " Edit selected rows still requires a real nonempty text selection",
         !missingRows.opened && missingRows.error === "Select a table or its rows first. The selection must contain exactly one table.",
         missingRows);
@@ -3820,7 +6827,7 @@ require("./test-userdata-isolation");
         (scenario.name !== "wrapped scrolled row" || setup.scroll > 0), setup);
       try {
         await nativeClick(setup.point);
-        const opened = await page(() => __cells.action(false));
+        const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
         check(scenario.name + " opens its exact table by native right click without a selection",
           opened.opened && opened.count === 4 && await exec("__cells.inputs()[0].textContent==='A'") &&
           JSON.stringify(await state()) === JSON.stringify(before), opened);
@@ -3846,7 +6853,7 @@ require("./test-userdata-isolation");
     const before = await state(), beforeSaves = saves.length;
     const sourceStart = lf(original.slice(0, secondOffset - between.length + 2)).length;
     await page((from, to, at) => __cells.source(from, to, at), sourceStart, lf(original).length, lf(original.slice(0, secondOffset)).length);
-    const opened = await page(() => __cells.action(false));
+    const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
     check("cell transaction setup resolves prose plus just the second duplicate through the textarea menu",
       opened.opened && opened.count === 12 && before.exact === original && before.value === lf(original), opened);
     await exec("__cells.inputs()[7].innerHTML='<strong>changed &amp; safe</strong><em> rich</em>';true");
@@ -3905,7 +6912,7 @@ require("./test-userdata-isolation");
     check("cell repeated Ctrl Enter submits once while a real preview render is pending",
       latched.calls === 1 && latched.delta === 1 && latched.disabled && latched.closed && !latched.error, latched);
     const subset = await fresh("row-subset");
-    await openGrid(1, true, 2, 2);
+    await openGrid(1, tableModes.UPDATE_ROWS, 2, 2);
     await exec("__cells.inputs()[1].textContent='only | row';true");
     await update();
     const subsetExpected = original.slice(0, editedOffset) + "only &#124; row" +
@@ -4549,12 +7556,71 @@ require("./test-userdata-isolation");
       const footerBefore = await state();
       await openGrid();
       await typeTrustedCell(["pending footer edit"], 8, { replace: true });
+      const footerNavigationBefore = await state();
+      const footerNavigation = await page(() => {
+        const inputs = __cells.inputs(), session = tableCellSession;
+        const table = inputs[0]?.closest("table");
+        const container = table?.closest(".table-cell-sizing-container");
+        const overlays = [...(container?.querySelectorAll(":scope > .table-column-controls") || [])];
+        const overlay = overlays[0], handles = [...(overlay?.children || [])];
+        window.__footerNavigation = { session, inputs, table, container, overlay, handles, cell: inputs.at(-1) };
+        return {
+          inputs: inputs.length, sessionCells: session?.cells.length, overlays: overlays.length,
+          columns: table?.rows[0]?.cells.length, tables: container?.querySelectorAll("table").length, handles: handles.length,
+          connected: inputs.every(input => input.isConnected && input.isContentEditable && input.closest("table") === table),
+          mapped: session?.cells.every((cell, index) => cell.input === inputs[index]),
+          owned: table?.closest(".table-cell-sizing-container") === container && overlay?.parentElement === container,
+          separators: handles.every((handle, index) => handle.isConnected && !handle.isContentEditable &&
+            handle.classList.contains("table-column-handle") && handle.tabIndex === 0 &&
+            handle.getAttribute("role") === "separator" && handle.getAttribute("aria-orientation") === "vertical" &&
+            handle.getAttribute("aria-label") === "Resize column " + (index + 1)),
+        };
+      });
+      check("table footer " + button + " has the source-owned cell and three exact resize stops",
+        footerNavigation.inputs === 12 && footerNavigation.sessionCells === 12 &&
+        footerNavigation.columns === 4 && footerNavigation.tables === 1 &&
+        footerNavigation.overlays === 1 && footerNavigation.handles === 3 &&
+        footerNavigation.connected && footerNavigation.mapped && footerNavigation.owned && footerNavigation.separators &&
+        JSON.stringify(footerNavigationBefore) === JSON.stringify(footerBefore),
+        { navigation: footerNavigation, source: footerNavigationBefore });
+      const expectFooterFocus = async (index, name) => {
+        const focus = await page(index => {
+          const navigation = window.__footerNavigation, active = document.activeElement;
+          const expected = index === -1 ? navigation.cell : index < 3 ? navigation.handles[index] :
+            document.getElementById(index === 3 ? "tableCellUpdate" : "tableCellCancel");
+          return {
+            matches: active === expected, sameSession: tableCellSession === navigation.session,
+            current: navigation.session.selection.isCurrent(),
+            connected: navigation.session.cells.length === 12 && navigation.session.cells.every((cell, index) =>
+              cell.input === navigation.inputs[index] && cell.input.isConnected && cell.input.closest("table") === navigation.table),
+            pending: navigation.session.cells[8].engine.readSource(),
+            tag: active?.tagName, id: active?.id, class: active?.className,
+            role: active?.getAttribute("role"), label: active?.getAttribute("aria-label"),
+            tabIndex: active?.tabIndex, editable: active?.isContentEditable,
+            ownedOverlay: active?.parentElement === navigation.overlay && navigation.overlay.parentElement === navigation.container,
+          };
+        }, index);
+        const source = await state();
+        check(name, focus.matches && focus.sameSession && focus.current && focus.connected &&
+          focus.pending === "pending footer edit" && focus.editable === (index === -1) &&
+          (index < 0 || index > 2 || focus.ownedOverlay) &&
+          (index < 3 || focus.tag === "BUTTON") &&
+          JSON.stringify(source) === JSON.stringify(footerNavigationBefore), { focus, source });
+        return focus;
+      };
       await exec("__cells.inputs().at(-1).focus();true");
+      await expectFooterFocus(-1, "table footer " + button + " starts at the exact last editable cell");
+      for (let index = 0; index < 3; index++) {
+        await key("Tab");
+        await expectFooterFocus(index, "table footer " + button + " actual Tab reaches owned separator " + (index + 1));
+      }
       await key("Tab");
-      if (button === "tableCellCancel") await key("Tab");
-      const focused = await exec("document.activeElement.id");
-      check("table footer " + button + " actual Tab reaches a noneditable button with pending cell changes",
-        focused === button && await exec("tableCellSession.cells[8].engine.readSource()==='pending footer edit'"), focused);
+      if (button === "tableCellCancel") {
+        await expectFooterFocus(3, "table footer Cancel route passes through the exact Update button");
+        await key("Tab");
+      }
+      const focused = (await expectFooterFocus(button === "tableCellUpdate" ? 3 : 4,
+        "table footer " + button + " actual Tab reaches a noneditable button with pending cell changes")).id;
       const footerControl = () => exec(`({
         state:__cells.state(),current:tableCellSession?.selection.isCurrent(),
         timers:[historyDebounceTimer,previewDebounceTimer],owner:currentDocumentActionOwner()?.id,
@@ -4648,7 +7714,7 @@ require("./test-userdata-isolation");
       const menu = await page(() => __cells.preview(1));
       await mark("menu");
       await mark("opening-grid");
-      const opened = await page(() => __cells.action(false));
+      const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
       await mark("open");
       check("cell dialog setup has a real selected table and visible menu action", menu && opened.visible && opened.opened, opened);
       await mark("untouched-cell-Undo");
@@ -5066,11 +8132,14 @@ require("./test-userdata-isolation");
         fs.readFileSync(fixture.file, "utf8") === body);
     }
   }
-  async function many() {
+  async function many(open = openGrid) {
     const manySource = "# Many rows\n\n| A | B | C |\n| - | - | - |\n" +
       Array.from({ length: 80 }, (_, i) => `| row ${i} | code ${i} | value ${i} |`).join("\n");
     await fresh("many", manySource);
-    await openGrid(0);
+    await open(0);
+    // Keep the existing wide-to-narrow layout and native-resize preconditions.
+    await exec("tableCellDialog.style.width='96vw';true");
+    await settle();
     const geometry = await exec(`(() => {
       const cells=__cells.inputs(),grid=tableCellGrid;
       const initiallyOverflowing=grid.scrollHeight>grid.clientHeight+100;
@@ -5082,13 +8151,16 @@ require("./test-userdata-isolation");
         lastVisible:c.top>=g.top&&c.bottom<=g.bottom+1,
         updateVisible:footer.top>=0&&footer.bottom<=innerHeight};
     })()`);
+    const initialLayout = detailPresentation ? await cellLayout() : null;
+    if (detailPresentation) await detailCapture("detail-many-initial", { geometry,layout:initialLayout });
     check("many-row cell grid scrolls the focused final cell while keeping Update usable",
       geometry.count === 243 && geometry.initiallyOverflowing && geometry.before === 0 && geometry.scroll > geometry.before &&
       geometry.lastVisible && geometry.updateVisible, geometry);
-    const originalLayout = await cellLayout(), sourceBefore = await state();
+    const originalLayout = initialLayout || await cellLayout(), sourceBefore = await state();
     check("hosted-size many-row footer keeps complete readable help and usable actions",
-      readableCellFooter(originalLayout, "81 rows, 3 columns. Only these cells will be updated.", true), originalLayout);
+      readableCellFooter(originalLayout, "81 rows, 3 columns. Only these cells will be updated.", true,80), originalLayout);
     const narrow = await resizeCellDialog(-480, -220);
+    if (detailPresentation) await detailCapture("detail-resized-narrow", { originalLayout,narrow });
     const contained = layout => layout.header.top >= layout.dialog.top &&
       layout.footer.bottom <= layout.dialog.bottom + 1 && layout.grid.height >= 80 &&
       layout.dialog.left >= 0 && layout.dialog.right <= layout.viewport.width &&
@@ -5099,23 +8171,105 @@ require("./test-userdata-isolation");
       narrow.resize === "both" && originalLayout.dialog.width - narrow.dialog.width >= 100 &&
       originalLayout.dialog.height - narrow.dialog.height >= 80 && contained(narrow), { originalLayout, narrow });
     check("resized narrow footer retains complete readable help and usable actions",
-      readableCellFooter(narrow, "81 rows, 3 columns. Only these cells will be updated.", false), narrow);
-    await screenshot("resized-grid-narrow");
+      readableCellFooter(narrow, "81 rows, 3 columns. Only these cells will be updated.", false,80), narrow);
+    if (!detailPresentation) await screenshot("resized-grid-narrow");
     const grown = await resizeCellDialog(180, 140);
+    const focusFinal = () => exec(`(() => {
+      const cells=__cells.inputs();cells[0].focus();cells.at(-1).focus();
+      const grid=tableCellGrid.getBoundingClientRect(),cell=cells.at(-1).getBoundingClientRect();
+      return cell.top>=grid.top&&cell.bottom<=grid.bottom+1;
+    })()`);
+    const capturedFinal = detailPresentation ? await focusFinal() : null;
+    if (detailPresentation) await detailCapture("detail-many-grown", { narrow,grown,finalCell:capturedFinal });
     check("native corner dragging grows the grid rather than wasting popup space",
       grown.dialog.width - narrow.dialog.width >= 60 && grown.dialog.height - narrow.dialog.height >= 40 &&
       grown.grid.height - narrow.grid.height >= 40 && contained(grown), { narrow, grown });
     check("popup resizing preserves source history and captured table authority",
       JSON.stringify(await state()) === JSON.stringify(sourceBefore) &&
       await exec("tableCellSession.selection.isCurrent()"), await state());
-    const finalCell = await exec(`(() => {
-      const cells=__cells.inputs();cells[0].focus();cells.at(-1).focus();
-      const grid=tableCellGrid.getBoundingClientRect(),cell=cells.at(-1).getBoundingClientRect();
-      return cell.top>=grid.top&&cell.bottom<=grid.bottom+1;
-    })()`);
+    const finalCell = detailPresentation ? capturedFinal : await focusFinal();
     check("resized grid still scrolls the final editable row into view", finalCell);
-    await screenshot("many-rows-bottom");
+    if (!detailPresentation) await screenshot("many-rows-bottom");
     await cancel();
+  }
+  function selectedPresentationCells(scope, opened) {
+    return scope.cells===3&&scope.readonlyHeaders===1&&scope.mode===tableModes.UPDATE_ROWS&&opened.count===3&&
+      scope.editable.length===3&&scope.editable.every(cell=>cell.connected&&cell.editable)&&
+      scope.header.length===3&&scope.header.every(cell=>cell.connected&&!cell.editable&&cell.readonly);
+  }
+  async function detailPresentationCases() {
+    const saveCount = saves.length;
+    await richPresentation(openCoreGrid,true);
+    await cancel();
+    await withCellViewport("detail selected scope",1008,680,true,async () => {
+      const fixture = await fresh("detail-selected"), before = await state();
+      const theme = await exec("({dark:document.body.classList.contains('dark-mode'),scheme:document.body.getAttribute('data-theme')})");
+      try {
+        await page(() => {document.body.removeAttribute('data-theme');document.body.classList.remove('dark-mode');});
+        const opened = await openCoreGrid(1,tableModes.UPDATE_ROWS,2,2);
+        const scope = await exec(`(() => {
+          const headers=tableCellSession.rows.filter(row=>row.header&&!row.editable);
+          const cell=item=>({connected:tableCellGrid.contains(item.input),editable:item.input.isContentEditable,
+            readonly:item.input.getAttribute('aria-readonly')==='true'});
+          return {cells:tableCellSession.cells.length,readonlyHeaders:headers.length,mode:tableCellSession.mode,
+            editable:tableCellSession.cells.map(cell),header:headers.flatMap(row=>row.cells).map(cell)};
+        })()`);
+        const layout = await cellLayout();
+        await detailCapture("detail-selected-scope",{scope,layout,opened});
+        check("detail selected scope keeps only its editable row and read-only header",
+          selectedPresentationCells(scope,opened),scope);
+        check("detail selected scope preserves named counts explanation and footer authority",
+          readableCellFooter(layout,"1 rows, 3 columns. Only these cells will be updated.",false,1),layout);
+        await cancel();
+        check("detail selected presentation never changes source history disk or Saves",
+          JSON.stringify(await state())===JSON.stringify(before)&&saves.length===saveCount&&
+          fs.readFileSync(fixture.file,"utf8")===original);
+      } finally {
+        await cancel();
+        await page(value => {
+          document.body.classList.toggle('dark-mode',value.dark);
+          if(value.scheme===null)document.body.removeAttribute('data-theme');
+          else document.body.setAttribute('data-theme',value.scheme);
+        },theme);
+      }
+    });
+    await withCellViewport("detail native zoom",1188,770,true,async () => {
+      const fixture = await fresh("detail-zoom"), before = await state();
+      const previous = await exec("tableCellGrid.style.zoom");
+      try {
+        await exec("tableCellGrid.style.zoom='2';true");
+        const beforeZoom = await exec("Number(getComputedStyle(tableCellGrid).zoom)");
+        check("detail native grid zoom is exactly2 before opening initializes its sizer",beforeZoom===2,beforeZoom);
+        await openCoreGrid();
+        const geometry = await exec(`(() => {
+          const label=tableCellGrid.querySelector('table').rows[0].cells[0],range=document.createRange();
+          range.selectNodeContents(label);
+          const style=getComputedStyle(label),zoom=Number(getComputedStyle(tableCellGrid).zoom),
+            edges=['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth'].map(key=>parseFloat(style[key])),
+            bounds=label.getBoundingClientRect(),grid=tableCellGrid.getBoundingClientRect(),
+            text=range.getBoundingClientRect(),rects=[...range.getClientRects()].map(rect=>rect.toJSON());
+          return {zoom,viewport:{width:innerWidth,height:innerHeight},label:bounds.toJSON(),grid:grid.toJSON(),text:text.toJSON(),rects,
+            content:label.textContent,required:Math.ceil(Math.max(parseFloat(style.minWidth),
+              text.width/zoom+edges.reduce((sum,width)=>sum+width,0)))};
+        })()`);
+        await detailCapture("detail-grid-zoom-2x",{geometry});
+        check("detail native zoom measures real positive glyphs inside the initially sized label",
+          geometry.zoom===2&&geometry.content.trim().length>0&&geometry.rects.length>0&&
+          geometry.rects.every(rect=>rect.width>0&&rect.height>0&&rect.left>=geometry.label.left&&
+            rect.right<=geometry.label.right+1&&rect.top>=geometry.label.top&&rect.bottom<=geometry.label.bottom+1)&&
+          geometry.label.left>=geometry.grid.left&&geometry.label.right<=geometry.grid.right+1&&
+          Math.abs(geometry.label.width/geometry.zoom-geometry.required)<1,geometry);
+        await cancel();
+        check("detail zoom and Cancel leave exact source disk history and Saves untouched",
+          JSON.stringify(await state())===JSON.stringify(before)&&saves.length===saveCount&&
+          fs.readFileSync(fixture.file,"utf8")===original);
+      } finally {
+        await cancel();
+        await exec("tableCellGrid.style.zoom="+JSON.stringify(previous)+";true");
+      }
+    });
+    await withCellViewport("detail many-row reference",1008,680,true,() => many(openCoreGrid));
+    check("detail presentation has not invoked Save",saves.length===saveCount,saves);
   }
   async function performanceUnit() {
     const { generate } = require("../bench/corpus");
@@ -5174,15 +8328,605 @@ require("./test-userdata-isolation");
     fs.writeFileSync(path.join(evidence, label + "-performance.json"),
       JSON.stringify(receipt, null, 2));
   }
+  async function shared(open = openGrid) {
+    const sharedSaves = saves.length;
+    const draft = () => exec(`({
+      rows:tableCellSession.rows.map(row=>({id:row.id,header:row.header,editable:row.editable,
+        cells:row.cells.map(cell=>cell.input.innerHTML)})),
+      columns:tableCellSession.columnOrder,nextRow:tableCellSession.nextRowId,
+      nextColumn:tableCellSession.nextColumnId,exact:window.CustomTabs.snapshotExactEditorContent(),
+      history:JSON.stringify(historySnapshot())
+    })`);
+    async function mouse(expression) {
+      const point = await exec(`(() => {
+        const node=${expression};node.scrollIntoView({block:'nearest',inline:'nearest'});
+        const rect=node.getBoundingClientRect(),x=Math.round(rect.left+Math.min(12,rect.width/2)),
+          y=Math.round(rect.top+Math.min(12,rect.height/2));
+        if(!node.contains(document.elementFromPoint(x,y)))throw Error('Shared control is not hit-testable');
+        return {x,y};
+      })()`);
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await bounded("owned shared mouse input", win.webContents.debugger.sendCommand("Input.dispatchMouseEvent",
+          { type, ...point, button: "left", clickCount: 1 }));
+      }
+      await settle();
+    }
+    async function noSelection(label, ids) {
+      const before = await draft();
+      for (const id of ids) {
+        const beforeSaves = saves.length;
+        await mouse("document.getElementById(" + JSON.stringify(id) + ")");
+        check(label + " " + id + " refuses unselected insertion with no mutation",
+          JSON.stringify(await draft()) === JSON.stringify(before) &&
+          await exec("tableCellError.textContent==='Select a cell first.'&&tableCellSession.selectedCell===null") &&
+          saves.length === beforeSaves);
+      }
+    }
+    const createSource = "\uFEFF# Shared Create 😀\r\n\r\n";
+    const createFixture = await fresh("shared-create", createSource);
+    const createDocumentSource = createSource.slice(1);
+    check("the owned BOM fixture follows file-open policy while retaining exact CRLF document source",
+      (await state()).exact === createDocumentSource, await state());
+    await page(() => {
+      __cells.source(markdownEditor.value.length, markdownEditor.value.length);
+      return __cells.action(FoliaTableCells.Mode.INSERT);
+    });
+    check("Create opens the one visual popup with honest defaults and no legacy Markdown UI",
+      await exec(`tableCellSession.mode===FoliaTableCells.Mode.INSERT&&!tableCellSession.ready&&
+        tableCellColumns.value==='3'&&tableCellDataRows.value==='2'&&tableCellDataRows.min==='0'&&
+        !tableCellSetup.hidden&&!document.getElementById('tableInsertOverlay')&&
+        !document.getElementById('tableInsertMarkdown')&&undoHistory.length===0`));
+    await exec("tableCellDataRows.value='0';tableCellStart.click();true");
+    check("zero data rows creates a required editable header and read-only live counts",
+      await exec(`tableCellSession.ready&&tableCellSession.rows.length===1&&
+        tableCellSession.rows[0].header&&tableCellSession.rows[0].editable&&
+        tableCellSession.columns===3&&tableCellSetup.hidden&&
+        tableCellCounts.textContent.includes('Data rows: 0')&&tableCellCounts.textContent.includes('Columns: 3')`));
+    await noSelection("Create initial autofocus", ["tableCellInsertAbove", "tableCellInsertBelow",
+      "tableCellInsertLeft", "tableCellInsertRight"]);
+    await mouse("tableCellSession.rows[0].cells[0].input");
+    await page(() => {
+      window.__sharedKeep=tableCellSession.rows[0].cells[0];
+      window.__sharedKeepHTML=__sharedKeep.input.innerHTML;window.__sharedInputEvents=[];
+      __sharedKeep.input.addEventListener('beforeinput',e=>__sharedInputEvents.push({
+        trusted:e.isTrusted,type:e.inputType}));
+      const range=document.createRange();range.selectNodeContents(__sharedKeep.input);range.collapse(false);
+      const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+      return true;
+    });
+    await bounded("owned shared rich-cell native typing", win.webContents.insertText(" X"));
+    const typed = await exec("__sharedKeep.input.innerHTML");
+    check("Create deliberately selects its header and receives real native text input",
+      typed !== await exec("__sharedKeepHTML") &&
+      await exec("__sharedInputEvents.some(event=>event.trusted&&event.type==='insertText')"));
+    await mouse("tableCellInsertLeft");
+    check("registered Create left-column callback preserves its original cell engine and DOM",
+      await exec(`tableCellSession.columns===4&&tableCellSession.rows[0].cells[1]===__sharedKeep&&
+        __sharedKeep.input.isConnected&&tableCellSession.selectedCell===tableCellSession.rows[0].cells[0]&&
+        tableCellSession.rows[0].cells.every((cell,index)=>cell.column===index)`));
+    await mouse("__sharedKeep.input");
+    await key("z", ["control"]);
+    check("native cell Undo survives column topology without undoing the column or document",
+      await exec("__sharedKeep.input.innerHTML===__sharedKeepHTML&&tableCellSession.columns===4&&undoHistory.length===0"));
+    await key("y", ["control"]);
+    check("native cell Redo survives column topology",
+      await exec("__sharedKeep.input.innerHTML===" + JSON.stringify(typed) + "&&tableCellSession.columns===4"));
+    await key("z", ["control"]);
+    await mouse("tableCellInsertBelow");
+    check("a selected header recovers data rows and selects the newly inserted cell",
+      await exec(`tableCellSession.rows.length===2&&!tableCellSession.rows[1].header&&
+        tableCellSession.selectedCell===tableCellSession.rows[1].cells[1]&&
+        tableCellCounts.textContent.includes('Data rows: 1')&&
+        window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(createDocumentSource)}`), await draft());
+    const createSaves = saves.length;
+    await update();
+    const createExpected = createDocumentSource + "|  | Header 1 | Header 2 | Header 3 |\r\n" +
+      "| --- | --- | --- | --- |\r\n|  |  |  |  |";
+    check("visual Create performs one exact atomic insertion without Save",
+      (await state()).exact === createExpected && (await state()).undo === 1 &&
+      saves.length === createSaves && createSaves === sharedSaves &&
+      fs.readFileSync(createFixture.file, "utf8") === createSource,
+      { state: await state(), expected: createExpected, createSaves, observedSaves: saves.length });
+    await exec("undoButton.click();true");
+    await wait("shared Create Undo DOM", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+    check("Create document Undo restores exact loaded CRLF source and button availability",
+      (await state()).exact === createDocumentSource && await exec("undoButton.disabled&&!redoButton.disabled"),
+      await state());
+    await exec("redoButton.focus();true");
+    check("Create Redo keyboard activation targets its enabled real button",
+      await exec("document.activeElement===redoButton&&!redoButton.disabled"));
+    await bounded("owned shared Redo Enter", win.webContents.debugger.sendCommand("Input.dispatchKeyEvent",
+      { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" }));
+    await bounded("owned shared Redo Enter release", win.webContents.debugger.sendCommand("Input.dispatchKeyEvent",
+      { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }));
+    await settle();
+    await wait("shared Create Redo DOM", `!undoRedoRendering&&
+      window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(createExpected)}&&
+      editorScroll.isCurrentSource(markdownEditor.value)&&viewer.querySelector('table thead tr')?.cells.length===4&&
+      viewer.querySelector('table tbody')?.rows.length===1`);
+    check("Create document Redo works from keyboard activation",
+      (await state()).exact === createExpected && await exec("!undoButton.disabled&&redoButton.disabled"),
+      await state());
+
+    const wholeSaves = saves.length;
+    const wholeFixture = await fresh("shared-whole");
+    await open();
+    check("Update Table has live counts and whole-table-only column permission",
+      await exec(`tableCellSession.mode===FoliaTableCells.Mode.UPDATE_TABLE&&tableCellSetup.hidden&&
+        tableCellCounts.textContent.includes('Data rows: 3')&&tableCellCounts.textContent.includes('Columns: 3')&&
+        tableCellColumnScope.hidden&&!tableCellInsertLeft.disabled&&!tableCellInsertRight.disabled`));
+    await noSelection("Update Table initial autofocus", ["tableCellInsertLeft", "tableCellInsertRight", "tableCellInsertBelow"]);
+    await mouse("tableCellSession.rows[2].cells[1].input");
+    await exec(`window.__sharedWholeCells=tableCellSession.rows.map(row=>row.cells.slice());true`);
+    await mouse("tableCellInsertRight");
+    await mouse("tableCellInsertLeft");
+    check("both registered whole-table column directions preserve all surviving cell identities",
+      await exec(`tableCellSession.columns===5&&tableCellSession.rows.every((row,index)=>
+        row.cells[0]===__sharedWholeCells[index][0]&&row.cells[1]===__sharedWholeCells[index][1]&&
+        row.cells[4]===__sharedWholeCells[index][2])`));
+    await update();
+    const wholeExpected = original.slice(0, secondOffset) + [
+      "| Name | Detail |  |  | Reference |", "| :--- | ---: | --- | --- | :---: |",
+      "| **alpha** | `code` and *emphasis* |  |  | [same][r] ![dot](cell.svg) |",
+      "| second | emoji 😀 and escaped \\| pipe |  |  | plain |",
+      "| third | unchanged _spelling_ |  |  | [same][r] |",
+    ].join("\r\n") + suffix;
+    check("whole structural Update preserves source spellings/alignment/all rows and its repeated neighbor",
+      (await state()).exact === wholeExpected && (await state()).undo === 1 &&
+      fs.readFileSync(wholeFixture.file, "utf8") === original && saves.length === wholeSaves &&
+      wholeSaves === sharedSaves,
+      { state: await state(), expected: wholeExpected, wholeSaves, observedSaves: saves.length });
+
+    const selectedSaves = saves.length;
+    const selectedFixture = await fresh("shared-selected");
+    await open(1, tableModes.UPDATE_ROWS, 2, 2);
+    check("Update Rows exposes only its selected data count and explains unavailable columns",
+      await exec(`tableCellSession.mode===FoliaTableCells.Mode.UPDATE_ROWS&&
+        tableCellCounts.textContent.includes('Data rows: 1')&&!tableCellColumnScope.hidden&&
+        tableCellInsertLeft.disabled&&tableCellInsertRight.disabled&&
+        tableCellSession.rows[0].header&&!tableCellSession.rows[0].editable`));
+    const selectedBefore = await draft();
+    await exec("changeTableCellColumns('left');true");
+    check("selected-row structural column refusal cannot widen source scope",
+      JSON.stringify(await draft()) === JSON.stringify(selectedBefore) &&
+      await exec("tableCellError.textContent.includes('Edit the whole table')"));
+    await mouse("tableCellSession.rows[1].cells[0].input");
+    await exec(`window.__sharedDialogs=window.MarkalooDialogs;
+      window.MarkalooDialogs={...__sharedDialogs,show(options){
+        window.__sharedConfirmation=options;
+        return new Promise(resolve=>window.__sharedAnswer=resolve);
+      }};true`);
+    try {
+      await mouse("tableCellRemoveAdded");
+      check("every selected data-row removal waits for its explicit confirmation",
+        await exec("!!tableCellSession.confirmation&&tableCellGrid.inert&&tableCellUpdate.disabled&&__sharedConfirmation.defaultId==='cancel'"));
+      const pending = await draft();
+      await exec("changeTableCellColumns('right');changeTableCellRows('below');updateTableCells();true");
+      check("pending confirmation refuses row/column/commit mutation",
+        JSON.stringify(await draft()) === JSON.stringify(pending));
+      await exec("__sharedAnswer({choice:'remove',cause:'choice'});true");
+      await wait("selected empty scope", "tableCellSession.rows.length===1&&!tableCellSession.confirmation");
+    } finally { await exec("window.MarkalooDialogs=__sharedDialogs;true"); }
+    await noSelection("empty selected scope fallback focus", ["tableCellInsertBelow"]);
+    await mouse("tableCellSession.rows[0].cells[1].input");
+    await mouse("tableCellInsertBelow");
+    check("readonly context-header recovery keeps header authority separate from the selected gap",
+      await exec(`tableCellSession.rows.length===2&&!tableCellSession.rows[0].editable&&
+        tableCellSession.rows[1].editable&&!tableCellSession.rows[1].original&&
+        tableCellSession.selectedCell===tableCellSession.rows[1].cells[1]`));
+    await update();
+    const rowStart = secondOffset + table.indexOf("| second |"), rowLength = table.split("\r\n")[3].length;
+    const selectedExpected = original.slice(0, rowStart) + "|  |  |  |" + original.slice(rowStart + rowLength);
+    check("empty selected-row recovery updates only its captured source gap as one Undo without Save",
+      (await state()).exact === selectedExpected && (await state()).undo === 1 &&
+      fs.readFileSync(selectedFixture.file, "utf8") === original && saves.length === selectedSaves &&
+      selectedSaves === sharedSaves,
+      { state: await state(), expected: selectedExpected, selectedSaves, observedSaves: saves.length });
+    // These native additions exercise registered controls with a controlled
+    // choice responder. They do not qualify confirmation-dialog presentation.
+    const columnPrefix = "# Column deletion\r\n\r\n";
+    const columnTable = "A|B|C\r\n:---|:---:|---:\r\na|b|c";
+    const columnTail = "\r\n\r\nNearby table\r\n\r\n" + columnTable + "\rTail without ending";
+    const columnSource = columnPrefix + columnTable + columnTail;
+    await exec(`window.__columnDialogs=window.MarkalooDialogs;
+      window.MarkalooDialogs={...__columnDialogs,show(options){
+        window.__columnConfirmation=options;
+        return new Promise(resolve=>{
+          window.__columnAnswer=resolve;
+          options.signal.addEventListener('abort',()=>resolve({choice:options.cancelId,cause:'aborted'}),{once:true});
+        });
+      }};true`);
+    try {
+      for (const replacement of [false, true]) {
+        const name = replacement ? "equal-count" : "delete-only";
+        const fixture = await fresh("shared-column-" + name, columnSource), beforeSaves = saves.length;
+        await open(0);
+        const geometry = await cellLayout();
+        check("shared compact toolbar has six visible native named SVG hit targets and readable footer " + name,
+          cellControlBands(geometry, 1, 3) &&
+          await exec(`tableCellUpdate.textContent.trim()==='Update the document'&&
+            document.getElementById('tableCellCancel').textContent.trim()==='Cancel'&&
+            tableCellDeleteColumn.disabled&&!tableCellInsertLeft.disabled&&!tableCellInsertRight.disabled`),
+          geometry);
+        const beforeUnselected = await draft();
+        await exec("changeTableCellColumns('remove');true");
+        check("Delete cannot borrow opening autofocus as deliberate selection " + name,
+          JSON.stringify(await draft()) === JSON.stringify(beforeUnselected) &&
+          await exec("!tableCellSession.selectedCell&&!tableCellSession.confirmation&&tableCellDeleteColumn.disabled"));
+        await mouse("tableCellSession.rows[1].cells[0].input");
+        await page(() => {
+          window.__columnKeep=tableCellSession.rows[1].cells[0];
+          window.__columnOldHTML=__columnKeep.input.innerHTML;
+          window.__columnNativeEvents=[];
+          __columnKeep.input.addEventListener('beforeinput',e=>__columnNativeEvents.push({trusted:e.isTrusted,type:e.inputType}));
+          const range=document.createRange();range.selectNodeContents(__columnKeep.input);range.collapse(false);
+          getSelection().removeAllRanges();getSelection().addRange(range);
+          return true;
+        });
+        await bounded("surviving column cell native typing", win.webContents.insertText(" X"));
+        const typed = await exec("__columnKeep.input.innerHTML");
+        check("surviving-cell history setup actually receives trusted native input " + name,
+          typed !== await exec("__columnOldHTML") &&
+          await exec("__columnNativeEvents.some(event=>event.trusted&&event.type==='insertText')"));
+        await mouse("tableCellSession.rows[1].cells[1].input");
+        await exec(`window.__columnRemoved=tableCellSession.rows.map(row=>row.cells[1]);
+          window.__columnSurvivors=tableCellSession.rows.map(row=>[row.cells[0],row.cells[2]]);
+          window.__columnClicks=[];tableCellDeleteColumn.addEventListener('click',e=>__columnClicks.push(e.isTrusted));
+          true`);
+        check("Delete icon is visible enabled focusable and deliberately selected for native click " + name,
+          await exec(`tableCellDeleteColumn instanceof HTMLButtonElement&&tableCellDeleteColumn.tabIndex>=0&&
+            !tableCellDeleteColumn.disabled&&tableCellDeleteColumn.getClientRects().length>0&&
+            tableCellSession.selectedCell===tableCellSession.rows[1].cells[1]&&
+            tableCellGrid.contains(tableCellSession.selectedCell.input)&&
+            tableCellSession.selectedCell.container.classList.contains('table-cell-selected')&&
+            tableCellSession.selectedCell.columnState===tableCellSession.columnOrder[1]`));
+        await mouse("tableCellDeleteColumn");
+        await wait("column native click confirmation " + name, "!!tableCellSession.confirmation");
+        check("native click invokes Delete's registered safe-default confirmation " + name,
+          await exec(`__columnClicks.some(Boolean)&&tableCellGrid.inert&&tableCellUpdate.disabled&&
+            __columnConfirmation.signal===tableCellSession.confirmation.controller.signal&&
+            __columnConfirmation.defaultId==='cancel'&&__columnConfirmation.cancelId==='cancel'&&
+            __columnConfirmation.message==='Delete Column 2: B? The document changes only when you choose Update the document.'`));
+        const pendingDraft = await draft();
+        await exec("changeTableCellRows('below');changeTableCellColumns('right');updateTableCells();true");
+        check("native pending deletion cannot mutate row/column/document adoption " + name,
+          JSON.stringify(await draft()) === JSON.stringify(pendingDraft) && saves.length === beforeSaves);
+        await exec("__columnAnswer({choice:'remove',cause:'choice'});true");
+        await wait("confirmed original column draft " + name, "!tableCellSession.confirmation&&tableCellSession.columns===2");
+        check("confirmed original deletion preserves exact surviving inputs/engines and only records its source index " + name,
+          await exec(`tableCellSession.rows.every((row,index)=>row.cells[0]===__columnSurvivors[index][0]&&
+            row.cells[1]===__columnSurvivors[index][1]&&row.cells.every(cell=>cell.input.isConnected))&&
+            __columnRemoved.every(cell=>!cell.input.isConnected)&&tableCellSession.deletedColumns.size===1&&
+            tableCellSession.deletedColumns.has(1)&&tableCellSession.selectedCell===null&&tableCellDeleteColumn.disabled&&
+            window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(columnSource)}&&undoHistory.length===0`));
+        await mouse("__columnKeep.input"); await key("z", ["control"]);
+        check("surviving-cell native Undo remains live after confirmed deletion " + name,
+          await exec("__columnKeep.input.innerHTML===__columnOldHTML&&tableCellSession.columns===2&&undoHistory.length===0"));
+        await key("y", ["control"]);
+        check("surviving-cell native Redo retains its original engine after confirmed deletion " + name,
+          await exec("__columnKeep.input.innerHTML===" + JSON.stringify(typed) + "&&tableCellSession.columns===2"));
+        await key("z", ["control"]);
+        if (replacement) {
+          await mouse("tableCellSession.rows[1].cells[1].input");
+          await mouse("tableCellInsertLeft");
+          check("equal-count replacement genuinely deletes an original and inserts a new identity",
+            await exec(`tableCellSession.columns===3&&tableCellSession.deletedColumns.has(1)&&
+              tableCellSession.columnOrder[1].originalIndex===undefined&&
+              tableCellSession.rows[1].cells[0]===__columnKeep`));
+          for (const [row, text] of [[0, "N"], [1, "n"]]) {
+            await mouse("tableCellSession.rows[" + row + "].cells[1].input");
+            await bounded("new replacement column native text", win.webContents.insertText(text));
+          }
+        }
+        const finalTable = replacement ? "A| N |C\r\n:---| --- |---:\r\na| n |c" :
+          "A|C\r\n:---|---:\r\na|c";
+        const expected = columnPrefix + finalTable + columnTail;
+        await update();
+        check("column " + name + " Update adopts exact authored bytes as one document Undo and no Save",
+          (await state()).exact === expected && (await state()).undo === 1 &&
+          fs.readFileSync(fixture.file, "utf8") === columnSource && saves.length === beforeSaves,
+          { expected, state: await state() });
+        await exec("undoButton.click();true");
+        await wait("column document Undo " + name, "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+        check("document Undo reverses the entire column transaction with exact outside bytes " + name,
+          (await state()).exact === columnSource && await exec("undoButton.disabled&&!redoButton.disabled"));
+        await exec("redoButton.click();true");
+        await wait("column document Redo " + name, "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+        check("document Redo reapplies column " + name + " without Save",
+          (await state()).exact === expected && saves.length === beforeSaves);
+      }
+      await fresh("shared-column-cancel", columnSource); await open(0);
+      await mouse("tableCellSession.rows[1].cells[1].input");
+      await mouse("tableCellInsertLeft");
+      const addedDraft = await draft(), cancelSaves = saves.length;
+      await mouse("tableCellDeleteColumn");
+      check("actual Delete icon click identifies the new current draft column",
+        await exec("!!tableCellSession.confirmation&&tableCellSession.selectedCell.columnState.originalIndex===undefined"));
+      await exec("__columnAnswer({choice:'remove',cause:'escape'});true");
+      await wait("new-column non-choice refusal", "!tableCellSession.confirmation");
+      check("controlled escape cause cannot authorize new-column removal",
+        JSON.stringify(await draft()) === JSON.stringify(addedDraft));
+      await mouse("tableCellDeleteColumn");
+      await exec("__columnAnswer({choice:'remove',cause:'choice'});true");
+      await wait("confirmed new-column removal", "!tableCellSession.confirmation&&tableCellSession.columns===3");
+      check("confirmed new-column removal adds no original deletion and can return to no-op topology",
+        await exec("tableCellSession.deletedColumns.size===0&&tableCellSession.columnOrder.every((column,index)=>column.originalIndex===index)"));
+      await mouse("tableCellSession.rows[1].cells[1].input");
+      await mouse("tableCellDeleteColumn");
+      await exec("__columnAnswer({choice:'remove',cause:'choice'});true");
+      await wait("Cancel original deletion setup", "!tableCellSession.confirmation&&tableCellSession.columns===2");
+      await mouse("document.getElementById('tableCellCancel')");
+      check("ordinary Cancel discards confirmed original/new structure drafts with exact source/history/no Save",
+        (await state()).exact === columnSource && (await state()).undo === 0 &&
+        await exec("!tableCellDialog.open&&!tableCellSession") && saves.length === cancelSaves);
+      await fresh("shared-column-stale", columnSource); await open(0);
+      await mouse("tableCellSession.rows[1].cells[1].input"); await mouse("tableCellDeleteColumn");
+      await exec("tableCellSession.rows[0].cells[0].input.textContent='changed while pending';true");
+      const staleDraft = await draft();
+      await exec("__columnAnswer({choice:'remove',cause:'choice'});true");
+      await wait("stale column refusal", "!tableCellSession.confirmation&&!!tableCellError.textContent");
+      check("post-confirmation stale draft cannot delete or adopt despite an affirmative controlled choice",
+        JSON.stringify(await draft()) === JSON.stringify(staleDraft) &&
+        (await state()).exact === columnSource && (await state()).undo === 0);
+      await cancel();
+      const createDeletionSource = "# Create deletion\r\n\r\n";
+      await fresh("shared-column-create", createDeletionSource);
+      await page(() => {
+        __cells.source(markdownEditor.value.length, markdownEditor.value.length);
+        return __cells.action(FoliaTableCells.Mode.INSERT);
+      });
+      await exec("tableCellColumns.value='2';tableCellDataRows.value='0';tableCellStart.click();true");
+      check("Create deletion has a real editable header without data rows or an autofocus deletion selection",
+        await exec(`tableCellSession.mode===FoliaTableCells.Mode.INSERT&&tableCellSession.rows.length===1&&
+          tableCellSession.rows[0].header&&tableCellSession.rows[0].editable&&
+          tableCellSession.columns===2&&tableCellDeleteColumn.disabled&&tableCellSession.selectedCell===null`));
+      await mouse("tableCellSession.rows[0].cells[1].input"); await mouse("tableCellDeleteColumn");
+      check("Create Delete uses the actual header and explains that only Insert adopts the draft",
+        await exec(`!!tableCellSession.confirmation&&__columnConfirmation.message===
+          'Delete Column 2: Header 2? The document changes only when you choose Insert into the document.'&&
+          __columnConfirmation.defaultId==='cancel'`));
+      await exec("__columnAnswer({choice:'remove',cause:'choice'});true");
+      await wait("Create column deletion draft", "!tableCellSession.confirmation&&tableCellSession.columns===1");
+      check("Create confirmed deletion preserves its header and has no original-source deletion authority",
+        await exec(`tableCellSession.rows.length===1&&tableCellSession.rows[0].cells.length===1&&
+          tableCellSession.deletedColumns.size===0&&tableCellDeleteColumn.disabled&&
+          window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(createDeletionSource)}&&undoHistory.length===0`));
+      await mouse("document.getElementById('tableCellCancel')");
+      check("Create deletion Cancel leaves document source history and Save untouched",
+        (await state()).exact === createDeletionSource && (await state()).undo === 0 && saves.length === cancelSaves);
+      await fresh("shared-column-minimum", "# Minimum column\n\n| H |\n| --- |\n| a |");
+      await open(0); await mouse("tableCellSession.rows[1].cells[0].input");
+      const minimum = await draft();
+      await exec("changeTableCellColumns('remove');true");
+      check("one-column native draft keeps visible Delete disabled and refuses the command without a confirmation",
+        JSON.stringify(await draft()) === JSON.stringify(minimum) &&
+        await exec("tableCellDeleteColumn.disabled&&tableCellDeleteColumn.getClientRects().length>0&&!tableCellSession.confirmation"));
+      await cancel();
+      await fresh("shared-column-selected-refusal", columnSource); await open(0, tableModes.UPDATE_ROWS, 1, 1);
+      const selectedColumnDraft = await draft();
+      await exec("changeTableCellColumns('remove');true");
+      check("selected-row native mode keeps all three column icons visible disabled and scope-described",
+        JSON.stringify(await draft()) === JSON.stringify(selectedColumnDraft) &&
+        await exec(`[tableCellInsertLeft,tableCellInsertRight,tableCellDeleteColumn].every(button=>
+          button.disabled&&button.getClientRects().length>0&&button.getAttribute('aria-describedby')==='tableCellColumnScope')&&
+          !tableCellColumnScope.hidden&&tableCellColumnScope.textContent==='Columns change every row. Edit the whole table to insert or delete a column.'`));
+      await cancel();
+    } finally {
+      await cancel();
+      await exec("window.MarkalooDialogs=__columnDialogs;true");
+    }
+    if (!coreFunction) await sharedOpeningWidths();
+    await fresh("shared-refusal", "# Shared refusal\n\nOrdinary prose remains unchanged.");
+    await page(() => {
+      __cells.source(markdownEditor.value.indexOf("prose"), markdownEditor.value.indexOf("prose"));
+      return __cells.action(FoliaTableCells.Mode.INSERT);
+    });
+    await exec("tableCellStart.click();true");
+    const refusedBefore = await draft();
+    const refusalSaves = saves.length;
+    await exec("tableCellUpdate.click();true");
+    await wait("invalid insertion position refuses", "tableCellError.textContent.length>0&&!tableCellSession.submitting");
+    const refusedAfter = await draft();
+    const refusalState = await exec(`({open:tableCellDialog.open,applied:tableCellSession.applied,
+      error:tableCellError.textContent})`);
+    check("Create invalid embedding keeps its draft/source/history and never Saves",
+      JSON.stringify(refusedAfter) === JSON.stringify(refusedBefore) &&
+      refusalState.open && !refusalState.applied && saves.length === refusalSaves &&
+      refusalSaves === sharedSaves,
+      { before: refusedBefore, after: refusedAfter, refusalState, refusalSaves, observedSaves: saves.length });
+    const priorMode = await exec("tableCellSession.mode");
+    await exec("openTableCellEditor('invalid-mode');true");
+    check("invalid launch mode cannot discard an existing popup draft",
+      JSON.stringify(await draft()) === JSON.stringify(refusedBefore) &&
+      await exec("tableCellSession.mode===" + JSON.stringify(priorMode) + "&&tableCellDialog.open"));
+    await cancel();
+  }
+
+  async function sharedOpeningWidths(open = openGrid, isolated = false) {
+    const openingSaves = saves.length;
+    const prose = "Readable ordinary words describe how the shared table editor preserves context and makes substantial prose comfortable without cutting words into fragments.";
+    const sql = '`SELECT number, category, description FROM entries WHERE status = "ready" ORDER BY number, category;`';
+    const shapes = {
+      heavy: Array.from({ length: 7 }, () => [prose, sql, "**" + prose + "**"]),
+      mixed: Array.from({ length: 7 }, (_, i) => [String(i + 1), prose, sql]),
+      tiny: [["ID", "Name"], ["1", "OK"]],
+    };
+    const measurements = [];
+    for (const viewport of [1650, 700, 400]) {
+      const runCases = async admission => {
+      for (const [name, rows] of Object.entries(shapes)) {
+        if (isolated) {
+          const actual = await page(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }));
+          check("shared opening viewport is exact before fixture " + name + "/" + viewport,
+            actual.width === viewport && actual.height === 1000, { requested: viewport, actual });
+          if (actual.width !== viewport || actual.height !== 1000)
+            throw new Error("Opening fixture viewport was not admitted");
+        }
+        const beforeOpeningSaves = saves.length;
+        const body = "# Shared " + name + "\n\n" + [
+          "| " + rows[0].join(" | ") + " |",
+          "| " + rows[0].map(() => "---").join(" | ") + " |",
+          ...rows.slice(1).map(row => "| " + row.join(" | ") + " |"),
+        ].join("\n");
+        await fresh("shared-width-" + name + "-" + viewport, body);
+        await open(0);
+        await settle();
+        const geometry = await exec(`(() => {
+          const table=tableCellGrid.querySelector('table'),cells=[...table.rows[0].cells],
+            data=cells.slice(1).map(cell=>cell.getBoundingClientRect().width),
+            input=tableCellSession.rows[1].cells[${JSON.stringify(name)}==='heavy'?0:1].input;
+          const range=document.createRange();range.selectNodeContents(input);
+          const lines=new Set([...range.getClientRects()].map(rect=>Math.round(rect.top))).size;
+          const walker=document.createTreeWalker(input,NodeFilter.SHOW_TEXT);
+          let text,splitWords=0;
+          while((text=walker.nextNode()))for(const word of text.data.matchAll(/[A-Za-z]+/g)){
+            range.setStart(text,word.index);range.setEnd(text,word.index+word[0].length);
+            if(new Set([...range.getClientRects()].map(rect=>Math.round(rect.top))).size>1)splitWords++;
+          }
+          range.selectNodeContents(cells[0]);
+          const labelText=range.getBoundingClientRect(),label=cells[0].getBoundingClientRect(),
+            labelStyle=getComputedStyle(cells[0]),zoom=Number(getComputedStyle(tableCellGrid).zoom)||1;
+          const labelEdges=['paddingLeft','paddingRight','borderLeftWidth','borderRightWidth']
+            .map(property=>parseFloat(labelStyle[property]));
+          const labelRequired=Math.ceil(Math.max(parseFloat(labelStyle.minWidth),
+            labelText.width/zoom+labelEdges.reduce((sum,width)=>sum+width,0)));
+          return {viewport:innerWidth,popup:tableCellDialog.getBoundingClientRect().width,
+            table:table.getBoundingClientRect().width,client:tableCellGrid.clientWidth,
+            fixed:label.width,labelRequired,
+            labelOverflow:Math.max(0,labelText.right-label.right+
+              (labelEdges[1]+labelEdges[3])*zoom),data,
+            overflow:input.scrollWidth-input.clientWidth,
+            lines,splitWords};
+        })()`);
+        const measurement = { name, requestedViewport: viewport, admission: admission || null, ...geometry };
+        measurements.push(measurement);
+        if (isolated) {
+          fs.writeFileSync(path.join(evidence, "shared-opening-measurements.json"), JSON.stringify(measurements, null, 2));
+          await screenshot("shared-" + name + "-" + viewport);
+          const captured = screenshots.at(-1);
+          measurement.capture = { file: captured.file, sha256: captured.sha256 };
+          fs.writeFileSync(path.join(evidence, "shared-opening-measurements.json"), JSON.stringify(measurements, null, 2));
+          check("shared opening retains its exact measured viewport " + name + "/" + viewport,
+            geometry.viewport === viewport, geometry);
+        }
+        check("shared opening fits its actual data grid and bounded label " + name + "/" + viewport,
+          geometry.popup <= Math.min(960.6, geometry.viewport - 23.4) &&
+          Math.abs(geometry.table - geometry.client) < 1 &&
+          Math.abs(geometry.fixed - geometry.labelRequired) < 1 &&
+          geometry.data.every(width => width >= 48) &&
+          geometry.overflow <= 1, geometry);
+        check("the initial row-label allocation contains its actual header text " + name + "/" + viewport,
+          geometry.labelOverflow <= 1, geometry);
+        if (name === "tiny") check("tiny source stays compact " + viewport, geometry.popup <= 480.6, geometry);
+        if (name === "heavy" && viewport === 1650) {
+          check("substantial prose gains initial data width rather than widening only its outer dialog",
+            geometry.popup >= 959 && geometry.data.every(width => width >= 275) && geometry.splitWords === 0, geometry);
+        }
+        if (name === "mixed" && viewport === 1650) {
+          check("unequal content keeps initial data-column proportions",
+            Math.abs(geometry.data[1] / geometry.data[0] - 2.5) < .03 &&
+            Math.abs(geometry.data[2] / geometry.data[0] - 2.5) < .03, geometry);
+        }
+        if (!isolated && name === "heavy" && [1650, 400].includes(viewport)) {
+          const file = path.join(evidence, "shared-" + name + "-" + viewport + ".png");
+          fs.writeFileSync(file, (await win.webContents.capturePage(undefined,
+            { stayHidden: true, stayAwake: true })).toPNG());
+        }
+        await cancel();
+        check("opening and Cancel leave exact source/history untouched " + name + "/" + viewport,
+          (await state()).exact === body && (await state()).undo === 0 &&
+          saves.length === beforeOpeningSaves && beforeOpeningSaves === openingSaves,
+          { state: await state(), beforeOpeningSaves, observedSaves: saves.length });
+      }
+      };
+      if (isolated) await withCellViewport("opening matrix/" + viewport, viewport, 1000, true, runCases);
+      else {
+        win.setContentSize(viewport, 1000);
+        await runCases();
+      }
+    }
+    fs.writeFileSync(path.join(evidence, "shared-opening-measurements.json"), JSON.stringify(measurements, null, 2));
+    const runToolbar = async admission => {
+    const previousDark = await exec("document.body.classList.contains('dark-mode')");
+    try {
+    await exec("document.body.classList.add('dark-mode');true");
+    await fresh("shared-toolbar", "# Shared toolbar\n\nA compact unchanged document.");
+    if (isolated) {
+      await exec("document.body.classList.add('dark-mode');true");
+      await settle();
+    }
+    const toolbar = await exec(`(() => {
+      const ids=['undoButton','redoButton','saveButton','exitEditBtn'];
+      const nodes=ids.map(id=>document.getElementById(id)),controls=nodes[0].closest('.editor-controls');
+      const rect=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}};
+      return {dark:document.body.classList.contains('dark-mode'),
+        viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},
+        ids:nodes.slice().sort((a,b)=>a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING?-1:1).map(n=>n.id),
+        enabled:nodes.filter(node=>!node.disabled).map(node=>{
+          const r=node.getBoundingClientRect();
+          return {id:node.id,hit:node.contains(document.elementFromPoint((r.left+r.right)/2,(r.top+r.bottom)/2))};
+        }),
+        separators:[...controls.querySelectorAll('.editor-toolbar-separator')].map(n=>({text:n.textContent,hidden:n.getAttribute('aria-hidden')})),
+        groups:[...controls.querySelectorAll('.editor-history-controls,.editor-toolbar-group')].map(group=>{
+          const children=[...group.children].map(rect);return {
+            sameLine:children.every(r=>Math.abs((r.top+r.bottom)/2-(children[0].top+children[0].bottom)/2)<1),
+            ordered:children.every((r,index)=>!index||r.left>=children[index-1].right-.5),
+            visible:children.every(r=>r.right>r.left&&r.bottom>r.top&&r.left>=0&&r.right<=innerWidth)};
+        })};
+    })()`);
+    if (isolated) {
+      const measurement = { admission, ...toolbar };
+      const file = path.join(evidence, "shared-toolbar-measurement.json");
+      fs.writeFileSync(file, JSON.stringify(measurement, null, 2));
+      await screenshot("shared-dark-toolbar-700");
+      const captured = screenshots.at(-1);
+      measurement.capture = { file: captured.file, sha256: captured.sha256 };
+      fs.writeFileSync(file, JSON.stringify(measurement, null, 2));
+    }
+    check("dark compact mini toolbar keeps requested order/separators and coherent usable groups",
+      toolbar.ids.join(",") === "undoButton,redoButton,saveButton,exitEditBtn" &&
+      toolbar.separators.map(item => item.text).join(",") === "|,|,||" &&
+      toolbar.separators.every(item => item.hidden === "true") &&
+      toolbar.enabled.map(item=>item.id).join(",") === "saveButton,exitEditBtn" &&
+      toolbar.enabled.every(item=>item.hit) &&
+      toolbar.groups.length === 3 && toolbar.groups.every(item => item.sameLine && item.ordered && item.visible), toolbar);
+    if (isolated) {
+      check("dark toolbar really uses the requested theme", toolbar.dark, toolbar);
+      check("dark toolbar keeps its exact 700 CSS viewport", toolbar.viewport.width === 700 &&
+        toolbar.viewport.height === 1000, toolbar.viewport);
+    } else fs.writeFileSync(path.join(evidence, "shared-dark-toolbar-700.png"),
+      (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+    } finally {
+      if (isolated) await exec("document.body.classList.toggle('dark-mode'," + JSON.stringify(previousDark) + ");true");
+      else await exec("document.body.classList.remove('dark-mode');true");
+    }
+    };
+    if (isolated) await withCellViewport("opening toolbar/700", 700, 1000, true, runToolbar);
+    else {
+      win.setContentSize(700, 1000);
+      await runToolbar();
+    }
+  }
+
   const saveListener = (event, request) => {
     if (ownedMainFrame(event)) saves.push(request);
   };
   app.whenReady().then(async () => {
     try {
+      if (ownedGroup) coreFailFast = true;
+      if (focusedFunction) {
+        corePhase = "source/parser";
+        coreFailFast = true;
+        await sourceTests(true);
+        corePhase = "setup";
+      }
       session.defaultSession.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
         (details, callback) => { network.push(details.url); callback({ cancel: true }); });
       ipcMain.prependListener("save-markdown-file", saveListener);
       await bounded("actual Main bootstrap", awaitMainReady(), 10000);
+      tableModes = await exec("FoliaTableCells.Mode");
+      if (ownedHidden) await bounded("owned renderer focus emulation",
+        win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }));
       receipt("ready", { watchdogMs: 180000, appRoot });
       admissionFixture = await fresh("fixture-admission", "# Fixture admission\n\nThis unchanged tab admits owned fixtures.");
       if (dirtyOpenProbe) await bounded("dirty Open negative probe", proveDirtyOpenRefusal(), 10000);
@@ -5207,15 +8951,24 @@ require("./test-userdata-isolation");
       if (!alive.console || !alive.dom) throw new Error("Both actual cell sentinel channels must be proven before scenarios");
       if (perfOnly) await performanceUnit();
       else {
-        await pureInRenderer();
-        const scenarios = { menus, provenance, noop, input, click, transaction, adoption, stale, keyboard, formatting, many };
+        if (!focusedFunction) await pureInRenderer();
+        const scenarios = { menus, provenance, noop, input, click, transaction, adoption, stale, keyboard, formatting, many, shared };
         check("cell UI dispatcher contains exactly the declared scenarios",
           JSON.stringify(Object.keys(scenarios)) === JSON.stringify(uiGroups));
-        for (const [name, run] of Object.entries(scenarios)) {
+        const activeScenarios = detailPresentation ? { detail: detailPresentationCases } : openingPresentation
+          ? { opening: () => sharedOpeningWidths(openCoreGrid, true) } : scenarios;
+        for (const [name, run] of Object.entries(activeScenarios)) {
           if (!selected(name)) continue;
           try {
-            if (name === "many") await withCellViewport("hosted many-row", 1008, 681, false, run);
-            else await run();
+            if (name === "many") await withCellViewport("hosted many-row", 1008, 681, false, () => run());
+            else if (openingPresentation || detailPresentation) {
+              corePhase = "browser/presentation";
+              await run();
+            }
+            else if (coreFunction) {
+              corePhase = "browser/core";
+              await run(openCoreGrid);
+            } else await run();
           }
           catch (error) { check("cell " + name + " scenario completed", false, error.stack); throw error; }
           finally {
@@ -5228,7 +8981,7 @@ require("./test-userdata-isolation");
           if (!shellGuardsInstalled()) throw new Error("Main shell guard replacement prevents further scenarios");
         }
         check("all selected cell UI scenarios ran",
-          JSON.stringify(uiGroups.filter(name => executed.has(name))) === JSON.stringify(expectedUiGroups) &&
+          JSON.stringify(invocationUiGroups.filter(name => executed.has(name))) === JSON.stringify(expectedUiGroups) &&
           (!proof || executed.has(proof)));
       }
     } catch (error) {
@@ -5236,6 +8989,8 @@ require("./test-userdata-isolation");
         console.error("SECONDARY suite termination -> " + error.stack);
       } else check("cell Electron suite completed", false, error.stack);
     } finally {
+      coreFailFast = false;
+      if (focusedFunction) corePhase = "cleanup";
       let code = 1;
       try {
         try { await cleanupActors(); }

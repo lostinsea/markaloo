@@ -27,6 +27,23 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Document history controls
+
+- Compact Undo and Redo buttons sit beside Save in the Raw Markdown toolbar.
+  Their names and tooltips include the existing Ctrl+Z and Ctrl+Y shortcuts.
+- Buttons use document history, not browser or cell-editor history, and do not save.
+  Stack changes, editor mode, active-owner changes and shutdown freeze/thaw
+  refresh availability without changing document state.
+- The toolbar wraps inside a narrow editor pane so Save and Exit remain reachable.
+- Candidate grouping is `| Undo Redo | Save || Exit`. Separators are decorative;
+  each group stays together when the pane wraps.
+- Typing records its pre-change source immediately. The 800ms idle window groups
+  typing; expiry does not add the already-current text to history.
+- New typing clears Redo immediately. Composition stays in one group, and
+  document Undo/Redo waits until its final input settles.
+- Tab snapshots retain existing stacks and exact source, not a pending post-state.
+  Ownership changes and exact transactions retire the old typing timer.
+
 ### Shared source-owned inline editing and Edit Text
 
 `src/inline-formatting.js` owns the inline source atoms, parser-confirmed
@@ -97,22 +114,107 @@ Update/Cancel controls remain usable.
 
 ```mermaid
 flowchart LR
+    N["Insert table"] --> C["Choose initial dimensions"]
+    C --> D["Shared visual cell grid"]
     A["Right-click a table in either pane"] --> B["Edit table"]
     S["Select rows in either pane"] --> R["Edit selected rows"]
     B --> V["Verify current source and owner"]
     R --> V
-    V --> D["Rendered cell grid"]
-    D --> E["Update once; retain Undo"]
+    V --> D
+    D --> E["Insert or Update once; retain Undo"]
     E --> F["Normal preview render"]
 ```
 
+- Shared creation, column changes and deliberate cell selection are
+  implemented, reviewed and locally installed as the current 0.12.0 candidate.
+  Current B973/BD1B pointer SAME15 passes all fifteen cases. Shared/Core reach both
+  column iterations, controlled confirmation, deletion/native history and exact
+  source/document Undo/Redo/Cancel tails. Broader qualification remains incomplete.
+  Detail passes its original actual shrink/grow and source/history/authority tail.
+  See [candidate status](PROJECT-CHANGE-LIST.md#status-of-the-0120-candidate).
+  The installed 0.12.0 history, row-removal and sizing baseline is separate.
+- Independent Sol/Luna code and test reviews are clear. Existing source/VM
+  checks cover deletion, captured confirmation authority and sizing rollback;
+  they do not prove native dialog presentation or displayed tooltips.
+  Detail's revised sender has current functional coverage, not a historical-cause claim.
+- The two injected setup payloads now use the existing page-function scope.
+  Actual-payload repeated-context source/VM checks and independent Sol/Luna
+  actual-code and binding/guard reviews pass. The earlier consumed 2EC/4B02
+  keyboard-route rerun retains Shared/Core confirmation timeouts and unreached
+  deletion/history/equal-count tails. Every owned closure passed; all 68 PNG
+  exports were hashed, with 33 unique images from that earlier cohort viewed.
+  Absent activation versus authority refusal remains
+  unknown. Failed C5C/675178 and older receipts stay unchanged; that admission is
+  consumed and no product correction is justified by those receipts.
+- The user now requires native pointer activation of the new structure-button
+  tests, not button Enter/Space activation. Grid keyboard editing and standard
+  button accessibility stay unchanged. The narrow test revision passes source/
+  VM checks and independent Sol/Luna actual-code reviews, with no blocking
+  disagreement. One coherent SAME15 is bound; both actual admission reviews
+  clear, with no blocking disagreement. The pointer SAME15 passes all fifteen
+  cases, 4888/0 assertions. Shared 143/0 and distinct Core 648/0 reach controlled
+  confirmation, deletion/native history and exact source/document Undo/Redo,
+  Cancel, minimum-column and selected-row checks. No interrupted tail remains.
+  Detail 600/0 retains its original grip and authority/history requirements.
+  All owned closure gates pass; 107 exports are hashed and all 37 unique current
+  PNGs are viewed. Independent factual Sol/Luna reviews are clear; no blocking disagreement.
+  Real confirmation presentation
+  and displayed tooltips stay outside; narrow/2x readability is still limited.
+  No confirmation, deletion/history or captured-authority requirement is waived.
+- The user authorized one normal local installation after saving/closing the app.
+  All 32 product source bytes match the reviewed build and installed payload.
+  Strict packaging passes 481/0 with no skips. Profiles/settings/notes, shortcuts,
+  associations and machine identity are preserved. The unsigned app was left
+  closed for user testing; no commit or public release.
+- User manual checks on this machine pass confirmation, icons/tooltips,
+  tab/recent/note menus and minimum-size toolbar/footer rows.
+  These are not automated or platform-wide passes. No minimum-layout fix is needed.
+- Release 0.12.0 preparation is authorized; publication is pending.
+  Original supported four-area closure resumes afterward, separately from the release.
+- One popup serves Insert, whole-table Update and selected-row Update.
+  The shared immutable mode enum validates launch, permissions and transactions.
+  Insertion captures an actual editor caret, not an invented existing-table target.
+- Creation offers 3 columns and 2 data rows initially, with an editable header.
+  Zero data rows is valid. Editing counts are read-only and follow draft changes.
+- Initial data widths use bounded displayed-content estimates. A single existing
+  header-label Range plus computed padding/borders sets the fixed label reference;
+  browser surplus does not take width from data columns.
 - In edit mode, both pane menus offer Edit table and Edit selected rows.
 - Edit table uses the right-click location, not a selection. Edit selected rows
   requires selected text, not an empty row/table or an image-only range.
   Markdown pipe syntax alone is not cell text. A partial cell selection edits
   that row.
 - Markdown row selections may include prose before or after one table. Only
-  changed cells are replaced; surrounding text and unselected rows stay unchanged.
+  changed cells and explicitly inserted/removed data rows are replaced;
+  surrounding text and unselected rows stay unchanged.
+- Row and column changes require a current highlighted cell selected by mouse
+  or keyboard. Autofocus alone grants no mutation target.
+  No selection reports "Select a cell first." without changing the draft or source.
+- Column insertion and deletion are allowed only for creation and whole-table Update.
+  Stable column identities preserve original cell nodes, provenance and native
+  history. Pure physical-slot patches update the header, delimiter and every row;
+  unchanged alignment and outside source remain exact.
+  Unsupported original-column projections refuse without adopting intermediate source.
+- Delete column confirms the selected column's number and plain header text,
+  with a numbered fallback for a header without text. Keep at least one column.
+  Recheck the original captured source, selection and draft after confirmation.
+  Cancel, a changed column or a changed owner removes nothing.
+- Track removed original column numbers separately from the remaining order.
+  Keep retained cell spans, spacing and alignment; repair missing outer pipes
+  without rebuilding the table or changing source outside it.
+- An empty data scope can recover through its header. A context header outside
+  selected rows stays read-only and anchors only the captured selected-source gap.
+- Six compact icon buttons have tooltips, accessible names, native keyboard
+  activation and a thin theme-colour border. Insert/Update and Cancel keep text.
+  Selected-row editing disables all column actions.
+- Remove row
+  confirms every data-row removal, including empty and added rows.
+  The header is identified by its row role, not its displayed position.
+  Attempting to remove it shows an informational message.
+- Removal stays in the popup draft until Update. Surviving cell nodes, engines
+  and native history stay intact. Empty selected scopes can insert a row again.
+  A pending confirmation blocks row changes and Update, and rechecks source,
+  ownership, draft and composition before removing anything.
 - Right-click and Cancel preserve the original selection, including its direction.
 - The popup shows rendered cells, never a Markdown textarea or source toggle.
   Closing backticks format code immediately. Typing `**bold**` or `*italic*`
@@ -218,7 +320,9 @@ flowchart LR
   empty cells, escaped pipes, Unicode and end-of-file tables.
 - Raw HTML tables, nested tables and ragged rows are refused instead of guessed.
   Unsupported cell structures show an error without changing the document.
-- Table insertion and Mermaid editing keep their existing separate behavior.
+- Insert and Update share the visual grid but use separate exact-source operations.
+  Both adopt one complete candidate as one document Undo step, without Save.
+  Mermaid keeps its separate code/preview behavior.
 
 ### Offline fenced-code languages
 
@@ -367,14 +471,42 @@ flowchart LR
 
 - One app-wide percentage is saved in `readingZoom`, not in document history.
 - Buttons, Ctrl/Cmd keyboard shortcuts and Ctrl/Cmd+wheel save the same choice.
+- Ctrl/Cmd+wheel inside an inline Mermaid diagram uses that same reader handler,
+  before diagram descendants handle the event. Dialogs still block zoom first.
+- Wide diagrams still fit the viewport. Their visible width can stay capped
+  while the reader percentage changes; this is not separate diagram zoom.
 - Documents, reader windows and app restarts keep it in normal and split mode.
 - Startup restores it before documents render, without rewriting the setting.
 - Other same-profile readers follow preference changes without writing them back.
 - The range stays 50% to 400%, in 10-point steps. Reset saves 100%.
 - Missing or invalid values use 100%. Storage failures warn without disabling zoom.
 - Diagram-local zoom and export behavior stay unchanged.
+- Focused hidden Chromium wheel checks confirm the same reader step exactly
+  once over prose and Mermaid, with default prevention and the SVG fit cap.
 - `npm run test:zoom` covers disposable-profile restarts, controls, modes,
   geometry, invalid values, storage failures and cross-window updates.
+
+### Popup view controls
+
+- Mermaid, image and table viewers have two compact actions at the top left,
+  with quiet help to their right. There is no control card or repeated heading.
+- Mermaid: Reset View and Save as PDF.
+- Images: Reset View and Save image, with PNG and JPG in its format menu.
+- Tables: Clear Filters and Export, with CSV and JSON in its format menu.
+- Format menus use native disclosures and keep the existing export handlers.
+  Actions retain text labels, keyboard access and visible focus indicators.
+- Window titles, theme colors and independent popup pan/zoom stay unchanged.
+- PDF export hides the controls and restores their previous display afterward,
+  including cancellation and failure.
+- Focused hidden checks cover all three layouts, pointer-opened format menus,
+  Mermaid/image zoom and Reset, PNG/JPG canceled-handler routes, and table
+  filtering/Clear Filters. Captures were opened and viewed.
+- Actual printToPDF plus simulated Save cancellation restores the toolbar.
+- A separate focused check completed real CSV/JSON downloads and checked their
+  header/field mapping and both owned fixture rows.
+- Trusted keyboard checks cover opening, traversal, format activation, closing
+  with summary focus and exclusion of closed choices from Tab order.
+- Real native Save/Cancel UX and broad theme/print coverage remain unqualified.
 
 ### Reading drawers, table headers and update notices
 
@@ -789,6 +921,181 @@ insertion paths, full-label geometry, compact decisions, bindings, stale
 adoption, scrolling in normal/split view and width-dependent layouts. Its
 roomy 100% and constrained/zoomed captures must be opened when checking visual
 changes; merely writing PNGs is not visual verification.
+
+### Rendered table widths and wide Mermaid diagrams
+
+- Hover over a rendered table to see column separators. Drag a separator to
+  resize that column; the other columns keep their widths.
+- Separator strokes are 1px. The active double marker has a 2px gap; the
+  pointer target remains 8px wide, with keyboard focus and dragging unchanged.
+- Accessible separators report their share of table width on a 0-100 scale and
+  announce the actual pixel width. Reader columns keep the 48px minimum;
+  there is no new maximum.
+- Keyboard: focus the table, Tab to a separator, then use Left/Right. Hold Shift
+  for larger steps. Home or double-click restores automatic widths.
+- Escape, pointer cancellation, window blur, zoom and mode changes cancel an
+  unfinished drag. Completed widths last until the document renders again.
+- Widths are view-only. They do not change Markdown, Save, Undo or visual cell
+  editing. Print and PDF keep automatic table layout and hide the controls.
+- The separate cell-editing grid now uses the same resize mechanics. Its widths
+  are independent of reader widths and reset on each opening. Data columns keep
+  the reader's 48px minimum; the row-label column has no grip and keeps its width.
+- Local-candidate refinement: when the grid gains or loses width, data columns
+  fit proportionally, including previously dragged columns. The row label stays
+  fixed. Columns stop at 48px; smaller budgets scroll horizontally.
+  Reference proportions survive minimum-width clamping and return on widening.
+- The local candidate uses available window width rather than the ordinary
+  1100px dialog cap. Native dialog resizing still works; a stable grid scrollbar
+  gutter prevents column wrapping from feeding back into the fitting budget.
+  These refinements are included in the local 0.12.0 installation. Independent
+  Sol/Luna reviews are clear after fixing untouched/reset fitting and stale
+  natural proportions after cell edits.
+- The refinement's focused source checks pass 97/97; its separate hidden check
+  passes 23/23. Trusted input covers actual 48px columns, fixed row labels,
+  proportional table growth beyond the former cap, manual dialog resizing,
+  minimum overflow, selection, native Undo/Redo, Escape, Cancel and reopening.
+  Captures were viewed; owned processes and temporary data were cleaned up.
+- The cell editor keeps its preferred share of window
+  width after a native dialog resize. Height follows content until deliberately
+  resized, then keeps its preferred share of window height. Temporary viewport
+  clamps do not replace preferences; each opening starts fresh.
+  The existing table fitter uses the resulting grid width. Source checks pass
+  109/109. Native completion uses a cancellable post-event task, not a paint
+  frame; captured prior window dimensions define each chosen ratio.
+  Astra and independent Sol/Luna cleared the correction. The separate hidden
+  check passes 22/22, including proportions, clamps/regrowth, content/manual
+  height, selection/native Undo/Redo/Cancel and reopening. Both captures were
+  viewed and owned processes/temp data removed. The built and installed NSIS
+  payloads match the reviewed source inventory. The normal local installation
+  preserved the profile, shortcuts and associations; the app was left closed.
+- Qualified opening refinement: estimate a comfortable initial width from the
+  displayed header and rows before starting the shared fitter. Stop at bounded
+  row/cell/source-length budgets and use a column-count fallback.
+  The opening comfort cap is not a permanent resize limit; later manual and
+  window-relative preferences, clamp recovery and content-aware height remain.
+  No extra table clone or per-cell geometry scan is used. Parsing and rendering
+  still scale with the displayed scope. Included in the local 0.12.0 installation.
+- Installed row controls insert above/below and confirm removal of existing,
+  added and empty data rows. The true header cannot be removed.
+  In the new source candidate, insertion requires a clearly highlighted
+  mouse- or keyboard-selected cell; autofocus alone is not a target.
+  Existing cells keep their DOM and native Undo;
+  new cells use the same safe inline editor. Update combines complete targeted
+  originals and new rows without replacing outside rows or delimiter spelling.
+  No new keyboard shortcuts are added. Earlier row-insertion checks passed
+  179/179 source and 24/24 hidden, with clear Sol/Luna reviews.
+  These do not qualify later removal, column or deliberate-selection changes.
+  Captures were viewed and
+  owned data/processes removed. The local installation matches reviewed sources
+  and preserves profile/settings. Platform IME and the full regression suite
+  are not qualified by these checks.
+- Readability correction: exhausted inspection uses conservative
+  data-column demands, not a smaller compact fallback. One initial shared-fitter
+  allocation uses those demands and the actual grid budget. Existing first-row
+  geometry is reused; there is no extra table scan or typing-time estimate.
+  Manual 48px widths and later proportions remain separate. Source checks pass
+  189/189 and focused hidden checks pass 22/22, including readable actual wide
+  and narrow openings, manual sizing, original cell history and row transactions.
+  Both captures were viewed and owned resources removed. Independent Sol/Luna
+  reviews are clear. Normal local installation is complete at version 0.12.0;
+  installed sources match the qualified build. Profile, associations, shortcuts
+  and installation identity/path compare unchanged; app left closed.
+- Grid thumbnails fit the available cell width, within their existing 160px
+  width and 100px height limits. Narrowing a column does not cover its neighbor.
+  Automatic height keeps images proportional even with authored dimensions.
+- Pointer resizing in the grid does not focus a grip or replace cell markup.
+  Cell keys keep their normal owner; resize keys apply only to a focused grip.
+  Composition blocks sizing until the inline editor's queued work finishes.
+- Escape during a grid drag cancels sizing, not the dialog. Scrolling cancels
+  the drag; close, reopen and stale ownership dispose controls and width rules.
+  The existing bounded dialog and its horizontal scroller remain in place.
+- Focused hidden Chromium input checks cover real grid dragging, unchanged cell
+  DOM/text and a collapsed caret, native cell Undo/Redo, Escape/keyboard ownership,
+  minimum widths, scrolling, Update/document Undo, reopen and Cancel.
+  Reader and editor-preview resizing also pass; the captures were viewed.
+- A further real pointer case preserves a noncollapsed range across plain/bold/
+  plain nodes without focus or selection repair. Typing changes only that range;
+  native Undo restores its rich markup, Redo and Cancel preserve source authority.
+- A focused image check covers trusted narrowing/widening, ordinary and explicitly
+  sized images, proportional fit, thumbnail limits and unchanged DOM/source/Cancel.
+  Negative controls reproduce overlap and stretching. The overlap-control and
+  corrected-grid captures were viewed.
+- Source checks cover composition guards and stale cleanup. Platform IME,
+  every stale/Save path and native save-dialog behavior remain unqualified.
+  The grid/wheel/popup follow-ups and current sizing refinements are in the
+  verified local 0.12.0 Windows installation.
+  Installed payload hashes match the reviewed source. Identity, profile and
+  installation settings are preserved; this is not a public release.
+- Resizing supports rectangular tables. Nested tables, spanning cells and HTML
+  column groups keep their automatic layout.
+- Wide Mermaid diagrams use the same space beside the reading column as tables.
+  TOC and split-view boundaries still apply. SVGs proportionally fit the available
+  width after breakout; Mermaid blocks do not create horizontal scrollbars.
+  No content is hidden or clipped to enforce the fit.
+- The Mermaid envelope can expand or contract with the live budget. Nested
+  content reserves space on both sides of its actual center. Print preserves
+  Mermaid's intrinsic maximum, so small responsive diagrams are not enlarged.
+- Sequence auto-wrapping is deferred by user choice and remains off by default.
+  In Mermaid 11.17, enabling it can overflow participant aliases with explicit
+  breaks and long individual lines. Existing breaks and author-selected wrapping
+  are unchanged. This feature does not fork or patch Mermaid.
+- Sequence messages and notes use the shared diagram font size. Sequences keep
+  their intrinsic size when room permits and fit proportionally when needed.
+  Without wrapping or scrolling, an oversized diagram must shrink to stay fully
+  visible; zoom cannot grow it beyond the available reading area.
+- A bounded app check observed hover handles, pointer dragging, Home reset,
+  Escape cancellation and cell-editor open/cancel. Resizing kept Markdown,
+  dirty state and cell markup unchanged. Both captured screenshots were viewed.
+- The checked Mermaid container stayed inside its breakout/viewport budget.
+  Sequence messages and notes rendered at 14px without shrinking; explicit
+  actor, message and note breaks were visible. These observations use
+  `wrap:false`; they do not prove the deferred automatic-wrapping behavior.
+- Full runtime regression coverage remains pending. Print/theme/split-view
+  behavior was reviewed by source, not qualified by this bounded app check.
+- A separate background check exercised the reported third section at 150%.
+  Its native SVG fits the widened container and the actual content viewport;
+  Mermaid block scroll widths equal their client widths. The first captures
+  were stale and remain failed visual evidence. A bounded capture-only retry
+  produced complete-diagram and edge images, independently viewed by Sol and
+  Root. All participants and right-side arrows fit with no horizontal bar.
+  Both owned renderers/profiles were cleaned up.
+- `node --check src\renderer.js` and `node --check src\mermaid-config.js` pass.
+  Existing `npm run test:table-cells-source` passes 64/64 assertions with the
+  shipping parser. The source suite does not verify dragging or diagram geometry.
+- Authorized setup used `npm ci --ignore-scripts --no-audit --no-fund`, then the
+  existing `npm run vendor`. Dependency versions, manifests and tracked vendor
+  files are unchanged. A later bounded grant restored the matching official
+  Electron 43.4.1 runtime through its existing installer. No older runtime store,
+  Mermaid patch, global tooling or public release was used.
+- The corrected candidate uses real app version `0.12.0`, without a local
+  package-version override. Independent product reviews are clear; the local
+  installer is built with publishing disabled and matching source payload.
+  After fresh saved/closed confirmation, local installation completed at
+  `C:\Program Files\lostinsea\Folia\Markaloo.exe`. Installed EXE/package/registry
+  versions are 0.12.0 and feature payload bytes match the source. Machine scope,
+  shortcut targets, default associations and selected legacy Folia profile
+  state are unchanged. The app was left closed; use the existing shortcut.
+
+Existing coverage reviewed for these changes; no test files or assertions changed:
+
+| Area | Existing coverage | Implementation constraint |
+|---|---|---|
+| Table editing and document safety | `test-table-cell-editor.js`: provenance, exact source spans, one Undo, no implicit Save; `test-editor-scroll.js`: source mapping | Handles and width rules stay outside the sealed table markup. |
+| Automatic table layout | `test-table-display.js`: batched measurements, exception restoration, incremental rendering, zoom and print | Unresized tables keep the automatic measurement path and its existing proof anchors. |
+| Wide content and split view | `test-responsive-layout.js`: TOC widths, zoom, final-column access and splitter changes | Mermaid shares the table budget and fits its split pane. |
+| Mermaid types and labels | `test-mermaid-render.js`: type-specific fill floors, font floor, label fit, cache, reload, stale adoption and error paths | Sequence actor width stays unchanged; automatic wrapping remains off; natural-size output is a sequence-only default. |
+| Theme and export | `test-reading.js`: native headers and diagram styles; `test-theme.js`: print-hidden overlays and export settling | Controls join the existing print-hidden overlay rule; table print neutralization stays intact. |
+| Source-shape safety | `test-packaging.js`: render-error sinks; `prove-table-fixes.js`: automatic-layout anchors | No error-sink rewrite, oracle change or proof execution. |
+
+- The reading-column width assertion in `test-mermaid-render.js` stays unchanged.
+  Its current short fixture is not a demonstrated failure. The separate bounded
+  check observed wide breakout; the existing full Mermaid suite was not run.
+- A dependency upgrade alone is not a verified wrapping fix. Source inspection
+  of Mermaid 11.17.2 and 12.2.0 still finds fixed-width wrapped actors and the
+  explicit-break wrapper bypass. A single-actor note has a separate width path.
+- The user chose to defer automatic wrapping rather than maintain a Mermaid
+  patch across dependency updates. An actor-only width change would not cover
+  all sequence labels. No parser or SVG workaround was added.
 
 ### 8. Left table of contents and current section (renderer.js + styles.css)
 

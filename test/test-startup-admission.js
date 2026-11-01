@@ -247,7 +247,7 @@ app.on("web-contents-created", (_event, contents) => {
       }
     }
     const selectors = "dialog[open],#noteDialogOverlay.visible,#findNoteOverlay.visible," +
-      "#editTextOverlay.visible,#mermaidTemplateOverlay.visible,#tableInsertOverlay.visible";
+      "#editTextOverlay.visible,#mermaidTemplateOverlay.visible,#tableCellDialog[open]";
     const clear = () => !document.querySelector(selectors);
     const inspect = () => ({
       token: ${JSON.stringify(token)}, contentsId: ${contents.id}, url: location.href,

@@ -67,12 +67,12 @@ const MERMAID_DARK_THEME = {
  * at 15px with default spacing the flowchart canvas grew 19% while the fill
  * ratio moved only 39.9% -> 42.8%, because mermaid sizes shapes from the text
  * plus fixed padding. The effective levers are the padding and spacing
- * constants, and for sequence diagrams the fixed actor box `width`/`height`.
+ * constants. Sequence diagrams use table breakout space, then fit the reader
+ * proportionally when needed. Automatic wrapping stays disabled.
  *
  * These values were chosen from a measured sweep (see the commit for the full
  * table). Against mermaid's defaults they give, per diagram:
  *   flowchart  fill 39.9% -> 59.5%, canvas area -21.2%
- *   sequence   fill  6.3% ->  9.3%, canvas area -44.2%
  *   class      fill 49.6% -> 61.8%, canvas area -14.2%
  * with no label overflowing its shape in any tested diagram.
  */
@@ -90,16 +90,21 @@ const MERMAID_FLOWCHART = {
 };
 
 const MERMAID_SEQUENCE = {
-  // Actor boxes are a fixed size in mermaid, not text-derived, so they are the
-  // whole reason a one-word participant gets a 150x65 box.
-  width: 118, // default 150
+  // Keep the existing actor geometry while automatic wrapping is blocked.
+  width: 118,
   height: 42, // default 65
   actorMargin: 32, // default 50
   boxTextMargin: 3,
   boxMargin: 8,
   actorFontSize: 15,
-  messageFontSize: 14,
-  noteFontSize: 13,
+  messageFontSize: MERMAID_FONT_PX,
+  noteFontSize: MERMAID_FONT_PX,
+  // Native wrapping can overflow actor aliases that contain explicit breaks.
+  // Keep automatic wrapping off until Mermaid handles those labels safely.
+  wrap: false,
+  wrapPadding: 10,
+  // Keep intrinsic dimensions; the reader fits diagrams to its breakout budget.
+  useMaxWidth: false,
 };
 
 // Geometry only: labels, markers, chart data and fill-only symbols are not borders.

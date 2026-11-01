@@ -38,6 +38,930 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `shared-table-popup` - **IMPLEMENTED; QUALIFICATION INCOMPLETE; NOT INSTALLED**.
+  - User requests one popup for new-table insertion and existing-table editing.
+    Installation of the qualified history/row-control baseline is closed out.
+  - Astra's source investigation recommends shared rich cells, sizing, row
+    actions and lifecycle, with separate insertion/replacement transactions.
+    Independent Sol/Luna contract reviews are complete. Sol implements the
+    approved shared visual grid; final code/behavior reviews remain pending.
+  - User chose visual-only creation. Remove the separate preview/raw Markdown
+    UI; paste Markdown directly into the document instead.
+  - Keep creation/replacement candidates separate. Header permissions follow
+    the actual row role and selected scope, not the first displayed row.
+    Do not fake an existing-table target or expand an Edit scope.
+  - Capture the owning editor's normalized caret. Run the existing limited
+    fence helper on that normalized snapshot; map the adjusted offset into
+    exact source once. Insert without deleting selected text. Keep recognized
+    relocation and reject invalid final embedding; do not broaden the helper.
+  - Use one immutable named mode enum: Insert, Update table, Update rows.
+    Validate modes at launch, permissions and exact-source boundaries.
+    Preserve normal cell DOM/history and confirmed row removal.
+    Use one guarded exact document adoption/history step; no Save.
+  - User chose "Allow header-only tables (Recommended)" through Root. Keep a
+    required editable header; allow Data rows=0 with later row insertion.
+  - User approved columns left/right for Insert and whole-table Update only.
+    Selected-row Update cannot change columns or unselected source.
+    Keep draft Data rows/Columns counts current; Edit counts are read-only.
+  - Row/column insertion needs a deliberate highlighted mouse/keyboard cell.
+    No selection warns without mutation. Opening autofocus is not selection.
+    An empty selected scope recovers through its read-only context header,
+    at the captured selected gap, without granting header edits.
+  - Structural design uses stable identities and pure staged source patches.
+    Preserve physical slots, alignment, outside bytes and surviving cell DOM.
+    Reject composition; cancel sizing gestures, not composition.
+    Unsupported intermediate projections refuse explicitly and retain draft.
+  - Include the requested mini toolbar: | Undo Redo | Save || Exit.
+    Reopen text-heavy opening demand with bounded baseline/candidate geometry;
+    preserve tiny tables, scope estimates, manual preferences and clamps.
+  - Shared source checks pass. The latest ordinary shared UI qualification
+    attempt, r5/followup3, passed 56/58 and then failed at
+    menu visibility before activation; later width/toolbar cases were aborted.
+    Its cause is unresolved. The prior r3/followup2 97/97 receipt remains
+    separate and does not qualify this attempt. Owned cleanup succeeded.
+    Preserve all failed receipts; the invented seven-line
+    threshold was not a user requirement. Actual data allocation and ordinary
+    word fragmentation are measured against the same baseline fixture.
+    A measured header-label reference fixes clipping without a data scan.
+  - Sol/Luna source reviews resolved the nested column-handler finding.
+    Packaging, security and layout test migrations are independently reviewed
+    and integrated. Corrected proof contracts and factual/doc changes are
+    independently reviewed and integrated. Runtime proof gaps remain explicit.
+    One bounded heavy-to-mixed menu diagnostic did not reproduce the failure.
+    Both menus were visible before activation and opened the correct modal
+    target afterward. The original cause stays unknown; no more menu attempts
+    without user scope discussion. Full shared/layout qualification stays blocked.
+    Selected SEC-29/SEC-30/N10 renderer checks passed against frozen r6:
+    13 original assertions and five containment/sentinel controls.
+    This is not full security, menu admission, Update or mutation-proof coverage.
+    A is complete within the agreed scope: source 336/336, history 27/27,
+    packaging 463 passed with two unrun ASAR checks; no repeated security run.
+    B: retained Astra designed the bounded investigation; Sol drafted the plan
+    using the existing containment controls and original prelude. Independent
+    Sol/Luna review is clear after clarifying the 150-second actor deadline.
+    The user approved private observation changes, independent review and one
+    bounded diagnostic. Sol implemented the observations; independent Sol/Luna
+    review is clear after correcting the actor-deadline error label. The
+    approved provenance diagnostic did not reproduce the failure: original
+    visibility was true for both fixtures, and the only removal caller was
+    openTableCellEditor during activation. Targets and exact source matched.
+    The attempt stopped deliberately after mixed; it is not qualification.
+    Owned cleanup completed in 7.417 seconds with no source changes.
+    Retained-context outcome review is clear. Full shared/layout qualification
+    remains blocked; no further attempt or wider native run is approved.
+    The user requested a reviewed real mouse/keyboard verification plan.
+    Retained Astra identified existing owned CDP input, but the synchronous
+    dialog guard does not admit a later asynchronous mouse click. Sol drafted
+    the conditional plan; independent Sol/Luna review is clear after explicit
+    Edit-mode and Escape-closure checks. The reviewed plan is ready for handoff.
+    Bounded read-only guard-compatibility research is complete. No existing
+    asynchronous admission API was found. Astra recommends one event-bound,
+    single-use ticket inside the existing exact-dialog test guard.
+    Independent Sol/Luna design and safety reviews are clear.
+    The user approved narrow guard/entry implementation,
+    guard-specific checks and both independent reviews before exactly one isolated
+    heavy-to-mixed mouse/Escape check. Guard-specific source checks pass 38/38;
+    both independent safety reviews are clear after fixing explicit source binding.
+    The guard and private entry are implemented. The one approved isolated CDP
+    mouse/Escape route passed 11/11 for heavy then mixed. Requested width was 1650;
+    actual viewport was 1651. Menus, modal targets, owners and exact source matched.
+    Escape closed both modals with source/history unchanged and no admission left.
+    Owned Job/root/profile cleanup completed in 10.800 seconds without forced stop
+    or survivors. This narrow allowance is consumed.
+    It does not explain the original pre-click false or qualify shared/layout work.
+    The existing 180-second total budget includes cleanup; no retries, production
+    changes, installed-profile access, new tracing or broader qualification.
+    The existing feature guide includes the complete installed/new-source split.
+  - The user now authorizes the required feature qualification and reviewed
+    corrections without per-stage permission questions. Both core safety
+    reviews cleared after an atomic attempt lease and cleanup-owner binding.
+    The pinned r11 core route passed 321/321: 248 source/parser, nine setup,
+    60 browser/core and four suite-cleanup assertions. This is not 321 native
+    input checks or final presentation qualification.
+    Its launcher exited 2: JSON parsing converted the owner timestamp to
+    DateTime, so the strict string identity check refused cleanup.
+    The Job closed; separate PID/nonce/path-verified cleanup removed the owned
+    root/profile at 141.880 seconds since `issuedAt`, within the 180-second bound.
+    Keep the original failed cleanup and recovery receipts separate.
+    The string-preserving receipt fix passes eight actual-JSON checks and both
+    independent reviews are clear. The one core attempt is consumed; this fix
+    does not authorize rerunning it. P1/P2 need their own implementation reviews.
+    P1's exact-viewport route and bounded capture export are implemented.
+    Both reviewers found failure-evidence ordering that could lose measured
+    state. Raw measurements now precede captures and presentation assertions;
+    two mock failure checks preserve the state and available capture linkage.
+    Both P1 implementation/launch reviews cleared. The one r12 packet passed
+    379/379: 248 source/parser, nine setup, 118 browser/presentation and four
+    cleanup assertions. All nine actual 1650/700/400 fixtures and the dark
+    toolbar completed; ten exported images were actually viewed.
+    At 400, the measured heavy/mixed prose cells still split words (10/4);
+    the no-fragmentation requirement applies at 1650, not every narrow width.
+    Total wrapper elapsed, including preflight and owned Job/root/profile
+    cleanup, was 13.685 seconds without forced stop or survivors.
+    Both outcome reviews are clear. This is not 379 native actions, an
+    explanation of r5, or P2/mutation/full-feature qualification.
+    P2's source and exact one-attempt launcher cleared both reviews.
+    The first packet stopped after 276/279 suite checks. Only the rich and
+    light-reference captures were reached and viewed; later cases are unrun.
+    The final-band oracle expected at most 12px, but authored flex margins
+    are 8px + 8px = 16px. Both reviews clear that precise design correction.
+    The test now checks both named margins and the 16px gap within the existing
+    1px tolerance. Both implementation reviews clear; the source baseline
+    passes 368/368 and all prior focused controls remain passing.
+    A separate real ResizeObserver loop event remains unattributed.
+    Owned cleanup completed in 20.834 seconds total wrapper time, including
+    preflight, without forced stop or survivors. This is not a P2 pass.
+    The failed packet and its unchanged-byte receipts remain separate.
+    Both reviews clear the bounded passive prefix design. Its final snapshot
+    always leaves the later drain interval unobserved: sentinel deduplication
+    cannot prove that interval clean. Exact staged hooks still need review.
+    No blind repeat,
+    error filtering or unsupported production scheduling change is allowed.
+    The user now chooses one affected-test collect/fix/rerun batch. This replaces
+    the prospective one-prefix scheduling restriction, not historical receipts.
+    Existing independent groups run in separate owned processes; invalid dependent
+    cases stay blocked. Unrelated pre-existing failures are recorded, not repaired.
+    Ready passive observer witnesses may join that batch; no separate diagnostic
+    campaign or global proof-formatter repair is started.
+    The first affected source batch passes: table-cell source 368/368,
+    history controls 27/27 and packaging 463 passed. Packaging's two asar
+    notice checks stay skipped because no artifact was built.
+    The native batch has twelve existing UI groups plus the current
+    core/opening/detail routes, each in a fresh owned run. These are new
+    batch entries, not reuse of a consumed historical attempt.
+    Both reviewers clear the narrow single-group admission. Both then found
+    that incomplete Job-owner/log evidence could be treated as a functional
+    failure. Sol also found missing image references and raw measurements
+    could be lost. The bounded corrections pass source controls and both
+    final safety reviews. The first native batch collected all fifteen
+    entries: nine passed and six failed. Every owned cleanup and safety
+    gate passed; successful collection is not a functional green result.
+    Menus and many-row routes completed their functional checks but failed
+    the error sentinel. Input and shared opening failed the unchanged
+    pre-click menu-visibility check; keyboard failed footer Tab navigation.
+    Detail passed the corrected footer checks, then failed its exact hosted
+    viewport setup and also reported the observer warning. Interrupted
+    dependent tails remain unrun. Astra's baseline review and independent
+    Sol/Luna design reviews support two test-only changes: strict native
+    last-cell/separator/footer traversal, and an isolated P2 exact-hosted
+    reference of 1008x680. Neither proposed route is runtime-qualified.
+    Ordinary hosted-menu and many-row sizing keep their original contracts.
+    Menu and observer causes remain unknown; no product patch is justified.
+    The existing many/shared passive-observation proposal passes bounded
+    source/mock controls. Both implementation reviews clear the test changes
+    and documentation. Luna found that the standalone diagnostic launcher
+    could accept a forced owner stop; its narrow correction passes extracted
+    exit controls and both renewed launch reviews. The two owned diagnostics
+    completed: many 29/30 with the observer warning; shared 97/97 without
+    reproducing the menu failure. Cleanup passed for both. These are not
+    candidate qualification. Many captured a column-sizing delivery/write
+    chain, but not the browser's skipped observation. Shared's trace overflowed.
+    Astra recommends stopping: neither cause is established, and no menu or
+    scheduler product patch is justified.
+    Its original failed mock is preserved; the correction only supplies the
+    helper's existing options object, not a helper or product change.
+    The same affected batch uses a pinned candidate and viewed captures.
+    Preserve old failures and distinguish source, native and mutation evidence.
+    The same fifteen-case rerun completed: eleven passed, four failed; all owned
+    observation and cleanup gates passed. Source 368/368, history 27/27 and
+    packaging 463 passed separately, with the same two unbuilt-asar skips.
+    The first source-copy attempt lacked its gitignored shipping parser; its
+    failure is preserved, and one existing pinned parser was restored without
+    an install, download or test change.
+    Keyboard now passes 183/183, including the real separator-to-footer route.
+    Shared passes 97/97, but this does not explain its earlier menu failure.
+    Menus and many finish their functional routes and fail the observer sentinel.
+    Input stops at nested-mixed-delimiter-opening-join after 800 passing checks;
+    its remaining input matrix stays unrun. Detail admits exact 1008x680, passes
+    hosted light/dark and selected scope, and establishes CSS zoom2 before
+    opening. Its corner shrink fails: 967.675x648 becomes 960x648. Grow and
+    post-resize authority/Save checks stay unrun. That first zoom capture
+    showed no popup despite passing DOM/glyph checks.
+    Astra's bounded existing-evidence review establishes neither resize input
+    engagement nor the capture discrepancy's cause. No further diagnostic or
+    product correction is justified from those packets. Qualification
+    remains incomplete; menu, observer and detail drag gaps stay open.
+  - The separate capture-only Detail run awaited one owned hidden
+    capture with stayHidden/stayAwake and saved that returned image.
+    Its one validation passes 322/325 suite checks, not full qualification.
+    The actual Edit popup, enlarged glyphs, footer and Update/Cancel appear
+    in the saved grid-CSS2 image. This session and Root viewed it.
+    Name/Details/Reference and body words still fragment across lines;
+    this is not full readability or zoom approval. The shrink still fails,
+    an observer error remains, and the same dependent tails stay unrun.
+    This capture-only run uses renderer 044A6167, not the new layout change.
+  - Astra's finite observer witness is consumed. It supports a scrollbar-space
+    transition at stable outer size, not a proven warning cause.
+    Astra designed a separate cell-column layout policy; Sol and Luna accepted
+    its ownership and interaction constraints independently.
+    Sol implemented the policy; Sol and Luna independently cleared the code.
+    The cell observer queues an
+    owned frame rather than sizing inside its callback. Geometry-dependent
+    interactions reconcile pending work; close/replacement cancel stale work.
+    Ordinary reader sizing stays unchanged. Both reviewers cleared the corrected
+    controlled-clock regressions and name-exact R1180 wiring. The existing
+    source-only suite passes 401/401. This is not an executed mutation proof.
+    One coherent fifteen-case layout rerun on source 6339197D now has eleven
+    passes and four failures; every owned observation and cleanup gate passed.
+    Many passes 30/30 and Menus 77/77. Every reached error check passes, with
+    both error channels proved alive. This is bounded runtime evidence, not
+    proof of the historical warning's cause or permanent absence.
+    Input passes 812/814: opening-join completes, then letter-control fails
+    the real pre-click menu check. Transaction passes 39/41: before-debounce
+    history passes, but opening the after-debounce grid fails. Stale passes
+    34/36: reload is observed, then the next grid's menu is hidden.
+    Their remaining input/history/lifecycle checks stay unrun.
+    Detail passes 323/325; shrink remains 967.675x648 to 960x648.
+    Grow, post-resize authority and final Cancel/no-Save checks stay unrun.
+    The new grid-CSS2 popup image is viewed, but words still fragment.
+    Containment is not proof of a native grip hit; no coordinate fix is justified.
+    Separate history passes 27/27 and packaging 463, with two unbuilt-asar skips.
+    Current proof wiring and these status docs are outside the frozen runtime.
+    The first cohort admission stopped before claim/Job/native launch because
+    the outer log matched the reserved stem. Its failure is preserved.
+    Only the fresh stem/log binding changed; neither guard nor source changed.
+    Qualification remains incomplete. The separate two-diagnostic attempt
+    stopped during Transaction setup: the original hide/click/Escape hooks
+    resolved, but the exact mapping-commit breakpoint was unavailable.
+    No Transaction prefix or Detail route ran in that attempt.
+    Added hooks were removed and owned observation/cleanup completed.
+    Its diagnostic receipt gate failed; that receipt establishes no cause.
+    A fresh dismissal-only Transaction diagnostic then failed 39/41, with
+    its required diagnostic, identity, observation and cleanup gates passing.
+    In its failed fifth menu attempt, a trusted capture-phase scroll from
+    tabsContainer invoked the original hide body after dispatch returned
+    visible and before the pre-click sample returned hidden.
+    The later activation hide cannot explain that earlier hidden sample.
+    The scroll producer and mapped/rendered owner relationship stay unknown;
+    this does not establish the cause of Input/Stale or justify a stale-owner fix.
+    Escape's hook was installed but unhit; its capture fidelity is unverified.
+    Detail was then admitted once and stopped during hook setup: 260 passes,
+    one setup failure, no gesture evidence. Hooks were removed and both owned
+    runs cleaned up. Diagnostic implementation stops; no hook relocation,
+    retry, coordinate change or new qualification pass is claimed.
+    The approved menu policy is now implemented: unrelated scrolling keeps a
+    current menu open; anchor/context scrolling, viewport resize and committed
+    document/source/list changes still dismiss it. Captured table selection
+    survives dismissal before opening. Owner wrappers clear payload only on
+    an actual hide; the existing menu-scroll protection and helper API remain.
+    Independent Sol/Luna code review found two omissions, now corrected:
+    committed active-owner removal dismisses before replacement can pause;
+    textarea wheel keeps preview capture authority while closing a source menu.
+    Input/key/pointer invalidation and the captured mutation fences are unchanged.
+    Wheel separately cancels the accepted editor-scroll restore ticket.
+    Completion requires its identical pending ticket and retires it on every
+    exit, without consuming a newer ticket. Existing scroll synchronization
+    and CustomTabs restoration cancellation remain unchanged.
+    Pre-scoping source checks pass 804/804, history 29/29 and packaging 468 with two
+    unbuilt-asar skips. The original history owner-order assertion is unchanged;
+    its VM loads the actual new menu/cancellation dependencies.
+    Separate Sol ownership added theme/tab regressions in disjoint files;
+    syntax/CRLF checks passed, but their native cases remain unrun.
+    Retained independent Sol/Luna corrected-code reviews are clear: both
+    omissions are resolved, with no new blocking code or source-test conflict.
+    Root settled the scope; retained Sol/Luna cleared the actual SAME15 source
+    binding and admission gates. The corrected 2EC/4B02 rerun completed once:
+    13 cases passed; Shared 56/1 and Core 591/1 failed while waiting for the
+    Delete-column keyboard confirmation. Menus passes 86/86, Input 2163/2163,
+    Transaction 87/87 and Stale 74/74. All fifteen owned observation/cleanup
+    gates passed. Reached renderer warning/error checks passed; the lexical
+    `range` error did not recur. The cohort totals 4744 passing assertions and
+    two failures; these are not distinct native-action counts.
+    Earlier Create/whole-table column insertion and native-history checks pass.
+    New Delete-only trusted cell typing and enabled Delete-button DOM focus pass.
+    The confirmation assertion, deletion/history tail and whole equal-count
+    iteration remain unreached. Regular Shared's opening matrix is also unreached;
+    the distinct Opening route does not execute that interrupted tail.
+    One bounded source/receipt comparison cannot distinguish absent activation
+    from a locally handled authority refusal. No correction is justified yet.
+    Detail passes 600/600. The actual popup changes from 967.675x648 to
+    487x428, then 667x556. Original shrink/grow, footer, source/history/authority,
+    final-row and no-Save checks all pass. No cohort case remains unrun.
+    All 68 PNG exports were hashed; 33 unique current image bytes were viewed.
+    The current real 2x popup is
+    visible with enlarged glyphs and Update/Cancel; words still fragment.
+    This is partial zoom evidence, not full readability approval.
+    Many and Detail pass their actual popup-corner gestures with the reviewed
+    shared sender. Detail retains its separate CDP opening and exact viewport.
+    Current success does not establish the old CDP failure's cause.
+    Failed C5C/675178 Shared 53/2 and Core 588/2 lexical-error receipts,
+    and older 633/09D1 cohorts, remain separate and unchanged.
+    One bounded retained lookup did not establish an owned hidden
+    theme/tab route; that outer route stays unknown. Pure policy/owner logic
+    runs in the existing VM, not native visibility/position/command assertions.
+    The required SAME15 route remains separate from those unrun additions.
+    Qualification stays incomplete. Both test-only setup payloads now use the
+    existing page-function scope; every native assertion stays intact.
+    Affected source checks pass 822/822. Independent Sol/Luna actual-code reviews
+    and actual-binding/guard reviews are clear. The authorized rerun is consumed;
+    no standalone retry or further native admission is authorized.
+    Current proof wiring and status docs were excluded from
+    the frozen runtime candidate; their old frozen bytes remain retained.
+    R1181-R1184 record the directly coupled reverts; execution and sensitivity
+    remain unclaimed. R876/R877 anchors only follow the completion indentation;
+    their existing local sequence/freeze fences and oracles are unchanged.
+    Selected mutation proofs remain unexecuted: the global formatter audit
+    failed before their baselines. Astra and both reviewers recommend stopping
+    that track, not building a classifier or bypassing its audit.
+    The user also requires obsolete Insert-popup tests to be removed or
+    converted. Current packaging/security/display and cell/source/history
+    audits found no obsolete positive UI requirement. R195's retired textarea
+    proof is removed from the active inventory; its historical metadata and
+    frozen receipts remain. Both retirement implementation reviews are clear.
+    No blind retries, unrelated repair campaign, installed-profile access,
+    build/install, commit, push, release or version change is authorized.
+  - The separate visible owned-app check opened the real menu and Edit popup.
+    Computer Use's guarded Windows drag resized the popup from 1201x923 to
+    1017x741. Six real ResizeObserver errors occurred during the drag.
+    Their cause remains unknown; no product fix is inferred.
+    The actor deadline ended before Cancel or the zoom check. Owned cleanup
+    passed; 154.195 seconds is total wrapper time, not cleanup duration.
+    These observations do not fix the automated gesture failure.
+    Screenshots were viewed in tool responses; no persistent image paths
+    were returned. The reviewed zoom-only run remains unlaunched.
+
+- `table-column-removal-and-compact-toolbar` - **POINTER QUALIFICATION PASSES; LOCALLY INSTALLED; RELEASE PREPARATION**.
+  - User-approved: Delete column in Create/Insert and whole-table Edit only.
+    Selected-row Edit cannot remove columns.
+  - Confirm the actual selected column using plain header text when available;
+    otherwise identify its numbered position. Cancel/refusal changes nothing.
+  - Keep the minimum valid column count, deliberate selection, draft Undo/Redo
+    and source/adoption/Cancel fences. Recheck captured draft/column authority
+    after confirmation; reuse the existing structural and row-removal patterns.
+  - User selected compact visible icons with tooltips for structure actions.
+    Keep accessible names, keyboard access and readable Update/Cancel labels.
+    Reuse existing icons/handlers/styles; do not add a right-click-only system.
+  - Refined Astra design accepted independently by fresh Sol and Luna.
+  - Sol owns the production helper/renderer/markup/styles and current docs.
+    A separate Sol test author completed and handed back the existing table-cell
+    and packaging test files. Tests retain the approved shared Many/Detail sender.
+  - Current source/VM checks pass 838/838, including actual Create and
+    Delete-column payloads run repeatedly in one retained VM global context.
+    Both unscoped canaries fail specifically on lexical redeclaration.
+    Coupled pointer checks cover the actual submitted native action, visible/
+    enabled/deliberate-selection guards, confirmation signal and no fallback.
+    Keep earlier source/fixture failures and the first authored extraction failure.
+  - Controlled history passes 29/29. Packaging passes with unbuilt-ASAR skips.
+    Independent coherent Sol/Luna code and test reviews are clear.
+    Sol identified two coupled proof-metadata corrections. The proposed
+    mutations now target the row witness and both row/column abort cases.
+  - The consumed 2EC/4B02 SAME15 ran each case once: 13 passed;
+    Shared 56/1 and Core 591/1 time out waiting for Delete-only keyboard
+    confirmation. The lexical error no longer occurs.
+    Compact-toolbar, trusted cell typing and enabled Delete-button DOM focus pass.
+    Confirmation, deletion/native history and the entire equal-count iteration
+    remain unreached. Activation versus authority refusal stays unknown.
+  - Opening passes 645/645; Detail passes 600/600, including its original
+    actual shrink/grow, source/history/authority and final-row/no-Save tail.
+    All fifteen owned closure gates pass; 68 PNG exports are hash-verified and
+    33 unique current image bytes are viewed. Native confirmation presentation, displayed
+    tooltips and extra theme/tab routes remain outside this coverage.
+  - The disjoint test author completed and handed back the narrow page-function
+    correction and repeated-context coverage. Independent Sol/Luna actual-code
+    and actual-binding reviews are clear. Production and failed C5C/675178
+    frozen inputs stay unchanged. That candidate is consumed; do not reuse it
+    for another native launch. The bounded source review justifies no product fix.
+  - Related source-only reverts are recorded; no execution or sensitivity is
+    claimed. Old 09D1 does not qualify this new unit. No build/install, commit,
+    push or release is authorized here.
+  - User changed the new toolbar-button acceptance gate to real native pointer
+    clicks from the start. Button Enter/Space activation is no longer required
+    for this popup; native grid keyboard editing and standard button accessibility
+    remain unchanged. The dedicated keyboard phase diagnostic is cancelled.
+    The separate Sol test owner released the narrow activation-test revision.
+    Retained Sol/Luna independently clear the actual test delta; no blocking
+    disagreement. Source/VM checks pass 838/838, not native input.
+    Keep every confirmation, deletion/history, selection, source and Cancel
+    requirement. Preserve consumed 2EC/4B02 as a failed earlier-requirement run;
+    this decision neither fixes nor explains its timeout.
+    One current-candidate SAME15 is bound through the existing inventory/stem
+    facilities: B973 inventory, BD1B test and 7D51 wrapper. Only the test changes;
+    production, resources and safety gates stay unchanged. Both independent
+    actual-binding reviews clear; no blocking disagreement. The exact pointer
+    SAME15 is collected and consumed: all fifteen pass, 4888/0 assertions.
+    Shared passes 143/143; distinct Core passes 648/648. Both reach native Delete
+    clicks, controlled confirmation, deletion, native/document history and all
+    source/Cancel/minimum-column/selected-row tails. No interrupted tail remains.
+    Opening passes 645/645; Detail passes 600/600 with its original grip and
+    authority/history requirements. Every owned closure passes; all 107 exports
+    are hash-verified and all 37 unique current PNG bytes are viewed.
+    Heavy/mixed 400px and 2x-grid images still fragment words. Native confirmation
+    presentation, displayed tooltips and extra theme/tab routes stay outside.
+    Independent factual Sol/Luna reviews are clear; no blocking disagreement.
+    No new launch or whole acceptance.
+    Keep one attempt per case, native serialization,
+    original safety budgets and all cleanup stops. No fallback action, arbitrary
+    wait, coordinate offset, new runner or separate keyboard observation.
+  - User authorized local installation and confirmed Markaloo was saved/closed.
+    The current reviewed candidate is locally installed at the existing path.
+    All 32 product sources, package/dependencies and README match the build.
+    Fresh strict packaging passes 481/0 with no skips. Profile/settings/notes,
+    associations, shortcuts and machine identity are unchanged; app left closed.
+    The unsigned installer exited zero. No commit or public release.
+    The user may test this fixed build. Separate agent validation must use owned
+    data/windows, not the user's app/profile; unsupported routes remain unrun.
+  - User manual checks pass on this machine: confirmation, icons/tooltips,
+    tab/recent/note menus and minimum-size toolbar/footer rows.
+    These are manual observations, not automated or platform-wide passes.
+    No minimum-layout defect or extra exact-minimum gate remains.
+  - User authorized release 0.12.0 through the existing release workflow.
+    Optional four-copy validation is paused before launch; publication is pending.
+    After publication and artifact verification, resume the original supported
+    four-area closure. Any needed focused tests or fixes stay separate from 0.12.0.
+
+- `unattended-visible-app-qualification` - **DEFERRED UNTIL AFTER CURRENT 0.12 WORK; NOT IMPLEMENTED**.
+  - Visible checks must not need the user to launch the app.
+  - Use a genuinely supported unattended launch/control path. Do not disguise
+    or reroute the PowerShell application blocked by Computer Use.
+  - Keep owned Job/profile isolation, exact identity/pins, deadlines and cleanup.
+    Do not use the installed app or default profile.
+  - Product reading zoom, whole-webContents zoom and grid-CSS emulation are
+    different checks. Reading200% cannot replace the popup/grid-CSS2 contract.
+  - This follow-up does not waive the current menu, observer or gesture
+    gaps. No new framework, implementation or diagnostic run is started here.
+
+- `editor-history-buttons` - **REVIEWED; FOCUSED-QUALIFIED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - Add compact Undo/Redo buttons beside Save in the Raw Markdown toolbar.
+    Reuse document history and its guards; no browser/cell history or new stack.
+  - Keep availability current across typing, table Update, history restoration,
+    active-tab/file/reload changes and edit-mode lifecycle. Preserve Save/Exit.
+  - Astra's bounded toolbar/typing designs and independent Sol/Luna design and
+    code reviews are complete. Sol implemented the correction and resolved
+    the accepted review findings. Preserve the qualified row-removal baseline.
+    No shortcuts, full repair campaign, commit, push, release, version or
+    dependency change.
+  - The user authorized fixing the coupled typing-history bugs. Keep sensible
+    typing groups, retain the pre-change text so first Undo reverses typing,
+    and clear Redo immediately on new typing. Both controls and existing
+    shortcuts use this shared history. Retire pending typing timers across
+    traversal, exact transactions and owner/file/edit-mode changes.
+  - Both independent reviews found the same missing repaint when an active owner
+    closes before replacement selection. Sol corrected it and added a production
+    source regression case; both reviewers cleared that correction.
+  - Focused source checks pass 27/27; existing table-source checks pass 274/274.
+    Owned hidden checks pass 48/48, including actual typing Undo before/after
+    idle, immediate Redo invalidation, Ctrl+Z/Y, owner restoration, and separate
+    exact typing/table Update history steps. Light/dark compact captures viewed.
+  - Registered R1164-R1168 fail only their intended source checks in isolated
+    sensitivity runs, with required controls green and disk sources unchanged.
+    Reload/admission checkpoints have source-level coverage; they were not
+    separately exercised through native reload in this focused run.
+  - The temporary launcher now uses an owned Windows Job, so timeout cleanup
+    does not depend on completed result files. A forced-hang check confirmed
+    descendant exit and owned root/profile removal within its time bound.
+    The corrected normal run passed. Final typing cleanup completed in 13.55s
+    within its 180s bound, with no recorded survivors and owned root/profile
+    removed. Earlier failed receipts remain separate.
+  - The full anchor harness remains blocked by its pre-existing FAIL-formatter
+    self-check. No full regression, full legacy editor suite or platform IME
+    qualification is claimed; composition coverage is source/synthetic only.
+  - Normal local build/install completed at version 0.12.0 in the existing
+    installation folder. Installed sources, package/dependencies and separate
+    README match the qualified candidate; independent byte verification passed.
+    Profile, associations, shortcuts and identity/path stayed unchanged.
+    App left closed; no installed-app runtime check was performed.
+
+- `cell-grid-row-removal` - **REVIEWED; FOCUSED-QUALIFIED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - User requests a thin theme-colour border on the three row action buttons,
+    removal of existing as well as added data rows, and confirmation every time.
+  - Astra's bounded design and independent Sol/Luna design and code reviews are
+    complete. Both reviewers found no blocking issue or disagreement.
+  - Header removal is forbidden. An attempt shows an informational message;
+    identify the true header from source/model identity, not displayed position.
+  - Preserve surviving cell DOM/engines/history, Cancel/no-op, outside-scope
+    source, one document Undo/Redo, and composition/stale ownership guards.
+    No shortcuts, commit, push or release is requested.
+  - Relevant source checks pass 274/274; owned hidden checks pass 22/22.
+    Confirmed original/empty-added removal, true-header refusal, emptied-scope
+    insertion, exact CRLF source, surviving native cell history, document
+    Undo/Redo, Cancel and close/reopen remain intact. Light/dark captures viewed.
+  - Registered source reverts R1160-R1163 each fail only their intended check
+    in isolated in-memory sensitivity runs, with required controls still green.
+    The full anchor harness remains blocked by its pre-existing FAIL-formatter
+    self-check; no full harness, platform IME or full regression pass is claimed.
+    Failed probe attempts remain separate. Final native cleanup confirms no
+    owned processes, profile or temporary root remain.
+  - Locally installed with the cumulative history controls at version 0.12.0.
+    Installed-byte and preservation checks passed; app left closed.
+
+- `cell-grid-readable-opening` - **REVIEWED; FOCUSED-QUALIFIED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - User reports thin data columns for substantial text. A cropped screenshot
+    does not establish viewport size or prior manual resizing.
+  - Inspect bounded opening estimates and initial column allocation together.
+    Reproduce with neutral prose, SQL/code and emphasis in three columns.
+  - Keep tiny scopes compact, extra estimate work bounded, manual 48px widths,
+    popup proportions, row transactions and editing state intact.
+  - Neutral hidden reproduction confirms a 539px popup in a 1650px viewport,
+    with thin browser-selected data columns and an ordinary word split in two.
+  - Astra recommends conservative saturated demands when inspection stops and
+    one initial allocation through the existing shared fitter. Combined source
+    checks pass 189/189. Tiny scopes and existing work caps remain.
+  - Corrected hidden checks pass 22/22. At actual 1650px/700px viewports the
+    popup is 827px/652px and data columns are about 231px/172px, not the thin
+    browser-selected split. An ordinary word stays on one line; captures viewed.
+  - Native popup sizing, clamp recovery, manual 48px columns, original DOM/cell
+    Undo/Redo, row insertion, exact source update, Cancel and document Undo/Redo
+    remain intact in the focused check. Owned processes/profile/temp data removed.
+  - Independent Sol/Luna reviews have no remaining findings. Luna withdrew a
+    frame-overhead concern after actual geometry showed the required outcome.
+    Baseline and incomplete probe receipts remain separate. Full regression,
+    platform IME and fresh native print/theme checks are not claimed.
+  - Normal local build/install completed at 20:07 PDT. Installed source/ASAR/PE
+    match the qualified build; version remains 0.12.0. Profile, associations,
+    shortcuts and installation identity/path compare unchanged; app left closed.
+    Prior candidates and receipts remain separate. No commit, release, version
+    or dependency change is requested.
+
+- `cell-grid-content-opening` - **REVIEWED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - User approved an initial width estimate from the displayed header and rows,
+    not another geometry scan. Choose it before the shared sizing controller.
+  - Extra estimate work stops at 24 rows, 128 cells, 8192 source UTF-16 units or
+    256 units in one cell. Larger scopes use a column-count fallback.
+    These are work caps, not measured opening-time guarantees.
+  - Opening width uses a 480-960px comfort range within the viewport gutter.
+    The 960px limit applies only on opening; manual and window-relative sizing,
+    clamp recovery, automatic height and the shared grid fitter remain unchanged.
+  - Preserve the existing wide-layout assertions with explicitly wide fixtures.
+    Compact-opening and budget source checks pass. Independent Sol/Luna reviews
+    are clear. The combined hidden opening/row check passes 24/24, including
+    actual native growth beyond the opening cap and clamp recovery.
+    Captures were viewed and owned processes/temp data removed.
+  - Row insertion is a separate approved unit below. Both features passed review
+    and focused qualification before the normal local installation at 18:51 PDT.
+    Version remains 0.12.0; no commit or publication is requested.
+
+- `cell-grid-row-insertion` - **REVIEWED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - Root's Astra/Sol/Luna design is approved: visible above/below controls and
+    removal of added rows only. Keep original row identities/order and existing keys.
+  - Structural transactions cover complete selected originals plus added rows,
+    not highlighted characters. Keep old cell-only replacement when no additions
+    remain; preserve outside bytes, delimiter placement and local line endings.
+  - Keep old cell DOM/engines and use fresh inline-editor provenance for new rows.
+    Composition, stale ownership and Update adoption remain guarded.
+  - Combined focused source checks pass 179/179. Independent Sol/Luna reviews
+    are clear. The combined hidden check passes 24/24, including original native
+    cell Undo/Redo, selected-block replacement, one document Undo/Redo, Cancel,
+    no-op, added-row removal and injected stale refusal. Composition has source
+    coverage, not platform IME qualification. The existing revert harness stops in
+    its unrelated FAIL-formatter self-check before checking anchors; no claim
+    of anchor resolution or revert proof is made. Its failure log is retained.
+    The installed payload matches all reviewed application sources, package
+    metadata/dependencies and separate README. The normal local installation
+    preserved the profile, associations, shortcuts and machine identity/path.
+    Fresh process gates were empty; the app was left closed.
+
+- `cell-grid-dialog-proportions` - **REVIEWED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - User chose proportional window width, not a fixed popup aspect ratio.
+    Manual dialog resizing establishes a new preferred width proportion.
+  - Height follows content until the user resizes height; then preserve its
+    preferred window-height proportion. Temporary viewport clamps must not
+    replace either preference. Keep headers and Update/Cancel reachable.
+  - Preserve the reviewed grid fitter, fixed row labels, 48px floors, native
+    dialog resizing and editing state. Astra and independent Sol/Luna input
+    agree on separate preferences, witnessed native intent and shared cleanup.
+  - A modal-only composition owns the existing grid controller. Preferred
+    dimensions use viewport units; CSS clamps do not replace them. Native
+    completion updates only deliberately changed axes, and restores both
+    declarations. Blur/cancel/viewport changes cannot establish preferences.
+  - Focused source checks pass 109/109. Sol/Luna cleared the separate correction
+    that stops descendant cell blur from canceling a native sizing gesture.
+  - The resumed bounded trace proves the terminal ownership/ID guards pass,
+    but observes no normalization callback or disposal. Completion now uses one
+    cancellable post-event task instead of depending on a paint frame.
+    Captured prior window dimensions define each chosen ratio; viewport clamps
+    do not replace that reference. Astra and independent Sol/Luna cleared the
+    correction. The separate hidden check passes 22/22.
+  - Failed checks and their clocks remain preserved; owned processes/profile/temp
+    data were removed. The corrected check covers native manual width/height,
+    window growth, clamps/regrowth, content height, actual table proportions,
+    selection/native Undo/Redo/Cancel and reopening. Both captures were viewed.
+  - The earlier 97/97 source and 23/23 hidden results qualify the preceding
+    refinement only. The added policy's separate focused checks also pass.
+    The user requested local installation after this complete policy qualifies.
+    The normal local NSIS build and installation passed. All packaged and
+    installed source files match the frozen reviewed inventory. Fresh process
+    gates were empty; the profile, shortcuts, associations and machine install
+    identity were preserved. The app was left closed for user testing.
+    No version or publishing change.
+
+- `cell-grid-sizing-refinements` - **REVIEWED; LOCALLY INSTALLED; UNCOMMITTED**.
+  - User chose a 48px editable-column floor, matching the reader, and proportional
+    data-column fitting when the actual grid width changes. Keep the row label fixed.
+  - User also chose available window width instead of the ordinary 1100px dialog cap.
+    Native dialog resizing remains; the popup proportion policy is described above.
+  - Astra design and independent Sol/Luna input identified minimum redistribution,
+    reference proportions, canceled-drag restoration and scrollbar feedback as gates.
+    Sol implemented the modal-only policy in the existing shared factory/observer.
+  - Keep reference proportions through constrained fits; a new manual adjustment
+    establishes a new basis. Data columns stop at 48px and then scroll horizontally.
+    A stable scrollbar gutter prevents wrapping from changing the fitting budget.
+  - Sol's final review found that untouched/reset grids also need reference
+    proportions. Natural geometry is now captured before a host-width change,
+    without changing cell markup; the same fitter handles the first resize.
+  - Luna's correction review found that cell edits can change natural proportions
+    without changing the table box. The existing observer now watches first-row
+    cells too; cleanup still disconnects the same observer.
+  - Independent Sol/Luna correction reviews are clear. Focused Node source checks
+    pass 97/97; the separate hidden Chromium check passes 23/23.
+  - Trusted input reached the reader/grid 48px floor, preserved a plain/bold/plain
+    selection, native cell Undo/Redo and Cancel, and exercised manual dialog
+    narrowing/widening, minimum overflow, Escape and close/reopen cleanup.
+    Actual table width reached 1546px in the wider owned window; all captures
+    were viewed. Owned processes/profile/temp data were removed within its bound.
+  - Platform IME and broad theme/print/stale/Save combinations remain unqualified.
+    These refinements and the popup policy above are included in the verified
+    local 0.12.0 installation. No version or publishing change.
+
+- `cell-grid-column-sizing` - **0.12.0 LOCALLY INSTALLED; FOCUSED CHECKS PASS; UNCOMMITTED**.
+  - User approved adding reader-style grips to the separate cell-editing grid,
+    only while preserving its editing workflow. Astra's concrete design is
+    implemented as one factory in `renderer.js`, with reader and modal adapters.
+  - Share the mechanics, not copied controllers. Keep per-opening presentation
+    widths independent of reader widths, the row-label column, editor minimums,
+    modal bounds and horizontal scrolling.
+  - Preserve editable DOM, caret, composition, cell/document history, dirty state,
+    Update/Cancel/Save and stale-transaction checks. Cancel a drag before Escape
+    can close the dialog. Dispose controls on close, reopen or stale ownership.
+  - Sol authored; fresh independent Sol/Luna reviews are clear after correction.
+    The relevant source suite passes 83/83, including its unchanged assertions
+    and focused production-factory checks. Syntax checks pass. These fixtures
+    are separate from the hidden Chromium editing checks below.
+  - Fresh full-candidate Astra/Sol/Luna review: Astra found thumbnail overlap
+    after narrowing a grid column. Sol found that explicit image dimensions also
+    needed automatic height. Both corrections are in the same grid image rule;
+    all three reviewers cleared the final source change.
+  - The separate hidden image check passes 10/10: trusted shrink/widen, regular
+    and explicitly sized images, proportional fit, both negative controls,
+    unchanged cell DOM/source/dirty state and Cancel. Both captures were viewed.
+    Its own clock ran from 19:34:45Z to cleanup at 19:34:56Z, before 19:36:45Z.
+    Owned processes/profile/temp data were removed. Earlier broader checks
+    were not replayed; their incomplete and failed receipts remain unchanged.
+  - The full reviewed 0.12.0 candidate was rebuilt on October 30 at 20:23-20:24Z.
+    Local installation completed at 20:28Z, including wheel/popup/grid follow-ups
+    and image fixes.
+    All packaged and installed source files match the reviewed inventory.
+    Version, app identity, machine scope/path, profile, shortcuts and associations
+    are preserved. The app was left closed for user testing; no public release.
+  - First review: Luna found no significant issue; Sol identified automatic
+    scroll clamping during a shrinking drag. The modal now holds its scroll
+    extent and disables anchoring during the gesture; canceled widths restore
+    before that hold is released. Unchanged queued scroll notifications are
+    ignored. Both reviewers found no remaining significant source issue in the
+    corrected unit. The hidden check also passed a fully-right shrinking drag.
+  - User permits routine isolated background checks without repeated permission
+    when there is no mouse/keyboard takeover or installed-app interference.
+    The bounded hidden check used fresh owned fixtures/profile and targeted
+    Chromium input, without OS input or native window show/focus.
+    Those checks made no build/install, dependency/version, commit or publishing changes.
+  - Real dragging preserved editable text/DOM, active focus and a collapsed caret.
+    Native cell Undo/Redo, drag Escape, cell-versus-grip Home ownership, data and
+    row-label minimums, modal scrolling, Update/document Undo, reopening and
+    Cancel passed. Reader and editor-preview resizing still passed.
+  - Captures were opened and viewed. A further focused check passed a real
+    noncollapsed selection across plain/bold/plain nodes: resizing preserved
+    endpoints, focus and exact DOM without repair. Typing replaced only that
+    range; native Undo/Redo and Cancel also passed.
+    Platform IME, every stale/Save path and zero unknown bugs remain unqualified.
+  - The later selection/menu check stopped before resizing: its Ctrl-based
+    selection setup was blocked by the unchanged cell-editor key allow-list.
+    A pointer-selection retry was refused before launch by the same clock's
+    cleanup reserve. No product defect was shown.
+    Owned processes/profile/temp data were gone at 18:56:28Z, before its
+    18:58:24Z deadline. The failed result is preserved.
+  - The completed selection/menu follow-up passed 24/24 with unchanged product
+    hashes. Its own clock ran from 19:03:14Z to cleanup at 19:03:34Z, before
+    19:05:14Z. The selected-range capture was opened and viewed.
+  - Shared check clock: first launch 18:31:49Z, hard deadline 18:41:49Z on
+    October 30. Final owned processes/profile/temp data were gone at 18:40:21Z.
+    Earlier probe failures remain failed evidence; product hashes stayed fixed.
+  - Integrated the separately reviewed project guide and minimal README changes.
+    Initial hashes match Root's reviewed receipts. No child checkout was edited.
+    Guide status separates focused evidence, verified local installation and publication.
+
+- `reader-wheel-popup-controls` - **0.12.0 LOCALLY INSTALLED; FOCUSED CHECKS PASS; UNCOMMITTED**.
+  - Ctrl+wheel over inline Mermaid must use the existing reader zoom, just like
+    text. Keep popup pan/zoom separate and leave Mermaid itself unchanged.
+  - Replace the popup control card with two compact horizontal actions at the
+    top left and quiet help to their right. Cover every popup using that panel;
+    keep reset, export, accessible names, theme and print behavior.
+  - Astra traced the shared reader zoom owner, modal capture blocker and all
+    three popup templates. Sol implemented one shared wheel handler, delegated
+    reader capture for Mermaid, and compact theme-aware popup controls.
+    No swallowed sequence-wheel listener was established by source review.
+    The retained viewport cap can keep a wide SVG's visible width unchanged
+    while the reader percentage changes. Trusted Chromium Ctrl+wheel now proves
+    the same reader step and once-only handling over prose and Mermaid.
+  - The user explicitly chose two top-level actions with Save/Export format
+    menus for image/table viewers. PNG/JPG and CSV/JSON retain their original
+    buttons and handlers inside native disclosures. Mermaid retains Reset/PDF.
+    PDF restoration now keeps the original display instead of forcing a block.
+  - Fresh independent Sol/high and Luna reviews found no significant issue.
+    Both agree the source change is clear. Reviews are not runtime evidence.
+    There are no conflicting findings to adjudicate. This session remains the
+    sole writer and preserves the existing uncommitted 0.12.0 sizing/marker work.
+  - Permitted checks pass: main/renderer syntax, existing Node-only popup actor
+    contracts 68/68, and table-cell source checks 64/64. Evidence for the latter:
+    `screenshots/reader-wheel-popup-controls-source/`.
+    These preserve source/helper coverage. The later hidden check separately
+    exercised the SVG wheel route and popup controls below; neither is a full
+    regression run.
+  - Coverage map: `test-reading-zoom.js` covers reader steps/preferences and
+    independent popup reset; `test-popup-security.js` covers popup actions,
+    formats and overlay-based sharpness sampling; `test-theme.js` checks popup
+    palette hooks. Their native paths were source-reviewed, not executed.
+    Existing tests/assertions and proof records are unchanged.
+  - The narrow R442 anchor command exits two before
+    resolving that anchor: the existing harness rejects FAIL-format source
+    text in unchanged suites. No harness/test repair or bypass is included.
+  - Follow-up files: `src/main.js`, `src/renderer.js`, this register and
+    `docs/CUSTOMIZATIONS.md`. Package/lock, Mermaid config and reader stylesheet
+    diffs match the pre-follow-up baseline. All work remains uncommitted.
+  - Hidden checks passed all three two-action layouts, accessible group labels,
+    image/table format-menu opening, Mermaid/image independent zoom and Reset,
+    PNG/JPG canceled-handler routes, and table filtering/Clear Filters.
+    Actual printToPDF plus an exact-owner simulated Save cancellation restored
+    the compact toolbar. This is not a real native Cancel interaction.
+  - CSV/JSON downloads did not complete before the shared cleanup reserve.
+    The overall probe remains incomplete, not green.
+  - A separate download-only check passed real CSV/JSON completion and exact
+    header/field mapping and row content. It did not rerun the passing matrix.
+    Its own two-minute bound started at 18:46:20Z; all owned processes/profile/
+    temp data were gone at 18:46:24Z. The original failed report is unchanged.
+  - The later focused check passed trusted keyboard opening, format traversal,
+    Enter/Space activation, closing with summary focus and exclusion of closed
+    choices from Tab order. Image Save temporarily disables its button, so
+    Chromium drops focus to the body; real Tab navigation recovers naturally.
+    Table export retains button focus. No product focus or key-policy change.
+  - Platform IME, native Save UX and broad print/theme routes remain unqualified.
+  - The full reviewed 0.12.0 local installation includes these follow-ups and
+    cell-grid resizing. Installed PE/ASAR version and actual payload hashes match
+    the new build. No new version/dependency change, commit or publication.
+
+- `rendered-table-mermaid-sizing` - **0.12.0 IMPLEMENTED AND LOCALLY INSTALLED; UNCOMMITTED**.
+  - User corrections: real app version 0.12.0, thinner and closer double-line
+    resize markers with the existing hit target, and table-style Mermaid
+    protrusion with no horizontal scrollbars at 150% zoom. Do not hide or clip
+    inaccessible content. The user's reproduction document is read-only.
+  - Astra owns source investigation/design; Sol owns implementation; fresh
+    Sol/Luna reviews follow material corrections. Root's installed-app inspection
+    is finished. The authorized background check followed clear reviews and
+    stayed inside ten minutes from first launch, including cleanup and its retry.
+    No OS input, focus changes or installed-user-app control; the user can keep
+    working. The corrected 0.12.0 install followed verification and a fresh saved/
+    closed confirmation, preserving identity/path/scope/profile/associations.
+    No automatic wrapping, Mermaid fork or public release.
+  - Source-supported cause: native sequence SVG dimensions were not capped by the table
+    breakout budget. At increased zoom the container budget shrinks in CSS
+    pixels while the inner SVG keeps its intrinsic width; Mermaid's inherited
+    preformatted-block overflow exposes a horizontal bar below the tall diagram.
+  - Sol implementation follows Astra's design: reader-only SVG max-width and
+    proportional height, plus visible overflow instead of a scrolling Mermaid
+    pre. Existing table budget/zoom arithmetic and SVG content are unchanged.
+    Oversized diagrams fit rather than clip; smaller diagrams are not enlarged.
+    Root viewed the original installed payload at the exact third section and
+    confirmed its right-edge cut-off at 150%. No intrinsic DOM geometry or bottom
+    scrollbar was independently measured. That observation does not qualify the
+    corrected candidate.
+  - Correction review: both Sol and Luna found the print SVG importance could
+    enlarge small responsive diagrams. Sol additionally found displaced centers
+    in nested content; Luna found missing contraction and invalid separator
+    ranges. These findings are complementary. Astra validated the changes:
+    preserve native print caps, use a continuous position-aware Mermaid envelope,
+    and expose a 0-100 proportion plus pixel text without a new resize maximum.
+    Sol implemented them; fresh independent Sol/Luna review is clear. Table budget
+    arithmetic, test assertions, vendor code and automatic wrapping are unchanged.
+  - Corrected-source checks pass: the existing source suite is 64/64, both edited
+    JavaScript files pass syntax checks, and the diff passes whitespace checks.
+    Evidence: `screenshots/table-and-mermaid-sizing-012-source-r2/`.
+  - New bounded background qualification used the actual reported third section
+    at 150%, with a fresh owned profile and read-only input. The first attempt
+    exited zero on geometry/safety checks, but actual image viewing found stale
+    compositor frames. Its screenshots are failed visual evidence, preserved
+    separately; a zero process exit does not make that visual gate pass.
+  - Root approved one capture-only retry inside the original 16:44:30Z to
+    16:54:30Z bound. Page-compositor priming produced correct top, bottom and
+    complete-diagram captures. Sol and Root independently viewed all of them:
+    all participants and right-side arrows fit, with no Mermaid horizontal bar.
+    The exact-reproduction visual gate is clear. Native `getBBox` is geometry
+    only; it is not a stroke/marker oracle.
+  - Retry cleanup completed at 16:48:38Z, before the original deadline. Both
+    attempts left their OS windows hidden/unfocused and used no OS input.
+    Owned roots/children and the temporary profile are absent; input bytes and
+    feature source hashes are unchanged. Session evidence uses
+    `files/feature-sizing-012-background*`, with distinct attempt-two artifacts.
+    No installed-user-app, document or profile control was used.
+  - Local 0.12.0 NSIS packaging succeeded with publishing disabled and machine
+    scope unchanged. Packaged renderer/styles/config bytes match the source.
+    The installer is unsigned. After fresh saved/closed confirmation and an
+    empty installed-path process check, one normal machine-scope install
+    exited zero. Installed EXE, package and HKLM versions are 0.12.0; installed
+    renderer/styles/config bytes match both source and packaged candidate.
+    Existing shortcut targets/arguments, default associations and selected
+    profile/settings/LevelDB bytes are unchanged. The app was left closed.
+    Receipt: session `files/local-feature-012-install-receipt.json`.
+    No commit, push, tag, public release or main integration.
+  - User-selected option B: finish view-only rendered-table column dragging and
+    Mermaid breakout using the table layout budget. Keep readable native-size
+    sequence text, but defer automatic wrapping rather than maintain a Mermaid
+    package patch. No dependency version change or maintained fork.
+  - Base: `14c7b838`; isolated branch `users/vinma-microsoft/table-and-mermaid-sizing`.
+    This session is the sole writer for the features and their existing docs.
+  - Astra source design and the first Sol implementation are complete. First
+    independent review: Luna found no significant issue; Sol found pointer drift
+    during breakout resizing and an explicit-break participant regression in
+    Mermaid's native wrapping. Pointer drift is corrected by holding the
+    container's geometry until drag completion. Automatic wrapping is outside
+    the selected scope; neither tests nor vendor bytes have been changed to
+    hide the native limitation.
+  - Existing coverage is mapped by source review. No existing test or
+    assertion is weakened, skipped or repaired as part of this feature.
+  - Second independent round: Sol identified exact theme fallback-inventory and
+    unresolved-token conflicts; Luna identified document-wide header measurement
+    on each resize frame. Sol corrected the implementation: keep the original
+    fallback rule, generate numeric table widths without a new theme token, and
+    defer header remeasurement until the drag ends. The later review rounds
+    cover these corrections. Old runtime results are not reused as qualification.
+  - Third round: Sol found the R62 visibility anchor had changed; Luna found that
+    the nested-table exclusion covered parents but not inner tables. The anchor
+    is restored with a separate drag guard, and nested ancestors are excluded.
+    Both corrections retain the existing tests and proof records unchanged.
+  - Final full-diff Sol/Luna review of the safe-default candidate found no
+    significant issue. Automatic wrapping is left off by default:
+    do not risk existing explicit-break labels while the native fix is unresolved.
+    Table resizing, Mermaid breakout and native-size sequence readability changes
+    are implemented; automatic multiline wrapping is not delivered.
+  - The old no-diagram-wider-than-reading-column assertion remains unchanged.
+    Its current short fixture is not a demonstrated failure and does not qualify
+    wide breakout. No source prediction was used to change its oracle.
+  - The initial grant permitted relevant existing noninteractive source checks.
+    After the actual missing-vendor failure, Root authorized only lockfile-declared
+    dependency restoration and the existing vendor step in this worktree.
+    No new tests, test repairs, desktop/native/UI runs, builds, app installation,
+    release or main integration under that grant. The later bounded app check
+    is recorded below. The previous repair campaign remains closed.
+  - Changed renderer/config JavaScript passes `node --check`, exit zero.
+    Inspected `test:table-cells-source` skips its Electron path and uses the
+    production source modules plus shipping parser. The first run exits one,
+    23/24 assertions, because `libs\vendor\marked.min.js`
+    is missing. Its evidence remains unchanged in
+    `screenshots/table-and-mermaid-sizing-source/source.log` and `source.json`;
+    that first result is not a passing suite or a confirmed product regression.
+  - Inspected lifecycle/vendor scripts, including `vendor-prism.js`. Setup used
+    `npm ci --ignore-scripts --no-audit --no-fund` with Electron binary download
+    disabled, then the existing `npm run vendor`. No old runtime store, global
+    installation, dependency version/manifest/lockfile or tracked vendor change.
+    That source-only setup did not install the Electron runtime binary.
+  - The same `npm run test:table-cells-source` rerun passes 64/64, exit zero.
+    Separate evidence: `screenshots/table-and-mermaid-sizing-source-after-setup/`.
+    Both source runs retain matching before/after product hashes. No tests or
+    assertions changed. Source checks do not qualify mouse geometry or visuals.
+  - Astra's bounded upstream inspection found the actor-width/explicit-break
+    limitation still present in 11.17.2, 12.2.0 and the inspected develop source.
+    A single-actor note has a separate fixed-width path. No supported localized
+    sizing extension or complete upstream fix was found; upgrading alone is not
+    justified. The user chose option B rather than carry a maintained package
+    patch. Automatic wrapping stays off; a future official fix still needs
+    geometry verification. These are source-predicted defects, not runtime
+    reproductions.
+  - Fresh bounded app grant: 2026-10-30 15:30:07Z to 15:40:07Z, including setup
+    and cleanup. Restored only official locked Electron 43.4.1 through its
+    existing installer and a fresh worktree-local download cache. No dependency
+    version, maintained Mermaid patch, global install or release change.
+  - Session-local focused probe: the first app attempt exited one on a profile
+    ownership guard before feature checks. The existing isolation helper had
+    relocated the profile to its fresh per-probe test directory. This failure
+    is preserved separately; no user profile or document was admitted.
+  - The second app attempt used that existing fresh-profile helper. Observed:
+    hover separators; a trusted pointer drag adding 96px to only its column;
+    unchanged source/dirty state/cell markup; Home reset; Escape cancellation;
+    source receipt and cell-dialog open/cancel; native-size 14px sequence text.
+  - The second probe exits one with two failed compound checks, preserved
+    without relabeling the run green. Its wide Mermaid container uses the
+    1004px budget inside the viewport, but the flowchart scales to fit instead
+    of satisfying the extra scrollbar assumption. Its explicit-break check
+    expected multiple tspans in one text node. Both screenshots were viewed:
+    actor/message/note breaks visibly remain on separate lines. No product or
+    existing-test correction was made to hide either probe result.
+  - Evidence is in session `files/feature-sizing-1530-*`: first-attempt report,
+    second report, owner records and table/sequence screenshots. Print, theme,
+    split-view and the full existing native suites were not run in this window.
+  - Owned app roots 136224 and 127148 and their direct children were absent.
+    Only the resolved owned fixture/profile directories were removed. All three
+    paths were verified absent; physical release was confirmed at
+    15:37:27Z, before the 15:40:07Z deadline. No commit or push.
+  - User requested local installation and confirmed the existing app was saved
+    and closed. Built through the normal NSIS workflow with publishing disabled
+    and supported build metadata `0.11.3+local.table-mermaid.20261030`; tracked
+    manifests, app identity and dependency versions are unchanged.
+  - One machine-scope installer run exited zero. Installed executable remains
+    `C:\Program Files\lostinsea\Folia\Markaloo.exe`; its version and installed
+    package identify the local build. Installed renderer/styles/Mermaid config
+    match both candidate source and packaged bytes. Existing shortcut targets
+    and file-association/default choices are unchanged; the Folia profile
+    remains in place. No automatic app startup, extra feature tests or public
+    release. Small install receipt is in session
+    `files/local-feature-install-receipt.json`. No commit or push.
+
 - `edit-text-typed-formatting-0.11.3` - **PUBLISHED; BROAD TESTING PENDING**.
   - User-selected scope: format bold, italic and code inside the actual Edit Text
     input; keep other Markdown as typed. Preserve raw Markdown rather than adding
