@@ -278,8 +278,12 @@ const nestedWheelStateSource = `(p,owner=getEditorScrollDiagnostics().owner)=>{
   };
   return {nested:position(p),outer:{editor:position(markdownEditor),preview:position(viewer),owner}};
 }`;
+let nestedWheelReceiptSequence = 0;
 async function nativeWheel(side, deltaY, selector = null, record = null) {
-  const sampled = await exec(`(() => {
+  const receiptOwner = record ? ++nestedWheelReceiptSequence : null;
+  let failed = false, primaryFailure;
+  try {
+    const sampled = await exec(`(() => {
     const target=${selector ? `viewer.querySelector(${JSON.stringify(selector)})` : side === "editor" ? "markdownEditor" : "viewer"},r=target.getBoundingClientRect();
     const point={x:Math.round(r.left+Math.min(150,r.width/2)),y:Math.round(r.top+${selector ? "Math.min(60,r.height/2)" : "100"})};
     if(${!!record}){
@@ -295,36 +299,102 @@ async function nativeWheel(side, deltaY, selector = null, record = null) {
         return node===viewer?indexes:null;
       };
       const hit=document.elementFromPoint(point.x,point.y);
+      if(window.__nestedWheelReceipt)throw new Error('Nested wheel receipt already owned');
+      const owner=${receiptOwner},events=[],references=[],seen=new WeakSet();
+      let active=true,eventCount=0,overflow=false;
+      const phase=event=>({eventPhase:event.eventPhase,cancelable:event.cancelable,defaultPrevented:event.defaultPrevented});
+      const capture=event=>{
+        if(!active||seen.has(event))return;
+        seen.add(event);eventCount++;
+        if(events.length===2){overflow=true;return;}
+        const top=target.scrollTop,scrollHeight=target.scrollHeight,clientHeight=target.clientHeight;
+        references.push(event);
+        events.push({target:identity(event.target),targetPath:path(event.target),
+          targetIsSelectedPre:event.target===target,
+          containedInIntendedPre:!!event.target?.nodeType&&target.contains(event.target),
+          isTrusted:event.isTrusted,clientX:event.clientX,clientY:event.clientY,
+          deltaX:event.deltaX,deltaY:event.deltaY,deltaMode:event.deltaMode,
+          ctrlKey:event.ctrlKey,metaKey:event.metaKey,altKey:event.altKey,shiftKey:event.shiftKey,
+          nested:{connected:target.isConnected,top,scrollHeight,clientHeight,range:Math.max(0,scrollHeight-clientHeight)},
+          capture:phase(event),bubble:null,microtask:null,afterDispatch:null});
+      };
+      const bubble=event=>{
+        if(!active)return;
+        const index=references.indexOf(event);if(index<0)return;
+        const item=events[index];item.bubble=phase(event);
+        queueMicrotask(()=>{if(active)item.microtask=phase(event);});
+      };
+      const collector={owner,dispose(){
+        active=false;
+        document.removeEventListener('wheel',capture,true);
+        document.removeEventListener('wheel',bubble,false);
+        for(let index=0;index<events.length;index++)events[index].afterDispatch=phase(references[index]);
+        if(window.__nestedWheelReceipt!==collector)throw new Error('Nested wheel receipt ownership changed');
+        delete window.__nestedWheelReceipt;
+        references.length=0;
+        return {installed:true,eventCount,overflow,events};
+      }};
+      window.__nestedWheelReceipt=collector;
+      document.addEventListener('wheel',capture,{capture:true,passive:true});
+      document.addEventListener('wheel',bubble,{passive:true});
       return {point,pre:{...state,nested:{...state.nested,overflowY:style.overflowY,
         overscrollBehaviorY:style.overscrollBehaviorY},selectedPre:identity(target),selectedPrePath:path(target),
         point,hit:{identity:identity(hit),path:path(hit),containedInIntendedPre:target.contains(hit)}}};
     }
     return point;
   })()`);
-  const point = record ? sampled.point : sampled;
-  if (record) {
-    record.evidence = "DOM hit sampled before input; not an observed trusted wheel-event target.";
-    record.request = { side, selector, deltaX: 0, deltaY };
-    record.pre = sampled.pre;
-    const { nested, outer, hit, selectedPre, selectedPrePath } = record.pre;
-    const up = record.case === "top";
-    record.setup = {
-      intendedPre: selectedPre.tag === "PRE" && selectedPre.connected && selectedPrePath !== null,
-      nestedOverflow: nested.range > 1,
-      effectiveOverflow: nested.overflowY === "auto",
-      requestedEdge: up ? nested.top <= 1 : nested.top >= nested.range - 1,
-      pointDescendantHit: hit.containedInIntendedPre && hit.path !== null,
-      expectedBehavior: nested.overscrollBehaviorY === record.expectedBehavior,
-      ownerEditor: outer.owner === "editor",
-      editorTravel: (up ? outer.editor.top : outer.editor.range - outer.editor.top) > 5,
-      previewTravel: (up ? outer.preview.top : outer.preview.range - outer.preview.top) > 5,
-    };
-    check(`nested native wheel ${record.case} has overflowing edge hit behavior owner and outer-travel setup`,
-      Object.values(record.setup).every(Boolean), record);
+    const point = record ? sampled.point : sampled;
+    if (record) {
+      record.evidence = "DOM hit sampled before input; received event phases are recorded separately.";
+      record.request = { side, selector, deltaX: 0, deltaY };
+      record.pre = sampled.pre;
+      const { nested, outer, hit, selectedPre, selectedPrePath } = record.pre;
+      const up = record.case === "top";
+      record.setup = {
+        intendedPre: selectedPre.tag === "PRE" && selectedPre.connected && selectedPrePath !== null,
+        nestedOverflow: nested.range > 1,
+        effectiveOverflow: nested.overflowY === "auto",
+        requestedEdge: up ? nested.top <= 1 : nested.top >= nested.range - 1,
+        pointDescendantHit: hit.containedInIntendedPre && hit.path !== null,
+        expectedBehavior: nested.overscrollBehaviorY === record.expectedBehavior,
+        ownerEditor: outer.owner === "editor",
+        editorTravel: (up ? outer.editor.top : outer.editor.range - outer.editor.top) > 5,
+        previewTravel: (up ? outer.preview.top : outer.preview.range - outer.preview.top) > 5,
+      };
+      check(`nested native wheel ${record.case} has overflowing edge hit behavior owner and outer-travel setup`,
+        Object.values(record.setup).every(Boolean), record);
+    }
+    win.focus();
+    win.webContents.sendInputEvent({ type: "mouseWheel", ...point, deltaX: 0, deltaY });
+    await settle();
+  } catch (error) {
+    failed = true; primaryFailure = error;
+    throw error;
+  } finally {
+    if (record) {
+      try {
+        record.received = await exec(`(() => {
+          const collector=window.__nestedWheelReceipt;
+          if(!collector)return {installed:false,eventCount:0,overflow:false,events:[]};
+          if(collector.owner!==${receiptOwner})throw new Error('Cannot dispose another nested wheel receipt');
+          return collector.dispose();
+        })()`);
+      } catch (error) {
+        if (failed) throw new AggregateError([primaryFailure, error], "Wheel input and receipt cleanup failed");
+        throw error;
+      }
+    }
   }
-  win.focus();
-  win.webContents.sendInputEvent({ type: "mouseWheel", ...point, deltaX: 0, deltaY });
-  await settle();
+  if (record) {
+    const observed = record.received, event = observed.events[0];
+    check(`nested native wheel ${record.case} receives one trusted matching event`,
+      observed.installed && observed.eventCount === 1 && !observed.overflow &&
+      event?.isTrusted && event.containedInIntendedPre && event.nested.connected &&
+      event.clientX === record.pre.point.x && event.clientY === record.pre.point.y &&
+      event.deltaX === 0 && Number.isFinite(event.deltaY) &&
+      (record.case === "top" ? event.deltaY < 0 : event.deltaY > 0) &&
+      !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey, observed);
+  }
 }
 async function nativeClick(selector) {
   const point = await exec(`(() => {

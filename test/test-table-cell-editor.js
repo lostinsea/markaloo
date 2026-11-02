@@ -2137,6 +2137,68 @@ async function columnSizingSourceTests(cells) {
     Math.abs(weightedWidths[2] / weightedWidths[1] - 2.5) < .001 && weightedWidths[0] === 83 &&
     weightedStyle.media === "screen" && weightedStyle.textContent.includes("table-layout:fixed"));
   weightedSizing.dispose();
+  {
+    const reflow = fixture("reflowGrid"), natural = [100, 175, 168];
+    const rule = () => document.head.children.find(style => style.textContent?.startsWith("#reflowGrid "));
+    const renderedWidths = () => rule()
+      ? [...rule().textContent.matchAll(/nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)]
+        .map(match => Number(match[1]))
+      : natural;
+    Object.defineProperties(reflow.table, {
+      offsetLeft: { get: () => rule() ? 19 : 3 },
+      offsetTop: { get: () => rule() ? 23 : 7 },
+      offsetHeight: { get: () => rule() ? 144 : 120 },
+    });
+    reflow.table.getBoundingClientRect = () => ({
+      left: 100 + reflow.table.offsetLeft,
+      width: renderedWidths().reduce((sum, width) => sum + width, 0) + (rule() ? 0 : 20),
+    });
+    for (const [index, cell] of reflow.table.rows[0].cells.entries()) {
+      cell.getBoundingClientRect = () => {
+        const widths = renderedWidths(), left = reflow.table.getBoundingClientRect().left +
+          widths.slice(0, index).reduce((sum, width) => sum + width, 0);
+        return { left, right: left + widths[index], width: widths[index] };
+      };
+    }
+    const initialBoundary = natural[0] + natural[1];
+    check("initial-fit geometry setup changes natural label and data widths before observer delivery",
+      !rule() && JSON.stringify(renderedWidths()) === JSON.stringify(natural) &&
+      initialBoundary === 275 && reflow.table.getBoundingClientRect().width === 463);
+    const controller = context.createTableColumnSizing({ ...options, root: reflow.root,
+      initialWeights: null, initialFixedWidths: [83], isCurrent: () => true, onDragChange() {} });
+    document.activeElement = reflow.input;
+    reflow.root.emit("focusin", { target: reflow.input });
+    const overlay = reflow.container.children[1], grips = overlay.children;
+    const coherent = () => {
+      const bounds = reflow.table.getBoundingClientRect(), row = reflow.table.rows[0];
+      const total = renderedWidths().reduce((sum, width) => sum + width, 0);
+      return grips.every((grip, offset) => {
+        const rect = row.cells[offset + 1].getBoundingClientRect();
+        const proportion = Number((100 * rect.width / total).toFixed(2));
+        return grip.style.left === rect.right - bounds.left + "px" &&
+          grip.attributes["aria-valuenow"] === String(proportion) &&
+          grip.attributes["aria-valuetext"] === `${rect.width} pixels wide; ${proportion}% of table width`;
+      }) && overlay.style.left === "19px" && overlay.style.top === "23px" &&
+        overlay.style.width === bounds.width + "px" && overlay.style.height === "144px";
+    };
+    check("initial-fit handles overlay and ARIA immediately use post-fit cell geometry",
+      JSON.stringify(renderedWidths()) === JSON.stringify([83, 180, 180]) && coherent());
+    const interior = reflow.table.rows[0].cells[2].getBoundingClientRect().left + 12 -
+      reflow.table.getBoundingClientRect().left;
+    check("initial-fit separator no longer intercepts the unchanged Header 2 interior click point",
+      interior === initialBoundary &&
+      grips.every(grip => Math.abs(parseFloat(grip.style.left) - interior) > 4));
+    grips[0].focus();
+    grips[0].emit("keydown", { key: "ArrowRight" });
+    check("automatic reset geometry setup owns genuinely changed manual widths",
+      reflow.table.classList.contains("table-manually-sized") &&
+      JSON.stringify(renderedWidths()) === JSON.stringify([83, 196, 180]));
+    grips[0].emit("keydown", { key: "Home" });
+    check("automatic reset immediately remeasures handles overlay and ARIA after refitting",
+      !reflow.table.classList.contains("table-manually-sized") &&
+      JSON.stringify(renderedWidths()) === JSON.stringify([83, 180, 180]) && coherent());
+    controller.dispose();
+  }
   for (const manual of [false, true]) for (const failure of [null, "apply", "layout"]) {
     const id = "removeSizing" + Number(manual) + (failure || "success"), probe = fixture(id);
     const row = probe.table.rows[0], extra = node("td");

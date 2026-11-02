@@ -7660,6 +7660,8 @@ function createTableColumnSizing({
         index < firstColumn ? width : initialWeights?.[index - firstColumn] ?? 1);
       // Reuse this first-row read; browser word lengths must not choose the initial data split.
       writeWidths(table, fitWidths(widths, proportions, root.clientWidth), proportions, false);
+      // Fitting reflows cells; publish handles from their new boundaries immediately.
+      return position();
     }
     if (fitOnResize && !states.has(table) && root.clientWidth === availableWidth) {
       controls.naturalWidths = cells.map(cell => cell.width / zoom);
