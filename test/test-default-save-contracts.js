@@ -2483,6 +2483,165 @@ async function reloadRecoveryBoundaryContracts() {
     "Recovery observer setup failure disconnects without calling the direct producer");
 }
 
+async function shutdownAggregateDiagnosticContracts() {
+  const scenario = between(source, "async function runShutdownScenarios(",
+    "\nasync function runSameDocumentShutdownScenarios(");
+  const catchStart = "  } catch (error) {\n    bodyError = error;\n  } finally {";
+  const cleanup = scenario.slice(scenario.lastIndexOf(catchStart), scenario.lastIndexOf("\n}"));
+  assert.ok(cleanup.startsWith(catchStart), "The actual ordinary shutdown catch/finally is extracted");
+  const boundary = cleanup.slice(cleanup.lastIndexOf("    if (bodyError || cleanupErrors.length) {"),
+    cleanup.lastIndexOf("\n  }"));
+  const legacy = '    if (bodyError || cleanupErrors.length) {\n' +
+    '      throw new AggregateError([bodyError, ...cleanupErrors].filter(Boolean),\n' +
+    '        "Ordinary shutdown scenario or independent cleanup failed");\n    }';
+  assert.equal(cleanup.split(boundary).length, 2, "One exact final aggregate boundary is controlled");
+  const formatter = between(source, "function uncaughtExceptionDetail(error) {", "\nfunction writeFatal(");
+  const sameDescriptor = between(source, "function sameDescriptor(left, right) {", "\n}\n") + "\n}";
+  const util = require("node:util");
+  const bodyLeaf = new Error("SHUTDOWN_BODY_DEEP_LEAF");
+  const nestedBody = new AggregateError([new AggregateError([bodyLeaf], "BODY_LEVEL_TWO")], "BODY_LEVEL_ONE");
+  const body = new AggregateError([nestedBody, ...Array.from({ length: 130 },
+    (_, index) => "BODY_CHILD_" + index)], "SHUTDOWN_BODY");
+  let customReads = 0;
+  Object.defineProperty(body, util.inspect.custom, {
+    get() { customReads++; throw new Error("Error inspection must not invoke application hooks"); },
+  });
+  const rendererError = new Error("INDEPENDENT_RENDERER_CLEANUP");
+  const dialogError = new Error("INDEPENDENT_DIALOG_CLEANUP");
+  const cleanupLeaf = new Error("SHUTDOWN_CLEANUP_DEEP_LEAF");
+  const readinessError = new AggregateError([new AggregateError([cleanupLeaf], "CLEANUP_LEVEL_TWO"),
+    "X".repeat(12000) + "UNTRUNCATED_CLEANUP_TAIL"], "INDEPENDENT_READINESS_CLEANUP");
+  const timingError = new Error("INDEPENDENT_TIMING_CLEANUP");
+  const formatError = new Error("DIAGNOSTIC_FORMATTER_REFUSED");
+  const run = async (options = {}) => {
+    const trace = [], assertions = [], unavailable = [];
+    let inspections = 0, thrown = null;
+    const app = { quit() {} };
+    const descriptor = Object.getOwnPropertyDescriptor(app, "quit");
+    const action = (label, error) => () => { trace.push(label); if (error) throw error; };
+    const rejected = error => { const promise = Promise.reject(error); promise.catch(() => {}); return promise; };
+    const failed = options.failures === true;
+    const holds = ["first", "last"].map(label => {
+      let restored = false;
+      return { dispose() { trace.push("hold-" + label); restored = true; },
+        snapshot: () => ({ restored, captured: true, released: true }) };
+    });
+    const activeCleanup = options.legacy ? cleanup.replace(boundary, legacy) : cleanup;
+    const context = vm.createContext({
+      AggregateError, app, bodyError: null,
+      work: async () => { if ((failed && !options.cleanupOnly) || options.bodyOnly) throw body; },
+      require: name => {
+        assert.equal(name, "util");
+        return { inspect: (value, settings) => {
+          inspections++;
+          assert.equal(value.bodyError, (failed && !options.cleanupOnly) || options.bodyOnly ? body : null);
+          if (options.formatFailure) throw formatError;
+          return util.inspect(value, settings);
+        } };
+      },
+      heldDialogs: [{ settled: false, settle: choice => {
+        assert.equal(choice, 1); trace.push("held-dialog");
+      } }],
+      rendererTails: failed ? [rejected(rendererError)] : [],
+      dialogTails: failed ? [rejected(dialogError)] : [],
+      ownedHolds: holds,
+      __shutdown: {
+        state: () => ({ shutdownPendingContinuationCount: 0, rendererPageSession: "source-page" }),
+        reset: action("reset"), timing: { disable: action("timing", failed && timingError) },
+      },
+      setImmediate: callback => { trace.push("turn"); return setImmediate(callback); },
+      requestCounterOwner: "owned-source-counter", counterPageSession: "source-page",
+      exec: async script => {
+        if (script.includes("const state = window.__ordinaryShutdownRequestCounter;")) {
+          trace.push("counter-remove"); return true;
+        }
+        assert.equal(script, "!!window.__ordinaryShutdownRequestCounter");
+        trace.push("counter-check"); return false;
+      },
+      readinessFixture: { restore: action("readiness", failed && readinessError) },
+      baseUpdaterBranchBorrow: { restore: action("base-borrow"),
+        snapshot: () => ({ platform: process.platform, quitAndInstallPlatforms: [] }) },
+      automaticUpdatesAvailable: false, actualHostPlatform: process.platform,
+      unavailable: (...args) => unavailable.push(args),
+      restoreInstall: action("install"), countPublicUpdateCommit: null,
+      electronAutoUpdater: { removeListener: (channel, listener) => {
+        assert.equal(channel, "before-quit-for-update"); assert.equal(listener, null);
+        trace.push("electron-update");
+      } },
+      restoreUpdaterLatch: action("updater-latch"),
+      ownedQuestions: { restore: action("owned-questions") },
+      restoreOrdinaryEmergencyGuard: action("emergency"),
+      rig: { restore: action("rig"), appQuitDescriptor: descriptor },
+      timingWasEnabled: false,
+      check: (name, success) => { assertions.push({ name, success }); },
+    });
+    try {
+      await vm.runInContext(formatter + "\n" + sameDescriptor + "\n(async () => {\ntry { await work();\n" +
+        activeCleanup + "\n})()", context);
+    } catch (error) { thrown = error; }
+    return { trace, assertions, unavailable, inspections, thrown };
+  };
+  const current = await run({ failures: true });
+  const error = current.thrown;
+  check(error instanceof AggregateError && error.errors.length === 5 &&
+    error.errors[0] === body && error.errors[1].errors[0] === rendererError &&
+    error.errors[2].errors[0] === dialogError && error.errors[3] === readinessError &&
+    error.errors[4] === timingError,
+  "Actual shutdown boundary preserves the body and every independently collected cleanup error in original order");
+  check(error.message.startsWith("Ordinary shutdown scenario or independent cleanup failed\n") &&
+    error.stack.includes("bodyError:") && error.stack.includes("cleanupErrors:") &&
+    ["SHUTDOWN_BODY_DEEP_LEAF", "BODY_CHILD_129", "INDEPENDENT_RENDERER_CLEANUP",
+      "INDEPENDENT_DIALOG_CLEANUP", "SHUTDOWN_CLEANUP_DEEP_LEAF",
+      "UNTRUNCATED_CLEANUP_TAIL", "INDEPENDENT_TIMING_CLEANUP"]
+      .every(marker => error.stack.includes(marker)),
+  "Actual stack-only terminal output retains labeled body and independent cleanup lanes with complete nested children");
+  check(current.inspections === 1 && customReads === 0,
+    "Shutdown diagnostics use actual Node inspection without invoking application inspection hooks");
+  const old = await run({ failures: true, legacy: true });
+  check(old.thrown instanceof AggregateError && old.thrown.errors.length === error.errors.length &&
+    old.thrown.errors[0] === body && old.thrown.errors[1].errors[0] === rendererError &&
+    old.thrown.errors[2].errors[0] === dialogError &&
+    old.thrown.errors[3] === readinessError && old.thrown.errors[4] === timingError &&
+    !old.thrown.stack.includes("SHUTDOWN_BODY_DEEP_LEAF") &&
+    !old.thrown.stack.includes("SHUTDOWN_CLEANUP_DEEP_LEAF"),
+  "Former stack-only aggregate genuinely loses nested causes while preserving the same thrown error accounting");
+  const expectedTrace = ["held-dialog", "turn", "hold-last", "hold-first", "reset", "turn", "turn",
+    "counter-remove", "counter-check", "readiness", "base-borrow", "install", "electron-update",
+    "updater-latch", "owned-questions", "emergency", "rig", "timing"];
+  assert.deepEqual(current.trace, expectedTrace);
+  assert.deepEqual(current.trace, old.trace);
+  assert.deepEqual(current.assertions, old.assertions);
+  assert.deepEqual(current.unavailable, old.unavailable);
+  check(current.assertions.length === 3 && current.assertions.every(assertion => assertion.success),
+    "Diagnostics change neither cleanup order nor any existing behavioral assertion, even after independent cleanup failures");
+  const healthy = await run();
+  check(healthy.thrown === null && healthy.inspections === 0 &&
+    JSON.stringify(healthy.trace) === JSON.stringify(expectedTrace),
+  "Healthy shutdown performs the same cleanup and does not invoke failure diagnostics or throw");
+  const bodyOnly = await run({ bodyOnly: true });
+  check(bodyOnly.thrown.errors.length === 1 && bodyOnly.thrown.errors[0] === body &&
+    bodyOnly.thrown.stack.includes("bodyError:") &&
+    bodyOnly.thrown.stack.includes("cleanupErrors: []"),
+  "Body-only shutdown failures label the empty independent cleanup lane without inventing an error");
+  const cleanupOnly = await run({ failures: true, cleanupOnly: true });
+  check(cleanupOnly.thrown.errors.length === 4 &&
+    cleanupOnly.thrown.errors[0].errors[0] === rendererError &&
+    cleanupOnly.thrown.errors[1].errors[0] === dialogError &&
+    cleanupOnly.thrown.errors[2] === readinessError && cleanupOnly.thrown.errors[3] === timingError &&
+    cleanupOnly.thrown.stack.includes("bodyError: null") &&
+    cleanupOnly.thrown.stack.includes("SHUTDOWN_CLEANUP_DEEP_LEAF") &&
+    !cleanupOnly.thrown.stack.includes("SHUTDOWN_BODY_DEEP_LEAF"),
+  "Cleanup-only shutdown failures retain their independent causes without inventing a body failure");
+  const failedFormat = await run({ failures: true, formatFailure: true });
+  check(failedFormat.thrown instanceof AggregateError && failedFormat.thrown.errors.length === 5 &&
+    failedFormat.thrown.errors[0] === body && failedFormat.thrown.errors[3] === readinessError &&
+    failedFormat.thrown.errors[4] === timingError &&
+    failedFormat.thrown.stack.includes("Shutdown diagnostics unavailable:") &&
+    failedFormat.thrown.stack.includes("DIAGNOSTIC_FORMATTER_REFUSED") &&
+    JSON.stringify(failedFormat.trace) === JSON.stringify(expectedTrace),
+  "Formatter refusal preserves the original aggregate and completed cleanup instead of replacing their failure");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -2491,7 +2650,7 @@ async function reloadRecoveryBoundaryContracts() {
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,
     defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
-    reloadRecoveryBoundaryContracts]) {
+    reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

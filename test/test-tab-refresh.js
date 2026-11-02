@@ -44774,8 +44774,19 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       }),
     );
     if (bodyError || cleanupErrors.length) {
-      throw new AggregateError([bodyError, ...cleanupErrors].filter(Boolean),
+      const failure = new AggregateError([bodyError, ...cleanupErrors].filter(Boolean),
         "Ordinary shutdown scenario or independent cleanup failed");
+      try {
+        // The terminal reporter prints .stack, which otherwise omits .errors.
+        failure.message += "\n" + require("util").inspect(
+          { bodyError, cleanupErrors },
+          { depth: null, maxArrayLength: null, maxStringLength: null,
+            colors: false, customInspect: false, getters: false },
+        );
+      } catch (error) {
+        failure.message += "\nShutdown diagnostics unavailable: " + uncaughtExceptionDetail(error);
+      }
+      throw failure;
     }
   }
 }
