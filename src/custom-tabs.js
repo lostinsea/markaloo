@@ -3285,6 +3285,8 @@
       // Switch to another tab if closing active
       if (tab.id === activeTabId) {
         if (tabs.length > 0) {
+          // Retirement is already final; replace queued layouts before selection can await disk.
+          saveTabs();
           const newActiveTab = tabs[Math.max(0, tabIndex - 1)];
           await switchToTab(newActiveTab.id);
         } else {

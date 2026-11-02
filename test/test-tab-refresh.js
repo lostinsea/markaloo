@@ -18274,6 +18274,122 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
     adoptBaseline: false,
   }); null`);
   await clearFixtureTabs("layout persistence recovery cleanup");
+  {
+    const remainingPath = path.join(quotaDir, "quota-519.md");
+    selectNativePath(remainingPath);
+    await exec("window.ipcRenderer.send('open-file-dialog'); null");
+    await waitForCondition(exec, `window.currentFilePath === ${JSON.stringify(remainingPath)} &&
+      document.getElementById('viewer').textContent.includes('Quota 519') &&
+      !!window.CustomTabs.getDocumentDescriptor()`, 8000);
+    const remaining = await capture();
+    selectNativePath(active.filePath);
+    await exec("window.ipcRenderer.send('open-file-dialog'); null");
+    await waitForCondition(exec, `window.currentFilePath === ${JSON.stringify(active.filePath)} &&
+      document.getElementById('viewer').textContent.includes('Quota 518') &&
+      !!window.CustomTabs.getDocumentDescriptor()`, 8000);
+    await exec("window.CustomTabs.settleSessionLayout()");
+    const closing = await capture();
+    let releaseWrite, releaseRead, writeHeld = false, readHeld = false;
+    const writeGate = new Promise(resolve => { releaseWrite = resolve; });
+    const readGate = new Promise(resolve => { releaseRead = resolve; });
+    const restoreWrite = replaceMethod(fs.promises, "rename", async function (_from, to) {
+      if (to === manifest && !writeHeld) { writeHeld = true; await writeGate; }
+      return originalRename.apply(this, arguments);
+    });
+    const originalOpen = fs.promises.open;
+    const restoreRead = replaceMethod(fs.promises, "open", async function (filePath, flags) {
+      const handle = await originalOpen.apply(this, arguments);
+      if (filePath === remainingPath && flags === "r" && !readHeld) {
+        readHeld = true;
+        await readGate;
+      }
+      return handle;
+    });
+    await withOrdinaryShutdownCleanup(async () => {
+      await exec(`(() => {
+        window.__activeCloseLayoutCalls = [];
+        window.__activeCloseInvoke = window.ipcRenderer.invoke;
+        window.ipcRenderer.invoke = function(channel, payload) {
+          if (channel === 'save-document-session-layout') window.__activeCloseLayoutCalls.push(payload);
+          return window.__activeCloseInvoke.apply(this, arguments);
+        };
+        window.CustomTabs.updateTabContent(window.originalMarkdown, false);
+      })()`);
+      const durableHeld = await waitUntil(() => writeHeld, 8000);
+      const beforeClose = await exec(`(() => {
+        window.CustomTabs.updateTabContent(window.originalMarkdown, false);
+        return window.__activeCloseLayoutCalls;
+      })()`);
+      check("SEC-08 active-close layout setup holds a durable write containing the admitted active owner",
+        durableHeld && beforeClose.length === 1 &&
+          remaining.filePath === remainingPath && closing.filePath === active.filePath &&
+          remaining.document.ref !== closing.document.ref && beforeClose[0].entries.length === 2 &&
+          beforeClose[0].entries.some(entry => entry.documentRef === closing.document.ref) &&
+          beforeClose[0].entries.some(entry => entry.documentRef === remaining.document.ref) &&
+          __shutdown.documentAdmissionIsCurrent(closing.document.ref) &&
+          __shutdown.documentAdmissionIsCurrent(remaining.document.ref),
+        JSON.stringify({ durableHeld, beforeClose, closing, remaining }));
+      write(remainingPath, "# Quota 519\n\nACTIVE_CLOSE_REPLACEMENT\n");
+      await exec(`(() => {
+        window.__activeCloseSettled = false;
+        window.__activeClosePromise = window.CustomTabs.closeTab(${closing.owner.tabId})
+          .then(() => { window.__activeCloseSettled = true; });
+      })()`);
+      const replacementHeld = await waitUntil(() => readHeld, 8000);
+      const paused = await exec(`({
+        settled: window.__activeCloseSettled,
+        ids: window.CustomTabs.getTabs().map(tab => tab.id),
+      })`);
+      check("SEC-08 active close retires its exact owner while the replacement read is genuinely paused",
+        replacementHeld && !paused.settled &&
+          !paused.ids.includes(closing.owner.tabId) &&
+          paused.ids.includes(remaining.owner.tabId) &&
+          __shutdown.documentAdmissionIsCurrent(closing.document.ref) === false &&
+          __shutdown.documentAdmissionIsCurrent(remaining.document.ref) === true,
+        JSON.stringify({ replacementHeld, paused }));
+      releaseWrite();
+      const postRemovalDurable = await waitUntil(async () => {
+        const calls = await exec("window.__activeCloseLayoutCalls");
+        const saved = JSON.parse(fs.readFileSync(manifest, "utf8"));
+        return calls.length >= 2 && saved.entries.length === 1 &&
+          saved.entries[0].id === remaining.document.entryId;
+      }, 8000);
+      const during = await exec(`({ calls: window.__activeCloseLayoutCalls,
+        settled: window.__activeCloseSettled })`);
+      check("SEC-08 a released durable writer sends post-removal layout before replacement selection settles",
+        postRemovalDurable && !during.settled &&
+          during.calls[1]?.entries.length === 1 &&
+          during.calls[1].entries[0].documentRef === remaining.document.ref &&
+          during.calls[1].activeEntryId === null,
+        JSON.stringify({ postRemovalDurable, during }));
+      releaseRead();
+      await exec("(async () => { await window.__activeClosePromise; await window.CustomTabs.settleSessionLayout(); })()");
+      const selected = await capture();
+      const saved = JSON.parse(fs.readFileSync(manifest, "utf8"));
+      await sentinel.drain();
+      check("SEC-08 active close finally persists the surviving active owner with the error sentinel unmuted",
+        selected.document.entryId === remaining.document.entryId &&
+          __shutdown.documentAdmissionIsCurrent(selected.document.ref) === true &&
+          saved.activeEntryId === remaining.document.entryId &&
+          saved.entries.length === 1 && sentinel.currentMute() === null &&
+          await exec("document.getElementById('viewer').textContent.includes('ACTIVE_CLOSE_REPLACEMENT')"),
+        JSON.stringify({ selected, saved }));
+    }, [
+      () => { releaseWrite(); releaseRead(); },
+      restoreWrite, restoreRead,
+      () => exec(`(async () => {
+        try { await window.__activeClosePromise; }
+        finally {
+          if (window.__activeCloseInvoke) window.ipcRenderer.invoke = window.__activeCloseInvoke;
+          delete window.__activeCloseInvoke;
+          delete window.__activeClosePromise;
+          delete window.__activeCloseSettled;
+          delete window.__activeCloseLayoutCalls;
+        }
+      })()`),
+    ]);
+    await clearFixtureTabs("active-close layout race cleanup");
+  }
   const directory = path.join(quotaDir, "executable-directory");
   const appDirectory = path.join(quotaDir, "blocked.app");
   fs.mkdirSync(directory);

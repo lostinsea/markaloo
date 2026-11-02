@@ -210,6 +210,8 @@ jobs:
             ci-test-results/native-isolation.log
             ci-test-results/selected-proofs-status.txt
             ci-test-results/selected-proofs.log
+            ci-test-results/tabs-unusable.stdout.log
+            ci-test-results/tabs-unusable.stderr.log
             tmp/about-updates/
           if-no-files-found: error
           retention-days: 7
@@ -267,7 +269,19 @@ jobs:
         run: npm ci
 
       - name: Verify every expect/mustPass regex names a live assertion
+        id: live_assertions
         run: node scripts/prove-table-fixes.js --expects
+
+      - name: Retain unusable tab audit evidence
+        if: ${{ always() && steps.live_assertions.outcome != '' && steps.live_assertions.outcome != 'skipped' && hashFiles('ci-test-results/tabs-unusable.*.log') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-tab-audit
+          path: |
+            ci-test-results/tabs-unusable.stdout.log
+            ci-test-results/tabs-unusable.stderr.log
+          if-no-files-found: error
+          retention-days: 7
 
   clean-refresh:
     if: github.event_name == 'workflow_dispatch' && inputs.clean_refresh

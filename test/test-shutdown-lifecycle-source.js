@@ -145,7 +145,111 @@ function fixture(options = {}) {
     originalChooser, processorGate, renderGate, tabs, clock, viewer, owner, pageSession };
 }
 
+async function activeCloseLayoutContracts() {
+  const tabsSource = fs.readFileSync(path.join(__dirname, "..", "src", "custom-tabs.js"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const region = (start, end) => {
+    const first = tabsSource.indexOf(start), last = tabsSource.indexOf(end, first);
+    assert(first >= 0 && first === tabsSource.lastIndexOf(start) && last > first);
+    return tabsSource.slice(first, last);
+  };
+  const actual = region("  async function closeTab(tabId) {", "\n  function updateTabContent(") +
+    region("  let sessionRestoreStarted = false;", "\n  async function loadSavedTabs(");
+  function layoutFixture() {
+    const durable = deferred(), replacement = deferred(), calls = [], errors = [], retired = new Set();
+    const tabs = [1, 2].map(id => ({ id, filename: `owned-${id}.md`, filePath: `owned-${id}.md`,
+      scrollPosition: 0, anchor: null }));
+    const documentState = new WeakMap(tabs.map(tab =>
+      [tab, { admission: { entryId: `entry-${tab.id}`, ref: `ref-${tab.id}` } }]));
+    let durableLayout = null, switching = false;
+    const context = vm.createContext({
+      tabs, activeTabId: 2, activeTabForMutations: tabs[1], documentState,
+      closingTabs: new Set(), pendingConfirmedReload: null, approvalRendererGeneration: 7,
+      mayMutateDocument: () => true, isDocumentFrozen: () => false,
+      snapshotActiveTab() {}, isDirty: () => false, safeDocumentLabel: value => value,
+      documentIdentity: tab => ({ tabId: tab.id, documentRef: documentState.get(tab).admission.ref }),
+      consultDocumentDeletionState: () => ({ known: true, unresolved: false, revision: 1 }),
+      bumpDocumentRevision() {}, dismissUpdatePrompt() {}, renderTabs() {},
+      notify: (...args) => errors.push(args),
+      getActiveTab: () => tabs.find(tab => tab.id === context.activeTabId),
+      switchToTab: async id => {
+        switching = true;
+        await replacement.promise;
+        context.activeTabId = id;
+        context.activeTabForMutations = tabs.find(tab => tab.id === id);
+      },
+      console: { log() {}, error: (...args) => errors.push(args) },
+      window: {
+        getReloadRequestSession: () => "source-page",
+        retireDeletionTombstone: (_path, owner) => {
+          retired.add(owner.documentRef);
+          return { retired: true };
+        },
+        folia: { saveSessionLayout: async layout => {
+          calls.push(layout);
+          if (calls.length === 1) await durable.promise;
+          else if (layout.entries.some(entry => retired.has(entry.documentRef))) {
+            throw new Error("Controlled Main refuses a retired reference");
+          }
+          durableLayout = layout;
+        } },
+      },
+    });
+    const api = vm.runInContext(actual +
+      "\n({ closeTab, saveTabs, settleSessionLayout });", context);
+    return { ...api, context, calls, errors, retired, durable, replacement,
+      durableLayout: () => durableLayout, switching: () => switching };
+  }
+  const active = layoutFixture();
+  active.saveTabs();
+  active.saveTabs();
+  assert.equal(active.calls.length, 1, "The real writer holds the first durable layout");
+  assert(active.calls[0].entries.some(entry => entry.documentRef === "ref-2"),
+    "The pending pre-close layout genuinely contains the closing owner");
+  const closing = active.closeTab(2);
+  assert.equal(active.switching(), true);
+  assert.equal(active.retired.has("ref-2"), true);
+  assert.equal(active.context.activeTabId, 2, "Replacement selection is still held");
+  active.durable.resolve();
+  await turn();
+  try {
+    check("active close replaces queued retired refs before awaiting replacement selection", () => {
+      assert.equal(active.calls.length, 2);
+      assert.deepEqual(JSON.parse(JSON.stringify(active.calls[1])), {
+        entries: [{ id: "entry-1", documentRef: "ref-1", scrollPosition: 0, anchor: null }],
+        activeEntryId: null,
+      });
+      assert.equal(active.errors.length, 0);
+      assert.equal(active.context.activeTabId, 2);
+    });
+  } finally { active.replacement.resolve(); }
+  await closing;
+  await active.settleSessionLayout();
+  check("active close eventually persists the genuine replacement active identity", () => {
+    assert.equal(active.context.activeTabId, 1);
+    assert.equal(active.durableLayout().activeEntryId, "entry-1");
+    assert.deepEqual(Array.from(active.durableLayout().entries, entry => entry.documentRef), ["ref-1"]);
+  });
+  const background = layoutFixture();
+  background.saveTabs();
+  background.saveTabs();
+  let backgroundCompleted = false;
+  const backgroundClose = background.closeTab(1).then(() => { backgroundCompleted = true; });
+  await turn();
+  check("background close remains independent of a held durable layout write", () => {
+    assert.equal(backgroundCompleted, true);
+    assert.equal(background.retired.has("ref-1"), true);
+    assert.equal(background.calls.length, 1);
+    assert.equal(background.switching(), false);
+  });
+  background.durable.resolve();
+  await backgroundClose;
+  await background.settleSessionLayout();
+  assert.equal(background.durableLayout().activeEntryId, "entry-2");
+}
+
 async function main() {
+  await activeCloseLayoutContracts();
   check("compiles the entire unexecuted Electron suite", () => {
     new vm.Script(source, { filename: sourcePath });
   });

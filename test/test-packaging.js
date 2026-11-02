@@ -726,6 +726,101 @@ async function main() {
         exact.lines.filter(line => /\sVACUOUS\s/.test(line)).length === 2 &&
         !exact.lines.some(line => line.includes("BATCH STOPPED")),
         JSON.stringify({ launches: exact.launches, bad: exact.bad, stoppedAt: exact.stoppedAt }));
+    const tailStart = runnerSource.indexOf("\nconst R660_PROOF_ONLY_SHUTDOWN_TAIL =");
+    const tailEnd = runnerSource.indexOf("\nconst VIRTUAL_SUITES =", tailStart);
+    const healthStart = runnerSource.indexOf("\nconst actualSuiteRuns = new WeakMap();");
+    const healthEnd = runnerSource.indexOf("\n// THE CATALOGUE RUN", healthStart);
+    if (tailStart < 0 || tailEnd < 0 || healthStart < 0 || healthEnd < 0) {
+      throw new Error("Cannot extract actual suite execution/health/retention controls");
+    }
+    const actualHealth = runnerSource.slice(tailStart, tailEnd) +
+      runnerSource.slice(healthStart, healthEnd) + "\n({ runSuite, suiteRunHealth });";
+    function retainedTabsFixture({ healthy = false, writeError = false, synthetic = false,
+      noCapture = false, emptyStderr = false, buffered = false, suite = "test:tabs" } = {}) {
+      const disk = new Map(), writes = [], errors = [], directories = [], removed = [];
+      const stdoutPath = path.join(ROOT, "ci-test-results", "tabs-unusable.stdout.log");
+      const stderrPath = path.join(ROOT, "ci-test-results", "tabs-unusable.stderr.log");
+      disk.set(stdoutPath, "stale stdout");
+      disk.set(stderrPath, "stale stderr");
+      disk.set(path.join(ROOT, "ci-test-results", "unrelated.log"), "unrelated evidence");
+      let stdout = healthy
+        ? "[companion stdout] PASS child\nPASS parent\n=== 1/1 passed ===\n"
+        : '[companion stdout] PASS child\r\nPASS preceding assertion\r\n' +
+          'TABS_CONSOLE_EVENT {"message":"actual renderer message","line":71}\r\n' +
+          "renderer errors:\r\noriginal complete detail without a footer\n";
+      let stderr = emptyStderr ? "" : "separate original stderr\r\nwith a partial final line";
+      if (buffered) { stdout = Buffer.from(stdout); stderr = Buffer.from(stderr); }
+      if (noCapture) { stdout = undefined; stderr = null; }
+      const spawnError = noCapture ? new Error("controlled failed spawn without captured streams") : null;
+      const api = require("node:vm").runInNewContext(actualHealth, {
+        ROOT, path, Buffer, process: { env: {} }, VIRTUAL_SUITES: {
+          virtualTabs: { npmScript: "test:tabs", environment: {} },
+        },
+        spawnSync: () => ({ stdout, stderr, status: noCapture ? null : healthy ? 0 : 1,
+          signal: null, error: spawnError }),
+        fs: {
+          mkdirSync: (...args) => directories.push(args),
+          rmSync(file, options) {
+            if (options.force !== true || options.recursive) throw new Error("Unexpected cleanup options");
+            removed.push(file); disk.delete(file);
+          },
+          writeFileSync(file, text, encoding) {
+            writes.push(file);
+            if (writeError && file.endsWith("tabs-unusable.stdout.log")) {
+              throw new Error("controlled transcript write failure");
+            }
+            if (encoding !== "utf8") throw new Error("Unexpected transcript encoding");
+            disk.set(file, text);
+          },
+        },
+        console: { error: (...args) => errors.push(args) },
+      }, { timeout: 1000 });
+      const run = synthetic ? { stdout, stderr, exitCode: 1 } : api.runSuite(suite);
+      const checked = api.suiteRunHealth(run, suite, { mutationRun: true });
+      return { disk, writes, directories, removed, errors, stdout, stderr, run, checked };
+    }
+    const retained = retainedTabsFixture();
+    check("unusable actual tabs retain both complete original streams without changing the verdict",
+      retained.checked.healthy === false &&
+      retained.checked.reasons.some(reason => reason.includes("did not finish")) &&
+      retained.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stdout.log")) === retained.stdout &&
+      retained.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stderr.log")) === retained.stderr &&
+      retained.run.stdout === retained.stdout && retained.run.stderr === retained.stderr &&
+      retained.writes.length === 2 && retained.errors.length === 0 &&
+      retained.removed.length === 2 &&
+      retained.disk.get(path.join(ROOT, "ci-test-results", "unrelated.log")) === "unrelated evidence");
+    const notRetained = [retainedTabsFixture({ healthy: true }),
+      retainedTabsFixture({ suite: "test:tables" }), retainedTabsFixture({ suite: "virtualTabs" }),
+      retainedTabsFixture({ synthetic: true })];
+    check("healthy non-tabs virtual and synthetic runs cannot manufacture unusable tabs artifacts",
+      notRetained[0].checked.healthy === true &&
+      notRetained.slice(1).every(result => result.checked.healthy === false) &&
+      notRetained.every(result => result.writes.length === 0 && result.directories.length === 0) &&
+      notRetained[0].removed.length === 2 && notRetained[0].disk.size === 1 &&
+      notRetained.slice(1).every(result => result.removed.length === 0 &&
+        result.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stdout.log")) === "stale stdout" &&
+        result.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stderr.log")) === "stale stderr"));
+    const uncaptured = retainedTabsFixture({ noCapture: true });
+    const capturedEmpty = retainedTabsFixture({ emptyStderr: true });
+    const capturedBuffers = retainedTabsFixture({ buffered: true });
+    check("tabs clear stale artifacts but retain only genuine captured strings buffers and empty streams",
+      uncaptured.checked.healthy === false && uncaptured.removed.length === 2 &&
+      uncaptured.writes.length === 0 && uncaptured.directories.length === 0 &&
+      uncaptured.disk.size === 1 &&
+      uncaptured.checked.executionError === "Error: controlled failed spawn without captured streams" &&
+      capturedEmpty.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stderr.log")) === "" &&
+      capturedBuffers.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stdout.log")) ===
+        capturedBuffers.stdout &&
+      capturedBuffers.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stderr.log")) ===
+        capturedBuffers.stderr);
+    const retentionFailure = retainedTabsFixture({ writeError: true });
+    check("transcript write errors stay explicit and independent stream retention still runs",
+      retentionFailure.checked.healthy === false && retentionFailure.writes.length === 2 &&
+      retentionFailure.errors.length === 1 &&
+      retentionFailure.errors[0][0] === "Could not retain unusable tabs transcript:" &&
+      retentionFailure.errors[0][2].message === "controlled transcript write failure" &&
+      retentionFailure.disk.get(path.join(ROOT, "ci-test-results", "tabs-unusable.stderr.log")) ===
+        retentionFailure.stderr);
   }
   check("package.json declares build.files", Array.isArray(files) && files.length > 0);
   if (!Array.isArray(files)) {

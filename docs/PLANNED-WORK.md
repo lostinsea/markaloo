@@ -555,7 +555,9 @@ section is kept here so the register has a visible edge.
     `R1195`/`R1196` independently prove each CSS selector guard; `R1197`
     proves the untagged standalone route. Exact failures and healthy controls
     pass; styles and package are restored byte for byte.
-    Native `R68`/`R434`/`R445`/`R1025`/`R659` sensitivities remain unrun.
+    CI `41404741789` proves native `R68`, `R434` and `R445` sensitivities.
+    `R659` is unusable: its full tab suite throws a renderer-script error.
+    The fail-stop guard then leaves later `R1025` unrun, not proven.
     The approved existing Windows job will run their fixed sequential command
     after the original native checks and evidence upload, before ordinary
     acceptance. Attempted proofs retain actual exits and logs in a separate
@@ -574,13 +576,44 @@ section is kept here so the register has a visible edge.
     none of those skipped checks is passed or proven.
     Failure-only Main diagnostics capture the rejected entry and admission state
     before later cleanup; the original validator, throw and sentinel are unchanged.
-    The cause remains unknown until hosted evidence identifies the rejected entry.
+    Hosted evidence identifies actor-13's retired admission; its scope, owner,
+    entry, scroll and anchor are valid. Active close removes that tab but awaits
+    replacement selection before replacing an older queued layout.
+    This ordering is present in the prior release's source; its earlier native
+    failure rate is not measured. The current failure remains a real blocker.
+    Sol has authored truthful post-removal publication before that await,
+    preserving the final save and existing held-write/background-close controls.
+    Actual-method Source coverage passes 28/28. `R1200` sensitivity proves the
+    exact retired-layout failure with final-selection and background controls.
+    The added native held-write/replacement-read leg is unrun.
+    Independent Sol/Luna reviews clear the frozen correction.
     Astra also confirms an introduced PDF-probe dependency defect:
     extracted notification code uses a factory the probe never initializes.
     Sol loads the actual module and factory; the original assertions are unchanged.
     Existing Source controls pass 83/83 and the actual PDF probe passes 4/4
     without Electron or UI. Strict live and paired mutant bindings pass.
-    Sol/Luna review of these changes and safe CI continuation is in progress.
+    Independent Sol/Luna reviews clear these changes and safe CI continuation.
+    The reviewed slice is committed and pushed on the feature ref as `7493eaa2`.
+    Existing nonpublishing CI `41404741789` completes for that exact commit.
+    Original table and scroll commands exit 0; Mermaid exits 1.
+    Both isolation checks admit independent work: original commands returned,
+    no owned Electron remains and tracked actor sources are clean.
+    About exits 0: Source 42/42, combined 20/20 and native phases 143/143.
+    The selected proof command exits 1 on `R659`'s unusable transcript;
+    this is a completion stop, not an isolation refusal.
+    The full-tab failure still lacks its actual renderer exception.
+    Existing console records are already captured but omitted by abbreviated
+    unusable-run reporting. Sol has authored retention of the actual full-tabs
+    stdout/stderr streams, with stale-file cleanup and explicit write errors.
+    Existing packaging controls pass 480 checks with two ASAR-only skips.
+    The existing test and audit artifact paths are extended; both reviewers
+    clear that CI-only change and the producer. `R598` is reanchored for the
+    audit step ID; its sensitivity preserves the exact audit failure and controls.
+    All reviewed tracked-file byte digests match after both Source proofs.
+    Missing streams remain missing, not fabricated empty evidence; a partial
+    artifact does not prove complete capture. A cleanup warning means affected
+    files may be stale; inspect the producer log before using them as evidence.
+    No new observer is added.
     About will use its existing entrypoint before the fixed proof batch.
     Completed exits, owned-process absence and clean tracked sources are required;
     ambiguous isolation refuses another actor without hiding the original failure.
@@ -627,7 +660,8 @@ section is kept here so the register has a visible edge.
     uses one real transition each way, retaining exact document restoration,
     disk, updater and sentinel checks. Source history controls pass 29/29;
     independent Sol/Luna reviews clear the correction. The actual native
-    combined route remains pending; CI `41399138663` skips ordinary acceptance.
+    combined route passes 20/20 in independent CI `41404741789`;
+    its full native phase chain passes 143/143 and exits 0.
     Wheel input and assertions are unchanged; source reporting and proof
     maintenance remain separate working-tree changes.
     Reviewed diagnostic tests stay out of the frozen `v0.12.0` tag.

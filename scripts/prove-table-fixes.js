@@ -526,6 +526,21 @@ const SEARCH_LAYOUT_CONTROLS = [
 
 const REVERTS = [
   {
+    id: "R1200",
+    what: "leave a retired active owner in the queued layout while replacement selection awaits disk",
+    file: TABS,
+    from: "          saveTabs();\n          const newActiveTab = tabs[Math.max(0, tabIndex - 1)];",
+    to: "          const newActiveTab = tabs[Math.max(0, tabIndex - 1)];",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [/^lifecycle source active close replaces queued retired refs before awaiting replacement selection$/],
+    mustPass: [
+      /^lifecycle source active close eventually persists the genuine replacement active identity$/,
+      /^lifecycle source background close remains independent of a held durable layout write$/,
+      /^lifecycle source does not hide an unexpected restored-layout failure$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
     id: "R1199", what: "continue the mutation batch after an unusable suite",
     file: path.join(ROOT, "scripts", "prove-table-fixes.js"),
     from: "    bad += 1;\n    stoppedAt = r.id;\n    break;\n  }\n  const fails = mutationFailureNames(run);",
@@ -17109,6 +17124,7 @@ const REVERTS = [
     file: CI_YML,
     from:
       "      - name: Verify every expect/mustPass regex names a live assertion\n" +
+      "        id: live_assertions\n" +
       "        run: node scripts/prove-table-fixes.js --expects",
     to:
       "      - name: Verify every revert anchor still resolves\n" +
@@ -18540,7 +18556,7 @@ const REVERTS = [
       file: path.join(ROOT, "test", "teardown-question-current-bindings.json"),
       from:
         '{\n' +
-        '  "suite": "cd45ea6a7ada09f2ffb9d1f4410dc3dad7c017d655b80d4711a32e6a485d4705",\n' +
+        '  "suite": "9d6914ba595544bd5c9ee3fe72146511ca3434ec8a71d6368a6c4eebf45dc4a2",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
@@ -18551,7 +18567,7 @@ const REVERTS = [
         '}\n',
       to:
         '{\n' +
-        '  "suite": "3380aada991c21ac795a9a357bb58f50c6c73e4591a4a698bc842608e61ac55a",\n' +
+        '  "suite": "ccaae40216d87649e5ba1305f33a4bcdf2d17519d17352c30537af437438d2ec",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
@@ -25967,9 +25983,20 @@ if (only.length && chosen.length !== only.length) {
   process.exit(2);
 }
 
+// Synthetic health checks are not child captures and must never publish diagnostic artifacts.
+const actualSuiteRuns = new WeakMap();
+const unusableTabsTranscripts = Object.freeze([
+  ["stdout", "tabs-unusable.stdout.log"], ["stderr", "tabs-unusable.stderr.log"],
+]);
 function runSuite(suite) {
   const virtual = VIRTUAL_SUITES[suite];
   const npmScript = virtual ? virtual.npmScript : suite || "test:tables";
+  if (suite === "test:tabs") {
+    for (const [, file] of unusableTabsTranscripts) {
+      try { fs.rmSync(path.join(ROOT, "ci-test-results", file), { force: true }); }
+      catch (error) { console.error("Could not clear previous unusable tabs transcript:", file, error); }
+    }
+  }
   const result = spawnSync("npm", ["run", npmScript], {
     cwd: ROOT,
     encoding: "utf8",
@@ -25985,13 +26012,34 @@ function runSuite(suite) {
   // finished. Only stdout can establish whether the suite itself ended at its
   // footer; retain stderr separately so an unterminated stdout record cannot
   // fuse with and hide a fatal stderr record.
-  return {
+  const run = {
     stdout,
     stderr,
     exitCode: typeof result.status === "number" ? result.status : 1,
     signal: typeof result.signal === "string" ? result.signal : null,
     executionError: result.error ? String(result.error) : null,
   };
+  actualSuiteRuns.set(run, { suite, stdout: result.stdout, stderr: result.stderr });
+  return run;
+}
+
+function retainUnusableTabsTranscript(run, suite) {
+  if (suite !== "test:tabs" || !actualSuiteRuns.has(run)) return;
+  const captured = actualSuiteRuns.get(run);
+  if (captured.suite !== "test:tabs") return;
+  const streams = unusableTabsTranscripts.filter(([stream]) =>
+    typeof captured[stream] === "string" || Buffer.isBuffer(captured[stream]));
+  if (!streams.length) return;
+  const directory = path.join(ROOT, "ci-test-results");
+  try { fs.mkdirSync(directory, { recursive: true }); }
+  catch (error) {
+    console.error("Could not create unusable tabs transcript directory:", error);
+    return;
+  }
+  for (const [stream, file] of streams) {
+    try { fs.writeFileSync(path.join(directory, file), captured[stream], "utf8"); }
+    catch (error) { console.error("Could not retain unusable tabs transcript:", file, error); }
+  }
 }
 
 const COMPANION_RELAY_LINE =
@@ -26260,6 +26308,7 @@ function suiteRunHealth(run, suite, { mutationRun, exactShutdownTail }) {
   } else if (run.exitCode !== 0) {
     reasons.push(`exit code ${run.exitCode}`);
   }
+  if (reasons.length) retainUnusableTabsTranscript(run, suite);
   return { ...run, transcript, healthy: reasons.length === 0, reasons };
 }
 
