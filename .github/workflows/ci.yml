@@ -68,6 +68,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
+        id: install_dependencies
         # `npm ci`, not `npm install`: it installs exactly what the lockfile
         # pins and fails if the lockfile and package.json disagree.
         run: npm ci
@@ -75,6 +76,7 @@ jobs:
       # Collect both regressions before npm test's fail-fast feature chain can
       # hide the second failure. Neither command's failure is waived.
       - name: Check Windows table editing and editor scrolling independently
+        id: native_collection
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force ci-test-results | Out-Null
@@ -144,18 +146,58 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Prove these repairs before unrelated ordinary-suite failures can hide
-      # them. The finished native collection is a prerequisite, not a waiver.
-      - name: Prove selected regression repairs sequentially
+      # Functional failures must not hide these checks. Refuse another actor
+      # if command completion, process isolation or source restoration is unknown.
+      - name: Check About history and prove selected repairs sequentially
         id: selected_proofs
+        if: ${{ !cancelled() && steps.install_dependencies.outcome == 'success' && (steps.native_collection.outcome == 'success' || steps.native_collection.outcome == 'failure') }}
         shell: pwsh
         run: |
+          "NOT-RUN" | Set-Content ci-test-results\about-status.txt
+          "NOT-RUN" | Set-Content ci-test-results\selected-proofs-status.txt
+          function Assert-NativeIsolation {
+            try {
+              $receipts = @(Get-Content ci-test-results\exit-codes.txt -ErrorAction Stop)
+              foreach ($command in @("table-cells", "editor-scroll", "mermaid", "shared-supplemental")) {
+                $completed = @($receipts | Where-Object { $_.StartsWith("$command=", [StringComparison]::Ordinal) })
+                $valuePattern = if ($command -eq "shared-supplemental") { "(?:NOT-RUN|-?\d+)" } else { "-?\d+" }
+                if ($completed.Count -ne 1 -or $completed[0] -notmatch "^$command=$valuePattern$") {
+                  throw "Native isolation refused: $command has no unique returned-command exit receipt."
+                }
+              }
+              $electronPath = [IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE "node_modules\electron\dist\electron.exe"))
+              $actors = @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" -ErrorAction Stop)
+              foreach ($actor in $actors) {
+                if ([string]::IsNullOrWhiteSpace($actor.ExecutablePath)) {
+                  throw "Native isolation refused: Electron PID $($actor.ProcessId) has an unknown executable path."
+                }
+                if ([IO.Path]::GetFullPath($actor.ExecutablePath).Equals($electronPath, [StringComparison]::OrdinalIgnoreCase)) {
+                  throw "Native isolation refused: owned Electron PID $($actor.ProcessId) is still running."
+                }
+              }
+              git diff --quiet HEAD -- src scripts test package.json package-lock.json
+              if ($LASTEXITCODE -ne 0) {
+                throw "Native isolation refused: tracked application, test or proof files are changed or unreadable."
+              }
+              "Original commands returned; no owned Electron remains; tracked actor source diff is clean." |
+                Add-Content ci-test-results\native-isolation.log
+            } catch {
+              "REFUSED: $($_.Exception.Message)" | Add-Content ci-test-results\native-isolation.log
+              throw
+            }
+          }
+          Assert-NativeIsolation
+          "STARTED" | Set-Content ci-test-results\about-status.txt
+          npm run test:updates 2>&1 | Tee-Object -FilePath ci-test-results\about.log
+          $aboutExit = $LASTEXITCODE
+          "exit=$aboutExit" | Set-Content ci-test-results\about-status.txt
+          Assert-NativeIsolation
           "STARTED" | Set-Content ci-test-results\selected-proofs-status.txt
           node scripts/prove-table-fixes.js R68 R434 R445 R1025 R659 2>&1 |
             Tee-Object -FilePath ci-test-results\selected-proofs.log
           $proofExit = $LASTEXITCODE
           "exit=$proofExit" | Set-Content ci-test-results\selected-proofs-status.txt
-          exit $proofExit
+          if ($aboutExit -ne 0 -or $proofExit -ne 0) { exit 1 }
 
       - name: Retain selected regression proof evidence
         if: ${{ always() && steps.selected_proofs.outcome != '' && steps.selected_proofs.outcome != 'skipped' }}
@@ -163,8 +205,12 @@ jobs:
         with:
           name: windows-regression-proofs
           path: |
+            ci-test-results/about-status.txt
+            ci-test-results/about.log
+            ci-test-results/native-isolation.log
             ci-test-results/selected-proofs-status.txt
             ci-test-results/selected-proofs.log
+            tmp/about-updates/
           if-no-files-found: error
           retention-days: 7
 

@@ -18540,8 +18540,8 @@ const REVERTS = [
       file: path.join(ROOT, "test", "teardown-question-current-bindings.json"),
       from:
         '{\n' +
-        '  "suite": "1bf98cae176fa4b47f2524aed0673748a7aefdefde09e62899d9304b1d560929",\n' +
-        '  "main": "9eafa7bb8a5f112db4785b6bc196825f5ffaa0d37c78b51e5a1edb78705ba839",\n' +
+        '  "suite": "cd45ea6a7ada09f2ffb9d1f4410dc3dad7c017d655b80d4711a32e6a485d4705",\n' +
+        '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
         '  "closedRegistration": "0b1bc610dc956875a2bd47067a3ade856f8d43c8c23a029064d425350b04d606",\n' +
@@ -18551,8 +18551,8 @@ const REVERTS = [
         '}\n',
       to:
         '{\n' +
-        '  "suite": "608cd43ba7c3acfe0652e6c407e3728b8f03477f3e99f5ae3d0041150b5ee0d7",\n' +
-        '  "main": "9eafa7bb8a5f112db4785b6bc196825f5ffaa0d37c78b51e5a1edb78705ba839",\n' +
+        '  "suite": "3380aada991c21ac795a9a357bb58f50c6c73e4591a4a698bc842608e61ac55a",\n' +
+        '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
         '  "closedRegistration": "0b1bc610dc956875a2bd47067a3ade856f8d43c8c23a029064d425350b04d606",\n' +

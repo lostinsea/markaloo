@@ -15,18 +15,189 @@ function check(name, operation) {
   checks++;
   console.log("PASS " + name);
 }
-function between(start, end) {
-  const first = source.indexOf(start);
-  assert(first >= 0 && source.indexOf(start, first + start.length) === -1, start);
-  const last = source.indexOf(end, first + start.length);
+function between(start, end, input = source) {
+  const first = input.indexOf(start);
+  assert(first >= 0 && input.indexOf(start, first + start.length) === -1, start);
+  const last = input.indexOf(end, first + start.length);
   assert(last > first, end);
-  return source.slice(first, last);
+  return input.slice(first, last);
 }
 function compile(code, context) {
   return vm.runInNewContext("(" + code.trim() + ")", context);
 }
 
+async function layoutDiagnosticContracts() {
+  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const actual = between("function validSessionAnchor(anchor) {",
+    "\nfunction bootstrapDocumentSession(", main) +
+    between("function admissionScopeIsCurrent(record) {",
+      "\nfunction sweepRevokedAdmissionOwners()", main) +
+    between('ipcMain.handle("save-document-session-layout",',
+      "\nfunction sameDiskVersion(", main);
+  function fixture() {
+    const sender = { isDestroyed: () => false,
+      mainFrame: { isDestroyed: () => false, frameTreeNodeId: 7 } };
+    const entry = { id: "a".repeat(32), filePath: path.join(__dirname, "layout-fixture.md"),
+      provenance: "native-open", scrollPosition: 0, anchor: null };
+    const ref = "b".repeat(64);
+    const record = { sender, frameTreeNodeId: 7, rendererGeneration: 7,
+      pageSession: "layout-page", descriptor: { entryId: entry.id } };
+    const logs = [], writes = [], handlers = new Map();
+    const context = vm.createContext({
+      console: { error: (...args) => logs.push(args) },
+      ipcMain: { handle: (name, handler) => {
+        assert.equal(name, "save-document-session-layout");
+        assert.equal(handlers.size, 0);
+        handlers.set(name, handler);
+      } },
+      mainWindow: { webContents: sender }, approvalRendererState: "ready",
+      approvalRendererGeneration: 7, approvalRendererPageSession: "layout-page",
+      documentSessionFailure: null,
+      documentSessionManifest: { entries: [entry], approvedEntries: [entry], activeEntryId: entry.id },
+      MAX_SESSION_DOCUMENTS: 128, documentAdmissions: new Map([[ref, record]]),
+      unavailableSessionEntries: new Set(), protectedSessionEntries: new Set(),
+      isApprovalSender: event => event.sender === sender,
+      persistLiveDocumentSession: async () => { writes.push(context.documentSessionManifest); },
+    });
+    vm.runInContext(actual, context);
+    const initial = context.documentSessionManifest;
+    const layout = { id: entry.id, documentRef: ref, scrollPosition: 23,
+      anchor: { scrollTop: 21, text: "PRIVATE HEADING", ordinal: 2, delta: -3 } };
+    return { context, sender, entry, ref, record, logs, writes, initial, layout,
+      save: data => handlers.get("save-document-session-layout")({ sender }, data),
+      data: { entries: [layout], activeEntryId: entry.id } };
+  }
+  async function refusal(state) {
+    await assert.rejects(state.save(state.data),
+      error => error.message === "Document layout contains an unknown or invalid entry");
+    assert.equal(state.context.documentSessionManifest, state.initial);
+    assert.equal(state.writes.length, 0);
+    assert.equal(state.logs.length, 1);
+    assert.equal(state.logs[0][0], "Document layout rejected entry:");
+    assert.equal(state.logs[0].length, 2);
+    return JSON.parse(state.logs[0][1]);
+  }
+  const valid = fixture();
+  assert.equal(await valid.save(valid.data), true);
+  check("actual Main layout accepts current admissions without rejection diagnostics", () => {
+    assert.equal(valid.logs.length, 0);
+    assert.equal(valid.writes.length, 1);
+    assert.equal(valid.writes[0].entries[0].scrollPosition, 23);
+    assert.deepEqual(JSON.parse(JSON.stringify(valid.writes[0].entries[0].anchor)), valid.layout.anchor);
+  });
+  const retired = fixture();
+  retired.record.retired = true;
+  const pending = retired.save(retired.data);
+  assert.equal(retired.logs.length, 1, "rejection is observed synchronously, before any settlement");
+  retired.context.documentAdmissions.clear();
+  retired.context.approvalRendererGeneration += 1;
+  await assert.rejects(pending,
+    error => error.message === "Document layout contains an unknown or invalid entry");
+  check("actual Main layout captures retired admission at rejection before later cleanup", () => {
+    const diagnostic = JSON.parse(retired.logs[0][1]);
+    assert.deepEqual(diagnostic.admission, { rawExists: true, retired: true, currentScope: true,
+      accepted: false, senderMatches: true, entryIdMatches: true });
+    assert.equal(diagnostic.rendererGeneration, 7);
+    assert.equal(diagnostic.pageSession, "layout-page");
+    assert.equal(diagnostic.approvedPath, retired.entry.filePath);
+    assert.equal(retired.context.documentSessionManifest, retired.initial);
+    assert.equal(retired.writes.length, 0);
+  });
+  for (const kind of ["approval", "raw-admission"]) {
+    const state = fixture();
+    if (kind === "approval") state.context.documentSessionManifest.approvedEntries = [];
+    else state.context.documentAdmissions.clear();
+    const diagnostic = await refusal(state);
+    check("actual Main layout distinguishes missing " + kind, () => {
+      assert.equal(diagnostic.approvedEntryExists, kind !== "approval");
+      assert.equal(diagnostic.admission.rawExists, kind === "approval");
+      assert.equal(diagnostic.admission.retired, kind === "approval" ? false : null);
+      assert.equal(diagnostic.admission.currentScope, kind === "approval");
+      assert.equal(diagnostic.admission.accepted, kind === "approval");
+      assert.equal(diagnostic.admission.entryIdMatches, false);
+    });
+  }
+  for (const kind of ["generation", "page", "sender", "entry-ID"]) {
+    const state = fixture();
+    if (kind === "generation") state.record.rendererGeneration = 6;
+    if (kind === "page") state.record.pageSession = "old-page";
+    if (kind === "sender") state.record.sender = { ...state.sender };
+    if (kind === "entry-ID") state.record.descriptor.entryId = "c".repeat(32);
+    const diagnostic = await refusal(state);
+    check("actual Main layout diagnoses mismatched " + kind, () => {
+      assert.equal(diagnostic.admission.currentScope, kind === "entry-ID");
+      assert.equal(diagnostic.admission.accepted, kind === "entry-ID");
+      assert.equal(diagnostic.admission.senderMatches, kind !== "sender");
+      assert.equal(diagnostic.admission.entryIdMatches, kind !== "entry-ID");
+      assert.equal(diagnostic.rendererGeneration, 7);
+      assert.equal(diagnostic.pageSession, "layout-page");
+      assert.equal(diagnostic.scrollValid, true);
+      assert.equal(diagnostic.anchorValid, true);
+    });
+  }
+  const duplicate = fixture();
+  duplicate.data.entries.push({ ...duplicate.layout });
+  const duplicateDiagnostic = await refusal(duplicate);
+  check("actual Main layout reports the duplicate entry index without adopting partial layout", () => {
+    assert.equal(duplicateDiagnostic.index, 1);
+    assert.equal(duplicateDiagnostic.duplicate, true);
+    assert.equal(duplicateDiagnostic.approvedEntryExists, true);
+    assert.equal(duplicateDiagnostic.admission.accepted, true);
+  });
+  for (const [kind, value] of [["scroll", NaN], ["scroll", Infinity], ["scroll", -1],
+    ["anchor", undefined], ["anchor", []], ["anchor", { scrollTop: -1 }],
+    ["anchor", "unexpected-anchor-string"]]) {
+    const state = fixture();
+    state.layout[kind === "scroll" ? "scrollPosition" : "anchor"] = value;
+    const diagnostic = await refusal(state);
+    check("actual Main layout diagnoses invalid " + kind + " " + (Array.isArray(value) ? "array" : String(value)), () => {
+      assert.equal(diagnostic.scrollValid, kind !== "scroll");
+      assert.equal(diagnostic.anchorValid, kind !== "anchor");
+      if (kind === "scroll") {
+        assert.equal(diagnostic.entry.scrollPosition, Number.isFinite(value) ? value : String(value));
+      } else if (typeof value === "string") {
+        assert.deepEqual(diagnostic.entry.anchor, { type: "string", length: value.length });
+        assert(!state.logs[0][1].includes(value));
+      }
+    });
+  }
+  const bounded = fixture(), secret = "PRIVATE DOCUMENT CONTENT";
+  bounded.layout.id = "x".repeat(10000);
+  bounded.layout.documentRef = "y".repeat(10000);
+  bounded.layout.content = secret;
+  bounded.layout.extra = { toJSON() { throw new Error("Unknown layout field was serialized"); } };
+  bounded.layout.scrollPosition = { toJSON() { throw new Error("Invalid scalar was serialized"); } };
+  bounded.layout.anchor.text = secret.repeat(10000);
+  bounded.layout.anchor.extra = bounded.layout.extra;
+  const boundedDiagnostic = await refusal(bounded);
+  check("actual Main layout bounds diagnostics and excludes document text and unknown fields", () => {
+    assert.equal(boundedDiagnostic.entry.id.prefix.length, 128);
+    assert.equal(boundedDiagnostic.entry.id.length, 10000);
+    assert.equal(boundedDiagnostic.entry.documentRef.prefix.length, 128);
+    assert.equal(boundedDiagnostic.entry.documentRef.length, 10000);
+    assert.deepEqual(boundedDiagnostic.entry.scrollPosition, { type: "object" });
+    assert.deepEqual(boundedDiagnostic.entry.anchor.text,
+      { type: "string", length: bounded.layout.anchor.text.length });
+    assert.equal(boundedDiagnostic.scrollValid, false);
+    assert.equal(boundedDiagnostic.anchorValid, true);
+    assert.deepEqual(Object.keys(boundedDiagnostic.entry).sort(), ["anchor", "documentRef", "id", "scrollPosition"]);
+    assert.deepEqual(Object.keys(boundedDiagnostic.entry.anchor).sort(), ["delta", "ordinal", "scrollTop", "text"]);
+    assert(!bounded.logs[0][1].includes(secret));
+    assert(bounded.logs[0][1].length < 2048);
+  });
+  const notReady = fixture();
+  notReady.context.approvalRendererState = "loading";
+  await assert.rejects(notReady.save(notReady.data), error => error.message === "Document layout refused");
+  check("actual Main layout preflight refusal remains silent and cannot persist", () => {
+    assert.equal(notReady.logs.length, 0);
+    assert.equal(notReady.writes.length, 0);
+    assert.equal(notReady.context.documentSessionManifest, notReady.initial);
+  });
+}
+
 async function main() {
+  await layoutDiagnosticContracts();
   const filePath = path.join(__dirname, "fixture.md"), generation = 7;
   const fixture = { filePath, heading: "Fixture", body: "# Fixture\n" };
   const action = { fixture, start: { entries: 0 }, settled: true, error: null };

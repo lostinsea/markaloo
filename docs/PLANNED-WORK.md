@@ -566,6 +566,24 @@ section is kept here so the register has a visible edge.
     Independent Sol/Luna reviews clear the correction and workflow change.
     `R1198`/`R1199` sensitivity proves the guards with exact failures and
     surviving controls. All tracked-file byte digests match after restoration.
+    Cleared changes are committed and pushed on the feature ref as `1673699f`.
+    Existing nonpublishing CI `41399138663` completes for that commit:
+    table and scroll exit 0; Mermaid exits 1 on a genuine session-layout
+    persistence error after its functional checks. The rejected entry is unknown.
+    Success-only ordering skips the selected proofs, About and anchors;
+    none of those skipped checks is passed or proven.
+    Failure-only Main diagnostics capture the rejected entry and admission state
+    before later cleanup; the original validator, throw and sentinel are unchanged.
+    The cause remains unknown until hosted evidence identifies the rejected entry.
+    Astra also confirms an introduced PDF-probe dependency defect:
+    extracted notification code uses a factory the probe never initializes.
+    Sol loads the actual module and factory; the original assertions are unchanged.
+    Existing Source controls pass 83/83 and the actual PDF probe passes 4/4
+    without Electron or UI. Strict live and paired mutant bindings pass.
+    Sol/Luna review of these changes and safe CI continuation is in progress.
+    About will use its existing entrypoint before the fixed proof batch.
+    Completed exits, owned-process absence and clean tracked sources are required;
+    ambiguous isolation refuses another actor without hiding the original failure.
     Current anchors resolve, which proves anchor availability only.
   - User requires any introduced app or test defect fixed before release.
     No test waiver or new focused CI option is authorized. The prior release's
@@ -609,7 +627,7 @@ section is kept here so the register has a visible edge.
     uses one real transition each way, retaining exact document restoration,
     disk, updater and sentinel checks. Source history controls pass 29/29;
     independent Sol/Luna reviews clear the correction. The actual native
-    combined route remains pending.
+    combined route remains pending; CI `41399138663` skips ordinary acceptance.
     Wheel input and assertions are unchanged; source reporting and proof
     maintenance remain separate working-tree changes.
     Reviewed diagnostic tests stay out of the frozen `v0.12.0` tag.

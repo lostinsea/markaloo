@@ -3159,13 +3159,55 @@ ipcMain.handle("save-document-session-layout", async (event, data) => {
   }
   const known = new Map(documentSessionManifest.approvedEntries.map(entry => [entry.id, entry]));
   const seen = new Set();
-  const entries = data.entries.map(layout => {
+  const entries = data.entries.map((layout, index) => {
     const entry = known.get(layout?.id);
     const admission = admittedDocumentReference(layout?.documentRef);
     if (!entry || !admission || admission.sender !== event.sender ||
         admission.descriptor.entryId !== entry.id ||
         seen.has(entry.id) || !Number.isFinite(layout.scrollPosition) ||
         layout.scrollPosition < 0 || !validSessionAnchor(layout.anchor)) {
+      const rawAdmission = documentAdmissions.get(layout?.documentRef);
+      const describe = (value, limit = 128) => {
+        if (typeof value === "string") return value.length <= limit ? value
+          : { prefix: value.slice(0, limit), length: value.length };
+        if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
+        if (value === null || typeof value === "boolean") return value;
+        return { type: Array.isArray(value) ? "array" : typeof value };
+      };
+      const anchor = layout?.anchor;
+      console.error("Document layout rejected entry:", JSON.stringify({
+        index,
+        entry: {
+          id: describe(layout?.id),
+          documentRef: describe(layout?.documentRef),
+          scrollPosition: describe(layout?.scrollPosition),
+          anchor: anchor && typeof anchor === "object" && !Array.isArray(anchor)
+            ? {
+              scrollTop: describe(anchor.scrollTop),
+              // Heading text can contain document content; its type/length suffice here.
+              text: typeof anchor.text === "string"
+                ? { type: "string", length: anchor.text.length } : describe(anchor.text),
+              ordinal: describe(anchor.ordinal),
+              delta: describe(anchor.delta),
+            } : typeof anchor === "string"
+              ? { type: "string", length: anchor.length } : describe(anchor),
+        },
+        approvedEntryExists: Boolean(entry),
+        duplicate: Boolean(entry && seen.has(entry.id)),
+        admission: {
+          rawExists: Boolean(rawAdmission),
+          retired: rawAdmission ? Boolean(rawAdmission.retired) : null,
+          currentScope: Boolean(admissionScopeIsCurrent(rawAdmission)),
+          accepted: Boolean(admission),
+          senderMatches: Boolean(rawAdmission && rawAdmission.sender === event.sender),
+          entryIdMatches: Boolean(entry && rawAdmission?.descriptor.entryId === entry.id),
+        },
+        scrollValid: Number.isFinite(layout?.scrollPosition) && layout.scrollPosition >= 0,
+        anchorValid: Boolean(validSessionAnchor(anchor)),
+        rendererGeneration: approvalRendererGeneration,
+        pageSession: describe(approvalRendererPageSession),
+        approvedPath: describe(entry?.filePath, 4096),
+      }));
       throw new Error("Document layout contains an unknown or invalid entry");
     }
     seen.add(entry.id);

@@ -15035,6 +15035,7 @@ function popupPdfRendererRegions(source) {
 }
 
 async function probePopupPdfConsumer(rendererSource, succeed = false) {
+  const reloadRequestSource = fs.readFileSync(path.join(__dirname, "..", "src", "reload-request.js"), "utf8");
   const regions = popupPdfRendererRegions(rendererSource);
   // Fault the transport below the real frozen API, never the isolated page.
   const run = runPreloadUnitProbe(`(async function(host, succeed) {
@@ -15078,6 +15079,8 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
       }
     }
     try {
+      ${reloadRequestSource}
+      const reloadRequests = window.FoliaReloadRequest.create({ document, console, setTimeout });
       ${regions}
       if (channels.length !== 1 || typeof channels[0].onmessage !== 'function' ||
           warnings.length || preloadTransport.listenerCount('pdf-export-result') !== 1) {
