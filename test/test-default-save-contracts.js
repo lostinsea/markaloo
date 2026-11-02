@@ -1530,13 +1530,773 @@ async function questionObserverContracts() {
   }
 }
 
+const lazyHelpers = between(source, "async function nativeInactiveFixtureReceipts(",
+  "async function runEarlyNativeLargeTabGuard(");
+const lazyCaller = between(source, '  const fileBig = path.join(dir, "guard-big.md");',
+  "  // Vacuity guards.");
+const lazyChecks = between(source, "  // Vacuity guards.",
+  "  // ---- Scenario 11:");
+const inactiveReloadCaller = between(source,
+  '  await clearFixtureTabs("reload-ownership preflight");',
+  "  const reloadDisk = fs.readFileSync(fileA");
+const exactLargeReceiptSource = between(source, "function exactLargeRenderReceipt(",
+  "async function withEarlyLargeRenderFault(");
+const answerLargeSource = between(source, "async function answerLargeRenderQuestion(",
+  "async function runLargeRenderBoundary(");
+
+function lazyNativeFixture(options = {}) {
+  const { EventEmitter } = require("node:events");
+  const isDeepStrictEqual = require("node:util").isDeepStrictEqual;
+  const root = path.join(__dirname, "source-native-lazy-fixtures");
+  const files = new Map(), admissions = new Map(), grants = new Map();
+  const owners = [], tabs = [], calls = [], restores = [], closed = [];
+  const state = { renderer: "ready", pendingId: 0, rendererGeneration: 3,
+    rendererPageSession: "source-native-session" };
+  const control = { active: null, viewer: "", path: null, question: null,
+    choiceRequested: false, choice: deferred(), terminal: [], hostReads: [],
+    constructorCalls: [], selections: [], held: [], actorFailures: [], questionAnswers: [] };
+  const win = { webContents: new EventEmitter() };
+  win.webContents.id = 19;
+  win.webContents.mainFrame = {};
+  const originalSend = win.webContents.send = (...args) => calls.push(["forwarded", ...args]);
+  const chooserOptions = { properties: ["openFile", "multiSelections"], filters: ["source chooser"] };
+  const dialog = { showOpenDialog: async () => { throw new Error("Unowned native chooser"); } };
+  const originalChooser = dialog.showOpenDialog;
+  const dialogSafety = { expected: null };
+  const ownedDialogFile = path.join(root, "dialog.html"), ownedDialogUrl = "source://owned-dialog";
+  const sourceId = require("node:url").pathToFileURL(path.resolve(__dirname, "../src/custom-tabs.js")).href;
+  let sequence = 0, largeObservation, nativeObserver;
+  const receipt = filePath => {
+    const ref = (++sequence).toString(16).padStart(64, "0");
+    const content = files.get(filePath);
+    const diskVersion = { dev: 1, ino: sequence, size: Buffer.byteLength(content),
+      mtimeMs: 100 + sequence, ctimeMs: 200 + sequence };
+    const entry = { path: filePath, content, modifiedTime: diskVersion.mtimeMs, diskVersion,
+      document: { ref, logicalPath: filePath, readTarget: filePath,
+        pathKey: filePath, diskVersion } };
+    admissions.set(ref, entry);
+    return entry;
+  };
+  const identity = tab => tab && ({ pageSession: state.rendererPageSession,
+    rendererGeneration: state.rendererGeneration, tabId: tab.id,
+    documentGeneration: tab.id, pathKey: tab.filePath, documentRef: tab.ref });
+  const recordQuestion = request => {
+    const record = { owner: true, frame: true, sender: win.webContents,
+      senderFrame: win.webContents.mainFrame, senderId: 19, generation: 3,
+      pageSession: state.rendererPageSession, rawKeys: ["name", "seconds"], raw: request,
+      settled: options.earlyQuestionReply === true && control.question === null };
+    largeObservation.records.push(record);
+    return record;
+  };
+  class Host extends EventEmitter {
+    constructor(request, record, bridge) {
+      super();
+      this.destroyed = false;
+      this.request = request; this.record = record; this.bridge = bridge;
+      const choose = choice => {
+        record.settled = true; record.reply = choice === "0";
+        const producer = dialogSafety.expected.producerGate;
+        producer.resolve({ displayed: true, failed: false, emergency: false,
+          cause: "choice", response: Number(choice) });
+        bridge.resolve(choice === "0");
+        this.destroy();
+      };
+      const document = {
+        activeElement: { dataset: { dialogChoice: "1" } },
+        getElementById: id => ({
+          appMessageDialog: { open: true }, appMessageTitle: { textContent: "Large document" },
+          appMessageText: { textContent: `"${request.name}" may take about ${request.seconds} seconds to display.` },
+          appMessageDetail: { textContent: "Markaloo may not respond until the document finishes opening." },
+        })[id],
+        querySelectorAll: () => [{ textContent: "Open anyway" }, { textContent: "Cancel" }],
+        querySelector: selector => ({ click: () => choose(selector.includes('"0"') ? "0" : "1") }),
+      };
+      const popup = vm.createContext({ document });
+      this.webContents = {
+        getURL: () => ownedDialogUrl,
+        executeJavaScript: async script => {
+          if (script.includes(".click(); true")) {
+            control.choiceRequested = true;
+            await control.choice.promise;
+          }
+          const result = vm.runInContext(script, popup);
+          if (script.includes("title: document.getElementById('appMessageTitle')")) {
+            control.constructorBoundary = {
+              recordSettled: record.settled,
+              producerPending: control.constructorProducer.settled === false,
+              terminalCount: control.terminal.length,
+              permissionCalls: dialogSafety.expected.calls,
+              metadata: clone(result),
+            };
+          }
+          return result;
+        },
+      };
+    }
+    loadFile() { return Promise.resolve(); }
+    getParentWindow() { return win; }
+    isDestroyed() { return this.destroyed; }
+    isVisible() { return !this.destroyed; }
+    destroy() {
+      if (!this.destroyed) {
+        this.destroyed = true;
+        if (!Object.hasOwn(this.record, "reply")) {
+          this.record.settled = true; this.record.reply = false;
+        }
+        dialogSafety.expected?.producerGate.resolve({ displayed: true, failed: false,
+          emergency: false, cause: "host-closed", response: 1 });
+        this.bridge.resolve(false);
+        this.emit("closed");
+      }
+    }
+  }
+  const originalLoad = Host.prototype.loadFile;
+  const page = {
+    FoliaFileHelpers: require(path.join(producerRoot, "file-helpers.js")),
+    getReloadRequestSession: () => state.rendererPageSession,
+    document: { getElementById: id => id === "viewer" ? { textContent: control.viewer } : null },
+  };
+  const accepted = new Set();
+  const switchToTab = async id => {
+    const tab = tabs.find(candidate => candidate.id === id);
+    const verdict = page.FoliaFileHelpers.isLargeDocument(tab.content);
+    if (verdict.large && !accepted.has(id) && control.active !== id) {
+      const request = { name: path.basename(tab.filePath), seconds: Math.round(verdict.estimatedMs / 1000) };
+      const record = recordQuestion(request), bridge = deferred();
+      if (control.question) {
+        control.question.record = record;
+        control.question.bridge = bridge;
+      } else {
+        const expected = dialogSafety.expected;
+        assert.ok(expected, "Constructor must use the existing native owned-question seam");
+        expected.calls++;
+        expected.producerGate = deferred();
+        expected.producer = expected.producerGate.promise;
+        const producer = control.constructorProducer = { settled: false };
+        expected.producer.then(() => { producer.settled = true; });
+        const host = new Host(request, record, bridge);
+        await host.loadFile(ownedDialogFile);
+      }
+      if (!await bridge.promise) {
+        const detail = { message: "[CustomTabs] Large tab switch declined: " + request.name,
+          sourceId: options.wrongTerminalSource ? "source://foreign.js" : sourceId, lineNumber: 2642 };
+        control.terminal.push(detail);
+        if (!options.missingTerminal) win.webContents.emit("console-message", detail);
+        return;
+      }
+      accepted.add(id);
+    }
+    control.active = id; control.path = tab.filePath; control.viewer = tab.content;
+    page.currentFilePath = tab.filePath;
+    const selection = { channel: "select-file-tracking", replies: 1,
+      data: { owner: identity(tab) }, reply: { accepted: true } };
+    control.selections.push(selection);
+    nativeObserver?.records.push(selection);
+    return true;
+  };
+  page.CustomTabs = {
+    createTab(filePath, content, opts = {}) {
+      control.constructorCalls.push({ filePath, content, opts });
+      const admitted = admissions.get(opts.documentAdmission?.ref);
+      if (!admitted || admitted.path !== filePath || admitted.content !== content ||
+          opts.modifiedTime !== admitted.modifiedTime ||
+          !isDeepStrictEqual(clone(opts.diskVersion), clone(admitted.diskVersion)) ||
+          opts.confirmed || opts.verifiedDiskAdoption || opts.reservedIdentity ||
+          opts.deferOwnerRegistration) return null;
+      const tab = { id: tabs.length + 1, filePath, content, originalContent: content,
+        hasUnsavedChanges: false, ref: admitted.document.ref };
+      tabs.push(tab);
+      owners.push(identity(tab));
+      if (opts.activate !== false) {
+        const work = switchToTab(tab.id);
+        work.catch(error => control.actorFailures.push(error));
+      }
+      return tab;
+    },
+    getTabs: () => tabs,
+    getActiveTabId: () => control.active,
+    getActiveTab: () => tabs.find(tab => tab.id === control.active),
+    getDocumentIdentityForTab: id => identity(tabs.find(tab => tab.id === id)),
+    switchToTab,
+  };
+  page.folia = Object.freeze({
+    openFileDialog: () => {
+      const work = (async () => {
+        const result = await dialog.showOpenDialog(win, chooserOptions);
+        const primary = receipt(result.filePaths[0]);
+        const extraReadGrants = result.filePaths.slice(1).map(filePath => {
+          const grant = "actual-grant-" + filePath;
+          grants.set(grant, filePath);
+          return grant;
+        });
+        if (options.wrongPrimaryBody) primary.content = "wrong physical body";
+        if (options.missingAdmission) delete primary.document;
+        win.webContents.send("file-opened", { ...primary, allPaths: result.filePaths, extraReadGrants });
+      })();
+      control.held.push(work);
+    },
+    readDialogExtra: request => {
+      assert.equal(request.pageSession, state.rendererPageSession);
+      assert.equal(request.rendererGeneration, state.rendererGeneration);
+      const filePath = grants.get(request.grant);
+      assert.ok(filePath, "An actual one-use native extra grant is required");
+      grants.delete(request.grant);
+      const entry = receipt(filePath);
+      if (options.wrongExtraPath) entry.document.logicalPath = root;
+      return entry;
+    },
+    getVersion: () => "source-only",
+  });
+  page.window = page;
+  const context = vm.createContext(page);
+  const exec = async script => {
+    const result = await vm.runInContext(script, context);
+    if (options.ownerDrift && control.choiceRequested && !control.question) state.rendererGeneration++;
+    return result;
+  };
+  const waitUntil = async predicate => {
+    for (let turnIndex = 0; turnIndex < 20; turnIndex++) {
+      if (await predicate()) return true;
+      await turn();
+    }
+    return false;
+  };
+  const replaceMethod = (object, key, replacement) => {
+    const previous = object[key];
+    object[key] = replacement;
+    return () => { restores.push(key); object[key] = previous; };
+  };
+  const scope = {
+    fs: { readFileSync(filePath, encoding) {
+      assert.equal(encoding, "utf8"); assert.ok(files.has(filePath));
+      control.hostReads.push(filePath); return files.get(filePath);
+    } },
+    path, __dirname, require, isDeepStrictEqual, BrowserWindow: Host, dialog,
+    ownedDialogFile, ownedDialogUrl, dialogSafety, replaceMethod, waitUntil,
+    boundedDialogWork: async work => await work,
+    __shutdown: { state: () => ({ ...state }),
+      documentAdmissionIsCurrent: ref => admissions.has(ref) && !options.revokedAdmission,
+      documentSessionState: () => ({ owners }) },
+    observeEarlyLargeRender: () => {
+      largeObservation = { target: win.webContents, frame: win.webContents.mainFrame,
+        generation: 3, pageSession: state.rendererPageSession, records: [], unexpected: [],
+        restore() { restores.push("large observer"); } };
+      return largeObservation;
+    },
+    observeNativeDocumentPorts: () => {
+      nativeObserver = { records: [], restore() { restores.push("selection observer"); } };
+      return nativeObserver;
+    },
+    closeOwnedFixtureTabs: async (_exec, _label, { tabIds }) => {
+      closed.push(...tabIds);
+      if (options.cleanupFailure) throw new Error("source cleanup sentinel");
+    },
+  };
+  const compiled = vm.compileFunction(exactLargeReceiptSource + answerLargeSource + lazyHelpers +
+    "\nreturn { nativeInactiveFixtureReceipts, runNativeLazyTabSizeGuard };", Object.keys(scope))(...Object.values(scope));
+  const question = async (choice, _failLoad, _request, operation) => {
+    control.question = {};
+    const answer = { settled: false };
+    const work = exec(operation).then(value => {
+      if (options.switchConsumerFailure && choice === "1") {
+        throw new Error("original renderer switch failed after its native reply");
+      }
+      if (options.emptySwitchConsumerFailure && choice === "1") throw "";
+      if (options.falseCancelValue && choice === "1") return false;
+      if (options.undefinedProceedValue && choice === "0") return undefined;
+      return value;
+    }).then(
+      value => { answer.value = value; answer.settled = true; },
+      error => { answer.error = String(error.message || error); answer.settled = true; });
+    await turn();
+    const pending = !answer.settled && !control.question.record.settled;
+    control.question.record.settled = true;
+    control.question.record.reply = choice === "0";
+    control.question.bridge.resolve(choice === "0");
+    await work;
+    if (options.missingSwitchResolvedValue && choice === "1") delete answer.value;
+    control.questionAnswers.push({ choice, nativeReply: control.question.record.reply, answer });
+    control.question = null;
+    return { calls: 1, metadata: { pendingBeforeChoice: pending }, answer };
+  };
+  const write = (filePath, body) => files.set(filePath, body);
+  const run = () => vm.compileFunction("return (async () => {\n" + lazyCaller + "\nreturn guard;\n})();",
+    ["path", "dir", "write", "runNativeLazyTabSizeGuard", "win", "exec",
+      "largeRenderQuestion", "expectedChooserOptions", "switchToTabAndWait"])(
+      path, root, write, compiled.runNativeLazyTabSizeGuard, win, exec, question, chooserOptions, switchToTab);
+  return { run, compiled, control, page, exec, scope, root, files, owners, closed, restores,
+    intact: () => win.webContents.send === originalSend && dialog.showOpenDialog === originalChooser &&
+      Host.prototype.loadFile === originalLoad && dialogSafety.expected === null,
+    choice: () => control.choice.resolve(), win, chooserOptions, switchToTab, write };
+}
+
+function replacementNativeFixture(options = {}) {
+  const filePath = path.join(__dirname, "source-replacement.md");
+  const body = options.body ?? "F22_DELETED_A_BASE\r\n";
+  const replacementBody = options.replacementBody ?? "F22_DELETED_A_EXTERNAL_REPLACEMENT\r\n";
+  const originalOwner = { pageSession: "replacement-session", rendererGeneration: 3,
+    tabId: 7, documentGeneration: 9, pathKey: filePath, documentRef: "a".repeat(64) };
+  let owner = { ...originalOwner }, currentBody = body;
+  const pending = deferred(), calls = [], records = [];
+  const control = { confirms: 0, cancels: 0, restores: 0, nativeCalls: 0,
+    initialReads: 0, originalWork: null, request: null, adoptionRestores: 0 };
+  const elements = {
+    reloadDocumentDialog: { open: false, matches() { return this.open; } },
+    reloadDocumentTitle: { textContent: "Reload document?" },
+    reloadDocumentName: { textContent: path.basename(filePath) },
+    reloadDocumentReason: { textContent: "The file disappeared and later reappeared with the same name. Are you sure you want to reload it?" },
+    reloadDocumentCancel: { textContent: "Cancel", autofocus: true, click() {
+      control.cancels++; elements.reloadDocumentDialog.open = false; pending.resolve(false);
+    } },
+    reloadDocumentConfirm: { textContent: "Reload from disk", listeners: [],
+      addEventListener(_name, listener) { this.listeners.push(listener); },
+      click() {
+        control.confirms++; this.listeners.forEach(listener => listener());
+        elements.reloadDocumentDialog.open = false; pending.resolve(true);
+      } },
+  };
+  const document = { getElementById: id => elements[id], activeElement: null };
+  const originalConfirm = request => {
+    calls.push(request);
+    elements.reloadDocumentDialog.open = true;
+    document.activeElement = elements.reloadDocumentCancel;
+    return pending.promise;
+  };
+  const page = {
+    currentFilePath: filePath, originalMarkdown: body,
+    getReloadRequestSession: () => originalOwner.pageSession,
+    CustomTabs: { getActiveTabId: () => 7,
+      getDocumentIdentityForTab: () => ({ ...owner }),
+      getActiveDocumentIdentity: () => ({ ...owner }),
+      confirmDocumentReplacement: originalConfirm },
+    folia: Object.freeze({}),
+    document,
+  };
+  if (options.holdAdoption) {
+    page.__f22ReplacementAdoptionProbe = {
+      held: [], enabled: true, restored: false,
+      restore() {
+        control.adoptionRestores++;
+        this.enabled = false;
+        this.restored = true;
+      },
+    };
+  }
+  page.window = page;
+  const context = vm.createContext(page);
+  const reload = () => {
+    control.nativeCalls++;
+    const request = control.request = {
+      id: "c".repeat(32), reason: "file-reappeared", expiresAt: Date.now() + 10000,
+      fileName: path.basename(filePath), pageSession: originalOwner.pageSession,
+      rendererGeneration: originalOwner.rendererGeneration, owner: { ...originalOwner },
+    };
+    const record = { channel: "commit-document-disk-adoption", replies: 1,
+      data: { filePath, oldOwner: { ...originalOwner } },
+      reply: { accepted: false, why: "confirmation-required", confirmation: clone(request) } };
+    if (options.wrongMainOwner) record.data.oldOwner.documentRef = "b".repeat(64);
+    if (options.wrongMainDescriptor) record.reply.confirmation.id = "d".repeat(32);
+    if (options.duplicateReply) record.replies = 2;
+    if (!options.missingReceipt) records.push(record);
+    const work = page.CustomTabs.confirmDocumentReplacement(request);
+    control.originalWork = work.then(approved => {
+      if (approved) {
+        currentBody = page.originalMarkdown = replacementBody;
+        const probe = page.__f22ReplacementAdoptionProbe;
+        if (probe?.enabled) {
+          for (const channel of ["start-file-watching", "set-active-file"]) {
+            probe.held.push({ channel, payload: { filePath, adoptDeletion: true } });
+          }
+        }
+      }
+      return approved;
+    });
+  };
+  page.reloadCurrentFile = reload;
+  const exec = async script => {
+    const result = await vm.runInContext(script, context);
+    if (options.setupFailure && control.initialReads++ === 0) throw new Error("replacement setup sentinel");
+    return result;
+  };
+  const native = { records, restore() { control.restores++; } };
+  const helperSource = between(source,
+    "  const observeReplacementDialog = async (filePath, tabId, content) => {",
+    "  let deletedAReloadDialog = null;");
+  const observe = vm.compileFunction(helperSource + "\nreturn observeReplacementDialog;",
+    ["observeNativeDocumentPorts", "win", "exec", "boundedDialogWork", "waitForCondition", "path"])(
+      (_win, channels) => {
+        assert.deepEqual(channels, ["commit-document-disk-adoption"]);
+        return native;
+      }, {}, exec, async work => await work,
+      async (_exec, predicate) => {
+        const answer = await exec(predicate);
+        if (options.changedOwner) owner = { ...owner, documentGeneration: 99 };
+        if (options.changedSource) page.originalMarkdown = "CHANGED\r\n";
+        return answer;
+      }, path);
+  return { observe, exec, reload, control, page, elements, body, filePath, calls,
+    originalConfirm, pending, currentBody: () => currentBody };
+}
+
+async function replacementNativeBoundaryContracts() {
+  const fixture = replacementNativeFixture();
+  const restore = await fixture.observe(fixture.filePath, 7, fixture.body);
+  fixture.reload();
+  await turn();
+  check(fixture.control.nativeCalls === 1 && fixture.calls.length === 1 &&
+    fixture.elements.reloadDocumentDialog.open && fixture.control.confirms === 0 &&
+    fixture.currentBody() === fixture.body && fixture.page.fs === undefined &&
+    fixture.page.ipcRenderer === undefined && fixture.page.require === undefined,
+  "Actual replacement observer holds the original default-Cancel dialog after one genuine native receipt without renderer privileges");
+  await restore.confirm();
+  await fixture.control.originalWork;
+  const outcome = await restore();
+  check(fixture.currentBody() === "F22_DELETED_A_EXTERNAL_REPLACEMENT\r\n" && fixture.control.confirms === 1 &&
+    fixture.control.cancels === 0 && outcome.calls.length === 1 &&
+    outcome.calls[0].approved && outcome.calls[0].approvedBeforeReload &&
+    outcome.calls[0].confirmClicked && outcome.calls[0].dialogClosed &&
+    outcome.calls[0].mismatches.length === 0 && outcome.receipts.length === 1 &&
+    outcome.receipts[0].confirmation.id === fixture.control.request.id &&
+    fixture.page.CustomTabs.confirmDocumentReplacement === fixture.originalConfirm &&
+    !Object.hasOwn(fixture.page, "__f22ReloadConsentProbe") && fixture.control.restores === 1,
+  "Actual replacement handshake correlates the Main reply before its sole real Confirm, joins original completion, and restores both halves");
+  for (const option of ["wrongMainOwner", "wrongMainDescriptor", "duplicateReply",
+    "missingReceipt", "changedOwner", "changedSource"]) {
+    const negative = replacementNativeFixture({ [option]: true });
+    const cleanup = await negative.observe(negative.filePath, 7, negative.body);
+    negative.reload();
+    await assert.rejects(cleanup.confirm());
+    await negative.control.originalWork;
+    const refused = await cleanup();
+    check(negative.control.confirms === 0 && negative.control.cancels === 1 &&
+      negative.currentBody() === negative.body && refused.calls[0].approved === false &&
+      refused.calls[0].mismatches.length > 0 && negative.control.restores === 1 &&
+      negative.page.CustomTabs.confirmDocumentReplacement === negative.originalConfirm,
+    "Actual replacement handshake refuses " + option + " without adoption and restores the original live confirmation");
+  }
+  const abandoned = replacementNativeFixture();
+  const abandonCleanup = await abandoned.observe(abandoned.filePath, 7, abandoned.body);
+  abandoned.reload();
+  const cancelled = await abandonCleanup();
+  await abandoned.control.originalWork;
+  check(abandoned.control.confirms === 0 && abandoned.control.cancels === 1 &&
+    cancelled.calls[0].approved === false && abandoned.control.restores === 1,
+  "Actual failure cleanup cancels and joins an unanswered original replacement rather than leaking it");
+  const failedSetup = replacementNativeFixture({ setupFailure: true });
+  await assert.rejects(failedSetup.observe(failedSetup.filePath, 7, failedSetup.body),
+    /replacement setup sentinel/);
+  check(failedSetup.control.restores === 1 &&
+    failedSetup.page.CustomTabs.confirmDocumentReplacement === failedSetup.originalConfirm &&
+    !Object.hasOwn(failedSetup.page, "__f22ReloadConsentProbe"),
+  "Actual partially-installed replacement setup independently restores Main and page observations before preserving failure");
+  const callerFixture = replacementNativeFixture();
+  const callerSource = between(source, "  let deletedAReloadDialog = null;",
+    "  const replacementAfterExplicitAdoption = ");
+  const actualCaller = await vm.compileFunction("return (async () => {\n" + callerSource +
+    "\nreturn { explicitReplacementAdopted, deletedAReloadDialog };\n})();",
+    ["observeReplacementDialog", "deletedAFile", "deletedA", "exec", "waitForCondition"])(
+      callerFixture.observe, callerFixture.filePath, { id: 7 }, callerFixture.exec,
+      async (_exec, predicate) => {
+        for (let index = 0; index < 20; index++) {
+          if (await callerFixture.exec(predicate)) return true;
+          await turn();
+        }
+        return false;
+      });
+  check(actualCaller.explicitReplacementAdopted === true &&
+    actualCaller.deletedAReloadDialog.calls[0].confirmClicked &&
+    callerFixture.control.confirms === 1 && callerFixture.control.restores === 1 &&
+    callerFixture.page.CustomTabs.confirmDocumentReplacement === callerFixture.originalConfirm,
+  "Actual explicit-replacement caller answers the original native consent then joins its unchanged reload and cleanup");
+  const secondCallerFixture = replacementNativeFixture({
+    body: "F22_DELETED_REPLACEMENT_OLD\r\n",
+    replacementBody: "F22_DELETED_REPLACEMENT_NEW\r\n", holdAdoption: true,
+  });
+  const secondCallerSource = between(source, "  let replacementReloaded = false;",
+    "  const replacementBefore = await deletionTabSnapshot(replacementDeletedA.id);");
+  let adoptionWaits = 0;
+  const secondCaller = await vm.compileFunction("return (async () => {\n" + secondCallerSource +
+    "\nreturn { replacementReloaded, replacementCurrentOwner, replacementAdoption, replacementDialog };\n})();",
+    ["observeReplacementDialog", "replacementDeletedFile", "replacementDeletedA", "exec",
+      "waitForCondition", "consoleAttribution", "replacementHeldIdentity"])(
+      secondCallerFixture.observe, secondCallerFixture.filePath, { id: 7 }, secondCallerFixture.exec,
+      async (_exec, predicate) => {
+        adoptionWaits++;
+        for (let index = 0; index < 20; index++) {
+          if (await secondCallerFixture.exec(predicate)) return true;
+          await turn();
+        }
+        return false;
+      }, null, { deliveryId: "held-old-owner" });
+  const secondJoined = await secondCallerFixture.control.originalWork;
+  check(adoptionWaits === 1 && secondJoined === true &&
+    secondCaller.replacementReloaded === true &&
+    secondCaller.replacementCurrentOwner.tabId === 7 &&
+    secondCaller.replacementDialog.calls.length === 1 &&
+    secondCaller.replacementDialog.calls[0].confirmClicked &&
+    secondCallerFixture.control.nativeCalls === 1 &&
+    secondCallerFixture.control.confirms === 1 && secondCallerFixture.control.cancels === 0 &&
+    secondCallerFixture.control.restores === 1 &&
+    secondCallerFixture.page.CustomTabs.confirmDocumentReplacement === secondCallerFixture.originalConfirm &&
+    secondCallerFixture.currentBody() === "F22_DELETED_REPLACEMENT_NEW\r\n" &&
+    secondCaller.replacementAdoption.held.map(record => record.channel).join(",") ===
+      "start-file-watching,set-active-file" &&
+    secondCaller.replacementAdoption.held.every(record => record.payload.adoptDeletion === true) &&
+    secondCallerFixture.control.adoptionRestores === 1 &&
+    secondCallerFixture.page.__f22ReplacementAdoptionProbe.restored === true,
+  "Actual second replacement-owner caller confirms before its unchanged adoption wait, joins original completion, and preserves held-adoption cleanup");
+}
+
+async function ordinarySuffixBoundaryContracts() {
+  const owner = { pageSession: "suffix-session", rendererGeneration: 3, tabId: 7,
+    documentGeneration: 9, pathKey: "alpha.md", documentRef: "a".repeat(64) };
+  const baseline = { dev: 1, ino: 2, size: 3, mtimeMs: 4, ctimeMs: 5 };
+  let live = { ...baseline }, refusal = null;
+  const requests = [];
+  const page = { CustomTabs: { getTabs: () => [{ id: 7, diskVersion: baseline }] },
+    folia: Object.freeze({ checkOwnedTabDiskSnapshot(request) {
+      requests.push(clone(request));
+      return refusal || { matches: true, pathKey: owner.pathKey, diskVersion: { ...live } };
+    } }) };
+  const diskHelper = between(source, "    const f22DiskVersion = (filePath) => {",
+    "    // A result is THIS request's result");
+  const diskVersion = vm.compileFunction(diskHelper + "\nreturn f22DiskVersion;",
+    ["window", "f22ActiveOwner"])(page, () => ({ ...owner }));
+  const first = diskVersion("alpha.md");
+  live = { ...live, ctimeMs: 17 };
+  const second = diskVersion("alpha.md");
+  check(first.ctimeMs === 5 && second.ctimeMs === 17 && requests.length === 2 &&
+    ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(field => second[field] === live[field]) &&
+    requests.every(request => request.filePath === "alpha.md" &&
+      request.pageSession === owner.pageSession &&
+      request.rendererGeneration === owner.rendererGeneration &&
+      identityFields.every(field => request.owner[field] === owner[field]) &&
+      JSON.stringify(request.diskVersion) === JSON.stringify(baseline)),
+  "Actual F22 pre-click helper makes fresh full-identity native checks and retains live ctime-only metadata changes");
+  for (const bad of [
+    { matches: false, why: "stale-owner" },
+    { matches: true, pathKey: "foreign.md", diskVersion: live },
+    { matches: true, pathKey: owner.pathKey, diskVersion: { ...live, ino: 99 } },
+    { matches: true, pathKey: owner.pathKey, diskVersion: { ...live, ctimeMs: NaN } },
+    { matches: true, pathKey: owner.pathKey, diskVersion: null },
+  ]) {
+    refusal = bad;
+    assert.throws(() => diskVersion("alpha.md"));
+    check(true, "Actual F22 native metadata refusal cannot fall back to cached version: " + JSON.stringify(bad));
+  }
+  const missingOwner = vm.compileFunction(diskHelper + "\nreturn f22DiskVersion;",
+    ["window", "f22ActiveOwner"])(page, () => null);
+  assert.throws(() => missingOwner("alpha.md"));
+  check(page.fs === undefined, "Actual pre-click helper rejects missing ownership without renderer fs or static stats");
+
+  const orderedSource = between(source, "  const orderedSnapshot = async (expectedPendingSaves = null) => {",
+    "  const stableOrderedSnapshot = ");
+  const tab = { id: 7, content: "EDITOR", originalContent: "BASE", hasUnsavedChanges: true };
+  const orderedPage = {
+    CustomTabs: { getTabs: () => [tab], getActiveTabId: () => 7,
+      __documentState: () => ({ dirty: true }), __inEditMode: () => true,
+      __dirtyTabNames: () => ["alpha.md"], getActiveDocumentIdentity: () => owner },
+    originalMarkdown: "EDITOR", markdownEditor: { value: "EDITOR" },
+    getReloadRequestDiagnostics: () => ({ pending: 0 }),
+    getPendingSaveStatus: () => ({ count: 0, pending: false, paths: [] }),
+    getReloadRequestSession: () => owner.pageSession,
+    __f22OrderedSaveProbe: { alerts: [], controls: [], notifications: [],
+      saveSettlementEvents: [], saveResultObservations: [] },
+    document: { getElementById: () => null },
+    saveFailedFor: () => 0,
+  };
+  orderedPage.window = orderedPage;
+  const orderedContext = vm.createContext(orderedPage);
+  let physical = "FIRST\r\n", reads = 0;
+  const orderedSnapshot = vm.compileFunction(orderedSource + "\nreturn orderedSnapshot;",
+    ["fs", "orderedSaveFile", "orderedSaveTab", "exec"])({
+      readFileSync(filePath, encoding) {
+        assert.equal(filePath, "ordered.md"); assert.equal(encoding, "utf8");
+        reads++; return physical;
+      },
+    }, "ordered.md", tab, async script => vm.runInContext(script, orderedContext));
+  const firstOrdered = await orderedSnapshot();
+  physical = "SECOND\r\n";
+  const secondOrdered = await orderedSnapshot();
+  check(reads === 2 && firstOrdered.disk === "FIRST\r\n" && secondOrdered.disk === "SECOND\r\n" &&
+    firstOrdered.content === "EDITOR" && secondOrdered.original === "BASE" &&
+    firstOrdered.documentState.dirty && orderedPage.fs === undefined,
+  "Actual ordered Save snapshot reads exact fresh physical bytes in the host and retains independent renderer state");
+
+  const companionSource = between(source, "  const frozenDeletedA = await createActiveTab(",
+    "  const frozenAInitial = ");
+  let selectedGeneration = 0;
+  const trace = [];
+  const companion = await vm.compileFunction("return (async () => {\n" + companionSource +
+    "\nreturn { frozenDeletedA, frozenDeletedB, frozenSelectedOwner };\n})();",
+    ["createActiveTab", "createCompanionTab", "acceptedSelectionWitness",
+      "frozenDeletedFile", "deletedBFile"])(
+      async () => { trace.push("admit A"); selectedGeneration++; return { id: 1 }; },
+      async (primary, filePath, body) => {
+        assert.equal(primary.id, 1); assert.equal(filePath, "B.md");
+        assert.equal(body, "F22_DELETED_B_BASE\r\n");
+        trace.push("admit B", "restore A"); selectedGeneration += 2;
+        return { id: 2 };
+      },
+      async (filePath, id) => {
+        assert.equal(filePath, "A.md"); assert.equal(id, 1);
+        trace.push("capture actual A acceptance");
+        return { owner: { ...owner, selectionGeneration: selectedGeneration } };
+      }, "A.md", "B.md");
+  check(companion.frozenDeletedB.id === 2 && companion.frozenSelectedOwner.selectionGeneration === 3 &&
+    trace.join(",") === "admit A,admit B,restore A,capture actual A acceptance",
+  "Actual frozen-deletion setup genuinely admits its companion then captures fresh Main selection after restoration");
+}
+
+async function lazyNativeBoundaryContracts() {
+  const fixture = lazyNativeFixture();
+  let completed = false;
+  let guard;
+  let operationError;
+  const work = fixture.run().then(
+    result => { completed = true; guard = result; },
+    error => { completed = true; operationError = error; },
+  );
+  for (let index = 0; !fixture.control.choiceRequested && !completed && index < 20; index++) await turn();
+  if (operationError) throw operationError;
+  check(fixture.control.choiceRequested && !completed &&
+    fixture.control.constructorCalls.length === 2 &&
+    fixture.page.fs === undefined && fixture.page.ipcRenderer === undefined &&
+    fixture.page.require === undefined && Object.isFrozen(fixture.page.folia),
+  "Actual S10 boundary reaches a pending constructor question without renderer filesystem raw IPC or require");
+  check(fixture.control.active === 1 && fixture.control.viewer.includes("GUARD_SMALL_DOC") &&
+    fixture.control.selections.length === 1 && fixture.control.terminal.length === 0,
+  "Held original constructor permission cannot select or repaint the expensive tab before the real choice");
+  check(fixture.control.constructorCalls[0].opts.activate === false &&
+    fixture.control.constructorCalls[1].opts.activate === undefined &&
+    fixture.control.constructorCalls.every(call => call.opts.documentAdmission &&
+      !call.opts.confirmed && !call.opts.verifiedDiskAdoption),
+  "Actual ordinary and default-activation large constructors use genuine unbound receipts without cached approval");
+  fixture.choice();
+  await work;
+  if (operationError) throw operationError;
+  check(fixture.control.questionAnswers.length === 2 &&
+    fixture.control.questionAnswers.every(({ answer }) => answer.settled === true &&
+      Object.hasOwn(answer, "value") && !Object.hasOwn(answer, "error")) &&
+    fixture.control.questionAnswers[0].nativeReply === false &&
+    fixture.control.questionAnswers[0].answer.value === undefined &&
+    fixture.control.questionAnswers[1].nativeReply === true &&
+    fixture.control.questionAnswers[1].answer.value === true,
+  "Actual S10 distinguishes native false/true permission from outer undefined/true switch completion without synthetic rejection members");
+  check(fixture.intact() && fixture.closed.join(",") === "1,2" &&
+    fixture.restores.includes("large observer") && fixture.restores.includes("selection observer") &&
+    fixture.control.actorFailures.length === 0 && fixture.control.hostReads.length === 4,
+  "Actual S10 joins owned native choice and terminal consumer, retires both real tabs, and restores every observer");
+  const judge = output => {
+    const assertions = [];
+    vm.compileFunction(lazyChecks, ["guard", "check"])(output,
+      (name, success) => assertions.push({ name, success }));
+    return assertions;
+  };
+  const assertions = judge(guard);
+  const names = [
+    "the guard sample really is scored as expensive and the control is not",
+    "an ordinary document is never asked about",
+    "opening an expensive file asks, and declining leaves the reader put",
+    "switching to an expensive tab asks first",
+    "declining leaves the reader on the tab they were viewing",
+    "declining leaves the document they were reading on screen",
+    "accepting switches to the expensive tab",
+    "a cost already accepted is not asked about again",
+  ];
+  check(assertions.length === 8 && assertions.every((item, index) => item.success && item.name === names[index]),
+    "Actual S10 caller retains and satisfies all eight distinct original assertions including create-time decline");
+  for (const [index, field, value] of [
+    [0, "bigIsLarge", false], [1, "askedForSmall", 1], [2, "askedOnCreate", 0],
+    [3, "askedOnDecline", 0], [4, "activeAfterDecline", false],
+    [5, "viewerAfterDecline", false], [6, "askedOnAccept", 0], [7, "askedOnRevisit", 1],
+  ]) {
+    const failed = judge({ ...guard, [field]: value }).filter(item => !item.success);
+    check(failed.length === 1 && failed[0].name === names[index],
+      "Actual original S10 oracle rejects exactly its missing obligation: " + field);
+  }
+  for (const option of ["missingAdmission", "wrongPrimaryBody", "wrongExtraPath",
+    "revokedAdmission", "missingTerminal", "wrongTerminalSource", "earlyQuestionReply",
+    "ownerDrift", "switchConsumerFailure", "emptySwitchConsumerFailure",
+    "missingSwitchResolvedValue", "cleanupFailure"]) {
+    const negative = lazyNativeFixture({ [option]: true });
+    negative.choice();
+    const switchAnswerCase = ["switchConsumerFailure", "emptySwitchConsumerFailure",
+      "missingSwitchResolvedValue"].includes(option);
+    await assert.rejects(negative.run(), switchAnswerCase
+      ? /Explicit lazy switch lacks its genuine pending question and chosen completion/
+      : option === "earlyQuestionReply"
+        ? /Constructor question lacks its pending original Main producer and exact Cancel-default receipt/
+        : undefined);
+    if (option === "earlyQuestionReply") {
+      const boundary = negative.control.constructorBoundary;
+      assert.equal(boundary.recordSettled, true);
+      assert.equal(boundary.producerPending, true);
+      assert.equal(boundary.terminalCount, 0);
+      assert.equal(boundary.permissionCalls, 1);
+      assert.equal(boundary.metadata.title, "Large document");
+      assert.equal(boundary.metadata.buttons.join(","), "Open anyway,Cancel");
+      assert.equal(boundary.metadata.focused, "1");
+      assert.equal(negative.control.choiceRequested, false);
+      assert.equal(negative.control.questionAnswers.length, 0);
+    }
+    if (switchAnswerCase) {
+      assert.equal(negative.control.questionAnswers.length, 1);
+      const answer = negative.control.questionAnswers[0].answer;
+      assert.equal(answer.settled, true);
+      assert.equal(Object.hasOwn(answer, "value"), false);
+      assert.equal(Object.hasOwn(answer, "error"), option !== "missingSwitchResolvedValue");
+      if (option !== "missingSwitchResolvedValue") {
+        assert.equal(answer.error, option === "emptySwitchConsumerFailure" ? "" :
+          "original renderer switch failed after its native reply");
+      }
+    }
+    check(negative.intact(), "Actual S10 refuses " + option + " and restores its owned native slots");
+  }
+  for (const option of ["falseCancelValue", "undefinedProceedValue"]) {
+    const wrongValue = lazyNativeFixture({ [option]: true });
+    wrongValue.choice();
+    await assert.rejects(wrongValue.run(),
+      /Explicit lazy switch lacks its genuine pending question and chosen completion/);
+    const answer = wrongValue.control.questionAnswers.at(-1);
+    const proceed = option === "undefinedProceedValue";
+    check(wrongValue.intact() && wrongValue.control.questionAnswers.length === (proceed ? 2 : 1) &&
+      answer.choice === (proceed ? "0" : "1") && answer.nativeReply === proceed &&
+      answer.answer.settled === true && Object.hasOwn(answer.answer, "value") &&
+      !Object.hasOwn(answer.answer, "error") &&
+      answer.answer.value === (proceed ? undefined : false),
+    "Actual S10 rejects wrong outer " + option + " while retaining the genuine native permission result");
+  }
+  const inactive = lazyNativeFixture();
+  const fileA = path.join(inactive.root, "alpha.md");
+  inactive.write(fileA, "# Alpha\n\nACTUAL_INACTIVE_DISK\n");
+  const nativeChecks = [];
+  const nativeRun = vm.compileFunction("return (async () => {\n" + inactiveReloadCaller + "\n})();",
+    ["clearFixtureTabs", "nativeInactiveFixtureReceipts", "win", "exec", "fileA",
+      "expectedChooserOptions", "__shutdown", "check", "switchToTabAndWait"])(
+      async () => {}, inactive.compiled.nativeInactiveFixtureReceipts, inactive.win, inactive.exec,
+      fileA, inactive.chooserOptions, inactive.scope.__shutdown,
+      (name, success) => nativeChecks.push({ name, success }),
+      async id => {
+        check(inactive.control.active === null && inactive.control.selections.length === 0 &&
+          inactive.owners.length === 1,
+        "Actual reload-ownership caller admits its inactive tab before the unchanged explicit selection");
+        return inactive.switchToTab(id);
+      });
+  await nativeRun;
+  check(nativeChecks.length === 1 && nativeChecks[0].success && inactive.intact() &&
+    inactive.control.active === 1 && inactive.control.viewer.includes("ACTUAL_INACTIVE_DISK"),
+  "Actual reload-ownership caller preserves genuine Main admission and original explicit selected-disk setup");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
     subscriptionContracts, sameTaskContracts, deliveryContracts,
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,
-    defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts]) {
+    defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
+    lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

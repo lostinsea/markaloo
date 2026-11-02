@@ -13361,6 +13361,284 @@ async function runEarlyLargeRenderFaults(win) {
   }
 }
 
+async function nativeInactiveFixtureReceipts(win, evaluate, filePaths, chooserOptions) {
+  const exec = code => boundedDialogWork(evaluate(code), "inactive native fixture operation");
+  const ready = __shutdown.state();
+  const bodies = filePaths.map(filePath => fs.readFileSync(filePath, "utf8"));
+  const packets = [];
+  let chooserCalls = 0;
+  const originalSend = win.webContents.send;
+  const send = function(channel, packet) {
+    if (channel === "file-opened" && packet?.path === filePaths[0]) {
+      packets.push(packet);
+      return;
+    }
+    return originalSend.apply(this, arguments);
+  };
+  const chooser = async function(owner, options) {
+    if (arguments.length !== 2 || owner !== win || chooserCalls++ !== 0 ||
+        !isDeepStrictEqual(options, chooserOptions)) {
+      throw new Error("Inactive fixture received an unexpected native chooser");
+    }
+    return { canceled: false, filePaths };
+  };
+  if (ready.renderer !== "ready" || ready.pendingId !== 0 || !filePaths.length) {
+    throw new Error("Inactive fixture needs the current ready Main owner");
+  }
+  let restoreSend;
+  let restoreChooser;
+  let operationError;
+  const cleanupErrors = [];
+  try {
+    restoreSend = replaceMethod(win.webContents, "send", send);
+    restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
+    // This is the existing receipt-authority route: Main creates the genuine
+    // unbound receipt, but its activation delivery is deliberately not forwarded.
+    await exec("window.folia.openFileDialog(); null;");
+    if (!await waitUntil(() => packets.length === 1, 5000)) {
+      throw new Error("Inactive fixture did not receive its original native admission");
+    }
+  } catch (error) {
+    operationError = error;
+  } finally {
+    for (const [target, name, owned, restore] of [
+      [dialog, "showOpenDialog", chooser, restoreChooser],
+      [win.webContents, "send", send, restoreSend],
+    ]) {
+      try {
+        if (!restore) continue;
+        if (target[name] !== owned) throw new Error("Inactive admission restoration ownership changed");
+        restore();
+      } catch (error) { cleanupErrors.push(error); }
+    }
+  }
+  if (cleanupErrors.length) {
+    throw new AggregateError([...(operationError ? [operationError] : []), ...cleanupErrors],
+      "Inactive native admission restoration failed: " +
+      [operationError, ...cleanupErrors].filter(Boolean).map(error => error.message).join("; "));
+  }
+  if (operationError) throw operationError;
+  const primary = packets[0];
+  if (chooserCalls !== 1 || packets.length !== 1 ||
+      !isDeepStrictEqual(primary.allPaths, filePaths) ||
+      primary.extraReadGrants?.length !== filePaths.length - 1) {
+    throw new Error("Inactive native admission has an inexact original batch");
+  }
+  const entries = [primary];
+  for (const grant of primary.extraReadGrants) {
+    entries.push(await exec(`window.folia.readDialogExtra({
+      grant: ${JSON.stringify(grant)}, pageSession: window.getReloadRequestSession(),
+      rendererGeneration: ${ready.rendererGeneration},
+    })`));
+  }
+  const fields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];
+  const current = __shutdown.state();
+  if (current.renderer !== "ready" || current.pendingId !== 0 ||
+      current.rendererGeneration !== ready.rendererGeneration ||
+      current.rendererPageSession !== ready.rendererPageSession ||
+      entries.some((entry, index) => entry?.path !== filePaths[index] ||
+        entry.content !== bodies[index] ||
+        entry.document?.logicalPath !== filePaths[index] ||
+        typeof entry.document.readTarget !== "string" ||
+        !/^[a-f0-9]{64}$/.test(entry.document.ref || "") ||
+        !__shutdown.documentAdmissionIsCurrent(entry.document.ref) ||
+        fields.some(field => !Number.isFinite(entry.diskVersion?.[field]) ||
+          entry.diskVersion[field] !== entry.document.diskVersion?.[field]) ||
+        entry.modifiedTime !== entry.diskVersion.mtimeMs ||
+        __shutdown.documentSessionState().owners.some(owner =>
+          owner.documentRef === entry.document.ref)) ||
+      new Set(entries.map(entry => entry.document.ref)).size !== entries.length) {
+    throw new Error("Inactive fixture lacks its exact current unbound Main receipts");
+  }
+  return entries;
+}
+
+async function nativeLargeTabCreationQuestion(win, evaluate, observation, request, entry, created, retained) {
+  const exec = code => boundedDialogWork(evaluate(code), "native constructor size-guard operation");
+  const expected = { owner: win, calls: 0, hosts: [], failedLoads: 0 };
+  const sourceId = require("node:url").pathToFileURL(path.resolve(__dirname, "../src/custom-tabs.js")).href;
+  const terminal = [];
+  const onConsole = details => {
+    if (details.message === "[CustomTabs] Large tab switch declined: " + request.name &&
+        details.sourceId === sourceId && Number.isFinite(details.lineNumber) &&
+        details.lineNumber > 0) terminal.push(details);
+  };
+  const originalLoad = BrowserWindow.prototype.loadFile;
+  const restoreLoad = replaceMethod(BrowserWindow.prototype, "loadFile", function(filePath) {
+    if (filePath === ownedDialogFile && this.getParentWindow() === win) expected.hosts.push(this);
+    return originalLoad.apply(this, arguments);
+  });
+  const before = observation.records.length;
+  win.webContents.on("console-message", onConsole);
+  dialogSafety.expected = expected;
+  try {
+    const tab = await exec(`(() => {
+      const entry = ${JSON.stringify(entry)};
+      const tab = window.CustomTabs.createTab(entry.path, entry.content, {
+        documentAdmission: entry.document, modifiedTime: entry.modifiedTime,
+        diskVersion: entry.diskVersion,
+      });
+      return tab && { id: tab.id };
+    })()`);
+    if (!Number.isSafeInteger(tab?.id)) throw new Error("Native large constructor refused its admitted fixture");
+    created.push(tab.id);
+    let host;
+    if (!await boundedDialogWork(waitUntil(async () => {
+      host = expected.hosts.find(candidate => !candidate.isDestroyed() &&
+        candidate.getParentWindow() === win && candidate.isVisible() &&
+        candidate.webContents.getURL() === ownedDialogUrl);
+      return !!host && host.webContents.executeJavaScript(
+        "document.getElementById('appMessageDialog')?.open === true", true);
+    }, 12000), "native constructor owned size question", 13000)) {
+      throw new Error("Constructor did not present its genuine Main-owned size question");
+    }
+    const pending = observation.records.slice(before);
+    const metadata = await boundedDialogWork(host.webContents.executeJavaScript(`({
+      title: document.getElementById('appMessageTitle').textContent,
+      message: document.getElementById('appMessageText').textContent,
+      detail: document.getElementById('appMessageDetail').textContent,
+      buttons: [...document.querySelectorAll('#appMessageButtons button')].map(button => button.textContent),
+      focused: document.activeElement.dataset.dialogChoice,
+    })`, true), "native constructor size permission metadata");
+    if (pending.length !== 1 || !exactLargeRenderReceipt(pending[0], request, observation) ||
+        pending[0].settled || terminal.length || expected.calls !== 1 ||
+        metadata.title !== "Large document" ||
+        metadata.message !== `"${request.name}" may take about ${request.seconds} seconds to display.` ||
+        metadata.detail !== "Markaloo may not respond until the document finishes opening." ||
+        metadata.buttons.join(",") !== "Open anyway,Cancel" || metadata.focused !== "1" ||
+        !expected.producer || typeof expected.producer.then !== "function") {
+      throw new Error("Constructor question lacks its pending original Main producer and exact Cancel-default receipt");
+    }
+    if (!await retained()) throw new Error("Constructor changed the reader before its pending native choice");
+    await answerLargeRenderQuestion(host, expected.producer, "1");
+    // createTab deliberately returns no activation Promise. This exact terminal
+    // consumer receipt witnesses the private switch's decline, not a fake join.
+    if (!await waitUntil(() => terminal.length === 1, 12000)) {
+      throw new Error("Constructor's original renderer did not consume the size refusal");
+    }
+    const records = observation.records.slice(before);
+    if (records.length !== 1 || !records[0].settled || records[0].reply !== false ||
+        records[0].error || records[0].fault || observation.unexpected.length ||
+        !exactLargeRenderReceipt(records[0], request, observation)) {
+      throw new Error("Constructor question did not settle with its sole genuine refusal");
+    }
+    return { tab, records: records.length, terminal: terminal.length };
+  } finally {
+    restoreLoad();
+    win.webContents.off("console-message", onConsole);
+    for (const host of expected.hosts) if (!host.isDestroyed()) host.destroy();
+    try {
+      if (expected.producer) await boundedDialogWork(expected.producer,
+        "constructor size-question original producer cleanup");
+    } finally { dialogSafety.expected = null; }
+  }
+}
+
+async function runNativeLazyTabSizeGuard(win, evaluate, question, chooserOptions, switchAndWait, fileSmall, fileBig) {
+  const exec = code => boundedDialogWork(evaluate(code), "native lazy tab guard operation");
+  const smallBody = fs.readFileSync(fileSmall, "utf8");
+  const bigBody = fs.readFileSync(fileBig, "utf8");
+  const entries = await nativeInactiveFixtureReceipts(win, exec, [fileSmall, fileBig], chooserOptions);
+  const observation = observeEarlyLargeRender(win);
+  let selections;
+  const created = [];
+  try {
+    selections = observeNativeDocumentPorts(win, ["select-file-tracking"]);
+    const out = await exec(`({
+      bigIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(bigBody)}).large,
+      smallIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(smallBody)}).large,
+    })`);
+    if (!out.bigIsLarge || out.smallIsLarge) throw new Error("Lazy tab size fixtures do not prove their classifications");
+    const small = await exec(`(() => {
+      const entry = ${JSON.stringify(entries[0])};
+      const tab = window.CustomTabs.createTab(entry.path, entry.content, {
+        activate: false, documentAdmission: entry.document,
+        modifiedTime: entry.modifiedTime, diskVersion: entry.diskVersion,
+      });
+      return tab && { id: tab.id };
+    })()`);
+    if (!Number.isSafeInteger(small?.id)) throw new Error("Native ordinary constructor refused its admitted fixture");
+    created.push(small.id);
+    await switchAndWait(small.id);
+    const snapshot = () => exec(`(() => {
+      const tabs = window.CustomTabs, tab = tabs.getActiveTab();
+      return {
+        id: tabs.getActiveTabId(), path: window.currentFilePath,
+        viewer: document.getElementById('viewer').textContent,
+        content: tab?.content, original: tab?.originalContent, dirty: tab?.hasUnsavedChanges,
+        owner: tab && tabs.getDocumentIdentityForTab(tab.id, tab.filePath, window.getReloadRequestSession()),
+      };
+    })()`);
+    const before = await snapshot();
+    const currentOwner = async page => {
+      await exec("window.folia.getVersion(); null;");
+      const fields = ["pageSession", "rendererGeneration", "tabId", "documentGeneration", "pathKey", "documentRef"];
+      const current = __shutdown.state();
+      const selection = selections.records.filter(record => record.reply?.accepted === true).at(-1);
+      return !!page.owner && current.renderer === "ready" && current.pendingId === 0 &&
+        current.rendererGeneration === page.owner.rendererGeneration &&
+        current.rendererPageSession === page.owner.pageSession &&
+        selection?.replies === 1 &&
+        fields.every(field => selection.data.owner[field] === page.owner[field]) &&
+        __shutdown.documentAdmissionIsCurrent(page.owner.documentRef) &&
+        __shutdown.documentSessionState().owners.some(owner =>
+          fields.every(field => owner[field] === page.owner[field]));
+    };
+    out.askedForSmall = observation.records.length;
+    out.smallOnScreen = before.id === small.id && before.path === fileSmall &&
+      before.content === smallBody && before.original === smallBody && before.dirty === false &&
+      before.viewer.includes("GUARD_SMALL_DOC") && await currentOwner(before);
+    if (!out.smallOnScreen || out.askedForSmall !== 0) throw new Error("Native ordinary fixture has no clean painted Main owner");
+    const verdict = await exec(`window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(bigBody)})`);
+    const request = { name: path.basename(fileBig), seconds: Math.round(verdict.estimatedMs / 1000) };
+    const creation = await nativeLargeTabCreationQuestion(
+      win, exec, observation, request, entries[1], created,
+      async () => isDeepStrictEqual(await snapshot(), before) && await currentOwner(before),
+    );
+    const afterCreate = await snapshot();
+    out.askedOnCreate = creation.records;
+    out.activeAfterCreate = creation.terminal === 1 && isDeepStrictEqual(afterCreate, before) &&
+      await currentOwner(afterCreate);
+    if (!out.activeAfterCreate) throw new Error("Constructor refusal changed the original reader or its current Main owner");
+    const runSwitchQuestion = async choice => {
+      const mark = observation.records.length;
+      const result = await question(choice, false, request,
+        `window.CustomTabs.switchToTab(${creation.tab.id})`);
+      const records = observation.records.slice(mark);
+      if (records.length !== 1 || result.calls !== 1 || !result.metadata?.pendingBeforeChoice ||
+          result.answer?.settled !== true ||
+          !Object.hasOwn(result.answer, "value") || Object.hasOwn(result.answer, "error") ||
+          result.answer.value !== (choice === "0" ? true : undefined) ||
+          !records[0].settled || records[0].reply !== (choice === "0") ||
+          records[0].error || records[0].fault || observation.unexpected.length ||
+          !exactLargeRenderReceipt(records[0], request, observation)) {
+        throw new Error("Explicit lazy switch lacks its genuine pending question and chosen completion");
+      }
+      return records.length;
+    };
+    out.askedOnDecline = await runSwitchQuestion("1");
+    const declined = await snapshot();
+    out.activeAfterDecline = isDeepStrictEqual(declined, before) && await currentOwner(declined);
+    out.viewerAfterDecline = declined.viewer.includes("GUARD_SMALL_DOC") && declined.viewer === before.viewer;
+    out.askedOnAccept = await runSwitchQuestion("0");
+    const accepted = await snapshot();
+    out.activeAfterAccept = accepted.id === creation.tab.id && accepted.path === fileBig &&
+      accepted.content === bigBody && accepted.original === bigBody && accepted.dirty === false &&
+      accepted.viewer.includes(bigBody.trim()) && await currentOwner(accepted);
+    const mark = observation.records.length;
+    await switchAndWait(small.id);
+    await switchAndWait(creation.tab.id);
+    const revisited = await snapshot();
+    out.askedOnRevisit = observation.records.length - mark;
+    out.activeAfterRevisit = isDeepStrictEqual(revisited, accepted) && await currentOwner(revisited);
+    return out;
+  } finally {
+    observation.restore();
+    selections?.restore();
+    await closeOwnedFixtureTabs(exec, "native lazy size guard cleanup", { tabIds: created });
+  }
+}
+
 async function runEarlyNativeLargeTabGuard(win, sentinel, question, chooserOptions, switchAndWait) {
   const call = code => boundedDialogWork(win.webContents.executeJavaScript(code, true),
     "native large-tab guard operation");
@@ -24089,74 +24367,12 @@ async function run(win) {
   // 10-second document would make this scenario cost 10 seconds.
   const fileBig = path.join(dir, "guard-big.md");
   const fileSmall = path.join(dir, "guard-small.md");
-  const jsBig = JSON.stringify(fileBig);
-  const jsSmall = JSON.stringify(fileSmall);
   write(fileBig, "|".repeat(260000) + "\n");
   write(fileSmall, "# Small\n\nGUARD_SMALL_DOC\n");
 
-  const guard = await exec(`
-    (async () => {
-      const out = {};
-      const helpers = window.FoliaFileHelpers;
-      out.bigIsLarge = helpers.isLargeDocument(window.fs.readFileSync(${jsBig}, 'utf8')).large;
-      out.smallIsLarge = helpers.isLargeDocument(window.fs.readFileSync(${jsSmall}, 'utf8')).large;
-
-      const realSendSync = window.ipcRenderer.sendSync;
-      let asked = 0;
-      let answer = false;
-      window.ipcRenderer.sendSync = function (channel) {
-        if (channel === 'confirm-large-render') { asked++; return answer; }
-        return realSendSync.apply(this, arguments);
-      };
-      try {
-        const small = window.CustomTabs.createTab(${jsSmall}, window.fs.readFileSync(${jsSmall}, 'utf8'));
-        await new Promise(r => setTimeout(r, 400));
-        out.askedForSmall = asked;
-        out.smallOnScreen = document.getElementById('viewer').textContent.indexOf('GUARD_SMALL_DOC') !== -1;
-
-        // createTab() switches to the new tab, so opening an expensive file is
-        // itself a guarded switch. Declining here must leave the reader on the
-        // document they were already reading - the multi-select case.
-        answer = false;
-        const big = window.CustomTabs.createTab(${jsBig}, window.fs.readFileSync(${jsBig}, 'utf8'));
-        await new Promise(r => setTimeout(r, 400));
-        out.askedOnCreate = asked - out.askedForSmall;
-        out.activeAfterCreate = window.CustomTabs.getActiveTabId() === small.id;
-
-        let mark = asked;
-        window.CustomTabs.switchToTab(big.id);
-        await new Promise(r => setTimeout(r, 400));
-        out.askedOnDecline = asked - mark;
-        out.activeAfterDecline = window.CustomTabs.getActiveTabId() === small.id;
-        out.viewerAfterDecline = document.getElementById('viewer').textContent.indexOf('GUARD_SMALL_DOC') !== -1;
-
-        mark = asked;
-        answer = true;
-        window.CustomTabs.switchToTab(big.id);
-        await new Promise(r => setTimeout(r, 800));
-        out.askedOnAccept = asked - mark;
-        out.activeAfterAccept = window.CustomTabs.getActiveTabId() === big.id;
-
-        mark = asked;
-        window.CustomTabs.switchToTab(small.id);
-        await new Promise(r => setTimeout(r, 400));
-        window.CustomTabs.switchToTab(big.id);
-        await new Promise(r => setTimeout(r, 400));
-        out.askedOnRevisit = asked - mark;
-        out.activeAfterRevisit = window.CustomTabs.getActiveTabId() === big.id;
-
-        [big.id, small.id].forEach(id => {
-          const t = window.CustomTabs.getTabs().find(x => x.id === id);
-          if (t) t.hasUnsavedChanges = false;
-          window.CustomTabs.closeTab(id);
-        });
-      } finally {
-        window.ipcRenderer.sendSync = realSendSync;
-      }
-      return out;
-    })()
-  `);
-  await sleep(400);
+  const guard = await runNativeLazyTabSizeGuard(
+    win, exec, largeRenderQuestion, expectedChooserOptions, switchToTabAndWait, fileSmall, fileBig,
+  );
 
   // Vacuity guards. If the sample stopped tripping the estimator, or the small
   // document started tripping it, every assertion below would pass for the
@@ -24602,19 +24818,42 @@ async function run(win) {
   // keeps the test at the IPC boundary: no private sequence/session state is
   // manufactured by the harness.
   await clearFixtureTabs("reload-ownership preflight");
-  const reloadOwnerTab = await exec(`
+  const [reloadOwnerReceipt] = await nativeInactiveFixtureReceipts(
+    win, exec, [fileA], expectedChooserOptions,
+  );
+  const reloadInactiveOwner = await exec(`
     (() => {
-      const t = window.CustomTabs.createTab(${jsA},
-        window.fs.readFileSync(${jsA}, 'utf8'), { activate: false });
-      return t && t.id;
+      const entry = ${JSON.stringify(reloadOwnerReceipt)};
+      const before = window.CustomTabs.getActiveTabId();
+      const viewer = document.getElementById('viewer').textContent;
+      const t = window.CustomTabs.createTab(entry.path, entry.content, {
+        activate: false, documentAdmission: entry.document,
+        modifiedTime: entry.modifiedTime, diskVersion: entry.diskVersion,
+      });
+      return {
+        id: t && t.id, before, after: window.CustomTabs.getActiveTabId(),
+        viewerUnchanged: viewer === document.getElementById('viewer').textContent,
+        owner: t && window.CustomTabs.getDocumentIdentityForTab(
+          t.id, t.filePath, window.getReloadRequestSession()),
+      };
     })()
   `);
+  const reloadOwnerTab = reloadInactiveOwner.id;
+  await exec("window.folia.getVersion(); null;");
+  const reloadInactiveMainOwner = __shutdown.documentSessionState().owners.find(owner =>
+    owner.documentRef === reloadOwnerReceipt.document.ref);
+  const reloadInactiveAdmission = Number.isSafeInteger(reloadOwnerTab) &&
+    reloadInactiveOwner.before === reloadInactiveOwner.after &&
+    reloadInactiveOwner.after !== reloadOwnerTab && reloadInactiveOwner.viewerUnchanged &&
+    reloadInactiveOwner.owner?.documentRef === reloadOwnerReceipt.document.ref &&
+    ["pageSession", "rendererGeneration", "tabId", "documentGeneration", "pathKey", "documentRef"]
+      .every(field => reloadInactiveMainOwner?.[field] === reloadInactiveOwner.owner?.[field]);
   check(
     "reload-ownership fixture creates alpha.md before selecting it",
-    Number.isSafeInteger(reloadOwnerTab),
-    JSON.stringify(reloadOwnerTab),
+    reloadInactiveAdmission,
+    JSON.stringify({ reloadInactiveOwner, reloadInactiveMainOwner }),
   );
-  if (!Number.isSafeInteger(reloadOwnerTab)) throw new Error("reload-ownership tab was not created");
+  if (!reloadInactiveAdmission) throw new Error("reload-ownership tab was not created with its inactive Main admission");
   await switchToTabAndWait(reloadOwnerTab);
   const reloadDisk = fs.readFileSync(fileA, "utf8");
   const reloadOwnerBaseline = await exec(`(() => {
@@ -25693,7 +25932,19 @@ async function runF22SaveAndReloadScenarios(
       }
     };
     const f22DiskVersion = (filePath) => {
-      const stats = window.fs.statSync(filePath);
+      const owner = f22ActiveOwner(filePath);
+      const tab = owner && window.CustomTabs.getTabs().find(candidate => candidate.id === owner.tabId);
+      const checked = owner && tab && window.folia.checkOwnedTabDiskSnapshot({
+        filePath, pageSession: owner.pageSession,
+        rendererGeneration: owner.rendererGeneration, owner,
+        diskVersion: tab.diskVersion,
+      });
+      const stats = checked?.diskVersion;
+      if (checked?.matches !== true || checked.pathKey !== owner.pathKey ||
+          ["dev", "ino", "size", "mtimeMs", "ctimeMs"].some(field => !Number.isFinite(stats?.[field])) ||
+          ["dev", "ino", "size", "mtimeMs"].some(field => stats[field] !== tab.diskVersion[field])) {
+        throw new Error("F22 pre-click disk version has no current Main-owned verification");
+      }
       return {
         dev: stats.dev,
         ino: stats.ino,
@@ -32001,27 +32252,20 @@ async function runF22SaveAndReloadScenarios(
   // Observe Main's actual descriptor and the original themed confirmation.
   // Only its real Confirm button may approve; a mismatch cancels the dialog.
   const observeReplacementDialog = async (filePath, tabId, content) => {
-    await exec(`(() => {
+    const native = observeNativeDocumentPorts(win, ["commit-document-disk-adoption"]);
+    try { await exec(`(() => {
       const tabs = window.CustomTabs;
-      const ipc = window.ipcRenderer;
       const probe = window.__f22ReloadConsentProbe = {
         originalConfirm: tabs.confirmDocumentReplacement,
-        originalSync: ipc.sendSync,
         calls: [], receipts: [],
         owner: tabs.getDocumentIdentityForTab(
           ${tabId}, ${JSON.stringify(filePath)}, window.getReloadRequestSession()),
       };
-      ipc.sendSync = function (channel) {
-        const result = probe.originalSync.apply(this, arguments);
-        if (channel === 'commit-document-disk-adoption') probe.receipts.push(result);
-        return result;
-      };
-      tabs.confirmDocumentReplacement = async function (request) {
+      probe.confirm = tabs.confirmDocumentReplacement = async function (request) {
         const pending = probe.originalConfirm.apply(this, arguments);
         const dialog = document.getElementById('reloadDocumentDialog');
         const cancel = document.getElementById('reloadDocumentCancel');
         const confirm = document.getElementById('reloadDocumentConfirm');
-        const receipt = probe.receipts[probe.receipts.length - 1];
         const call = {
           request,
           title: document.getElementById('reloadDocumentTitle')?.textContent.trim(),
@@ -32037,13 +32281,6 @@ async function runF22SaveAndReloadScenarios(
         };
         const mismatches = call.mismatches;
         if (probe.calls.length !== 0) mismatches.push('second-dialog');
-        if (receipt?.accepted !== false || receipt?.why !== 'confirmation-required' ||
-            !['id', 'reason', 'expiresAt', 'fileName', 'pageSession', 'rendererGeneration']
-              .every(field => receipt.confirmation?.[field] === request?.[field]) ||
-            !['tabId', 'documentGeneration', 'documentRef']
-              .every(field => receipt.confirmation?.owner?.[field] === request?.owner?.[field])) {
-          mismatches.push('main-descriptor');
-        }
         if (!request || !/^[a-f0-9]{32}$/.test(request.id) ||
             request.reason !== 'file-reappeared' ||
             !Number.isFinite(request.expiresAt) || request.expiresAt <= Date.now() ||
@@ -32073,26 +32310,101 @@ async function runF22SaveAndReloadScenarios(
           mismatches.push('adopted-before-consent');
         }
         probe.calls.push(call);
-        if (mismatches.length === 0) {
+        if (!pending || typeof pending.then !== 'function') throw new Error('Replacement dialog has no original completion Promise');
+        probe.pending = pending;
+        call.approved = await pending;
+        call.dialogClosed = dialog?.open === false;
+        call.settled = true;
+        return call.approved;
+      };
+      return null;
+    })()`); }
+    catch (error) {
+      let cleanupError;
+      try {
+        await exec(`(() => {
+          const probe = window.__f22ReloadConsentProbe;
+          if (!probe) return;
+          const current = window.CustomTabs.confirmDocumentReplacement;
+          if (current === probe.confirm) window.CustomTabs.confirmDocumentReplacement = probe.originalConfirm;
+          else if (current !== probe.originalConfirm) throw new Error('Replacement setup lost confirmation ownership');
+          delete window.__f22ReloadConsentProbe;
+        })()`);
+      } catch (failure) { cleanupError = failure; }
+      finally { native.restore(); }
+      if (cleanupError) throw new AggregateError([error, cleanupError],
+        "Replacement setup and restoration failed: " + error.message + "; " + cleanupError.message);
+      throw error;
+    }
+    const restore = async () => {
+      try { return await boundedDialogWork(exec(`(async () => {
+        const probe = window.__f22ReloadConsentProbe;
+        if (!probe) return null;
+        const dialog = document.getElementById('reloadDocumentDialog');
+        if (dialog?.open) document.getElementById('reloadDocumentCancel').click();
+        if (probe.pending) await probe.pending;
+        if (window.CustomTabs.confirmDocumentReplacement !== probe.confirm) {
+          throw new Error('Replacement confirmation restoration ownership changed');
+        }
+        window.CustomTabs.confirmDocumentReplacement = probe.originalConfirm;
+        delete window.__f22ReloadConsentProbe;
+        return { calls: probe.calls, receipts: probe.receipts };
+      })()`), "replacement dialog original completion and restoration"); }
+      finally { native.restore(); }
+    };
+    restore.confirm = async () => {
+      if (!await waitForCondition(exec,
+        "window.__f22ReloadConsentProbe?.calls.length === 1", 5000)) {
+        throw new Error("Replacement reload did not present its actual confirmation");
+      }
+      const owner = await exec("window.__f22ReloadConsentProbe.owner");
+      const records = native.records;
+      const actual = records[0];
+      const exact = records.length === 1 && actual.replies === 1 &&
+        actual.channel === "commit-document-disk-adoption" &&
+        actual.data.filePath === filePath &&
+        ["pageSession", "rendererGeneration", "tabId", "documentGeneration", "pathKey", "documentRef"]
+          .every(field => actual.data.oldOwner?.[field] === owner?.[field]);
+      const answered = await exec(`(async () => {
+        const probe = window.__f22ReloadConsentProbe, call = probe.calls[0];
+        const request = call.request, receipt = ${JSON.stringify(actual?.reply || null)};
+        probe.receipts = ${JSON.stringify(records.map(record => record.reply))};
+        if (!${JSON.stringify(exact)} || receipt?.accepted !== false ||
+            receipt?.why !== 'confirmation-required' ||
+            !['id', 'reason', 'expiresAt', 'fileName', 'pageSession', 'rendererGeneration']
+              .every(field => receipt.confirmation?.[field] === request?.[field]) ||
+            !['tabId', 'documentGeneration', 'documentRef']
+              .every(field => receipt.confirmation?.owner?.[field] === request?.owner?.[field])) {
+          call.mismatches.push('main-descriptor');
+        }
+        const tabs = window.CustomTabs, dialog = document.getElementById('reloadDocumentDialog');
+        const owner = tabs.getDocumentIdentityForTab(
+          ${tabId}, ${JSON.stringify(filePath)}, window.getReloadRequestSession());
+        if (!dialog?.open || !dialog.matches(':modal') ||
+            document.activeElement !== document.getElementById('reloadDocumentCancel') ||
+            tabs.getActiveTabId() !== ${tabId} ||
+            window.currentFilePath !== ${JSON.stringify(filePath)} ||
+            window.originalMarkdown !== ${JSON.stringify(content)} ||
+            !['pageSession', 'rendererGeneration', 'tabId', 'documentGeneration', 'pathKey', 'documentRef']
+              .every(field => owner?.[field] === probe.owner?.[field])) {
+          call.mismatches.push('changed-before-choice');
+        }
+        if (call.mismatches.length === 0) {
+          const confirm = document.getElementById('reloadDocumentConfirm');
           confirm.addEventListener('click', () => { call.confirmClicked = true; }, { once: true });
           call.approvedBeforeReload = true;
           confirm.click();
         } else if (dialog?.open) {
-          cancel.click();
+          document.getElementById('reloadDocumentCancel').click();
         }
-        call.approved = await pending;
-        call.dialogClosed = dialog?.open === false;
-        return call.approved;
-      };
-      return null;
-    })()`);
-    return async () => exec(`(() => {
-      const probe = window.__f22ReloadConsentProbe;
-      window.CustomTabs.confirmDocumentReplacement = probe.originalConfirm;
-      window.ipcRenderer.sendSync = probe.originalSync;
-      delete window.__f22ReloadConsentProbe;
-      return { calls: probe.calls, receipts: probe.receipts };
-    })()`);
+        await probe.pending;
+        return { approved: call.approved, dialogClosed: call.dialogClosed, mismatches: call.mismatches };
+      })()`);
+      if (answered.approved !== true || answered.dialogClosed !== true || answered.mismatches.length) {
+        throw new Error("Replacement reload refused its actual Main/dialog correlation: " + JSON.stringify(answered));
+      }
+    };
+    return restore;
   };
   let deletedAReloadDialog = null;
   const restoreDeletedAReloadDialog = await observeReplacementDialog(
@@ -32101,6 +32413,7 @@ async function runF22SaveAndReloadScenarios(
   let explicitReplacementAdopted = false;
   try {
     await exec(`window.reloadCurrentFile(); null;`);
+    await restoreDeletedAReloadDialog.confirm();
     explicitReplacementAdopted = await waitForCondition(
       exec,
       `window.originalMarkdown === "F22_DELETED_A_EXTERNAL_REPLACEMENT\\r\\n"`,
@@ -32523,6 +32836,7 @@ async function runF22SaveAndReloadScenarios(
   }
   try {
     await exec(`window.reloadCurrentFile(); null;`);
+    await restoreReplacementDialog.confirm();
     replacementReloaded = await waitForCondition(
       exec,
       `window.originalMarkdown === "F22_DELETED_REPLACEMENT_NEW\\r\\n"`,
@@ -33333,15 +33647,15 @@ async function runF22SaveAndReloadScenarios(
     frozenDeletedFile,
     "F22_DELETED_FROZEN_A\r\n",
   );
+  const frozenDeletedB = await createCompanionTab(
+    frozenDeletedA, deletedBFile, "F22_DELETED_B_BASE\r\n",
+  );
   const frozenSelectionAcceptance = await acceptedSelectionWitness(
     frozenDeletedFile,
     frozenDeletedA.id,
   );
   const frozenSelectedOwner =
     frozenSelectionAcceptance && frozenSelectionAcceptance.owner;
-  const frozenDeletedB = await exec(
-    `window.CustomTabs.createTab(${JSON.stringify(deletedBFile)}, "F22_DELETED_B_BASE\\r\\n", { activate: false })`,
-  );
   const frozenAInitial = await deletionTabSnapshot(frozenDeletedA.id);
   const frozenMessageCount = await deletedMessages();
   const frozenDeliveryStart = await exec(
@@ -35084,7 +35398,9 @@ async function runF22SaveAndReloadScenarios(
   // `expectedPendingSaves` is the number of replies this fixture is holding at the
   // moment of the snapshot; null means none are held and the real array is the
   // answer, which is what the existing array assertions read.
-  const orderedSnapshot = (expectedPendingSaves = null) => exec(`
+  const orderedSnapshot = async (expectedPendingSaves = null) => {
+    const disk = fs.readFileSync(orderedSaveFile, "utf8");
+    return exec(`
     (() => {
       const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${orderedSaveTab.id});
       const state = tab && window.CustomTabs.__documentState(tab);
@@ -35142,7 +35458,7 @@ async function runF22SaveAndReloadScenarios(
         })(),
         selection: window.CustomTabs.getActiveDocumentIdentity(
           ${JSON.stringify(orderedSaveFile)}, window.getReloadRequestSession()),
-        disk: window.fs.readFileSync(${JSON.stringify(orderedSaveFile)}, "utf8"),
+        disk: ${JSON.stringify(disk)},
         notification: (() => {
           const toast = document.getElementById("notificationToast");
           const message = document.getElementById("notificationMessage");
@@ -35159,6 +35475,7 @@ async function runF22SaveAndReloadScenarios(
       } : null;
     })()
   `);
+  };
   const stableOrderedSnapshot = (snapshot) => {
     if (!snapshot) return snapshot;
     const { saveResultObservations, ...stable } = snapshot;
