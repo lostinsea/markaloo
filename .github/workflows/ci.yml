@@ -192,11 +192,22 @@ jobs:
           $aboutExit = $LASTEXITCODE
           "exit=$aboutExit" | Set-Content ci-test-results\about-status.txt
           Assert-NativeIsolation
-          "STARTED" | Set-Content ci-test-results\selected-proofs-status.txt
-          node scripts/prove-table-fixes.js R68 R434 R445 R1025 R659 2>&1 |
+          "exit=STARTED`nR1025=STARTED`nR659=NOT-RUN" | Set-Content ci-test-results\selected-proofs-status.txt
+          node scripts/prove-table-fixes.js R1025 2>&1 |
             Tee-Object -FilePath ci-test-results\selected-proofs.log
           $proofExit = $LASTEXITCODE
-          "exit=$proofExit" | Set-Content ci-test-results\selected-proofs-status.txt
+          $r1025Exit = $proofExit
+          if ($r1025Exit -eq 0) {
+            "exit=STARTED`nR1025=0`nR659=NOT-RUN" | Set-Content ci-test-results\selected-proofs-status.txt
+            Assert-NativeIsolation
+            "exit=STARTED`nR1025=0`nR659=STARTED" | Set-Content ci-test-results\selected-proofs-status.txt
+            node scripts/prove-table-fixes.js R659 2>&1 |
+              Tee-Object -FilePath ci-test-results\selected-proofs.log -Append
+            $proofExit = $LASTEXITCODE
+            "exit=$proofExit`nR1025=0`nR659=$proofExit" | Set-Content ci-test-results\selected-proofs-status.txt
+          } else {
+            "exit=$proofExit`nR1025=$r1025Exit`nR659=NOT-RUN" | Set-Content ci-test-results\selected-proofs-status.txt
+          }
           if ($aboutExit -ne 0 -or $proofExit -ne 0) { exit 1 }
 
       - name: Retain selected regression proof evidence

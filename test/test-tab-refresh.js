@@ -1553,7 +1553,9 @@ const restoreDialogSafety = [
       title: options.title, message: options.message, detail: options.detail,
       buttons: options.buttons.slice(), defaultId: options.defaultId, cancelId: options.cancelId,
     };
-    return realOwnedDialogShow.apply(this, arguments);
+    const producer = realOwnedDialogShow.apply(this, arguments);
+    expected.producer = producer;
+    return producer;
   }),
 ];
 // Refuse rather than invent an answer. Explicit fixture actors replace these
@@ -13016,6 +13018,28 @@ async function withEarlyLargeRenderFault(observation, request, fault, work) {
   }
 }
 
+async function answerLargeRenderQuestion(host, producer, choice) {
+  let closedListener;
+  const closed = new Promise(resolve => {
+    closedListener = resolve;
+    host.once("closed", closedListener);
+  });
+  try {
+    // Answering can destroy the host before its evaluation reply reaches Main.
+    await boundedDialogWork(Promise.race([closed, host.webContents.executeJavaScript(
+      `document.querySelector('#appMessageButtons [data-dialog-choice="${choice}"]').click(); true`,
+      true)]), "explicit test-owned large-render choice");
+    const result = await boundedDialogWork(producer, "original test-owned large-render choice");
+    if (result?.displayed !== true || result.failed !== false || result.emergency ||
+        result.cause !== "choice" || result.response !== Number(choice)) {
+      throw new Error("Large-render question did not return its genuine chosen result");
+    }
+    return result;
+  } finally {
+    host.removeListener("closed", closedListener);
+  }
+}
+
 async function runLargeRenderBoundary(win, isolatedWindow, sentinel, observation) {
   const request = { name: "Exact guard name", seconds: 12 };
   const message = '"Exact guard name" may take about 12 seconds to display.';
@@ -13075,9 +13099,7 @@ async function runLargeRenderBoundary(win, isolatedWindow, sentinel, observation
             metadata.focused !== "1" || !metadata.pendingBeforeChoice) {
           throw new Error("Large-render permission setup changed: " + JSON.stringify(metadata));
         }
-        await boundedDialogWork(host.webContents.executeJavaScript(
-          `document.querySelector('#appMessageButtons [data-dialog-choice="${choice}"]').click(); true`,
-          true), "explicit test-owned large-render choice");
+        await answerLargeRenderQuestion(host, expected.producer, choice);
       }
       const settled = await boundedDialogWork(waitUntil(() =>
         call("window.__largeRenderBoundary.settled === true"), 12000),
@@ -21359,10 +21381,53 @@ async function run(win) {
       await new Promise(r => setTimeout(r, 120));
       const parked = s.scrollTop;
 
+      const captureUndoState = () => {
+        const editorScroll = { available: typeof window.getEditorScrollDiagnostics === 'function' };
+        if (editorScroll.available) {
+          try {
+            const state = window.getEditorScrollDiagnostics();
+            if (!state || typeof state !== 'object') {
+              editorScroll.error = 'getEditorScrollDiagnostics returned no record';
+            } else {
+              const keys = ['owner', 'writes', 'ready', 'pendingGeometry', 'pendingSource',
+                'matchesSource', 'selection', 'mappedSelection'];
+              editorScroll.missingFields = keys.filter(key => !Object.hasOwn(state, key));
+              for (const key of keys) editorScroll[key] = state[key];
+            }
+          } catch (error) {
+            editorScroll.error = String(error?.message || error).slice(0, 160);
+          }
+        }
+        const history = historySnapshot();
+        return {
+          editorScroll,
+          paneTops: { editor: markdownEditor.scrollTop, preview: viewer.scrollTop,
+            wrapper: contentWrapper.scrollTop, physical: s.scrollTop },
+          undoRedoRendering: typeof undoRedoRendering === 'boolean' ? undoRedoRendering : 'unavailable',
+          renderGeneration: typeof renderGeneration === 'number' ? renderGeneration : 'unavailable',
+          history: { undoDepth: history.undo.length, redoDepth: history.redo.length },
+          editorMatchesLong: markdownEditor.value === longDoc,
+          editorMatchesShort: markdownEditor.value === shortDoc,
+          previewHasInsertedParagraph: viewer.textContent.includes('inserted paragraph.'),
+        };
+      };
+      const entrySource = entry => typeof entry === 'string' ? entry : entry?.source;
+      const beforeHistory = historySnapshot();
+      const beforeUndo = captureUndoState();
       historyUndo();
+      const afterUndo = captureUndoState();
+      const afterHistory = historySnapshot();
+      const oneHistoryTransition = beforeHistory.undo.length > 0 &&
+        afterHistory.undo.length === beforeHistory.undo.length - 1 &&
+        afterHistory.redo.length === beforeHistory.redo.length + 1 &&
+        afterHistory.undo.every((entry, index) => entry === beforeHistory.undo[index]) &&
+        beforeHistory.redo.every((entry, index) => entry === afterHistory.redo[index]) &&
+        entrySource(beforeHistory.undo.at(-1)) === shortDoc &&
+        entrySource(afterHistory.redo.at(-1)) === longDoc;
       await new Promise(r => setTimeout(r, 1400));
 
       const restored = getViewerScroller().scrollTop;
+      const finalUndo = captureUndoState();
       document.getElementById(isEditMode ? 'exitEditBtn' : 'toggleEdit').click();
       await new Promise(r => setTimeout(r, 500));
       return {
@@ -21371,6 +21436,12 @@ async function run(win) {
         parked,
         restored,
         scroller: s.id || s.className,
+        beforeUndo,
+        afterUndo,
+        finalUndo,
+        longBeforeUndo: beforeUndo.editorMatchesLong && beforeUndo.previewHasInsertedParagraph,
+        shortAfterUndo: finalUndo.editorMatchesShort && !finalUndo.previewHasInsertedParagraph,
+        oneHistoryTransition,
       };
     })()
   `);

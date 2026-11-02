@@ -526,6 +526,48 @@ const SEARCH_LAYOUT_CONTROLS = [
 
 const REVERTS = [
   {
+    id: "R1201",
+    what: "await a large-render dialog evaluation reply after answering destroys that same host",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from:
+      "    await boundedDialogWork(Promise.race([closed, host.webContents.executeJavaScript(\n" +
+      "      `document.querySelector('#appMessageButtons [data-dialog-choice=\"${choice}\"]').click(); true`,\n" +
+      "      true)]), \"explicit test-owned large-render choice\");",
+    to:
+      "    await boundedDialogWork(host.webContents.executeJavaScript(\n" +
+      "      `document.querySelector('#appMessageButtons [data-dialog-choice=\"${choice}\"]').click(); true`,\n" +
+      "      true), \"explicit test-owned large-render choice\");",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [/^lifecycle source large-render choice joins the original producer without a destroyed-host evaluation reply$/],
+    mustPass: [
+      /^lifecycle source large-render normal evaluation and explicit Cancel retain the original producer and input$/,
+      /^lifecycle source large-render host closure alone cannot replace the original producer result$/,
+      /^lifecycle source large-render choice propagates evaluation errors without its exact host closure$/,
+      /^lifecycle source large-render transport cannot settle from a different host closing$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1202",
+    what: "accept host transport completion without the original large-render producer's exact chosen result",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from:
+      '    if (result?.displayed !== true || result.failed !== false || result.emergency ||\n' +
+      '        result.cause !== "choice" || result.response !== Number(choice)) {\n' +
+      '      throw new Error("Large-render question did not return its genuine chosen result");\n' +
+      '    }\n',
+    to: "",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [/^lifecycle source large-render choice rejects missing undisplayed failed cancelled foreign and emergency producer results$/],
+    mustPass: [
+      /^lifecycle source large-render choice joins the original producer without a destroyed-host evaluation reply$/,
+      /^lifecycle source large-render host closure alone cannot replace the original producer result$/,
+      /^lifecycle source large-render choice propagates the original producer rejection$/,
+      /^lifecycle source large-render choice propagates evaluation errors without its exact host closure$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
     id: "R1200",
     what: "leave a retired active owner in the queued layout while replacement selection awaits disk",
     file: TABS,
@@ -18556,7 +18598,7 @@ const REVERTS = [
       file: path.join(ROOT, "test", "teardown-question-current-bindings.json"),
       from:
         '{\n' +
-        '  "suite": "9d6914ba595544bd5c9ee3fe72146511ca3434ec8a71d6368a6c4eebf45dc4a2",\n' +
+        '  "suite": "686f45142af47cd1b10a2108d330520f5edc959a45c552a4d6d6f651f5499b12",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
@@ -18567,7 +18609,7 @@ const REVERTS = [
         '}\n',
       to:
         '{\n' +
-        '  "suite": "ccaae40216d87649e5ba1305f33a4bcdf2d17519d17352c30537af437438d2ec",\n' +
+        '  "suite": "eec5e3147ffce3f32b24641947b5825019ee277b141da9d9a1e14dc634c7efcc",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +

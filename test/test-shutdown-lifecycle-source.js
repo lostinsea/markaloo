@@ -248,8 +248,153 @@ async function activeCloseLayoutContracts() {
   assert.equal(background.durableLayout().activeEntryId, "entry-2");
 }
 
+async function largeRenderChoiceContracts() {
+  const { EventEmitter } = require("node:events");
+  const currentSource = source.replace(/\r\n/g, "\n");
+  const region = (start, end) => {
+    const first = currentSource.indexOf(start), last = currentSource.indexOf(end, first);
+    assert(first >= 0 && first === currentSource.lastIndexOf(start) && last > first);
+    return currentSource.slice(first, last);
+  };
+  const actual = [
+    region("function replaceMethod(", "\n// A stand-in for"),
+    region("function unexpectedDialog(", "\nconst realOwnedDialogShow"),
+    region("const restoreDialogSafety = [", "\n// Refuse rather than invent"),
+    region("async function boundedDialogWork(", "\nfunction inspectCleanRefreshSource("),
+    region("async function answerLargeRenderQuestion(", "\nasync function runLargeRenderBoundary("),
+  ].join("\n");
+  async function exercise({ choice = "0", result, pendingProducer = false,
+    rejectProducer = false, closeHost = true, closeForeign = false,
+    evaluationReply = true, rejectEvaluation = false } = {}) {
+    const producer = deferred(), evaluation = deferred(), timers = [], input = [], removals = [];
+    const owner = {}, expected = { owner, calls: 0 };
+    const host = new EventEmitter(), foreign = new EventEmitter();
+    const baseline = () => {};
+    host.on("closed", baseline); foreign.on("closed", baseline);
+    let closedListener, listenerBeforeInput = false, observedProducer = false, originalCall;
+    let evaluationSettled = false;
+    evaluation.promise.then(() => { evaluationSettled = true; }, () => { evaluationSettled = true; });
+    const once = host.once, remove = host.removeListener;
+    host.once = function (name, listener) {
+      assert.equal(name, "closed"); closedListener = listener;
+      return once.apply(this, arguments);
+    };
+    host.removeListener = function (name, listener) {
+      removals.push({ name, listener }); return remove.apply(this, arguments);
+    };
+    const producerError = new Error("controlled original producer rejection");
+    const evaluationError = new Error("controlled evaluation rejection");
+    let producerSettled = false;
+    producer.promise.then(() => { producerSettled = true; }, () => { producerSettled = true; });
+    class SourceOwnedDialogs {
+      show(...args) { originalCall = { receiver: this, args }; return producer.promise; }
+    }
+    const original = SourceOwnedDialogs.prototype.show;
+    const api = vm.runInNewContext(actual +
+      "\n({ answerLargeRenderQuestion, restoreDialogSafety });", {
+      OwnedDialogs: SourceOwnedDialogs, realOwnedDialogShow: original,
+      dialogSafety: { expected, presentations: 0, unexpected: [] },
+      setTimeout(callback, delay) {
+        assert.equal(delay, 12000);
+        const timer = { callback, active: true }; timers.push(timer); return timer;
+      },
+      clearTimeout(timer) { timer.active = false; },
+    }, { timeout: 1000 });
+    const broker = new SourceOwnedDialogs();
+    const options = { title: "Large document", message: "Exact guard name",
+      detail: "Exact detail", buttons: ["Open anyway", "Cancel"], defaultId: 1, cancelId: 1 };
+    const returned = broker.show(owner, options);
+    observedProducer = returned === producer.promise && expected.producer === producer.promise &&
+      originalCall.receiver === broker && originalCall.args[0] === owner &&
+      originalCall.args[1] === options && expected.calls === 1;
+    host.webContents = {
+      executeJavaScript(code, gesture) {
+        input.push({ code, gesture });
+        listenerBeforeInput = host.listeners("closed").includes(closedListener);
+        if (closeForeign) foreign.emit("closed");
+        if (closeHost) host.emit("closed");
+        if (rejectEvaluation) return Promise.reject(evaluationError);
+        return evaluationReply ? Promise.resolve(true) : evaluation.promise;
+      },
+    };
+    let outcome;
+    try {
+      api.answerLargeRenderQuestion(host, expected.producer, choice).then(
+        value => { outcome = { value }; }, error => { outcome = { error }; });
+      if (rejectProducer) producer.reject(producerError);
+      else if (!pendingProducer) producer.resolve(result);
+      await turn();
+      if (!outcome) {
+        const timer = timers.find(item => item.active);
+        assert(timer, "A pending actual answer helper must retain its bounded operation");
+        timer.callback();
+        await turn();
+      }
+      assert(outcome, "The controlled bounded operation must settle");
+    } finally { api.restoreDialogSafety.forEach(restore => restore()); }
+    return { ...outcome, producerError, evaluationError, observedProducer, producerSettled,
+      listenerBeforeInput, evaluationSettled, input, result, choice,
+      cleaned: SourceOwnedDialogs.prototype.show === original &&
+        host.listeners("closed").length === 1 && host.listeners("closed")[0] === baseline &&
+        foreign.listeners("closed").length === 1 && foreign.listeners("closed")[0] === baseline &&
+        removals.some(item => item.name === "closed" && item.listener === closedListener) &&
+        timers.every(timer => !timer.active) };
+  }
+  const valid = { displayed: true, failed: false, cause: "choice", response: 0 };
+  const intact = result => {
+    assert.equal(result.observedProducer, true, "The observer must return and retain the original producer");
+    assert.equal(result.listenerBeforeInput, true, "The exact host must be observed before clicking");
+    assert.equal(result.cleaned, true, "Only the owned host listener and original observer may be removed");
+    assert.deepEqual(result.input, [{
+      code: `document.querySelector('#appMessageButtons [data-dialog-choice="${result.choice}"]').click(); true`,
+      gesture: true,
+    }]);
+  };
+  const closed = await exercise({ result: valid, evaluationReply: false });
+  check("large-render choice joins the original producer without a destroyed-host evaluation reply", () => {
+    intact(closed); assert.equal(closed.error, undefined); assert.equal(closed.value, valid);
+    assert.equal(closed.evaluationSettled, false, "The evaluation genuinely has no reply");
+  });
+  const normal = await exercise({ choice: "1", result: { ...valid, response: 1 }, closeHost: false });
+  check("large-render normal evaluation and explicit Cancel retain the original producer and input", () => {
+    intact(normal); assert.equal(normal.error, undefined); assert.equal(normal.value, normal.result);
+  });
+  const closureOnly = await exercise({ pendingProducer: true });
+  check("large-render host closure alone cannot replace the original producer result", () => {
+    intact(closureOnly); assert.equal(closureOnly.producerSettled, false);
+    assert.match(closureOnly.error?.message || "", /^Timed out: original test-owned large-render choice$/);
+  });
+  const bad = [];
+  for (const result of [undefined, { ...valid, displayed: false }, { ...valid, displayed: 1 },
+    { ...valid, failed: true }, { ...valid, failed: 0 }, { ...valid, cause: "cancel" },
+    { ...valid, response: 1 }, { ...valid, response: "0" }, { ...valid, emergency: true }]) {
+    bad.push(await exercise({ result }));
+  }
+  check("large-render choice rejects missing undisplayed failed cancelled foreign and emergency producer results", () => {
+    for (const result of bad) {
+      intact(result);
+      assert.equal(result.error?.message, "Large-render question did not return its genuine chosen result");
+    }
+  });
+  const rejected = await exercise({ rejectProducer: true });
+  check("large-render choice propagates the original producer rejection", () => {
+    intact(rejected); assert.equal(rejected.error, rejected.producerError);
+  });
+  const failedEvaluation = await exercise({ result: valid, closeHost: false, rejectEvaluation: true });
+  check("large-render choice propagates evaluation errors without its exact host closure", () => {
+    intact(failedEvaluation); assert.equal(failedEvaluation.error, failedEvaluation.evaluationError);
+  });
+  const foreign = await exercise({ result: valid, closeHost: false,
+    closeForeign: true, evaluationReply: false });
+  check("large-render transport cannot settle from a different host closing", () => {
+    intact(foreign);
+    assert.match(foreign.error?.message || "", /^Timed out: explicit test-owned large-render choice$/);
+  });
+}
+
 async function main() {
   await activeCloseLayoutContracts();
+  await largeRenderChoiceContracts();
   check("compiles the entire unexecuted Electron suite", () => {
     new vm.Script(source, { filename: sourcePath });
   });
