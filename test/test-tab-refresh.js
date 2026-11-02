@@ -44038,21 +44038,114 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     const beforePopup = __shutdown.state().lastRequestId;
     const windowsBeforePopup = new Set(BrowserWindow.getAllWindows().map(window => window.id));
     let popup = null;
+    const popupHost = win.webContents;
+    const popupOwner = __shutdown.state();
+    const popupRoot = contents => {
+      const frame = contents.mainFrame;
+      return { contents, frame, frameTreeNodeId: frame.frameTreeNodeId,
+        processId: frame.processId, routingId: frame.routingId, url: frame.url };
+    };
+    const retainedPopupRoot = (frame, scope) => {
+      try {
+        return !!frame && !frame.isDestroyed() && !frame.detached && frame.parent === null &&
+          frame.frameTreeNodeId === scope.frameTreeNodeId &&
+          frame.processId === scope.processId && frame.routingId === scope.routingId &&
+          frame.url === scope.url;
+      } catch { return false; }
+    };
+    const popupSource = popupRoot(popupHost);
+    const popupSourceCurrent = () => {
+      const state = __shutdown.state();
+      return !win.isDestroyed() && win.webContents === popupHost && !popupHost.isDestroyed() &&
+        state.renderer === "ready" && state.rendererGeneration === popupOwner.rendererGeneration &&
+        state.rendererPageSession === popupOwner.rendererPageSession &&
+        popupHost.getURL() === popupSource.url &&
+        retainedPopupRoot(popupHost.mainFrame, popupSource);
+    };
+    const popupPayload = {
+      svgContent: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#4a90d9"></rect></svg>',
+      isDarkMode: false,
+    };
+    const popupReceipts = [];
+    const popupCreations = [];
+    let popupReceipt = null;
+    let popupCorrelationError = null;
+    let popupScope = null;
+    let popupBridge = null;
+    let popupProbeAttempted = false;
+    const capturePopupReceipt = (event, payload) => {
+      const valid = popupReceipts.length === 0 && popupSourceCurrent() &&
+        event.sender === popupHost && retainedPopupRoot(event.senderFrame, popupSource) &&
+        isDeepStrictEqual(payload, popupPayload);
+      popupReceipts.push({ senderId: event.sender?.id,
+        frameTreeNodeId: event.senderFrame?.frameTreeNodeId, payload, valid });
+      if (!valid) { popupCorrelationError = "foreign, duplicate or changed popup receipt"; return; }
+      popupReceipt = event;
+    };
+    const capturePopupCreation = (_event, candidate) => {
+      popupCreations.push(candidate);
+      if (!popupReceipt || popup || windowsBeforePopup.has(candidate.id) || !popupSourceCurrent()) {
+        popupCorrelationError = "popup creation lacks its one retained fixed IPC receipt";
+        return;
+      }
+      popup = candidate;
+    };
+    const popupIsolated = candidate => {
+      const prefs = candidate.webContents.getLastWebPreferences();
+      // Electron can omit this metadata; the executed fixed bridge is still mandatory.
+      return prefs.nodeIntegration === false && prefs.contextIsolation === true && prefs.sandbox === true &&
+        (prefs.preload === undefined ||
+          prefs.preload === path.join(__dirname, "..", "src", "popup-preload.js"));
+    };
+    const popupBridgeExact = () => popupBridge &&
+      popupBridge.requireType === "undefined" && popupBridge.processType === "undefined" &&
+      JSON.stringify(popupBridge.keys) === JSON.stringify(["exportMermaidPdf"]) &&
+      popupBridge.exportType === "function";
     await withOrdinaryShutdownCleanup(async () => {
+      // Observe the receipt before production synchronously creates its BrowserWindow.
+      ipcMain.prependListener("open-mermaid-popup", capturePopupReceipt);
+      app.on("browser-window-created", capturePopupCreation);
       await exec(`
-        window.folia.openMermaidPopup({
-          svgContent: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#4a90d9"></rect></svg>',
-          isDarkMode: false
-        });
+        window.folia.openMermaidPopup(${JSON.stringify(popupPayload)});
         null;
       `);
       const newWindows = () => BrowserWindow.getAllWindows().filter(
         window => !windowsBeforePopup.has(window.id));
-      const popupOpened = await waitUntil(() => newWindows().length === 1, 10000);
+      const popupDeadline = Date.now() + 10000;
+      const popupOpened = await waitUntil(async () => {
+        const candidates = newWindows();
+        if (candidates.length !== 1 || !popup || candidates[0] !== popup ||
+            !popupReceipt || popupReceipts.length !== 1 || popupCreations.length !== 1 ||
+            popupCreations[0] !== popup || popupCorrelationError || !popupSourceCurrent() ||
+            popup.isDestroyed() || popup.webContents.isDestroyed() || !popupIsolated(popup) ||
+            popup.webContents.isLoadingMainFrame() || !popup.webContents.getURL().startsWith("file:")) {
+          return false;
+        }
+        if (!popupProbeAttempted) {
+          popupProbeAttempted = true;
+          popupScope = popupRoot(popup.webContents);
+          try {
+            popupBridge = await boundedDialogWork(popupScope.frame.executeJavaScript(`({
+              requireType: typeof require, processType: typeof process,
+              keys: window.popupBridge ? Object.keys(window.popupBridge).sort() : null,
+              exportType: typeof window.popupBridge?.exportMermaidPdf
+            })`, true), "ordinary popup executed Mermaid bridge",
+            Math.max(1, popupDeadline - Date.now()));
+          } catch (error) { popupBridge = { error: uncaughtExceptionDetail(error) }; }
+        }
+        return popupBridgeExact() && popupSourceCurrent() &&
+          popup.webContents === popupScope.contents &&
+          retainedPopupRoot(popup.webContents.mainFrame, popupScope) &&
+          popup.webContents.getURL() === popupScope.url;
+      }, 10000);
       const created = newWindows();
-      if (!popupOpened || created.length !== 1 ||
-          created[0].webContents.getLastWebPreferences().preload !==
-            path.join(__dirname, "..", "src", "popup-preload.js")) {
+      if (!popupOpened || created.length !== 1 || created[0] !== popup ||
+          popupReceipts.length !== 1 || popupCreations.length !== 1 ||
+          popupCreations[0] !== popup || !popupReceipt || popupCorrelationError ||
+          !popupSourceCurrent() || !popupScope || !popupIsolated(popup) || !popupBridgeExact() ||
+          popup.webContents !== popupScope.contents ||
+          !retainedPopupRoot(popup.webContents.mainFrame, popupScope) ||
+          popup.webContents.getURL() !== popupScope.url) {
         const failure = new Error("Ordinary popup close did not capture its one new isolated popup");
         try {
           failure.message += "\n" + require("util").inspect({
@@ -44069,11 +44162,25 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
         } catch (error) {
           failure.message += "\nPopup capture diagnostics unavailable: " + uncaughtExceptionDetail(error);
         }
+        try {
+          failure.message += "\nPopup authority: " + require("util").inspect({
+            receipts: popupReceipts, creationIds: popupCreations.map(window => window.id),
+            correlationError: popupCorrelationError, bridge: popupBridge,
+            sourceCurrent: popupSourceCurrent(),
+          }, { depth: null, colors: false, customInspect: false, getters: false });
+        } catch (error) {
+          failure.message += "\nPopup authority diagnostics unavailable: " + uncaughtExceptionDetail(error);
+        }
         throw failure;
       }
       popup = created[0];
       popup.close();
       const popupGone = await waitUntil(() => popup.isDestroyed(), 10000);
+      if (popupReceipts.length !== 1 || popupCreations.length !== 1 ||
+          popupCorrelationError || !popupSourceCurrent()) {
+        throw new Error("Ordinary popup authority changed during normal close: " +
+          String(popupCorrelationError));
+      }
       check(
         "closing a popup is not a shutdown: it is neither held nor asked about",
         popupOpened && popupGone && rig.dialogs.length === 0 &&
@@ -44082,7 +44189,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
         JSON.stringify({ popupOpened, popupGone, dialogs: rig.dialogs.length,
           lastRequestId: __shutdown.state().lastRequestId, beforePopup }),
       );
-    }, [() => { if (popup && !popup.isDestroyed()) popup.destroy(); }]);
+    }, [() => { if (popup && !popup.isDestroyed()) popup.destroy(); },
+      () => ipcMain.removeListener("open-mermaid-popup", capturePopupReceipt),
+      () => app.removeListener("browser-window-created", capturePopupCreation)]);
 
     // Main-side holds retain genuine ingress. No page listener is removed.
     const beginHeldApproval = async () => {

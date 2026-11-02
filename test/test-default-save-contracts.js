@@ -2645,90 +2645,194 @@ async function shutdownAggregateDiagnosticContracts() {
 async function popupCaptureDiagnosticContracts() {
   const scenario = between(source, "async function runShutdownScenarios(",
     "\nasync function runSameDocumentShutdownScenarios(");
-  const actor = between(scenario, "      const created = newWindows();",
-    "\n    }, [() => { if (popup && !popup.isDestroyed()) popup.destroy(); }]);");
-  const start = actor.indexOf("        const failure = new Error(");
-  const end = actor.indexOf("\n      }\n      popup = created[0];", start);
-  assert.ok(start > 0 && end > start, "The exact popup refusal is controlled");
-  const refusal = actor.slice(start, end);
-  const legacy = '        throw new Error("Ordinary popup close did not capture its one new isolated popup");';
+  const actor = between(scenario, "    const beforePopup = __shutdown.state().lastRequestId;",
+    "\n    // Main-side holds retain genuine ingress.");
+  const guardStart = actor.indexOf("      if (!popupOpened || created.length !== 1");
+  const guardEnd = actor.indexOf(" {\n        const failure = new Error(", guardStart) + 2;
+  assert.ok(guardStart > 0 && guardEnd > guardStart, "The actual final popup authority guard is controlled");
+  const guard = actor.slice(guardStart, guardEnd);
+  const packetStart = actor.indexOf('        try {\n          failure.message += "\\n" + require("util").inspect({');
+  const packetEnd = actor.indexOf('        try {\n          failure.message += "\\nPopup authority:');
+  assert.ok(packetEnd > guardEnd);
+  const packet = packetStart > guardEnd ? actor.slice(packetStart, packetEnd) : "";
+  const legacy = '      if (!popupOpened || created.length !== 1 ||\n' +
+    '          created[0].webContents.getLastWebPreferences().preload !==\n' +
+    '            path.join(__dirname, "..", "src", "popup-preload.js")) {';
+  const cleanup = between(source, "async function withOrdinaryShutdownCleanup(",
+    "\nfunction holdOrdinaryShutdownApproval(");
+  const bounded = between(source, "async function boundedDialogWork(", "\nfunction inspectCleanRefreshSource(");
   const formatter = between(source, "function uncaughtExceptionDetail(error) {", "\nfunction writeFatal(");
+  const preload = fs.readFileSync(path.join(producerRoot, "popup-preload.js"), "utf8");
+  const { EventEmitter } = require("node:events");
   const util = require("node:util");
   const expectedPreload = path.join(__dirname, "..", "src", "popup-preload.js");
   const run = async (options = {}) => {
     const trace = [], assertions = [], preferences = [];
-    let inspected = null, error = null;
-    const opened = options.opened ?? true;
-    const windows = Array.from({ length: options.count ?? 1 }, (_, index) => {
-      const prefs = { preload: options.wrongPreload ? "C:\\foreign\\popup-preload.js" : expectedPreload,
-        sandbox: true, contextIsolation: true, nodeIntegration: false,
-        additionalArguments: ["OBSERVED_POPUP_" + index] };
-      if (options.missingPreload) delete prefs.preload;
+    const app = new EventEmitter(), ipcMain = new EventEmitter();
+    const state = { lastRequestId: 9, pendingId: 0, renderer: "ready",
+      rendererGeneration: 4, rendererPageSession: "retained-popup-document" };
+    const rootFrame = { frameTreeNodeId: 31, processId: 11, routingId: 21,
+      url: "file:///fixture/index.html", parent: null, isDestroyed: () => false };
+    const host = { id: 1, mainFrame: rootFrame, isDestroyed: () => false, getURL: () => rootFrame.url };
+    const owner = { id: 1, webContents: host, isDestroyed: () => false };
+    const windows = [owner];
+    let inspected = null, error = null, probes = 0, waits = 0;
+    const create = () => {
+      const index = preferences.length;
+      const prefs = { sandbox: true, contextIsolation: true, nodeIntegration: false,
+        additionalArguments: ["OBSERVED_POPUP_" + index], ...options.unsafe };
+      if (!options.missingPreload) prefs.preload =
+        options.wrongPreload ? "C:\\foreign\\popup-preload.js" : expectedPreload;
       preferences.push(prefs);
       let destroyed = false;
-      return { id: 101 + index,
-        webContents: { id: 801 + index, getLastWebPreferences: () => prefs },
-        close() { trace.push("close"); destroyed = true; },
+      const page = { window: {} }, pageContext = vm.createContext(page);
+      vm.runInNewContext(preload, {
+        process: { argv: ["electron", "--popup-kind=" + (options.wrongKind ? "image" : "mermaid")] },
+        require: name => {
+          assert.equal(name, "electron");
+          return { contextBridge: { exposeInMainWorld: (key, value) => { page.window[key] = value; } },
+            ipcRenderer: { once() { throw new Error("No PDF/export dispatch is permitted"); },
+              send() { throw new Error("No PDF/export dispatch is permitted"); } } };
+        },
+      });
+      if (options.missingBridge) delete page.window.popupBridge;
+      if (options.extraBridge) page.window.popupBridge.saveImage = () => {};
+      if (options.nodeGlobal) page.require = () => {};
+      if (options.processGlobal) page.process = {};
+      const frame = { frameTreeNodeId: 131 + index, processId: 111, routingId: 121 + index,
+        url: "file:///fixture/mermaid-" + index + ".html", parent: null, isDestroyed: () => destroyed,
+        executeJavaScript: async script => {
+          probes++;
+          if (options.rejectProbe) throw new Error("ACTUAL_POPUP_PROBE_REFUSED");
+          const value = vm.runInContext(script, pageContext);
+          if (options.staleSource) state.rendererGeneration++;
+          if (options.movedPopup) frame.routingId++;
+          if (options.swappedContents) candidate.webContents = { ...candidate.webContents };
+          return value;
+        } };
+      const candidate = { id: 101 + index,
+        webContents: { id: 801 + index, mainFrame: frame,
+          isDestroyed: () => destroyed, isLoadingMainFrame: () => false,
+          getURL: () => frame.url, getLastWebPreferences: () => prefs },
+        close() {
+          trace.push("close"); destroyed = true;
+          if (options.lateDuplicate) ipcMain.emit("open-mermaid-popup", lastEvent, lastPayload);
+        },
+        destroy() { trace.push("destroy"); destroyed = true; },
         isDestroyed: () => destroyed };
-    });
-    const context = vm.createContext({ Error, path, __dirname, popup: null,
-      popupOpened: opened, newWindows: () => { trace.push("snapshot"); return windows; },
+      windows.push(candidate);
+      if (!options.missingCreation) app.emit("browser-window-created", {}, candidate);
+    };
+    let lastEvent, lastPayload;
+    const production = (event, payload) => {
+      lastEvent = event; lastPayload = payload;
+      for (let index = 0; index < (options.count ?? 1); index++) create();
+    };
+    const originalCreation = () => {};
+    ipcMain.on("open-mermaid-popup", production);
+    app.on("browser-window-created", originalCreation);
+    let context;
+    const dispatch = payload => {
+      const frame = { ...rootFrame, ...(options.foreignFrame ? { routingId: 999 } : {}) };
+      const event = { sender: options.foreignSender ? { id: 999 } : host, senderFrame: frame };
+      const received = options.wrongPayload ? { ...payload, isDarkMode: true } : payload;
+      if (options.missingReceipt) production(event, received);
+      else ipcMain.emit("open-mermaid-popup", event, received);
+      if (options.duplicate) ipcMain.emit("open-mermaid-popup", event, received);
+    };
+    context = vm.createContext({ Error, AggregateError, path, __dirname, app, ipcMain, win: owner,
+      Date, setTimeout, clearTimeout, isDeepStrictEqual: util.isDeepStrictEqual,
+      BrowserWindow: { getAllWindows: () => windows.filter(window => !window.isDestroyed()) },
+      exec: async script => vm.runInContext(script, context),
+      window: { folia: { openMermaidPopup: dispatch } },
       require: name => {
         assert.equal(name, "util");
         return { inspect: (value, settings) => {
-          inspected = value;
-          if (options.formatFailure) throw new Error("POPUP_DIAGNOSTIC_FORMATTER_REFUSED");
+          if (Object.hasOwn(value, "popupOpened")) {
+            inspected = value;
+            if (options.formatFailure) throw new Error("POPUP_DIAGNOSTIC_FORMATTER_REFUSED");
+          }
           return util.inspect(value, settings);
         } };
       },
       waitUntil: async (predicate, bound) => {
-        assert.equal(bound, 10000); trace.push("close-wait"); return predicate();
+        assert.equal(bound, 10000); waits++;
+        if (waits === 1 && options.waitFalse) return false;
+        return predicate();
       },
-      rig: { dialogs: [] }, beforePopup: 9,
-      __shutdown: { state: () => ({ lastRequestId: 9, pendingId: 0 }) },
+      rig: { dialogs: [] }, __shutdown: { state: () => ({ ...state }) },
       check: (name, success) => assertions.push({ name, success }),
     });
-    const body = options.legacy ? actor.replace(refusal, legacy) : actor;
-    try { await vm.runInContext(formatter + "\n(async () => {\n" + body + "\n})()", context); }
+    let body = options.legacy ? actor.replace(guard, legacy) : actor;
+    if (options.withoutPacket && packet) body = body.replace(packet, "");
+    try { await vm.runInContext(formatter + "\n" + cleanup + "\n" + bounded +
+      "\n(async () => {\n" + body + "\n})()", context); }
     catch (failure) { error = failure; }
-    return { trace, assertions, error, inspected, preferences, windows, opened };
+    assert.deepEqual(ipcMain.listeners("open-mermaid-popup"), [production]);
+    assert.deepEqual(app.listeners("browser-window-created"), [originalCreation]);
+    return { trace, assertions, error, bodyError: error?.errors?.[0] || error,
+      inspected, preferences, windows: windows.slice(1), probes, waits, state };
   };
   const healthy = await run();
   check(healthy.error === null && healthy.inspected === null &&
-    healthy.trace.join("|") === "snapshot|close|close-wait" &&
-    healthy.assertions.length === 1 && healthy.assertions[0].success === true,
-  "Popup diagnostics leave the original matching capture, close, bound and behavioral assertion unchanged");
-  for (const options of [{ opened: false }, { count: 0 }, { count: 2 },
-    { wrongPreload: true }, { missingPreload: true }]) {
+    healthy.trace.join("|") === "close" && healthy.probes === 1 && healthy.waits === 2 &&
+    healthy.assertions.length === 1 && healthy.assertions[0].success === true &&
+    healthy.state.lastRequestId === 9 && healthy.state.pendingId === 0,
+  "Receipt-correlated popup preserves the original normal close, bounds, shutdown assertion and owner counters");
+  const omitted = await run({ missingPreload: true });
+  check(omitted.error === null && omitted.probes === 1 && omitted.trace.join("|") === "close" &&
+    omitted.assertions[0].success === true && !Object.hasOwn(omitted.preferences[0], "preload"),
+  "Actual omitted metadata is admitted only by the genuine fixed receipt, creation, isolation and executed exact Mermaid preload bridge");
+  const old = await run({ missingPreload: true, legacy: true });
+  check(old.bodyError instanceof Error && old.probes === 1 && old.trace.join("|") === "destroy" &&
+    old.assertions.length === 0 && old.windows.length === 1 &&
+    !Object.hasOwn(old.preferences[0], "preload"),
+  "Former metadata-only witness genuinely rejects the known positive even after valid receipt and executed bridge qualification");
+  const noPacket = await run({ wrongPreload: true, withoutPacket: true });
+  check(noPacket.bodyError instanceof Error && noPacket.trace.join("|") === "destroy" &&
+    noPacket.assertions.length === 0 && noPacket.inspected === null &&
+    !noPacket.bodyError.stack.includes("expectedPreload:") &&
+    noPacket.bodyError.stack.includes("Popup authority:"),
+  "Removing the original R1240 packet genuinely omits observed preferences without removing the new authority evidence or original refusal");
+  for (const options of [{ waitFalse: true }, { count: 0 }, { count: 2 }, { wrongPreload: true },
+    { missingPreload: true, missingReceipt: true }, { missingPreload: true, missingBridge: true },
+    { foreignSender: true }, { foreignFrame: true }, { wrongPayload: true }, { duplicate: true },
+    { missingCreation: true }, { wrongKind: true }, { extraBridge: true }, { nodeGlobal: true },
+    { processGlobal: true }, { rejectProbe: true }, { staleSource: true }, { movedPopup: true },
+    { swappedContents: true },
+    { unsafe: { nodeIntegration: true } }, { unsafe: { contextIsolation: false } },
+    { unsafe: { sandbox: false } }]) {
     const refused = await run(options), data = refused.inspected;
-    check(refused.error instanceof Error &&
-      refused.error.message.startsWith("Ordinary popup close did not capture its one new isolated popup\n") &&
-      refused.trace.join("|") === "snapshot" && refused.assertions.length === 0 &&
-      data.popupOpened === refused.opened && data.expectedPreload === expectedPreload &&
+    const owned = options.count !== 0 && !options.missingReceipt && !options.missingCreation &&
+      !options.foreignSender && !options.foreignFrame && !options.wrongPayload;
+    check(refused.bodyError instanceof Error &&
+      refused.bodyError.message.startsWith("Ordinary popup close did not capture its one new isolated popup\n") &&
+      !refused.trace.includes("close") && refused.assertions.length === 0 &&
+      refused.trace.join("|") === (owned ? "destroy" : "") &&
+      !!data && data.expectedPreload === expectedPreload &&
       data.createdCount === refused.windows.length && data.created.length === refused.windows.length &&
       data.created.every((entry, index) => entry.windowId === refused.windows[index].id &&
         entry.webContentsId === refused.windows[index].webContents.id &&
         entry.webPreferences === refused.preferences[index]) &&
-      refused.error.stack.includes("popupOpened: " + refused.opened) &&
-      refused.error.stack.includes("createdCount: " + refused.windows.length) &&
-      refused.error.stack.includes(util.inspect(expectedPreload)) &&
+      refused.bodyError.stack.includes("popupOpened: " + data.popupOpened) &&
+      refused.bodyError.stack.includes("createdCount: " + refused.windows.length) &&
+      refused.bodyError.stack.includes(util.inspect(expectedPreload)) &&
       data.created.every((entry, index) =>
-        refused.error.stack.includes("windowId: " + entry.windowId) &&
-        refused.error.stack.includes("webContentsId: " + entry.webContentsId) &&
-        refused.error.stack.includes("OBSERVED_POPUP_" + index)),
-    "Actual popup refusal retains every observed value without admitting bad predicate " + JSON.stringify(options));
+        refused.bodyError.stack.includes("windowId: " + entry.windowId) &&
+        refused.bodyError.stack.includes("webContentsId: " + entry.webContentsId) &&
+        refused.bodyError.stack.includes("OBSERVED_POPUP_" + index)),
+    "Actual popup authority refuses " + JSON.stringify(options) + " while retaining the R1240 diagnostic packet");
   }
-  const old = await run({ wrongPreload: true, legacy: true });
-  check(old.error instanceof Error && old.trace.join("|") === "snapshot" &&
-    old.assertions.length === 0 && old.inspected === null &&
-    !old.error.stack.includes("popupOpened:") && !old.error.stack.includes("OBSERVED_POPUP_0"),
-  "Former popup refusal genuinely omits observed capture evidence while preserving its original refusal");
+  const late = await run({ lateDuplicate: true });
+  check(late.bodyError instanceof Error && late.bodyError.message.includes("authority changed during normal close") &&
+    late.assertions.length === 0,
+  "A duplicate fixed request during actual normal close cannot inherit the earlier successful popup witness");
   const failedFormat = await run({ wrongPreload: true, formatFailure: true });
-  check(failedFormat.error instanceof Error && failedFormat.trace.join("|") === "snapshot" &&
+  check(failedFormat.bodyError instanceof Error && failedFormat.trace.join("|") === "destroy" &&
     failedFormat.assertions.length === 0 &&
-    failedFormat.error.message.startsWith("Ordinary popup close did not capture its one new isolated popup\n") &&
-    failedFormat.error.stack.includes("Popup capture diagnostics unavailable:") &&
-    failedFormat.error.stack.includes("POPUP_DIAGNOSTIC_FORMATTER_REFUSED"),
+    failedFormat.bodyError.message.startsWith("Ordinary popup close did not capture its one new isolated popup\n") &&
+    failedFormat.bodyError.stack.includes("Popup capture diagnostics unavailable:") &&
+    failedFormat.bodyError.stack.includes("POPUP_DIAGNOSTIC_FORMATTER_REFUSED"),
   "Popup diagnostic formatting refusal cannot replace the original capture refusal or close a rejected window");
 }
 
