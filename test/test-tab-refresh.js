@@ -44053,7 +44053,23 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       if (!popupOpened || created.length !== 1 ||
           created[0].webContents.getLastWebPreferences().preload !==
             path.join(__dirname, "..", "src", "popup-preload.js")) {
-        throw new Error("Ordinary popup close did not capture its one new isolated popup");
+        const failure = new Error("Ordinary popup close did not capture its one new isolated popup");
+        try {
+          failure.message += "\n" + require("util").inspect({
+            popupOpened,
+            expectedPreload: path.join(__dirname, "..", "src", "popup-preload.js"),
+            createdCount: created.length,
+            created: created.map(window => ({
+              windowId: window.id,
+              webContentsId: window.webContents.id,
+              webPreferences: window.webContents.getLastWebPreferences(),
+            })),
+          }, { depth: null, maxArrayLength: null, maxStringLength: null,
+            colors: false, customInspect: false, getters: false });
+        } catch (error) {
+          failure.message += "\nPopup capture diagnostics unavailable: " + uncaughtExceptionDetail(error);
+        }
+        throw failure;
       }
       popup = created[0];
       popup.close();

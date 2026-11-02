@@ -2642,6 +2642,96 @@ async function shutdownAggregateDiagnosticContracts() {
   "Formatter refusal preserves the original aggregate and completed cleanup instead of replacing their failure");
 }
 
+async function popupCaptureDiagnosticContracts() {
+  const scenario = between(source, "async function runShutdownScenarios(",
+    "\nasync function runSameDocumentShutdownScenarios(");
+  const actor = between(scenario, "      const created = newWindows();",
+    "\n    }, [() => { if (popup && !popup.isDestroyed()) popup.destroy(); }]);");
+  const start = actor.indexOf("        const failure = new Error(");
+  const end = actor.indexOf("\n      }\n      popup = created[0];", start);
+  assert.ok(start > 0 && end > start, "The exact popup refusal is controlled");
+  const refusal = actor.slice(start, end);
+  const legacy = '        throw new Error("Ordinary popup close did not capture its one new isolated popup");';
+  const formatter = between(source, "function uncaughtExceptionDetail(error) {", "\nfunction writeFatal(");
+  const util = require("node:util");
+  const expectedPreload = path.join(__dirname, "..", "src", "popup-preload.js");
+  const run = async (options = {}) => {
+    const trace = [], assertions = [], preferences = [];
+    let inspected = null, error = null;
+    const opened = options.opened ?? true;
+    const windows = Array.from({ length: options.count ?? 1 }, (_, index) => {
+      const prefs = { preload: options.wrongPreload ? "C:\\foreign\\popup-preload.js" : expectedPreload,
+        sandbox: true, contextIsolation: true, nodeIntegration: false,
+        additionalArguments: ["OBSERVED_POPUP_" + index] };
+      if (options.missingPreload) delete prefs.preload;
+      preferences.push(prefs);
+      let destroyed = false;
+      return { id: 101 + index,
+        webContents: { id: 801 + index, getLastWebPreferences: () => prefs },
+        close() { trace.push("close"); destroyed = true; },
+        isDestroyed: () => destroyed };
+    });
+    const context = vm.createContext({ Error, path, __dirname, popup: null,
+      popupOpened: opened, newWindows: () => { trace.push("snapshot"); return windows; },
+      require: name => {
+        assert.equal(name, "util");
+        return { inspect: (value, settings) => {
+          inspected = value;
+          if (options.formatFailure) throw new Error("POPUP_DIAGNOSTIC_FORMATTER_REFUSED");
+          return util.inspect(value, settings);
+        } };
+      },
+      waitUntil: async (predicate, bound) => {
+        assert.equal(bound, 10000); trace.push("close-wait"); return predicate();
+      },
+      rig: { dialogs: [] }, beforePopup: 9,
+      __shutdown: { state: () => ({ lastRequestId: 9, pendingId: 0 }) },
+      check: (name, success) => assertions.push({ name, success }),
+    });
+    const body = options.legacy ? actor.replace(refusal, legacy) : actor;
+    try { await vm.runInContext(formatter + "\n(async () => {\n" + body + "\n})()", context); }
+    catch (failure) { error = failure; }
+    return { trace, assertions, error, inspected, preferences, windows, opened };
+  };
+  const healthy = await run();
+  check(healthy.error === null && healthy.inspected === null &&
+    healthy.trace.join("|") === "snapshot|close|close-wait" &&
+    healthy.assertions.length === 1 && healthy.assertions[0].success === true,
+  "Popup diagnostics leave the original matching capture, close, bound and behavioral assertion unchanged");
+  for (const options of [{ opened: false }, { count: 0 }, { count: 2 },
+    { wrongPreload: true }, { missingPreload: true }]) {
+    const refused = await run(options), data = refused.inspected;
+    check(refused.error instanceof Error &&
+      refused.error.message.startsWith("Ordinary popup close did not capture its one new isolated popup\n") &&
+      refused.trace.join("|") === "snapshot" && refused.assertions.length === 0 &&
+      data.popupOpened === refused.opened && data.expectedPreload === expectedPreload &&
+      data.createdCount === refused.windows.length && data.created.length === refused.windows.length &&
+      data.created.every((entry, index) => entry.windowId === refused.windows[index].id &&
+        entry.webContentsId === refused.windows[index].webContents.id &&
+        entry.webPreferences === refused.preferences[index]) &&
+      refused.error.stack.includes("popupOpened: " + refused.opened) &&
+      refused.error.stack.includes("createdCount: " + refused.windows.length) &&
+      refused.error.stack.includes(util.inspect(expectedPreload)) &&
+      data.created.every((entry, index) =>
+        refused.error.stack.includes("windowId: " + entry.windowId) &&
+        refused.error.stack.includes("webContentsId: " + entry.webContentsId) &&
+        refused.error.stack.includes("OBSERVED_POPUP_" + index)),
+    "Actual popup refusal retains every observed value without admitting bad predicate " + JSON.stringify(options));
+  }
+  const old = await run({ wrongPreload: true, legacy: true });
+  check(old.error instanceof Error && old.trace.join("|") === "snapshot" &&
+    old.assertions.length === 0 && old.inspected === null &&
+    !old.error.stack.includes("popupOpened:") && !old.error.stack.includes("OBSERVED_POPUP_0"),
+  "Former popup refusal genuinely omits observed capture evidence while preserving its original refusal");
+  const failedFormat = await run({ wrongPreload: true, formatFailure: true });
+  check(failedFormat.error instanceof Error && failedFormat.trace.join("|") === "snapshot" &&
+    failedFormat.assertions.length === 0 &&
+    failedFormat.error.message.startsWith("Ordinary popup close did not capture its one new isolated popup\n") &&
+    failedFormat.error.stack.includes("Popup capture diagnostics unavailable:") &&
+    failedFormat.error.stack.includes("POPUP_DIAGNOSTIC_FORMATTER_REFUSED"),
+  "Popup diagnostic formatting refusal cannot replace the original capture refusal or close a rejected window");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -2650,7 +2740,8 @@ async function shutdownAggregateDiagnosticContracts() {
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,
     defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
-    reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts]) {
+    reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
+    popupCaptureDiagnosticContracts]) {
     try { await run(); }
     catch (error) {
       failures++;
