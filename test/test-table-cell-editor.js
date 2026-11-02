@@ -121,6 +121,7 @@ async function sourceTests(core = false) {
   const cells = context.window.FoliaTableCells;
   if (sourceOnly && !proof) {
     await sharedNativeSetupSourceTests();
+    sharedOpeningOracleSourceTests();
     await columnSizingSourceTests(cells);
     await rowRemovalSessionSourceTests(cells);
   }
@@ -3007,9 +3008,16 @@ async function sharedNativeSetupSourceTests() {
   check("shared pointer Source extracts the actual Header 2 capture click boundary assertion and Delete sequence", headerSubjects);
   if (!headerSubjects) throw new Error("Missing Create Header 2 source subjects");
   const documentHistory = { undo: [], redo: [] };
-  pointer.markdownEditor = { value: "# Create deletion\r\n\r\n" };
+  const headerEditorSource = "# Create deletion\n\n";
+  const headerExactSource = "# Create deletion\r\n\r\n";
+  pointer.markdownEditor = { value: headerEditorSource };
+  pointer.__headerExactSource = headerExactSource;
+  pointer.CustomTabs = { snapshotExactEditorContent: () => pointer.__headerExactSource };
   pointer.undoHistory = documentHistory.undo; pointer.historySnapshot = () => documentHistory;
-  driver.createDeletionSource = pointer.markdownEditor.value; driver.saves = []; driver.cancelSaves = 0;
+  driver.createDeletionSource = headerExactSource; driver.saves = []; driver.cancelSaves = 0;
+  check("shared pointer Source Header 2 fixture separates LF editor text from exact CRLF source",
+    pointer.markdownEditor.value === headerEditorSource && pointer.CustomTabs.snapshotExactEditorContent() === headerExactSource &&
+    pointer.markdownEditor.value !== pointer.CustomTabs.snapshotExactEditorContent());
   session.rows = [{ header: true, editable: true, cells: [{}, header] }];
   session.columnOrder = [{}, column]; session.columns = 2; session.ready = true;
   session.selectedCell = null; session.confirmation = null; button.disabled = true;
@@ -3033,7 +3041,8 @@ async function sharedNativeSetupSourceTests() {
   session.selectedCell = header; button.disabled = false; checks.length = 0;
   await driver.assertHeader();
   check("shared pointer Source actual Header 2 assertion accepts exact current selection column source history and no Save",
-    checks.length === 1 && checks[0].ok === true && driver.createDeletionBefore.source === driver.createDeletionSource &&
+    checks.length === 1 && checks[0].ok === true && driver.createDeletionBefore.source === headerEditorSource &&
+    pointer.CustomTabs.snapshotExactEditorContent() === driver.createDeletionSource &&
     driver.createDeletionBefore.history === JSON.stringify(documentHistory));
   const headerRefusals = [
     ["selected object", () => { session.selectedCell = cell; }, () => { session.selectedCell = header; }],
@@ -3043,7 +3052,9 @@ async function sharedNativeSetupSourceTests() {
     ["highlight", () => { headerMarked = false; }, () => { headerMarked = true; }],
     ["Delete disabled", () => { button.disabled = true; }, () => { button.disabled = false; }],
     ["confirmation pending", () => { session.confirmation = {}; }, () => { session.confirmation = null; }],
-    ["source", () => { pointer.markdownEditor.value += "changed"; }, () => { pointer.markdownEditor.value = driver.createDeletionSource; }],
+    ["source", () => { pointer.markdownEditor.value += "changed"; }, () => { pointer.markdownEditor.value = headerEditorSource; }],
+    ["exact source", () => { pointer.__headerExactSource += "changed"; }, () => { pointer.__headerExactSource = headerExactSource; }],
+    ["exact newline bytes", () => { pointer.__headerExactSource = headerEditorSource; }, () => { pointer.__headerExactSource = headerExactSource; }],
     ["history", () => { documentHistory.redo.push({ changed: true }); }, () => { documentHistory.redo.pop(); }],
     ["Save", () => { driver.saves.push({}); }, () => { driver.saves.pop(); }],
   ];
@@ -3056,6 +3067,58 @@ async function sharedNativeSetupSourceTests() {
   }
   check("shared pointer Source actual Header 2 assertion rejects independent selection column highlight pending source history and Save violations",
     refusedHeaders.every(result => result.refused), refusedHeaders);
+}
+
+function sharedOpeningOracleSourceTests() {
+  const source = fs.readFileSync(__filename, "utf8");
+  const opening = source.indexOf("\n  async function sharedOpeningWidths(");
+  const widthStart = source.indexOf('        if (name === "heavy" && viewport === 1650) {', opening);
+  const widthEnd = source.indexOf('        if (name === "mixed"', widthStart);
+  const growthStart = source.indexOf("    const wideOpening = measurements.filter(", opening);
+  const growthEnd = source.indexOf('    fs.writeFileSync(path.join(evidence, "shared-opening-measurements.json")', growthStart);
+  const subjects = opening >= 0 && widthStart > opening && widthEnd > widthStart &&
+    growthStart > widthEnd && growthEnd > growthStart;
+  check("shared opening Source extracts the actual budget and cross-viewport assertions", subjects);
+  if (!subjects) throw new Error("Missing shared opening width oracle subjects");
+  const run = (body, globals) => {
+    const checks = [];
+    vm.runInNewContext(body, { ...globals, check: (name, ok) => checks.push({ name, ok: Boolean(ok) }) }, { timeout: 1000 });
+    return checks;
+  };
+  const widthName = "substantial prose gains initial data width rather than widening only its outer dialog";
+  const growthName = "substantial prose gains data width over its existing narrower viewport";
+  const widthBody = source.slice(widthStart, widthEnd), growthBody = source.slice(growthStart, growthEnd);
+  const fractional = { popup: 960, client: 902, fixed: 78,
+    data: [274.65625, 274.65625, 274.6875], splitWords: 0 };
+  check("shared opening Source fractional fixture fills its measured budget below the old threshold",
+    fractional.data.every(width => width < 275) &&
+    fractional.data.reduce((sum, width) => sum + width, 0) === fractional.client - fractional.fixed);
+  const widths = geometry => run(widthBody, { name: "heavy", viewport: 1650,
+    rows: [["prose", "sql", "formatted prose"]], geometry });
+  const passes = (result, name) => result.length === 1 && result[0].name === name && result[0].ok;
+  const refuses = (result, name) => result.length === 1 && result[0].name === name && !result[0].ok;
+  check("shared opening Source actual budget assertion accepts fully allocated fractional data columns",
+    passes(widths(fractional), widthName));
+  const invalidWidths = [
+    { ...fractional, data: [172, 172, 172] },
+    { ...fractional, client: 918, data: [275, 280, 285] },
+    { ...fractional, data: [412, 412] },
+    { ...fractional, splitWords: 1 },
+    { ...fractional, popup: 900 },
+  ];
+  check("shared opening Source actual budget assertion rejects underfilled unequal missing split or narrow columns",
+    invalidWidths.every(geometry => refuses(widths(geometry), widthName)));
+  const wide = { name: "heavy", requestedViewport: 1650, ...fractional };
+  const narrow = { name: "heavy", requestedViewport: 700, popup: 652, client: 594, data: [172, 172, 172] };
+  const growth = measurements => run(growthBody, { measurements });
+  check("shared opening Source actual growth assertion requires its existing narrower comparison",
+    passes(growth([wide, narrow]), growthName) &&
+    [
+      [{ ...narrow, requestedViewport: 1650, popup: 960 }, narrow],
+      [{ ...wide, data: [170, 327, 327] }, narrow],
+      [wide],
+      [wide, narrow, { ...narrow }],
+    ].every(measurements => refuses(growth(measurements), growthName)));
 }
 
 function dialogGuardSourceTests() {
@@ -8845,7 +8908,7 @@ require("./test-userdata-isolation");
           tableCellSession.columnOrder[1]===__createDeletionColumn2&&
           __createDeletionHeader2.container.classList.contains('table-cell-selected')&&
           tableCellGrid.contains(__createDeletionHeader2.input)&&!tableCellDeleteColumn.disabled&&
-          !tableCellSession.confirmation&&markdownEditor.value===${JSON.stringify(createDeletionSource)}&&
+          !tableCellSession.confirmation&&window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(createDeletionSource)}&&
           markdownEditor.value===${JSON.stringify(createDeletionBefore.source)}&&
           JSON.stringify(historySnapshot())===${JSON.stringify(createDeletionBefore.history)}&&
           undoHistory.length===0`) && saves.length===cancelSaves);
@@ -8988,8 +9051,11 @@ require("./test-userdata-isolation");
           geometry.labelOverflow <= 1, geometry);
         if (name === "tiny") check("tiny source stays compact " + viewport, geometry.popup <= 480.6, geometry);
         if (name === "heavy" && viewport === 1650) {
+          const share = (geometry.client - geometry.fixed) / geometry.data.length;
           check("substantial prose gains initial data width rather than widening only its outer dialog",
-            geometry.popup >= 959 && geometry.data.every(width => width >= 275) && geometry.splitWords === 0, geometry);
+            geometry.popup >= 959 && geometry.data.length === rows[0].length &&
+              geometry.data.every(width => Math.abs(width - share) < 1) &&
+              geometry.splitWords === 0, { ...geometry, share });
         }
         if (name === "mixed" && viewport === 1650) {
           check("unequal content keeps initial data-column proportions",
@@ -9014,6 +9080,14 @@ require("./test-userdata-isolation");
         await runCases();
       }
     }
+    const wideOpening = measurements.filter(item => item.name === "heavy" && item.requestedViewport === 1650);
+    const narrowOpening = measurements.filter(item => item.name === "heavy" && item.requestedViewport === 700);
+    check("substantial prose gains data width over its existing narrower viewport",
+      wideOpening.length === 1 && narrowOpening.length === 1 &&
+      wideOpening[0].popup > narrowOpening[0].popup && wideOpening[0].client > narrowOpening[0].client &&
+      wideOpening[0].data.length === narrowOpening[0].data.length &&
+      wideOpening[0].data.every((width, index) => width > narrowOpening[0].data[index] + 1),
+      { wideOpening, narrowOpening });
     fs.writeFileSync(path.join(evidence, "shared-opening-measurements.json"), JSON.stringify(measurements, null, 2));
     const runToolbar = async admission => {
     const previousDark = await exec("document.body.classList.contains('dark-mode')");
