@@ -27,6 +27,95 @@ async function control(name, run) {
   console.log("PASS " + name);
 }
 
+async function mermaidBreakoutControls() {
+  const styles = fs.readFileSync(path.join(__dirname, "..", "src", "styles.css"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const renderer = fs.readFileSync(path.join(__dirname, "..", "src", "renderer.js"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const applyBreakout = vm.compileFunction(
+    between(renderer, "function applyMermaidBreakout(", "function applyTableBreakout(") +
+      "\nreturn applyMermaidBreakout;",
+    ["viewer", "document", "getComputedStyle"],
+  );
+  const fixture = () => {
+    const classes = new Set(), properties = new Map();
+    const measurements = { bounds: 0, style: 0, svgQueries: 0 };
+    const svg = Object.freeze({ viewBox: Object.freeze({ baseVal: Object.freeze({ width: 480 }) }) });
+    const element = { querySelector(selector) {
+      assert.equal(selector, "svg");
+      measurements.svgQueries++;
+      return svg;
+    } };
+    const container = {
+      clientWidth: 600,
+      classList: { add: name => classes.add(name), remove: name => classes.delete(name) },
+      style: { setProperty: (name, value) => properties.set(name, value),
+        removeProperty: name => properties.delete(name) },
+      querySelector(selector) {
+        assert.equal(selector, ":scope > .mermaid");
+        return element;
+      },
+      getBoundingClientRect() { measurements.bounds++; return { left: 100, width: 600 }; },
+    };
+    const wrapper = { clientLeft: 0, clientWidth: 800,
+      getBoundingClientRect() { measurements.bounds++; return { left: 0 }; } };
+    const apply = applyBreakout(
+      { querySelectorAll(selector) {
+        assert.equal(selector, ".mermaid-container");
+        return [container];
+      } },
+      { querySelector(selector) { assert.equal(selector, ".content-wrapper"); return wrapper; } },
+      target => {
+        assert.equal(target, element);
+        measurements.style++;
+        return { paddingLeft: "20px", paddingRight: "20px", borderLeftWidth: "1px", borderRightWidth: "1px" };
+      },
+    );
+    return { apply, svg, element, container, classes, properties, measurements };
+  };
+  await control("reader Mermaid sizing is confined to renderer-owned breakout containers", async () => {
+    assert.match(styles, /\.markdown-body \.mermaid-container\.mermaid-breakout > \.mermaid \{\s*overflow: visible;\s*\}/);
+    assert.match(styles, /\.markdown-body \.mermaid-container\.mermaid-breakout > \.mermaid > svg \{\s*max-width: 100%;\s*height: auto;\s*\}/);
+    assert.doesNotMatch(styles, /\.markdown-body \.mermaid-container > \.mermaid(?: > svg)?\s*\{/);
+    assert.match(styles, /\.markdown-body pre \{[^}]*overflow-x: auto;/);
+  });
+  await control("reader Mermaid breakout preserves native SVG geometry and proportional envelope", async () => {
+    const f = fixture();
+    assert.equal(f.classes.has("mermaid-breakout"), false);
+    f.apply({ splitView: false, available: 760, zoomFactor: 1.5 });
+    assert.equal(f.classes.has("mermaid-breakout"), true);
+    assert.equal(f.properties.get("--table-breakout-width"), "522px");
+    assert.equal(f.properties.get("--mv-breakout-applied"),
+      "min(max(100%, 522px), max(0px, calc(var(--mv-breakout-budget, 100%) - 0px)))");
+    assert.equal(f.element.querySelector("svg"), f.svg);
+    assert.equal(f.svg.viewBox.baseVal.width, 480);
+    assert.equal(f.measurements.bounds, 2);
+    assert.equal(f.measurements.style, 1);
+  });
+  await control("split Mermaid clears prior reader breakout without SVG measurement", async () => {
+    const f = fixture();
+    f.apply({ splitView: false, available: 760, zoomFactor: 1.5 });
+    assert.equal(f.classes.has("mermaid-breakout"), true);
+    assert.equal(f.properties.size, 2);
+    Object.keys(f.measurements).forEach(key => { f.measurements[key] = 0; });
+    f.apply({ splitView: true, available: 760, zoomFactor: 1.5 });
+    assert.equal(f.classes.has("mermaid-breakout"), false);
+    assert.equal(f.properties.size, 0);
+    assert.deepEqual(f.measurements, { bounds: 0, style: 0, svgQueries: 0 });
+    assert.equal(f.element.querySelector("svg"), f.svg);
+    assert.equal(f.svg.viewBox.baseVal.width, 480);
+  });
+  await control("Mermaid print and preview caps retain native non-enlarging dimensions", async () => {
+    const print = between(styles, "  /* Table breakout is a screen affordance:", "/* Notification Toast */");
+    assert.match(print, /\.markdown-body \.mermaid-container\.mermaid-breakout \{\s*width: 100% !important;\s*max-width: 100% !important;\s*margin-left: 0 !important;\s*transform: none !important;\s*\}/);
+    const svg = /\.markdown-body \.mermaid svg \{([^}]*)\}/.exec(print);
+    assert(svg, "The existing native print SVG cap must be present");
+    assert.match(svg[1], /max-width: 100%;\s*height: auto;/);
+    assert.doesNotMatch(svg[1], /!important/);
+    assert.match(styles, /\.mermaid-template-preview svg \{\s*max-width: 100%;\s*height: auto;\s*\}/);
+  });
+}
+
 function mermaidPage() {
   const fixture = { path: "C:\\owned\\actor.md", source: "headerless text\n\nbody\n", blocks: 0,
     diskVersion: { dev: 1, ino: 2, size: 23, mtimeMs: 4, ctimeMs: 5 } };
@@ -920,6 +1009,7 @@ async function cleanupControls() {
 
 (async () => {
   await mermaidControls();
+  await mermaidBreakoutControls();
   await popupGuardControls();
   await cancellationControls();
   await cleanupControls();

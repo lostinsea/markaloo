@@ -3977,9 +3977,16 @@ async function run(win) {
         try {
           await renderMarkdown(${JSON.stringify(contextDoc)}, 'full');
           const svg = viewer.querySelector('.mermaid svg');
+          const element = svg.closest('.mermaid');
+          const container = element.closest('.mermaid-container');
+          const style = getComputedStyle(element);
           return {
             width:svg.viewBox.baseVal.width,
             height:svg.viewBox.baseVal.height,
+            split:contentWrapper.classList.contains('split-view'),
+            breakout:container.classList.contains('mermaid-breakout'),
+            overflowX:style.overflowX,
+            overflowY:style.overflowY,
             labels:[...svg.querySelectorAll('.taskText, .taskTextOutsideLeft, .taskTextOutsideRight')]
               .map(node => node.textContent.trim()),
           };
@@ -3997,6 +4004,86 @@ async function run(win) {
       c.native.width > 100 && Math.abs(c.native.width - c.staged.width) <= 1 &&
       Math.abs(c.native.height - c.staged.height) <= 1),
     JSON.stringify(widthContexts));
+  check("Mermaid reader sizing follows breakout ownership in native and staged width contexts",
+    widthContexts.every(context => [context.native, context.staged].every(measurement =>
+      measurement.split === context.split && measurement.breakout === !context.split &&
+      measurement.overflowX === (context.split ? "auto" : "visible") &&
+      measurement.overflowY === (context.split ? "auto" : "visible"))),
+    JSON.stringify(widthContexts));
+
+  const wideSequence = [
+    "# Breakout scope", "", "```mermaid", "sequenceDiagram",
+    ...Array.from({ length: 6 }, (_, index) =>
+      `  participant P${index} as Service ${index} authenticates its owned document`),
+    "  P0->>P5: Authenticate the complete physical owner",
+    "  P5-->>P0: Return the unchanged native selection",
+    "```", "",
+  ].join("\n");
+  const wideModes = [];
+  try {
+    for (const split of [false, true]) {
+      await exec(`(async () => {
+        contentWrapper.classList.toggle('split-view', ${split});
+        zoomLevel = 150; updateZoom();
+        await renderMarkdown(${JSON.stringify(wideSequence)}, 'full');
+      })()`);
+      await waitFor(exec, "the wide sequence in its actual reader mode", DIAGRAMS_READY);
+      wideModes.push(await exec(`(() => {
+        const element = viewer.querySelector('.mermaid');
+        const container = element.closest('.mermaid-container');
+        const svg = element.querySelector('svg');
+        const style = getComputedStyle(element);
+        const bounds = svg.getBoundingClientRect();
+        const pane = contentWrapper.getBoundingClientRect();
+        return {
+          split:contentWrapper.classList.contains('split-view'),
+          breakout:container.classList.contains('mermaid-breakout'),
+          nativeWidth:svg.viewBox.baseVal.width,
+          nativeHeight:svg.viewBox.baseVal.height,
+          width:bounds.width, height:bounds.height,
+          insidePane:bounds.left >= pane.left - 1 && bounds.right <= pane.right + 1,
+          containerWidth:container.clientWidth,
+          clientWidth:element.clientWidth, scrollWidth:element.scrollWidth,
+          overflowX:style.overflowX, overflowY:style.overflowY,
+          font:parseFloat(getComputedStyle(svg.querySelector('.messageText')).fontSize),
+          labels:Array.from({length:6}, (_, i) =>
+            svg.textContent.includes('Service ' + i + ' authenticates its owned document')),
+          zoom:parseFloat(getComputedStyle(viewer).zoom),
+        };
+      })()`));
+      await captureScreenshot(win, split ? "mermaid-breakout-split-150" : "mermaid-breakout-reader-150");
+    }
+  } finally {
+    await exec(`(async () => {
+      contentWrapper.classList.remove('split-view');
+      zoomLevel = 100; updateZoom();
+      await renderMarkdown(${JSON.stringify(ganttSource)}, 'full');
+    })()`);
+  }
+  console.log("Mermaid breakout mode measurements: " + JSON.stringify(wideModes));
+  check("Mermaid wide-sequence setup exceeds both pane widths with complete native labels",
+    wideModes.length === 2 && wideModes.every((measurement, index) =>
+      measurement.split === Boolean(index) && measurement.zoom === 1.5 &&
+      measurement.nativeWidth > measurement.containerWidth && measurement.nativeHeight > 0 &&
+      measurement.labels.length === 6 && measurement.labels.every(Boolean) && measurement.font === 14),
+    JSON.stringify(wideModes));
+  const wideReader = wideModes[0], wideSplit = wideModes[1];
+  check("Mermaid wide reader sequence fits proportionally without a horizontal scrolling pre",
+    wideReader?.breakout === true && wideReader.overflowX === "visible" &&
+      wideReader.overflowY === "visible" && wideReader.insidePane &&
+      wideReader.width < wideReader.nativeWidth * wideReader.zoom &&
+      wideReader.scrollWidth <= wideReader.clientWidth + 1 &&
+      Math.abs(wideReader.height -
+        wideReader.width * wideReader.nativeHeight / wideReader.nativeWidth) <= 2,
+    JSON.stringify(wideReader));
+  check("Mermaid wide split sequence retains native dimensions and scrollable pre",
+    wideSplit?.breakout === false && wideSplit.overflowX === "auto" && wideSplit.overflowY === "auto" &&
+      wideSplit.scrollWidth > wideSplit.clientWidth &&
+      Math.abs(wideSplit.width - wideSplit.nativeWidth * wideSplit.zoom) <= 2 &&
+      Math.abs(wideSplit.height - wideSplit.nativeHeight * wideSplit.zoom) <= 2 &&
+      Math.abs(wideSplit.nativeWidth - wideReader?.nativeWidth) <= 1 &&
+      Math.abs(wideSplit.nativeHeight - wideReader?.nativeHeight) <= 1,
+    JSON.stringify(wideSplit));
   await exec(`contentWrapper.classList.remove('split-view'); null`);
   await exec(`ipcRenderer.removeListener('file-reload-result', window.__fitReplyListener); null`);
 

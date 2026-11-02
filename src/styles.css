@@ -2728,11 +2728,12 @@ body > .container > .main-content > .content-wrapper > #indexPanel {
   width: 100%;
 }
 
-.markdown-body .mermaid-container > .mermaid {
+/* Split view keeps native pre/SVG sizing; only the measured reader breakout fits. */
+.markdown-body .mermaid-container.mermaid-breakout > .mermaid {
   overflow: visible;
 }
 
-.markdown-body .mermaid-container > .mermaid > svg {
+.markdown-body .mermaid-container.mermaid-breakout > .mermaid > svg {
   max-width: 100%;
   height: auto;
 }
