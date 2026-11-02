@@ -25050,8 +25050,9 @@ async function run(win) {
     let restored;
     try {
       recoveryRequest = await exec(`
-        (() => {
+        (async () => {
           const realConfirm = window.confirm;
+          const realRequest = window.CustomTabs.requestReloadWithConfirmation;
           const realRender = window.renderMarkdown;
           const renderProbe = {
             calls: [],
@@ -25087,24 +25088,73 @@ async function run(win) {
           let requested = false;
           let confirmCalls = 0;
           let confirmPrompt = null;
+          const dialog = () => document.getElementById('appMessageDialog');
+          const expectedButtons = [
+            { id: 'cancel', label: 'Cancel' },
+            { id: 'proceed', label: 'Discard and reload' },
+          ];
+          const collect = records => {
+            for (const record of records) {
+              if (record.target !== dialog() || record.oldValue !== null) continue;
+              const title = document.getElementById('appMessageTitle').textContent;
+              const message = document.getElementById('appMessageText').textContent;
+              const buttons = Array.from(document.querySelectorAll(
+                '#appMessageButtons [data-dialog-choice]'),
+                button => ({ id: button.dataset.dialogChoice, label: button.textContent }));
+              if (title !== 'Discard unsaved changes?' ||
+                  message !== 'You have unsaved changes. Reload from disk and discard them?' ||
+                  JSON.stringify(buttons) !== JSON.stringify(expectedButtons)) {
+                throw new Error('Reload ownership recovery displayed an unexpected question');
+              }
+              confirmCalls += 1;
+              confirmPrompt = message;
+            }
+          };
+          if (dialog()?.open || typeof realRequest !== 'function') {
+            throw new Error('Reload ownership recovery has no idle direct request');
+          }
+          const observer = new MutationObserver(collect);
+          let recoveryProducer;
           renderProbe.renderWrapper = renderWrapper;
           window.__f22ReloadRecoveryRenderProbe = renderProbe;
           window.renderMarkdown = renderWrapper;
           try {
-            window.confirm = prompt => {
-              confirmCalls += 1;
-              confirmPrompt = String(prompt);
-              return true;
-            };
-            requested = window.CustomTabs.requestReloadWithConfirmation();
+            observer.observe(document.documentElement, {
+              subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true,
+            });
+            recoveryProducer = window.CustomTabs.requestReloadWithConfirmation();
+            collect(observer.takeRecords());
+            if (!recoveryProducer || typeof recoveryProducer.then !== 'function' ||
+                !dialog()?.open || confirmCalls !== 1 ||
+                document.activeElement?.dataset.dialogChoice !== 'cancel') {
+              throw new Error('Reload ownership recovery lacks one Cancel-default question');
+            }
+            document.querySelector('#appMessageButtons [data-dialog-choice="proceed"]').click();
+            // The dialog closing is not completion of the direct async request.
+            requested = await recoveryProducer;
+            collect(observer.takeRecords());
+            if (confirmCalls !== 1 || dialog().open) {
+              throw new Error('Reload ownership recovery did not settle exactly one question');
+            }
           } finally {
-            window.confirm = realConfirm;
+            try {
+              if (recoveryProducer && dialog()?.open) {
+                const cancel = document.querySelector(
+                  '#appMessageButtons [data-dialog-choice="cancel"]');
+                if (!cancel) throw new Error('Reload ownership recovery cannot cancel its question');
+                cancel.click();
+                await recoveryProducer;
+              }
+            } finally {
+              observer.disconnect();
+            }
           }
           return {
             requested,
             confirmCalls,
             confirmPrompt,
-            confirmRestored: window.confirm === realConfirm,
+            confirmRestored: window.confirm === realConfirm &&
+              window.CustomTabs.requestReloadWithConfirmation === realRequest,
             renderProbeInstalled: window.renderMarkdown === renderWrapper,
             before: { ...window.CustomTabs.__reloadState() },
           };

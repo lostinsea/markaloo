@@ -2289,6 +2289,200 @@ async function lazyNativeBoundaryContracts() {
   "Actual reload-ownership caller preserves genuine Main admission and original explicit selected-disk setup");
 }
 
+async function reloadRecoveryBoundaryContracts() {
+  const actor = between(source, "      recoveryRequest = await exec(`",
+    "\n      recoverySettled =");
+  const acceptance = between(source, "      recoverySettled =",
+    "\n        await waitForCondition(");
+  const accepts = vm.compileFunction(
+    "let recoverySettled;\n" + acceptance + "true;\nreturn recoverySettled;",
+    ["recoveryRequest"]);
+  const producer = between(customTabs, "  async function requestReloadWithConfirmation() {",
+    "\n  async function reloadFromUpdatePrompt(");
+  const confirmation = between(customTabs, "  function captureDialogContext(",
+    "\n  function bumpTabMutationRevision(");
+  const fixture = (options = {}) => {
+    const gate = deferred();
+    const control = { requests: 0, dispatches: 0, sequence: 1, presentations: [],
+      clicks: [], observers: [], records: [], settled: false, renders: [] };
+    const tab = { id: 21, filePath: "C:\\fixture\\alpha.md", content: "DIRTY",
+      originalContent: "SAVED", hasUnsavedChanges: true };
+    const state = { mutationRevision: 1 };
+    const dialog = { open: false };
+    const elements = { appMessageDialog: dialog, appMessageTitle: {}, appMessageText: {} };
+    const document = { documentElement: {}, activeElement: null,
+      getElementById: id => elements[id],
+      querySelectorAll: selector => {
+        assert.equal(selector, "#appMessageButtons [data-dialog-choice]");
+        return control.buttons || [];
+      },
+      querySelector: selector => {
+        const choice = selector.match(/^\#appMessageButtons \[data-dialog-choice="(cancel|proceed)"\]$/)?.[1];
+        assert.ok(choice, "Only the genuine question's explicit choice is clickable");
+        return control.buttons.find(button => button.dataset.dialogChoice === choice);
+      } };
+    const page = {
+      confirm: () => { throw new Error("Retired synchronous confirmation was called"); },
+      renderMarkdown: text => { control.renders.push(text); return Promise.resolve(); },
+      getPendingSaveStatus: () => ({ pending: false, revision: 1 }),
+      getReloadRequestSession: () => "recovery-page",
+      getLatestReloadRequestSequence: () => control.sequence,
+      getActiveFileSelectionGeneration: () => 1,
+      requestCurrentFileReload: () => {
+        control.dispatches++;
+        control.sequence++;
+        return true;
+      },
+      MarkalooDialogs: { show: settings => {
+        control.presentations.push(settings);
+        elements.appMessageTitle.textContent = settings.title;
+        elements.appMessageText.textContent = options.wrongQuestion ? "Unrelated question" : settings.message;
+        control.buttons = settings.buttons.map(button => ({
+          dataset: { dialogChoice: button.id }, textContent: button.label,
+          click: () => {
+            control.clicks.push({ choice: button.id, beforeDispatch: control.dispatches,
+              beforeSettlement: control.settled });
+            dialog.open = false;
+            control.records.push({ target: dialog, oldValue: "" });
+          },
+        }));
+        document.activeElement = control.buttons[options.wrongDefault ? 1 : 0];
+        dialog.open = true;
+        control.records.push({ target: dialog, oldValue: null });
+        if (options.duplicate) control.records.push({ target: dialog, oldValue: null });
+        return gate.promise;
+      } },
+      CustomTabs: { __reloadState: () => ({ acceptedSequence: control.sequence }) },
+    };
+    const context = vm.createContext({ window: page, document, console,
+      MutationObserver: function () {
+        const record = { observed: 0, disconnected: 0 };
+        control.observers.push(record);
+        this.observe = (target, settings) => {
+          record.observed++;
+          assert.equal(target, document.documentElement);
+          assert.equal(settings.attributeOldValue, true);
+          assert.equal(settings.subtree, true);
+          assert.deepEqual(Array.from(settings.attributeFilter), ["open"]);
+          if (options.observeError) throw new Error("recovery observer setup failed");
+        };
+        this.takeRecords = () => control.records.splice(0);
+        this.disconnect = () => { record.disconnected++; };
+      },
+      tabs: [tab], activeTabId: tab.id, documentRevision: 1, dialogDecisionIntent: 0,
+      approvalRendererGeneration: 1, latestTabSwitchIntent: 0,
+      frozenDocumentOperationOverflowCount: 0, pendingConfirmedReload: null,
+      documentState: new WeakMap([[tab, state]]),
+      isDocumentFrozen: () => false, mayMutateDocument: () => true,
+      snapshotActiveTab: () => tab, getActiveTab: () => tab, isDirty: () => true,
+      liveDocument: () => tab.content, t: (_key, fallback) => fallback,
+      documentIdentity: () => ({ pageSession: "recovery-page", rendererGeneration: 1,
+        tabId: tab.id, documentGeneration: 1, pathKey: tab.filePath, documentRef: "owned-alpha" }),
+      canonicalTabPath: value => value, notify: () => {},
+    });
+    vm.runInContext(confirmation + "\n" + producer, context);
+    const originalRequest = context.requestReloadWithConfirmation;
+    page.CustomTabs.requestReloadWithConfirmation = function () {
+      control.requests++;
+      const request = originalRequest();
+      control.producer = request;
+      return request;
+    };
+    const originalBinding = page.CustomTabs.requestReloadWithConfirmation;
+    const originalConfirm = page.confirm;
+    const exec = async script => {
+      if (options.withoutJoin) {
+        const joined = "requested = await recoveryProducer;";
+        assert.equal(script.split(joined).length - 1, 1, "The missing-await control changes the actual join");
+        script = script.replace(joined, "requested = recoveryProducer;");
+      }
+      if (options.cancel) {
+        const proceed = `[data-dialog-choice="proceed"]').click();`;
+        assert.equal(script.split(proceed).length - 1, 1, "The Cancel control changes the actual Proceed click");
+        script = script.replace(proceed, `[data-dialog-choice="cancel"]').click();`);
+      }
+      return structuredClone(await vm.runInContext(script, context));
+    };
+    const running = vm.compileFunction("return (async () => {\nlet recoveryRequest;\n" +
+      actor + "\nreturn recoveryRequest;\n})();", ["exec"])(exec);
+    running.then(() => { control.settled = true; }, () => { control.settled = true; });
+    return { control, page, context, running, originalRequest,
+      release: () => {
+        const choice = control.clicks.at(-1)?.choice;
+        assert.ok(choice, "The original producer is released only after an actual explicit choice");
+        gate.resolve({ cause: "choice", choice });
+      },
+      intact: () => page.confirm === originalConfirm &&
+        page.CustomTabs.requestReloadWithConfirmation === originalBinding &&
+        control.observers.length === 1 && control.observers[0].disconnected === 1 };
+  };
+  const good = fixture();
+  await turn();
+  if (good.control.settled) await good.running;
+  check(good.originalRequest.constructor.name === "AsyncFunction" &&
+    typeof good.control.producer?.then === "function" && !good.control.settled &&
+    good.control.requests === 1 && good.control.dispatches === 0,
+  "Actual recovery actor stays pending on the real async producer after its genuine Proceed click");
+  const question = good.control.presentations[0];
+  check(good.control.presentations.length === 1 && question.defaultId === "cancel" &&
+    question.cancelId === "cancel" && question.title === "Discard unsaved changes?" &&
+    question.message === "You have unsaved changes. Reload from disk and discard them?" &&
+    question.buttons.map(button => button.label).join("|") === "Cancel|Discard and reload" &&
+    good.control.clicks.length === 1 && good.control.clicks[0].choice === "proceed" &&
+    good.control.clicks[0].beforeDispatch === 0 && !good.control.clicks[0].beforeSettlement,
+  "Actual recovery producer presents one owned Cancel-default question before any reload dispatch");
+  good.release();
+  const result = await good.running;
+  check(result.requested === true && typeof result.requested === "boolean" &&
+    result.confirmCalls === 1 && result.confirmPrompt === question.message &&
+    result.confirmRestored === true && result.renderProbeInstalled === true &&
+    good.control.dispatches === 1 && accepts(result) === true && good.intact(),
+  "Actual recovery actor joins the direct producer boolean, crosses structuredClone and restores observation");
+  check(good.page.__f22ReloadRecoveryRenderProbe.calls.length === 0 &&
+    good.page.renderMarkdown === good.page.__f22ReloadRecoveryRenderProbe.renderWrapper,
+  "Recovery question observation preserves the existing real-render probe without inventing a render");
+  await good.page.renderMarkdown("ACTUAL_RECOVERY_RENDER");
+  await turn();
+  check(good.control.renders.join("|") === "ACTUAL_RECOVERY_RENDER" &&
+    good.page.__f22ReloadRecoveryRenderProbe.terminal.length === 1 &&
+    good.page.__f22ReloadRecoveryRenderProbe.terminal[0].success === true,
+  "Existing recovery render probe still delegates and records the actual returned render completion");
+  const unjoined = fixture({ withoutJoin: true });
+  await assert.rejects(unjoined.running, error => error.name === "DataCloneError");
+  check(unjoined.control.requests === 1 && unjoined.control.dispatches === 0 && unjoined.intact(),
+  "Returning the old nested producer Promise genuinely fails the renderer structured-clone boundary");
+  unjoined.release();
+  await unjoined.control.producer;
+  for (const option of ["cancel", "stale"]) {
+    const refused = fixture({ cancel: option === "cancel" });
+    await turn();
+    if (option === "stale") refused.context.documentRevision++;
+    check(!refused.control.settled && refused.control.dispatches === 0,
+      "Recovery " + option + " retains a genuinely unsettled original producer before its decision");
+    refused.release();
+    const response = await refused.running;
+    check(response.requested === false && accepts(response) === false &&
+      refused.control.dispatches === 0 && refused.intact(),
+    "Actual recovery acceptance refuses " + option + " without a reload or changed request binding");
+  }
+  for (const option of ["duplicate", "wrongQuestion", "wrongDefault"]) {
+    const invalid = fixture({ [option]: true });
+    await turn();
+    check(invalid.control.requests === 1 && invalid.control.dispatches === 0 &&
+      invalid.control.clicks.length === 1 && invalid.control.clicks[0].choice === "cancel" &&
+      !invalid.control.settled,
+    "Invalid recovery " + option + " cancels its actual question and joins the original producer");
+    invalid.release();
+    await assert.rejects(invalid.running, /Reload ownership recovery/);
+    check(invalid.intact() && invalid.control.dispatches === 0,
+      "Invalid recovery " + option + " restores its observer and both original handler identities");
+  }
+  const setup = fixture({ observeError: true });
+  await assert.rejects(setup.running, /recovery observer setup failed/);
+  check(setup.control.requests === 0 && setup.control.presentations.length === 0 && setup.intact(),
+    "Recovery observer setup failure disconnects without calling the direct producer");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -2296,7 +2490,8 @@ async function lazyNativeBoundaryContracts() {
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,
     defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
-    lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts]) {
+    lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
+    reloadRecoveryBoundaryContracts]) {
     try { await run(); }
     catch (error) {
       failures++;
