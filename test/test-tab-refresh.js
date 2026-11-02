@@ -2081,7 +2081,6 @@ const fileB = path.join(dir, "beta.md");
 const fileM = path.join(dir, "diagram.mmd");
 const jsA = JSON.stringify(fileA);
 const jsB = JSON.stringify(fileB);
-const jsM = JSON.stringify(fileM);
 
 // This source and argument shape identify main.js's overlay probe exactly.
 // The test window and shared test helpers also execute arbitrary renderer code;
@@ -13018,6 +13017,76 @@ async function withEarlyLargeRenderFault(observation, request, fault, work) {
   }
 }
 
+async function answerDirtyReloadQuestion(exec, choice) {
+  if (!["cancel", "proceed"].includes(choice)) throw new Error("Unknown dirty Reload choice");
+  return boundedDialogWork(exec(`(async () => {
+    const reload = document.getElementById('reloadFileBtn');
+    const dialog = () => document.getElementById('appMessageDialog');
+    const expectedButtons = [
+      { id: 'cancel', label: 'Cancel' },
+      { id: 'proceed', label: 'Discard and reload' },
+    ];
+    const questions = [];
+    const collect = records => {
+      for (const record of records) {
+        if (record.target !== dialog() || record.oldValue !== null) continue;
+        const question = {
+          title: document.getElementById('appMessageTitle').textContent,
+          message: document.getElementById('appMessageText').textContent,
+          buttons: Array.from(document.querySelectorAll(
+            '#appMessageButtons [data-dialog-choice]'),
+            button => ({ id: button.dataset.dialogChoice, label: button.textContent })),
+        };
+        if (question.title === 'Discard unsaved changes?' &&
+            question.message === 'You have unsaved changes. Reload from disk and discard them?' &&
+            JSON.stringify(question.buttons) === JSON.stringify(expectedButtons)) {
+          questions.push(question);
+        } else {
+          throw new Error('Dirty Reload displayed an unexpected question');
+        }
+      }
+    };
+    if (!reload || typeof reload.onclick !== 'function' || dialog()?.open ||
+        !Number.isSafeInteger(window.__confirmCalls)) {
+      throw new Error('Dirty Reload question has no idle owned button or counter');
+    }
+    const original = reload.onclick;
+    let request;
+    const observeRequest = function () {
+      if (request) throw new Error('Dirty Reload dispatched more than one button request');
+      request = original.apply(this, arguments);
+      return request;
+    };
+    const observer = new MutationObserver(collect);
+    observer.observe(document.documentElement, {
+      subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true,
+    });
+    reload.onclick = observeRequest;
+    try {
+      reload.click();
+      collect(observer.takeRecords());
+      if (!request || typeof request.then !== 'function' || !dialog()?.open ||
+          questions.length !== 1 ||
+          document.activeElement?.dataset.dialogChoice !== 'cancel') {
+        throw new Error('Dirty Reload did not present exactly one Cancel-default question');
+      }
+      document.querySelector('#appMessageButtons [data-dialog-choice="${choice}"]').click();
+      // The DOM closing is not request settlement: join the original handler.
+      await request;
+      collect(observer.takeRecords());
+      if (questions.length !== 1 || dialog().open) {
+        throw new Error('Dirty Reload request did not settle with exactly one question');
+      }
+      window.__confirmCalls += questions.length;
+      return { choice: ${JSON.stringify(choice)}, presentations: questions.length, settled: true };
+    } finally {
+      observer.disconnect();
+      if (reload.onclick !== observeRequest) throw new Error('Dirty Reload button ownership changed');
+      reload.onclick = original;
+    }
+  })()`), "dirty Reload original question and request settlement", 8000);
+}
+
 async function answerLargeRenderQuestion(host, producer, choice) {
   let closedListener;
   const closed = new Promise(resolve => {
@@ -20091,9 +20160,11 @@ async function run(win) {
     channels: new Set([stableReadChannel]), records: [], fault: null,
   };
   if (tabDiskObservation) throw new Error("Overlapping stable-read Main observers");
-  const ownedReaderPath = fileB;
+  // Main opens its case-preserving physical target, not the renderer's spelling.
+  const ownedReaderPath = fs.realpathSync.native(stableReadRequest.filePath);
   const originalStableReadOpen = fs.promises.open;
   let stableReadOpenCalls = 0;
+  let stableMatchedReadPath = null;
   let releaseStableReadSecondStat = null;
   let stableReadHoldArmed = true;
   let stableReadLateHold = false;
@@ -20101,6 +20172,7 @@ async function run(win) {
   const restoreStableReadOpen = replaceMethod(fs.promises, "open", async function (filePath) {
     const handle = await originalStableReadOpen.apply(this, arguments);
     if (filePath !== ownedReaderPath) return handle;
+    stableMatchedReadPath = filePath;
     const attempt = ++stableReadOpenCalls;
     const realStat = handle.stat.bind(handle);
     let handleStatCalls = 0;
@@ -20201,6 +20273,8 @@ async function run(win) {
     ]);
     midReadRefresh.secondStatHeld = secondStatHeld;
     midReadRefresh.openCalls = stableReadOpenCalls;
+    midReadRefresh.readTarget = ownedReaderPath;
+    midReadRefresh.matchedReadPath = stableMatchedReadPath;
     midReadRefresh.superseded = superseded;
     midReadRefresh.preHold = preHold;
     midReadRefresh.lateHold = stableReadLateHold;
@@ -20337,8 +20411,10 @@ async function run(win) {
   if (tabDiskObservation) throw new Error("Overlapping atomic-read Main observers");
   const atomicReplacementPath = path.join(dir, "sec08-atomic-replacement.md");
   const atomicParkedPath = path.join(dir, "sec08-atomic-parked.md");
+  const atomicReaderPath = fs.realpathSync.native(atomicReadRequest.filePath);
   const originalAtomicOpen = fs.promises.open;
   let atomicOpenCalls = 0;
+  let atomicMatchedReadPath = null;
   let atomicHoldArmed = true;
   let atomicLateHold = false;
   let releaseAtomicSecondStat = null;
@@ -20354,7 +20430,8 @@ async function run(win) {
   let atomicSetupError = null;
   const restoreAtomicOpen = replaceMethod(fs.promises, "open", async function (filePath) {
     const handle = await originalAtomicOpen.apply(this, arguments);
-    if (filePath !== fileB) return handle;
+    if (filePath !== atomicReaderPath) return handle;
+    atomicMatchedReadPath = filePath;
     const attempt = ++atomicOpenCalls;
     const realStat = handle.stat.bind(handle);
     const realRead = handle.readFile.bind(handle);
@@ -20473,6 +20550,8 @@ async function run(win) {
   // returned full version to the settled file, not its pre-open metadata.
   atomicSettledStats = fs.statSync(fileB);
   const atomicEvidence = {
+    readTarget: atomicReaderPath,
+    matchedReadPath: atomicMatchedReadPath,
     secondStatHeld: atomicSecondStatHeld,
     lateHold: atomicLateHold,
     preHold: atomicPreHold,
@@ -20886,12 +20965,10 @@ async function run(win) {
       window.CustomTabs.updateTabContent(window.originalMarkdown, true);
       window.setUnsavedState(true);
       window.__confirmCalls = 0;
-      window.__realConfirm = window.confirm;
-      window.confirm = () => { window.__confirmCalls++; return false; };
       return true;
     })()
   `);
-  await exec(`document.getElementById('reloadFileBtn').click(); null;`);
+  const declinedReloadQuestion = await answerDirtyReloadQuestion(exec, "cancel");
   await sleep(900);
   check(
     "declining the Reload confirmation keeps unsaved edits",
@@ -20909,8 +20986,7 @@ async function run(win) {
   );
 
   const acceptedBefore = await exec(`window.CustomTabs.__reloadState().acceptedSequence`);
-  await exec(`window.confirm = () => { window.__confirmCalls++; return true; }; null;`);
-  await exec(`document.getElementById('reloadFileBtn').click(); null;`);
+  const acceptedReloadQuestion = await answerDirtyReloadQuestion(exec, "proceed");
   const acceptedSettled = await waitForCondition(
     exec,
     `(() => {
@@ -20933,13 +21009,17 @@ async function run(win) {
       original: tab && tab.originalContent,
       dirty: tab && tab.hasUnsavedChanges,
       live: window.originalMarkdown,
+      owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession()),
     };
   })()`);
-  await exec(`window.confirm = window.__realConfirm; null;`);
   const afterAccept = await viewerText();
   check(
     "accepting the Reload confirmation adopts clean disk bytes and advances its accepted sequence",
     acceptedSettled === true &&
+      declinedReloadQuestion.presentations === 1 && declinedReloadQuestion.settled === true &&
+      acceptedReloadQuestion.presentations === 1 && acceptedReloadQuestion.settled === true &&
+      (await exec(`window.__confirmCalls`)) === 2 &&
       fs.readFileSync(fileA, "utf8") === "# Alpha\n\nALPHA_V12\n" &&
       afterAccept.includes("ALPHA_V12"),
     JSON.stringify({ acceptedBefore, acceptedState, afterAccept }),
@@ -20992,6 +21072,35 @@ async function run(win) {
   `);
 
   await exec(`window.dismissFileUpdateNotification(); null;`);
+  const cleanPromptTarget = await exec(`(() => {
+    const tab = window.CustomTabs.getTabs().find(t => t.id === ${ids.a});
+    const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+      tab.id, tab.filePath, window.getReloadRequestSession());
+    const deletion = owner && window.queryDocumentDeletionState(tab.filePath, owner);
+    return {
+      activeId: window.CustomTabs.getActiveTabId(), filePath: window.currentFilePath,
+      content: tab && tab.content, original: tab && tab.originalContent,
+      dirty: tab && tab.hasUnsavedChanges, live: window.originalMarkdown, owner, deletion,
+      tracking: window.getReloadRequestDiagnostics().isFileTrackingActive,
+      questionOpen: document.getElementById('appMessageDialog').open,
+      confirmations: window.__confirmCalls,
+    };
+  })()`);
+  check(
+    "the next prompt write owns the clean reloaded alpha document with active tracking and no question",
+    cleanPromptTarget.activeId === ids.a && cleanPromptTarget.filePath === fileA &&
+      cleanPromptTarget.content === "# Alpha\n\nALPHA_V12\n" &&
+      cleanPromptTarget.original === cleanPromptTarget.content &&
+      cleanPromptTarget.live === cleanPromptTarget.content && cleanPromptTarget.dirty === false &&
+      ["pageSession", "rendererGeneration", "tabId", "documentGeneration", "pathKey", "documentRef"]
+        .every(field => cleanPromptTarget.owner?.[field] === acceptedState.owner?.[field]) &&
+      cleanPromptTarget.owner?.tabId === ids.a &&
+      cleanPromptTarget.deletion?.known === true && cleanPromptTarget.deletion.unresolved === false &&
+      cleanPromptTarget.tracking === true && cleanPromptTarget.questionOpen === false &&
+      cleanPromptTarget.confirmations === 2 &&
+      declinedReloadQuestion.settled === true && acceptedReloadQuestion.settled === true,
+    JSON.stringify(cleanPromptTarget),
+  );
   write(fileA, "# Alpha\n\nALPHA_V14\n");
   await sleep(2200);
   const promptedForA = await promptShown();
@@ -21459,13 +21568,12 @@ async function run(win) {
   );
   await sleep(400);
 
-  write(fileM, "graph TD;\n  A-->B;\n");
-  const mermaidTab = await exec(`
-    (() => {
-      const t = window.CustomTabs.createTab(${jsM}, '\\u0060\\u0060\\u0060mermaid\\ngraph TD;\\n  A-->B;\\n\\u0060\\u0060\\u0060');
-      return t.id;
-    })()
-  `);
+  const mermaidInitial = "graph TD;\n  A-->B;\n";
+  write(fileM, mermaidInitial);
+  const mermaidAdmission = await openShutdownLifecycleFixture(
+    exec, fileM,
+    require("../src/file-helpers-core").wrapMermaidContent(mermaidInitial, fileM), "A");
+  const mermaidTab = mermaidAdmission.tabId;
   await sleep(400);
   write(fileM, "graph TD;\n  A-->C;\n");
   await exec(`window.CustomTabs.switchToTab(${mermaidTab}); null;`);
@@ -21488,16 +21596,7 @@ async function run(win) {
       afterMermaid.synced === true,
     JSON.stringify(afterMermaid),
   );
-  await exec(`
-    (() => {
-      const t = window.CustomTabs.getTabs().find(t => t.id === ${mermaidTab});
-      t.content = t.originalContent;
-      t.hasUnsavedChanges = false;
-      window.originalMarkdown = t.content;
-      window.CustomTabs.closeTab(${mermaidTab});
-      return true;
-    })()
-  `);
+  await closeOwnedFixtureTabs(exec, "refreshed .mmd retirement", { tabIds: [mermaidTab] });
   await sleep(400);
 
   // ---- Scenario 6: closing tabs leaves no stale watcher / cache ---------

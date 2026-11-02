@@ -11,6 +11,7 @@ const output = message => console.log((companion ? "[companion stdout] " : "") +
 const root = path.join(__dirname, "..");
 const read = name => fs.readFileSync(path.join(root, "src", name), "utf8");
 const renderer = read("renderer.js"), html = read("index.html"), tabs = read("custom-tabs.js");
+const scrollSource = read("editor-scroll.js").replace(/\r\n/g, "\n");
 const cellContext = vm.createContext({ window: {} });
 for (const name of ["inline-formatting.js", "table-cell-editor.js"])
   vm.runInContext(read(name), cellContext);
@@ -26,7 +27,8 @@ function between(source, first, last) {
   return source.slice(start, end);
 }
 function fixture() {
-  const listeners = new Map(), timers = new Map(), microtasks = [];
+  const listeners = new Map(), timers = new Map(), microtasks = [], renderCompletions = [];
+  const dirtyUpdates = [], revisionNotifications = [], scrollIntents = [];
   const menuClasses = new Set();
   const noteMenuClasses = new Set();
   let nextTimer = 0;
@@ -54,8 +56,10 @@ function fixture() {
     setTimeout(run) { const id = ++nextTimer; timers.set(id, run); return id; },
     clearTimeout(id) { timers.delete(id); },
     queueMicrotask(run) { microtasks.push(run); },
-    console, exactSource: "after", setDocumentDirtyFromContent() {},
-    noteActiveContentMutation() {},
+    console, Event, exactSource: "after", hasUnsavedChanges: false,
+    updateUnsavedIndicator() {
+      dirtyUpdates.push({ dirty: context.hasUnsavedChanges, owner: context.ownerToken });
+    },
   };
   let editorValue = "after";
   Object.defineProperty(context.markdownEditor, "value", {
@@ -68,8 +72,10 @@ function fixture() {
   };
   context.frozenForShutdown = () => context.frozen;
   context.currentDocumentActionOwner = () => context.owner ? context.ownerToken : null;
-  context.renderMarkdown = async () => { context.renders++; };
-  context.sameReloadDocument = (a, b) => a === b;
+  context.renderMarkdown = () => {
+    context.renders++;
+    return { then(done) { renderCompletions.push(done); } };
+  };
   context.window = { CustomTabs: {
     snapshotExactEditorContent: () => {
       if (cells.normalise(context.exactSource) !== context.markdownEditor.value)
@@ -77,17 +83,47 @@ function fixture() {
       return context.exactSource;
     },
     adoptExactEditorContent: source => { context.exactSource = source; return true; },
-  } };
+    noteActiveContentMutation: () => { revisionNotifications.push(context.ownerToken); },
+  }, dispatchEvent(event) { scrollIntents.push(event.type); return true; } };
   vm.createContext(context);
   vm.runInContext(read("context-menu-utils.js"), context);
   context.hideContextMenuHelper = context.window.FoliaContextMenu.hideContextMenu;
   vm.runInContext(between(renderer, "function hideContextMenu(event)", "\n// Show context menu on right-click"), context);
   vm.runInContext(between(renderer, "function hideNotesPanelContextMenu(event)", "\ndocument.addEventListener('click'"), context);
   context.window.hideDocumentContextMenus = context.hideDocumentContextMenus;
+  const scroll = vm.runInContext(`(() => {
+    let owner = null, pendingSource = false, committed = null, anchors = [], dirty = false, frame = 0;
+    const scrollPoints = { editor: [], preview: [] }, editor = markdownEditor;
+    const active = () => isEditMode, frozen = () => frozenForShutdown();
+    const identity = () => currentDocumentActionOwner();
+    const stats = { builds: 0, scrolls: 0, writes: 0, callbacks: [] };
+    ${between(scrollSource, "  function clearGeometry()", "\n  function upperBound(")}
+    ${between(scrollSource, "  function usable()", "\n  function sealTextSource(")}
+    ${between(scrollSource, "  function claim(side)", "\n  function nestedScroller(")}
+    const api = {
+      ${between(scrollSource, "    start() {", "\n    commit(")}
+      ${between(scrollSource, "    changed() {", "\n    reset(")}
+      ${between(scrollSource, "    diagnostics() {", "\n  };\n};")}
+    };
+    return { api, claim, seed(side) {
+      pendingSource = false; dirty = false; frame = 0;
+      committed = { source: markdownEditor.value, selection: identity(), textGroups: [], warnings: [] };
+      anchors = [{ editor: 0, preview: 0 }, { editor: 100, preview: 200 }];
+      scrollPoints.editor = anchors.slice(); scrollPoints.preview = anchors.slice();
+      claim(side);
+    }, geometry: () => ({ editor: scrollPoints.editor.length, preview: scrollPoints.preview.length }) };
+  })()`, context);
+  context.editorScroll = scroll.api;
+  vm.runInContext(between(renderer, "function normaliseReloadSnapshot(", "\nfunction fileTrackingPathKey("), context);
+  vm.runInContext(between(renderer, "function setDocumentDirtyState(", "\nfunction withFileTrackingResumeHeld("), context);
+  vm.runInContext(between(renderer, "function setDocumentDirtyFromContent(", "\nfunction currentReloadSnapshot("), context);
+  vm.runInContext(between(renderer, "const TIMING = {", "\n};") + "\n};", context);
   vm.runInContext(between(renderer, "const MAX_UNDO_HISTORY = 100;", "\nlet isEditMode"), context);
   vm.runInContext(between(renderer, "function captureDocumentEditor()", "\nfunction cancelEditorDeferredWork()"), context);
   vm.runInContext(between(renderer, "function cancelEditorDeferredWork()", "\nfunction retainCurrentDocumentEditor()"), context);
   vm.runInContext(between(renderer, "function captureExactInput(", "\n// Live preview with fast debounce"), context);
+  vm.runInContext(between(renderer, "// Live preview with fast debounce",
+    "\n// Sync editor textarea content with originalMarkdown"), context);
   vm.runInContext(between(renderer, "undoButton.addEventListener('click'", "\nwindow.updateEditorHistoryControls ="), context);
   const run = script => vm.runInContext(script, context);
   const emit = (name, event = {}) => listeners.get(name)?.forEach(listener => listener(event));
@@ -109,7 +145,9 @@ function fixture() {
     timers.delete(timer);
     callback();
   }
-  return { context, run, seed, input, emit, expire, timers,
+  return { context, run, seed, input, emit, expire, timers, scroll,
+    dirtyUpdates, revisionNotifications, scrollIntents,
+    finishRenders() { while (renderCompletions.length) renderCompletions.shift()(); },
     flushMicrotasks() { while (microtasks.length) microtasks.shift()(); } };
 }
 
@@ -159,6 +197,94 @@ check("document buttons use the existing history and clear redo on a fresh push"
   run("historyPush('fresh')");
   assert(!c.undoButton.disabled && c.redoButton.disabled);
 });
+for (const action of ["Undo", "Redo"]) {
+  for (const owner of ["preview", "editor"]) {
+    check(action + " preserves the " + owner + " scroll owner and invalidates source and both geometry maps", () => {
+      const f = fixture(), { context: c, run, seed, input, scroll } = f;
+      seed("before"); input("after");
+      if (action === "Redo") { c.undoButton.click(); f.finishRenders(); }
+      scroll.seed(owner);
+      const before = scroll.api.diagnostics();
+      assert.equal(before.owner, owner, "The driving pane must already own the current source");
+      assert(before.ready && !before.pendingSource && before.anchors === 2);
+      assert.deepEqual(scroll.geometry(), { editor: 2, preview: 2 });
+      const dirtyCount = f.dirtyUpdates.length, revisionCount = f.revisionNotifications.length;
+      const intents = f.scrollIntents.length;
+      c[action === "Undo" ? "undoButton" : "redoButton"].click();
+      const after = scroll.api.diagnostics();
+      assert.equal(after.owner, before.owner);
+      assert.equal(after.pendingSource, true);
+      assert.equal(after.ready, false);
+      assert.equal(after.anchors, 0);
+      assert.deepEqual(scroll.geometry(), { editor: 0, preview: 0 });
+      assert.equal(f.scrollIntents.length, intents, "History must not fabricate a new scroll intent");
+      assert.equal(c.exactSource, action === "Undo" ? "before" : "after");
+      assert.equal(c.markdownEditor.value, c.exactSource);
+      assert.equal(c.hasUnsavedChanges, action === "Redo");
+      assert.equal(f.dirtyUpdates.length, dirtyCount + 1);
+      assert.equal(f.dirtyUpdates.at(-1).dirty, action === "Redo");
+      assert.strictEqual(f.dirtyUpdates.at(-1).owner, c.ownerToken);
+      assert.equal(f.revisionNotifications.length, revisionCount + 1);
+      assert.strictEqual(f.revisionNotifications.at(-1), c.ownerToken);
+      assert.equal(run("undoHistory.length"), action === "Undo" ? 0 : 1);
+      assert.equal(run("redoHistory.length"), action === "Undo" ? 1 : 0);
+    });
+  }
+}
+check("ordinary editor input still claims the editor and invalidates current source and geometry", () => {
+  const f = fixture(), { context: c, seed, input, scroll } = f;
+  seed("before"); scroll.seed("preview");
+  assert.equal(scroll.api.diagnostics().owner, "preview");
+  assert.equal(scroll.api.diagnostics().ready, true);
+  const intents = f.scrollIntents.length;
+  input("after");
+  const after = scroll.api.diagnostics();
+  assert.equal(after.owner, "editor");
+  assert.equal(after.pendingSource, true);
+  assert.equal(after.ready, false);
+  assert.deepEqual(scroll.geometry(), { editor: 0, preview: 0 });
+  assert.equal(f.scrollIntents.length, intents + 1);
+  assert.equal(f.scrollIntents.at(-1), "editor-scroll-intent");
+  assert.equal(c.hasUnsavedChanges, true);
+  assert.equal(f.dirtyUpdates.at(-1).dirty, true);
+  assert.strictEqual(f.revisionNotifications.at(-1), c.ownerToken);
+});
+for (const action of ["Undo", "Redo"]) {
+  check("new editor input during " + action + " rendering keeps its newer scroll ownership after completion", () => {
+    const f = fixture(), { context: c, run, seed, input, scroll } = f;
+    seed("before"); input("after");
+    if (action === "Redo") { c.undoButton.click(); f.finishRenders(); }
+    scroll.seed("preview");
+    assert.equal(scroll.api.diagnostics().owner, "preview");
+    c[action === "Undo" ? "undoButton" : "redoButton"].click();
+    assert.equal(run("undoRedoRendering"), true, "The original history render is genuinely unfinished");
+    const revisions = f.revisionNotifications.length, dirtyCount = f.dirtyUpdates.length;
+    input("newer input");
+    assert.equal(run("undoRedoRendering"), true, "A later real input must not use the history flag as intent");
+    assert.equal(scroll.api.diagnostics().owner, "editor");
+    assert.equal(f.revisionNotifications.length, revisions + 1);
+    assert.equal(f.dirtyUpdates.length, dirtyCount + 1);
+    f.finishRenders();
+    assert.equal(run("undoRedoRendering"), false);
+    assert.equal(scroll.api.diagnostics().owner, "editor");
+    assert.equal(c.exactSource, "newer input");
+    assert.equal(c.hasUnsavedChanges, true);
+  });
+  check("new preview intent during " + action + " rendering keeps its newer scroll ownership after completion", () => {
+    const f = fixture(), { context: c, run, seed, input, scroll } = f;
+    seed("before"); input("after");
+    if (action === "Redo") { c.undoButton.click(); f.finishRenders(); }
+    scroll.seed("editor");
+    assert.equal(scroll.api.diagnostics().owner, "editor");
+    c[action === "Undo" ? "undoButton" : "redoButton"].click();
+    assert.equal(run("undoRedoRendering"), true);
+    scroll.claim("preview");
+    assert.equal(scroll.api.diagnostics().owner, "preview");
+    f.finishRenders();
+    assert.equal(run("undoRedoRendering"), false);
+    assert.equal(scroll.api.diagnostics().owner, "preview");
+  });
+}
 check("exact transactions retain source spelling through button Undo and Redo", () => {
   const { context: c, run } = fixture();
   run("historyPushExact('before\\r\\n'); exactSource = 'after\\r\\n'; markdownEditor.value = 'after\\n'");

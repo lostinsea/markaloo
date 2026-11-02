@@ -526,6 +526,204 @@ const SEARCH_LAYOUT_CONTROLS = [
 
 const REVERTS = [
   {
+    id: "R1208",
+    what: "let Undo's dirty transition claim editor scrolling instead of preserving the existing driver",
+    file: RENDERER,
+    from: "    setDocumentDirtyFromContent(prevContent, { preserveScrollOwner: true });",
+    to: "    setDocumentDirtyFromContent(prevContent);",
+    suite: "test:editor-history",
+    expect: [
+      /^Undo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Undo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+    ],
+    mustPass: [
+      /^Redo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Redo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+      /^ordinary editor input still claims the editor and invalidates current source and geometry$/,
+      /^new editor input during Undo rendering keeps its newer scroll ownership after completion$/,
+      /^new preview intent during Undo rendering keeps its newer scroll ownership after completion$/,
+      /^exact transactions retain source spelling through button Undo and Redo$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1209",
+    what: "let Redo's dirty transition claim editor scrolling instead of preserving the existing driver",
+    file: RENDERER,
+    from: "    setDocumentDirtyFromContent(nextContent, { preserveScrollOwner: true });",
+    to: "    setDocumentDirtyFromContent(nextContent);",
+    suite: "test:editor-history",
+    expect: [
+      /^Redo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Redo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+    ],
+    mustPass: [
+      /^Undo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Undo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+      /^ordinary editor input still claims the editor and invalidates current source and geometry$/,
+      /^new editor input during Redo rendering keeps its newer scroll ownership after completion$/,
+      /^new preview intent during Redo rendering keeps its newer scroll ownership after completion$/,
+      /^exact transactions retain source spelling through button Undo and Redo$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1210",
+    what: "preserve scrolling by default so ordinary editor input cannot claim its newer driving intent",
+    file: RENDERER,
+    from: "function noteActiveContentMutation({ preserveScrollOwner = false } = {}) {",
+    to: "function noteActiveContentMutation({ preserveScrollOwner = true } = {}) {",
+    suite: "test:editor-history",
+    expect: [
+      /^ordinary editor input still claims the editor and invalidates current source and geometry$/,
+      /^new editor input during Undo rendering keeps its newer scroll ownership after completion$/,
+      /^new editor input during Redo rendering keeps its newer scroll ownership after completion$/,
+    ],
+    mustPass: [
+      /^Undo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Undo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+      /^Redo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Redo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+      /^new preview intent during Undo rendering keeps its newer scroll ownership after completion$/,
+      /^new preview intent during Redo rendering keeps its newer scroll ownership after completion$/,
+      /^composition retains one burst and blocks history until final input settles$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1211",
+    what: "notify a history mutation without invalidating its old source and both correspondence maps",
+    file: RENDERER,
+    from: "  if (preserveScrollOwner) editorScroll.start();\n  else editorScroll.changed();",
+    to: "  if (!preserveScrollOwner) editorScroll.changed();",
+    suite: "test:editor-history",
+    expect: [
+      /^Undo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Undo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+      /^Redo preserves the preview scroll owner and invalidates source and both geometry maps$/,
+      /^Redo preserves the editor scroll owner and invalidates source and both geometry maps$/,
+    ],
+    mustPass: [
+      /^ordinary editor input still claims the editor and invalidates current source and geometry$/,
+      /^new editor input during Undo rendering keeps its newer scroll ownership after completion$/,
+      /^new editor input during Redo rendering keeps its newer scroll ownership after completion$/,
+      /^new preview intent during Undo rendering keeps its newer scroll ownership after completion$/,
+      /^new preview intent during Redo rendering keeps its newer scroll ownership after completion$/,
+      /^owner, edit-mode and freeze guards survive forced button dispatch$/,
+      /^exact beforeinput preserves CRLF through typing Undo and Redo$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1203",
+    what: "hold stable-read adoption at the logical spelling instead of Main's physical descriptor",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: "  const ownedReaderPath = fs.realpathSync.native(stableReadRequest.filePath);",
+    to: "  const ownedReaderPath = fileB;",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [
+      /^lifecycle source stable owned-read hook captures only the exact physical target before the request$/,
+      /^lifecycle source stable owned-read hook preserves retry descriptors and exact restoration$/,
+    ],
+    mustPass: [
+      /^lifecycle source atomic owned-read hook captures only the exact physical target before the request$/,
+      /^lifecycle source atomic owned-read hook preserves retry descriptors and exact restoration$/,
+      /^lifecycle source dirty Reload answers actual Cancel and Proceed and joins the unchanged original request$/,
+      /^lifecycle source Mermaid fixture uses the real chooser admission leaf with exact Main-wrapped source and original paint$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1204",
+    what: "miss the atomic Main read by binding its hold to the logical fixture spelling",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: "  const atomicReaderPath = fs.realpathSync.native(atomicReadRequest.filePath);",
+    to: "  const atomicReaderPath = fileB;",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [
+      /^lifecycle source atomic owned-read hook captures only the exact physical target before the request$/,
+      /^lifecycle source atomic owned-read hook preserves retry descriptors and exact restoration$/,
+    ],
+    mustPass: [
+      /^lifecycle source stable owned-read hook captures only the exact physical target before the request$/,
+      /^lifecycle source stable owned-read hook preserves retry descriptors and exact restoration$/,
+      /^lifecycle source dirty Reload answers actual Cancel and Proceed and joins the unchanged original request$/,
+      /^lifecycle source Mermaid fixture uses the real chooser admission leaf with exact Main-wrapped source and original paint$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1205",
+    what: "treat a closed dirty Reload question as settlement of its original request",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: "      await request;\n      collect(observer.takeRecords());",
+    to: "      collect(observer.takeRecords());",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [
+      /^lifecycle source dirty Reload answers actual Cancel and Proceed and joins the unchanged original request$/,
+      /^lifecycle source dirty Reload retains original request rejection and disposes only its observation$/,
+    ],
+    mustPass: [
+      /^lifecycle source dirty Reload refuses foreign questions non-Cancel defaults and duplicate presentations$/,
+      /^lifecycle source stable owned-read hook captures only the exact physical target before the request$/,
+      /^lifecycle source atomic owned-read hook captures only the exact physical target before the request$/,
+      /^lifecycle source Mermaid fixture uses the real chooser admission leaf with exact Main-wrapped source and original paint$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1206",
+    what: "create the Mermaid fixture without the production chooser's verified admission and version",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from:
+      "  const mermaidAdmission = await openShutdownLifecycleFixture(\n" +
+      "    exec, fileM,\n" +
+      '    require("../src/file-helpers-core").wrapMermaidContent(mermaidInitial, fileM), "A");',
+    to:
+      "  const mermaidAdmission = await exec(`(() => {\n" +
+      "    const tab = window.CustomTabs.createTab(${JSON.stringify(fileM)},\n" +
+      '      ${JSON.stringify(require("../src/file-helpers-core").wrapMermaidContent(mermaidInitial, fileM))});\n' +
+      "    return { tabId: tab.id };\n" +
+      "  })()`);",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [
+      /^lifecycle source Mermaid fixture uses the real chooser admission leaf with exact Main-wrapped source and original paint$/,
+    ],
+    mustPass: [
+      /^lifecycle source Mermaid fixture genuinely retires only its owned tab without rewriting its content or dirty state$/,
+      /^lifecycle source returns its checked owner and restores both observations$/,
+      /^lifecycle source refuses missingOwner and restores its chooser$/,
+      /^lifecycle source dirty Reload answers actual Cancel and Proceed and joins the unchanged original request$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1207",
+    what: "erase the Mermaid fixture's live content and dirty evidence before asking to close",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: '  await closeOwnedFixtureTabs(exec, "refreshed .mmd retirement", { tabIds: [mermaidTab] });',
+    to:
+      "  await exec(`(async () => {\n" +
+      "    const tab = window.CustomTabs.getTabs().find(candidate => candidate.id === ${mermaidTab});\n" +
+      "    tab.content = tab.originalContent;\n" +
+      "    tab.hasUnsavedChanges = false;\n" +
+      "    window.originalMarkdown = tab.content;\n" +
+      "    await window.CustomTabs.closeTab(tab.id);\n" +
+      "    return true;\n" +
+      "  })()`);",
+    suite: "test:shutdown-lifecycle-source",
+    expect: [
+      /^lifecycle source Mermaid fixture genuinely retires only its owned tab without rewriting its content or dirty state$/,
+    ],
+    mustPass: [
+      /^lifecycle source Mermaid fixture uses the real chooser admission leaf with exact Main-wrapped source and original paint$/,
+      /^lifecycle source returns its checked owner and restores both observations$/,
+      /^lifecycle source dirty Reload answers actual Cancel and Proceed and joins the unchanged original request$/,
+      /^lifecycle source dirty Reload retains original request rejection and disposes only its observation$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
     id: "R1201",
     what: "await a large-render dialog evaluation reply after answering destroys that same host",
     file: path.join(ROOT, "test", "test-tab-refresh.js"),
@@ -18598,7 +18796,7 @@ const REVERTS = [
       file: path.join(ROOT, "test", "teardown-question-current-bindings.json"),
       from:
         '{\n' +
-        '  "suite": "686f45142af47cd1b10a2108d330520f5edc959a45c552a4d6d6f651f5499b12",\n' +
+        '  "suite": "b772443f6590238071eea29397d07c3644d17b0d6010f9df7cecd7937509e3de",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
@@ -18609,7 +18807,7 @@ const REVERTS = [
         '}\n',
       to:
         '{\n' +
-        '  "suite": "eec5e3147ffce3f32b24641947b5825019ee277b141da9d9a1e14dc634c7efcc",\n' +
+        '  "suite": "69d117ae5faeb7337b76668b9c4c8fbd7c47b53941e51a17fe130f6dfc617332",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +

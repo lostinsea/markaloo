@@ -43,6 +43,9 @@ This approach means after an upstream merge, you only need to ensure these files
   document Undo/Redo waits until its final input settles.
 - Tab snapshots retain existing stacks and exact source, not a pending post-state.
   Ownership changes and exact transactions retire the old typing timer.
+- Undo and Redo invalidate source correspondence and geometry without changing
+  the current scroll-driving pane. Ordinary editor input still chooses the
+  editor; newer direct scrolling remains authoritative while history renders.
 
 ### Shared source-owned inline editing and Edit Text
 

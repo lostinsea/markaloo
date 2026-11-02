@@ -392,9 +392,294 @@ async function largeRenderChoiceContracts() {
   });
 }
 
+async function ownedReadPathContracts() {
+  // These fake stat ports have no I/O; after release, microtasks settle before the next turn.
+  const observeStat = work => {
+    const outcome = work.then(value => ({ status: "fulfilled", value }),
+      error => ({ status: "rejected", error }));
+    return () => Promise.race([outcome, turn().then(() => ({ status: "pending" }))]);
+  };
+  const stranded = deferred(), statError = new Error("controlled owned stat failure");
+  const joinStranded = observeStat(stranded.promise);
+  let pendingStat, recoveredStat, rejectedStat;
+  try {
+    pendingStat = await joinStranded();
+    rejectedStat = await observeStat(Promise.reject(statError))();
+  } finally { stranded.resolve("released owned stat"); }
+  recoveredStat = await joinStranded();
+  check("owned-read stat join exposes pending and rejected work without fabricating a value", () => {
+    assert.equal(pendingStat.status, "pending");
+    assert.equal("value" in pendingStat, false);
+    assert.equal(rejectedStat.status, "rejected");
+    assert.equal(rejectedStat.error, statError);
+    assert.equal("value" in rejectedStat, false);
+    assert.deepEqual(recoveredStat, { status: "fulfilled", value: "released owned stat" });
+  });
+  for (const kind of ["stable", "atomic"]) {
+    const atomic = kind === "atomic";
+    const startText = atomic ? "  const atomicReaderPath = " : "  const ownedReaderPath = ";
+    const endText = atomic ? "  tabDiskObservation = atomicObservation;" : "  let midReadRefresh;";
+    const start = source.indexOf(startText), end = source.indexOf(endText, start);
+    assert(start >= 0 && start === source.lastIndexOf(startText) && end > start);
+    const logical = "c:\\fixture\\beta.md", physical = "C:\\Fixture\\Beta.md";
+    const calls = [], handles = [], resolutions = [];
+    const stats = { dev: 1, ino: 2, size: 23, mtimeMs: 4, ctimeMs: 5 };
+    const originalOpen = async function (filePath) {
+      assert.equal(this, ownedFs.promises);
+      calls.push(filePath);
+      const handle = {
+        stat: async () => stats,
+        readFile: async () => "exact first descriptor bytes",
+        close: async () => {},
+      };
+      handles.push({ handle, stat: handle.stat, read: handle.readFile, close: handle.close });
+      return handle;
+    };
+    const ownedFs = {
+      realpathSync: { native(filePath) {
+        resolutions.push(filePath);
+        assert.equal(filePath, logical);
+        return physical;
+      } },
+      promises: { open: originalOpen },
+    };
+    const restoreName = atomic ? "restoreAtomicOpen" : "restoreStableReadOpen";
+    const releaseName = atomic ? "releaseAtomicSecondStat" : "releaseStableReadSecondStat";
+    const countName = atomic ? "atomicOpenCalls" : "stableReadOpenCalls";
+    const targetName = atomic ? "atomicReaderPath" : "ownedReaderPath";
+    const matchedName = atomic ? "atomicMatchedReadPath" : "stableMatchedReadPath";
+    const suffix = `\nreturn { restore: ${restoreName}, release: () => ${releaseName},
+      count: () => ${countName}, target: () => ${targetName}, matched: () => ${matchedName},
+      closed: () => ${atomic ? "atomicClosedAttempts" : "[]"} };`;
+    const api = vm.compileFunction(source.slice(start, end) + suffix, [
+      "fs", "stableReadRequest", "atomicReadRequest", "fileB", "replaceMethod",
+    ])(ownedFs, { filePath: logical }, { filePath: logical }, logical,
+      (object, key, replacement) => {
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        Object.defineProperty(object, key, { ...descriptor, value: replacement });
+        return () => Object.defineProperty(object, key, descriptor);
+      });
+    let evidence;
+    try {
+      const logicalHandle = await ownedFs.promises.open(logical);
+      const physicalHandle = await ownedFs.promises.open(physical);
+      await physicalHandle.stat();
+      if (atomic) await physicalHandle.readFile("utf8");
+      let heldSettled = false;
+      const joinHeld = observeStat(physicalHandle.stat().then(value => { heldSettled = true; return value; }));
+      await turn();
+      evidence = {
+        resolutions: resolutions.slice(), target: api.target(), matched: api.matched(),
+        calls: calls.slice(), count: api.count(), held: typeof api.release() === "function",
+        settled: heldSettled, logicalUntouched: logicalHandle.stat === handles[0].stat &&
+          logicalHandle.readFile === handles[0].read && logicalHandle.close === handles[0].close,
+      };
+      if (api.release()) api.release()();
+      evidence.join = await joinHeld();
+      const second = await ownedFs.promises.open(physical);
+      await second.stat();
+      await second.stat();
+      await physicalHandle.close();
+      await second.close();
+      evidence.finalCount = api.count();
+      evidence.closed = Array.from(api.closed());
+    } finally { api.restore(); }
+    check(kind + " owned-read hook captures only the exact physical target before the request", () => {
+      assert.notEqual(logical, physical, "The controlled fixture must discriminate spellings");
+      assert.deepEqual(evidence.resolutions, [logical]);
+      assert.equal(evidence.target, physical);
+      assert.equal(evidence.matched, physical);
+      assert.deepEqual(evidence.calls, [logical, physical]);
+      assert.equal(evidence.logicalUntouched, true, "Logical adoption must not arm the Main read hold");
+      assert.equal(evidence.count, 1);
+      assert.equal(evidence.held, true);
+      assert.equal(evidence.settled, false, "The physical second stat must genuinely remain pending");
+      assert.equal(evidence.join.status, "fulfilled",
+        evidence.join.error?.stack || "The owned stat did not settle after its captured release");
+      assert.equal(evidence.join.value, stats);
+    });
+    check(kind + " owned-read hook preserves retry descriptors and exact restoration", () => {
+      assert.equal(evidence.join.status, "fulfilled",
+        evidence.join.error?.stack || "An unjoined owned stat cannot qualify descriptor cleanup");
+      assert.equal(evidence.finalCount, 2);
+      if (atomic) assert.deepEqual(evidence.closed, [1, 2]);
+      assert.equal(ownedFs.promises.open, originalOpen);
+      assert.equal(handles.length, 3);
+    });
+  }
+}
+
+async function dirtyReloadQuestionContracts() {
+  const start = source.indexOf("async function answerDirtyReloadQuestion(");
+  const end = source.indexOf("\nasync function answerLargeRenderQuestion(", start);
+  assert(start >= 0 && end > start);
+  const answer = vm.compileFunction(source.slice(start, end) +
+    "\nreturn answerDirtyReloadQuestion;", ["boundedDialogWork"])(work => work);
+  async function exercise(options = {}) {
+    const pending = deferred(), records = [], input = [], observers = [];
+    const choice = options.choice || "cancel";
+    const dialog = { open: false };
+    const buttons = [
+      { dataset: { dialogChoice: "cancel" }, textContent: "Cancel" },
+      { dataset: { dialogChoice: "proceed" },
+        textContent: options.wrongButtons ? "Discard and close" : "Discard and reload" },
+    ];
+    const nodes = {
+      appMessageDialog: dialog,
+      appMessageTitle: { textContent: options.wrongTitle ? "Close this file?" : "Discard unsaved changes?" },
+      appMessageText: { textContent: options.wrongMessage ? "Discard another document?" :
+        "You have unsaved changes. Reload from disk and discard them?" },
+    };
+    const page = { __confirmCalls: 0 };
+    let originalCalls = 0, originalReceiver, originalEvent, producerSettled = false;
+    const event = { type: "click", exact: true };
+    pending.promise.then(() => { producerSettled = true; }, () => { producerSettled = true; });
+    const original = function (received) {
+      originalCalls += 1; originalReceiver = this; originalEvent = received;
+      dialog.open = true;
+      records.push({ target: dialog, oldValue: null });
+      if (options.duplicate) records.push({ target: dialog, oldValue: null });
+      page.document.activeElement = buttons[options.wrongDefault ? 1 : 0];
+      return pending.promise;
+    };
+    const reload = { onclick: original, click() {
+      input.push("reload");
+      const returned = this.onclick(event);
+      assert.equal(returned, pending.promise, "The observed handler must return its original producer");
+    } };
+    nodes.reloadFileBtn = reload;
+    for (const button of buttons) button.click = () => {
+      input.push(button.dataset.dialogChoice);
+      dialog.open = false;
+      records.push({ target: dialog, oldValue: "" });
+      if (options.reject) pending.reject(options.reject);
+      else if (!options.holdRequest) pending.resolve();
+    };
+    page.document = {
+      documentElement: {}, activeElement: null,
+      getElementById: id => nodes[id],
+      querySelectorAll: selector => {
+        assert.equal(selector, "#appMessageButtons [data-dialog-choice]"); return buttons;
+      },
+      querySelector: selector => buttons.find(button => selector ===
+        `#appMessageButtons [data-dialog-choice="${button.dataset.dialogChoice}"]`),
+    };
+    page.MutationObserver = class {
+      constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
+      observe(target, settings) {
+        assert.equal(target, page.document.documentElement);
+        assert.deepEqual(JSON.parse(JSON.stringify(settings)),
+          { subtree: true, attributes: true, attributeFilter: ["open"], attributeOldValue: true });
+      }
+      takeRecords() { return records.splice(0); }
+      disconnect() { this.disconnected = true; }
+    };
+    page.window = page;
+    const context = vm.createContext(page);
+    let outcome;
+    answer(code => vm.runInContext(code, context, { timeout: 1000 }), choice).then(
+      value => { outcome = { value }; }, error => { outcome = { error }; });
+    await turn();
+    const whileClosed = { open: dialog.open, settled: outcome !== undefined,
+      producerSettled, confirmations: page.__confirmCalls };
+    if (options.holdRequest) { pending.resolve(); await turn(); }
+    assert(outcome, "The controlled actual helper must finish");
+    return { ...outcome, input, whileClosed, page, originalCalls, receiver: originalReceiver === reload,
+      event: originalEvent === event, restored: reload.onclick === original &&
+        observers.length === 1 && observers[0].disconnected, choice };
+  }
+  const valid = [];
+  for (const choice of ["cancel", "proceed"]) valid.push(await exercise({ choice, holdRequest: true }));
+  check("dirty Reload answers actual Cancel and Proceed and joins the unchanged original request", () => {
+    for (const result of valid) {
+      assert.equal(result.error, undefined);
+      assert.deepEqual(result.input, ["reload", result.choice]);
+      assert.equal(result.originalCalls, 1);
+      assert.equal(result.receiver, true); assert.equal(result.event, true);
+      assert.equal(result.whileClosed.open, false);
+      assert.equal(result.whileClosed.settled, false, "A closed question is not a settled request");
+      assert.equal(result.whileClosed.producerSettled, false);
+      assert.equal(result.whileClosed.confirmations, 0);
+      assert.equal(result.page.__confirmCalls, 1);
+      assert.equal(result.value.presentations, 1); assert.equal(result.value.settled, true);
+      assert.equal(result.restored, true);
+    }
+  });
+  const malformed = [];
+  for (const option of ["wrongTitle", "wrongMessage", "wrongButtons", "wrongDefault", "duplicate"])
+    malformed.push({ option, result: await exercise({ [option]: true }) });
+  check("dirty Reload refuses foreign questions non-Cancel defaults and duplicate presentations", () => {
+    for (const { option, result } of malformed) {
+      assert.match(result.error?.message || "", ["wrongTitle", "wrongMessage", "wrongButtons"].includes(option)
+        ? /unexpected question/ : /exactly one Cancel-default question/);
+      assert.deepEqual(result.input, ["reload"], "An unverified question must not receive a choice");
+      assert.equal(result.page.__confirmCalls, 0);
+      assert.equal(result.restored, true);
+    }
+  });
+  const rejection = new Error("controlled original dirty Reload rejection");
+  const rejected = await exercise({ reject: rejection });
+  check("dirty Reload retains original request rejection and disposes only its observation", () => {
+    assert.equal(rejected.error, rejection);
+    assert.equal(rejected.page.__confirmCalls, 0);
+    assert.deepEqual(rejected.input, ["reload", "cancel"]);
+    assert.equal(rejected.restored, true);
+  });
+}
+
+async function mermaidAdmissionContract() {
+  const start = source.indexOf('  const mermaidInitial = "graph TD;');
+  const end = source.indexOf("\n  await sleep(400);", start);
+  assert(start >= 0 && end > start);
+  const calls = [], filePath = "physical-mermaid-fixture.mmd", evaluate = () => {
+    throw new Error("The Mermaid fixture must use the existing production admission helper");
+  };
+  const admitted = { tabId: 7, owner: { tabId: 7 }, descriptor: { ref: "verified" },
+    diskVersion: { dev: 1, ino: 2, size: 23, mtimeMs: 4, ctimeMs: 5 } };
+  const run = vm.compileFunction("return (async () => {" + source.slice(start, end) +
+    "\nreturn { mermaidTab, mermaidAdmission }; })();", [
+    "exec", "fileM", "write", "openShutdownLifecycleFixture", "require",
+  ]);
+  let value, error;
+  try {
+    value = await run(evaluate, filePath, (target, bytes) => calls.push(["write", target, bytes]),
+      async (...args) => { calls.push(["admit", ...args]); return admitted; }, require);
+  } catch (caught) { error = caught; }
+  check("Mermaid fixture uses the real chooser admission leaf with exact Main-wrapped source and original paint", () => {
+    assert.equal(error, undefined);
+    assert.equal(value.mermaidTab, admitted.tabId);
+    assert.equal(value.mermaidAdmission, admitted);
+    assert.deepEqual(calls, [
+      ["write", filePath, "graph TD;\n  A-->B;\n"],
+      ["admit", evaluate, filePath, "```mermaid\ngraph TD;\n  A-->B;\n\n```", "A"],
+    ]);
+  });
+  const closeMarker = "    JSON.stringify(afterMermaid),\n  );";
+  const normalized = source.replace(/\r\n/g, "\n");
+  const closeStart = normalized.indexOf(closeMarker) + closeMarker.length;
+  const closeEnd = normalized.indexOf("\n  await sleep(400);", closeStart);
+  assert(closeStart >= closeMarker.length && closeEnd > closeStart);
+  const close = vm.compileFunction("return (async () => {" + normalized.slice(closeStart, closeEnd) +
+    "\n})();", ["exec", "mermaidTab", "closeOwnedFixtureTabs"]);
+  const closed = [];
+  let closeError;
+  try { await close(evaluate, admitted.tabId, async (...args) => { closed.push(args); }); }
+  catch (caught) { closeError = caught; }
+  check("Mermaid fixture genuinely retires only its owned tab without rewriting its content or dirty state", () => {
+    assert.equal(closeError, undefined);
+    assert.equal(closed.length, 1);
+    assert.equal(closed[0][0], evaluate);
+    assert.equal(closed[0][1], "refreshed .mmd retirement");
+    assert.deepEqual(JSON.parse(JSON.stringify(closed[0][2])), { tabIds: [admitted.tabId] });
+  });
+}
+
 async function main() {
   await activeCloseLayoutContracts();
   await largeRenderChoiceContracts();
+  await ownedReadPathContracts();
+  await dirtyReloadQuestionContracts();
+  await mermaidAdmissionContract();
   check("compiles the entire unexecuted Electron suite", () => {
     new vm.Script(source, { filename: sourcePath });
   });

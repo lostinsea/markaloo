@@ -1155,10 +1155,27 @@ async function run() {
       await wait("current edited preview and geometry", "viewer.querySelector('h1')?.textContent==='Inserted heading'&&getEditorScrollDiagnostics().ready");
       await correspondence("editor", "Repeated identical paragraph.", "insertion updates the source position of reused repeated blocks", 2);
       const edited = await exec("markdownEditor.value");
-      await exec(`historyRestore({undo:[${JSON.stringify(beforeEdit)}],redo:[]});clearTimeout(historyDebounceTimer);historyUndo();true`);
+      const undoOwner = await exec(`(() => {
+        historyRestore({undo:[${JSON.stringify(beforeEdit)}],redo:[]});clearTimeout(historyDebounceTimer);
+        viewer.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));
+        const before=getEditorScrollDiagnostics();
+        historyUndo();
+        return {before,after:getEditorScrollDiagnostics()};
+      })()`);
+      check("Undo preserves the established preview scroll owner before geometry and explicit navigation",
+        undoOwner.before.ready && undoOwner.before.owner === "preview" &&
+        undoOwner.after.owner === undoOwner.before.owner, undoOwner);
       await wait("undo geometry", "viewer.querySelector('h1')?.textContent==='Scroll correspondence'&&getEditorScrollDiagnostics().ready");
       await correspondence("preview", "Middle paragraph 25.", "undo rebuilds mapping for the restored source");
-      await exec("historyRedo();true");
+      const redoOwner = await exec(`(() => {
+        const before=getEditorScrollDiagnostics();
+        historyRedo();
+        return {before,after:getEditorScrollDiagnostics()};
+      })()`);
+      receipt.historyOwners = { undo: undoOwner, redo: redoOwner };
+      check("Redo preserves the established preview scroll owner before geometry and explicit navigation",
+        redoOwner.before.ready && redoOwner.before.owner === "preview" &&
+        redoOwner.after.owner === redoOwner.before.owner, redoOwner);
       await wait("redo geometry", "viewer.querySelector('h1')?.textContent==='Inserted heading'&&getEditorScrollDiagnostics().ready");
       check("redo restores the exact edited body through the real history path", await exec(`markdownEditor.value===${JSON.stringify(edited)}`));
       await correspondence("editor", "Middle paragraph 25.", "redo rebuilds mapping for the edited source");

@@ -310,8 +310,12 @@ function inputMenuContracts() {
       "Full menu dismissal precedes scroll and actual tab mutation"],
     ["preview-only dismissal", text => text.replace("  hideDocumentContextMenus();",
       "  hideDocumentContextMenus(true);"), "Ordinary input requests full dismissal"],
-    ["reordered dismissal", text => text.replace("  hideDocumentContextMenus();\n  editorScroll.changed();",
-      "  editorScroll.changed();\n  hideDocumentContextMenus();"),
+    ["reordered dismissal", text => text.replace(
+      "  hideDocumentContextMenus();\n" +
+      "  // History changes the source, not which pane the reader chose to drive it.\n" +
+      "  if (preserveScrollOwner) editorScroll.start();\n  else editorScroll.changed();",
+      "  if (preserveScrollOwner) editorScroll.start();\n  else editorScroll.changed();\n" +
+      "  hideDocumentContextMenus();"),
       "Full menu dismissal precedes scroll and actual tab mutation"],
   ]) {
     let changed = false;

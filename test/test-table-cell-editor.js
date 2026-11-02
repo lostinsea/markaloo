@@ -2545,7 +2545,7 @@ async function columnSizingSourceTests(cells) {
   let mutations = 0, scrollChanges = 0;
   menuWindow.CustomTabs = { noteActiveContentMutation() { mutations++; } };
   menuScope.editorScroll = { changed() { scrollChanges++; } };
-  vm.runInContext(extract("function noteActiveContentMutation()", "\nfunction withFileTrackingResumeHeld("), menuScope);
+  vm.runInContext(extract("function noteActiveContentMutation(", "\nfunction withFileTrackingResumeHeld("), menuScope);
   openMenu(presentation); menuUtils.positionContextMenu(noteMenu, 40, 60);
   menuScope.noteActiveContentMutation();
   check("accepted source mutation immediately closes document menus and forwards existing revisions",

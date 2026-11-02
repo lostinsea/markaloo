@@ -1368,7 +1368,7 @@ function historyUndo() {
   if (isEditMode) {
     markdownEditor.value = prevContent;
     exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
-    setDocumentDirtyFromContent(prevContent);
+    setDocumentDirtyFromContent(prevContent, { preserveScrollOwner: true });
     clearTimeout(previewDebounceTimer);
     renderMarkdown(prevContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
@@ -1376,7 +1376,7 @@ function historyUndo() {
     });
   } else {
     originalMarkdown = prevContent;
-    noteActiveContentMutation();
+    noteActiveContentMutation({ preserveScrollOwner: true });
     renderMarkdown(prevContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
       undoRedoRendering = false;
@@ -1402,7 +1402,7 @@ function historyRedo() {
   if (isEditMode) {
     markdownEditor.value = nextContent;
     exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
-    setDocumentDirtyFromContent(nextContent);
+    setDocumentDirtyFromContent(nextContent, { preserveScrollOwner: true });
     clearTimeout(previewDebounceTimer);
     renderMarkdown(nextContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
@@ -1410,7 +1410,7 @@ function historyRedo() {
     });
   } else {
     originalMarkdown = nextContent;
-    noteActiveContentMutation();
+    noteActiveContentMutation({ preserveScrollOwner: true });
     renderMarkdown(nextContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
       undoRedoRendering = false;
@@ -1614,9 +1614,11 @@ function setDocumentDirtyState(value) {
   return hasUnsavedChanges;
 }
 
-function noteActiveContentMutation() {
+function noteActiveContentMutation({ preserveScrollOwner = false } = {}) {
   hideDocumentContextMenus();
-  editorScroll.changed();
+  // History changes the source, not which pane the reader chose to drive it.
+  if (preserveScrollOwner) editorScroll.start();
+  else editorScroll.changed();
   window.CustomTabs?.noteActiveContentMutation?.();
 }
 
@@ -1629,8 +1631,8 @@ function withFileTrackingResumeHeld(run) {
   }
 }
 
-function setDocumentDirtyFromContent(content) {
-  noteActiveContentMutation();
+function setDocumentDirtyFromContent(content, options) {
+  noteActiveContentMutation(options);
   let baseline = originalMarkdown;
   if (!isEditMode) {
     const tabs = window.CustomTabs;
