@@ -443,7 +443,7 @@ const deadline = setTimeout(() => { throw new Error("Teardown source controls di
   try {
     for (const [name, run] of cases) {
       try { await run(); console.log("PASS " + name); }
-      catch (error) { failures += 1; console.error("FAIL " + name + "\n" + error.stack); }
+      catch (error) { failures += 1; console.error("FAIL " + name + "  -> " + error.stack); }
     }
   } finally {
     clearTimeout(deadline);

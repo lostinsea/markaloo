@@ -116,7 +116,7 @@ const cases = [
   let failures = 0;
   for (const [name, run] of cases) {
     try { await run(); console.log(`PASS ${name}`); }
-    catch (error) { failures += 1; console.error(`FAIL ${name}\n${error.stack}`); }
+    catch (error) { failures += 1; console.error(`FAIL ${name}  -> ${error.stack}`); }
   }
   console.log(`${cases.length - failures}/${cases.length} helper controls; Main/updater/Electron/native NOT RUN`);
   process.exitCode = failures ? 1 : 0;

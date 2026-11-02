@@ -229,7 +229,7 @@ for (const [name, run] of cases) {
     console.log(`PASS ${name}`);
   } catch (error) {
     failures += 1;
-    console.error(`FAIL ${name}\n${error.stack}`);
+    console.error(`FAIL ${name}  -> ${error.stack}`);
   }
 }
 console.log(`${cases.length - failures}/${cases.length} helper controls; Main/Electron/native NOT RUN`);

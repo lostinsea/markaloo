@@ -304,7 +304,7 @@ for (const stage of ["before-plan", "pre-effect"]) test(
   let failed = 0;
   for (const [name, run] of cases) {
     try { await run(); console.log("PASS " + name); }
-    catch (error) { failed++; console.error("FAIL " + name + "\n" + error.stack); }
+    catch (error) { failed++; console.error("FAIL " + name + "  -> " + error.stack); }
   }
   console.log(`F22 ordered Save E contracts: ${cases.length - failed} passed, ${failed} failed; source/VM only, native NOT RUN.`);
   if (failed) process.exitCode = 1;

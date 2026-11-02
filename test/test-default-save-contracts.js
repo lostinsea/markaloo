@@ -183,11 +183,23 @@ async function loadHelpers(fixture, mutateAtChoice = () => {}, mutateBeforeInput
   })()`, host, { timeout: 1000 });
 }
 
-function installOrdinaryInput(fixture) {
+function installOrdinaryInput(fixture, transformSource = value => value) {
   const { page, control, context } = fixture;
   Object.assign(control.state, { saveFailure: false, content: control.tab.content,
     foldedLive: control.tab.content });
   const listeners = [], timers = new Map();
+  const menuClasses = new Set(["visible"]), noteMenuClasses = new Set(["visible"]);
+  const classes = values => ({
+    add: name => values.add(name), remove: name => values.delete(name),
+    contains: name => values.has(name),
+  });
+  const menuState = () => ({
+    documentVisible: page.contextMenu.classList.contains("visible"),
+    notesVisible: page.notesPanelContextMenu.classList.contains("visible"),
+    noteId: page.notesPanelContextNoteId,
+  });
+  control.inputTrace = [];
+  control.inputMenuState = menuState;
   let nextTimer = 1;
   page.markdownEditor.addEventListener = (name, callback) => {
     assert.equal(name, "input"); listeners.push(callback);
@@ -207,7 +219,12 @@ function installOrdinaryInput(fixture) {
     setTimeout: callback => { const id = nextTimer++; timers.set(id, callback); return id; },
     clearTimeout: id => timers.delete(id),
     mayMutateRendererDocument: () => true,
-    editorScroll: { changed: () => {} },
+    contextMenu: { classList: classes(menuClasses) },
+    notesPanelContextMenu: { classList: classes(noteMenuClasses) },
+    notesPanelContextNoteId: "owned-input-note", rightClickTarget: page.markdownEditor,
+    editorScroll: { changed: () => {
+      control.inputTrace.push({ phase: "scroll", menus: menuState() });
+    } },
     unsavedIndicator: { style: {} }, fileTrackingPauseOwner: null,
     isFileTrackingActive: false, fileTrackingResumeHold: 0,
     hasPendingSaveFor: () => false, saveFailedFor: () => false, reloadConflictFor: () => false,
@@ -215,6 +232,18 @@ function installOrdinaryInput(fixture) {
     assertFileTrackingOwnership: () => { throw new Error("Unexpected tracking resume"); },
     renderMarkdown: content => { page.viewer.textContent = content; },
   });
+  vm.runInContext(fs.readFileSync(path.join(producerRoot, "context-menu-utils.js"), "utf8"), context);
+  page.hideContextMenuHelper = page.FoliaContextMenu.hideContextMenu;
+  vm.runInContext(between(renderer, "function hideContextMenu(event)",
+    "\n// Show context menu on right-click"), context);
+  vm.runInContext(between(renderer, "function hideNotesPanelContextMenu(event)",
+    "\ndocument.addEventListener('click'"), context);
+  const dismiss = page.hideDocumentContextMenus;
+  page.hideDocumentContextMenus = (...args) => {
+    const result = dismiss(...args);
+    control.inputTrace.push({ phase: "dismiss", args, menus: menuState() });
+    return result;
+  };
   const mutation = between(customTabs, "  function bumpTabMutationRevision(",
     "  function bumpDocumentRevision(") +
     between(customTabs, "  function noteActiveContentMutation()",
@@ -223,6 +252,11 @@ function installOrdinaryInput(fixture) {
     ${mutation}
     return noteActiveContentMutation;
   })()`, context);
+  const noteMutation = page.CustomTabs.noteActiveContentMutation;
+  page.CustomTabs.noteActiveContentMutation = (...args) => {
+    control.inputTrace.push({ phase: "tab-mutation", menus: menuState() });
+    return noteMutation(...args);
+  };
   const documentStateReader = between(customTabs, "__documentState: (tab) => {",
     "__reloadState:").replace("__documentState:", "").trim().replace(/,$/, "");
   page.CustomTabs.__documentState = vm.runInContext("(" + documentStateReader + ")", context);
@@ -232,8 +266,81 @@ function installOrdinaryInput(fixture) {
     between(renderer, "function setDocumentDirtyFromContent(", "function currentReloadSnapshot(") +
     between(renderer, "function updateUnsavedIndicator(", "// ============================================\n// RECENT FILES") +
     between(renderer, "// Live preview with fast debounce", "// Sync editor textarea");
-  vm.runInContext(inputSource, context, { timeout: 1000 });
+  vm.runInContext(transformSource(inputSource), context, { timeout: 1000 });
   check(listeners.length === 1, "Exact current ordinary preview input producer was installed");
+}
+
+function inputMenuContracts() {
+  const make = transformSource => {
+    const fixture = pageFixture(), { page, control } = fixture;
+    control.tab.content = control.tab.originalContent = control.saved;
+    control.tab.hasUnsavedChanges = false; control.state.dirty = false;
+    page.markdownEditor.value = control.saved; page.hasUnsavedChanges = false;
+    page.viewer.textContent = "SAVED";
+    installOrdinaryInput(fixture, transformSource);
+    check(page.contextMenu.classList.contains("visible") &&
+      page.notesPanelContextMenu.classList.contains("visible") &&
+      page.notesPanelContextNoteId === "owned-input-note" &&
+      page.rightClickTarget === page.markdownEditor &&
+      control.state.mutationRevision === 10 && control.inputTrace.length === 0,
+    "Ordinary input fixture starts with both real menus visible and an editor-owned captured note");
+    return fixture;
+  };
+  const input = fixture => {
+    fixture.page.markdownEditor.value = fixture.control.typed;
+    fixture.page.markdownEditor.dispatchEvent(new fixture.page.Event("input"));
+  };
+  const verify = ({ page, control }) => {
+    assert.deepEqual(control.inputTrace.map(event => event.phase),
+      ["dismiss", "scroll", "tab-mutation"],
+      "Full menu dismissal precedes scroll and actual tab mutation");
+    assert.deepEqual(control.inputTrace[0].args, [], "Ordinary input requests full dismissal");
+    for (const event of control.inputTrace) assert.deepEqual(event.menus,
+      { documentVisible: false, notesVisible: false, noteId: null },
+      "Both menus and captured note are dismissed before downstream work");
+    assert.equal(control.state.mutationRevision, 11, "Actual mutation revision increases");
+    assert.equal(control.tab.content, control.saved, "Live input does not eagerly fold the tab cache");
+    assert.equal(page.viewer.textContent, control.typed, "Actual input still paints its live preview");
+  };
+  const positive = make();
+  input(positive); verify(positive);
+  check(true, "Ordinary input fully dismisses real menus before scroll and actual mutation without eager cache folding");
+  for (const [label, transform, expected] of [
+    ["omitted dismissal", text => text.replace("  hideDocumentContextMenus();\n", ""),
+      "Full menu dismissal precedes scroll and actual tab mutation"],
+    ["preview-only dismissal", text => text.replace("  hideDocumentContextMenus();",
+      "  hideDocumentContextMenus(true);"), "Ordinary input requests full dismissal"],
+    ["reordered dismissal", text => text.replace("  hideDocumentContextMenus();\n  editorScroll.changed();",
+      "  editorScroll.changed();\n  hideDocumentContextMenus();"),
+      "Full menu dismissal precedes scroll and actual tab mutation"],
+  ]) {
+    let changed = false;
+    const fixture = make(text => {
+      const altered = transform(text);
+      assert.notEqual(altered, text, "Mutation reaches the actual ordinary-input producer");
+      changed = true; return altered;
+    });
+    input(fixture);
+    assert.throws(() => verify(fixture), error =>
+      error.code === "ERR_ASSERTION" && error.message.startsWith(expected));
+    check(changed && fixture.control.state.mutationRevision === 11 &&
+      fixture.control.tab.content === fixture.control.saved &&
+      fixture.page.viewer.textContent === fixture.control.typed,
+    "Real ordinary-input menu contract detects " + label + " without crashing or disabling mutation");
+  }
+  for (const denied of ["permission", "non-edit mode"]) {
+    const fixture = make(), { page, control } = fixture;
+    if (denied === "permission") page.mayMutateRendererDocument = () => false;
+    else page.isEditMode = false;
+    const before = { menus: control.inputMenuState(), revision: control.state.mutationRevision,
+      preview: page.viewer.textContent, cache: control.tab.content, dirty: page.hasUnsavedChanges };
+    input(fixture);
+    check(JSON.stringify(before) === JSON.stringify({
+      menus: control.inputMenuState(), revision: control.state.mutationRevision,
+      preview: page.viewer.textContent, cache: control.tab.content, dirty: page.hasUnsavedChanges }) &&
+      control.inputTrace.length === 0,
+    "Ordinary input leaves menus revision preview cache and dirty state untouched for " + denied);
+  }
 }
 
 async function consentContracts() {
@@ -866,11 +973,12 @@ async function questionObserverContracts() {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
     subscriptionContracts, sameTaskContracts, deliveryContracts,
-    liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts]) {
+    liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
+    inputMenuContracts]) {
     try { await run(); }
     catch (error) {
       failures++;
-      console.error("FAIL " + run.name + ": " + error.stack);
+      console.error("FAIL " + run.name + "  -> " + error.stack);
     }
   }
   console.log(`${checks} source/VM controls passed; ${failures} groups failed; native execution NOT RUN`);

@@ -467,7 +467,7 @@ for (const [name, flag] of [
   let failures = 0;
   for (const [name, run] of cases) {
     try { await run(); console.log("PASS " + name); }
-    catch (error) { failures++; console.error("FAIL " + name + "\n" + error.stack); }
+    catch (error) { failures++; console.error("FAIL " + name + "  -> " + error.stack); }
   }
   console.log(`F22 background pair contracts: ${cases.length - failures} passed, ${failures} failed; source/VM only, native NOT RUN.`);
   if (failures) process.exitCode = 1;

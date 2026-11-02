@@ -336,7 +336,7 @@ for (const fallback of [false, true]) test(fallback
   let failures = 0;
   for (const [name, run] of cases) {
     try { await run(); console.log("PASS " + name); }
-    catch (error) { failures++; console.error("FAIL " + name + "\n" + error.stack); }
+    catch (error) { failures++; console.error("FAIL " + name + "  -> " + error.stack); }
   }
   console.log(`Main question-consumer controls: ${cases.length - failures} passed, ${failures} failed; actual function bodies/controlled ports only, Main module/native NOT RUN.`);
   if (failures) process.exitCode = 1;

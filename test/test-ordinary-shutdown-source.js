@@ -662,7 +662,7 @@ const completionDeadline = setTimeout(() => {
   let failures = 0;
   for (const [name, run] of cases) {
     try { await run(); console.log(`PASS ${name}`); }
-    catch (error) { failures += 1; console.error(`FAIL ${name}\n${error.stack}`); }
+    catch (error) { failures += 1; console.error(`FAIL ${name}  -> ${error.stack}`); }
   }
   console.log(`ordinary source/VM: ${cases.length - failures}/${cases.length}; native NOT RUN`);
   console.log("Simulated sender events do not qualify Main sender authentication or deferred R573.");

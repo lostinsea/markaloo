@@ -750,7 +750,7 @@ const deadline = setTimeout(() => { throw new Error("Shared question controls di
   let failed = 0;
   for (const [name, run] of cases) {
     try { await run(); console.log(`PASS ${name}`); }
-    catch (error) { failed += 1; console.error(`FAIL ${name}\n${error.stack}`); }
+    catch (error) { failed += 1; console.error(`FAIL ${name}  -> ${error.stack}`); }
   }
   console.log(`shared actual-provider/simulated-ports: ${cases.length - failed}/${cases.length}; native NOT RUN`);
   clearTimeout(deadline);
