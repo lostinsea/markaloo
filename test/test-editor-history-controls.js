@@ -4,6 +4,10 @@ const path = require("path");
 const vm = require("vm");
 const assert = require("assert");
 
+const companion = process.argv[2] === "--companion";
+if (process.argv.length !== (companion ? 3 : 2))
+  throw new Error("Usage: node test-editor-history-controls.js [--companion]");
+const output = message => console.log((companion ? "[companion stdout] " : "") + message);
 const root = path.join(__dirname, "..");
 const read = name => fs.readFileSync(path.join(root, "src", name), "utf8");
 const renderer = read("renderer.js"), html = read("index.html"), tabs = read("custom-tabs.js");
@@ -13,8 +17,8 @@ for (const name of ["inline-formatting.js", "table-cell-editor.js"])
 const cells = cellContext.window.FoliaTableCells;
 let passed = 0, failed = 0;
 function check(name, run) {
-  try { run(); passed++; console.log("PASS " + name); }
-  catch (error) { failed++; console.error("FAIL " + name + "  -> " + JSON.stringify(error.message)); }
+  try { run(); passed++; output("PASS " + name); }
+  catch (error) { failed++; output("FAIL " + name + "  -> " + JSON.stringify(error.message)); }
 }
 function between(source, first, last) {
   const start = source.indexOf(first), end = source.indexOf(last, start + first.length);
@@ -423,5 +427,5 @@ check("accepted reload clears old history and seeds the next pre-input source", 
   assert.equal(c.exactSource, "reloaded\r\n");
 });
 
-console.log(`History controls: ${passed} passed, ${failed} failed.`);
+output(`=== ${passed}/${passed + failed} passed ===`);
 process.exitCode = failed ? 1 : 0;

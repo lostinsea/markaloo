@@ -5,9 +5,24 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { EventEmitter } = require("node:events");
 const { pathToFileURL } = require("node:url");
-const mermaid = fs.readFileSync(path.join(__dirname, "test-mermaid-render.js"), "utf8").replace(/\r\n/g, "\n");
-const popups = fs.readFileSync(path.join(__dirname, "test-popup-security.js"), "utf8").replace(/\r\n/g, "\n");
+const { format } = require("node:util");
+const args = process.argv.slice(2);
+const companion = args[0] === "--companion";
+const output = (message, fatal = false) => {
+  const prefix = companion ? `[companion ${fatal ? "stderr" : "stdout"}] ` : "";
+  const stream = fatal ? process.stderr : process.stdout;
+  for (const line of String(message).split(/\r\n|\r|\n/)) stream.write(prefix + line + "\n");
+};
+const actorConsole = {
+  log: (...values) => output(format(...values)),
+  info: (...values) => output(format(...values)),
+  debug: (...values) => output(format(...values)),
+  warn: (...values) => output(format(...values), true),
+  error: (...values) => output(format(...values), true),
+};
+let mermaid, popups;
 let passed = 0;
+let failures = 0;
 
 function between(source, start, end) {
   const first = source.indexOf(start), last = source.indexOf(end, first + start.length);
@@ -22,9 +37,15 @@ const deferred = () => {
 };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function control(name, run) {
-  await run();
-  passed++;
-  console.log("PASS " + name);
+  try {
+    await run();
+    passed++;
+    output("PASS " + name);
+  } catch (error) {
+    if (!(error instanceof assert.AssertionError)) throw error;
+    failures++;
+    output("FAIL " + name + "  -> " + String(error.stack || error));
+  }
 }
 
 async function mermaidBreakoutControls() {
@@ -36,6 +57,7 @@ async function mermaidBreakoutControls() {
     between(renderer, "function applyMermaidBreakout(", "function applyTableBreakout(") +
       "\nreturn applyMermaidBreakout;",
     ["viewer", "document", "getComputedStyle"],
+    { parsingContext: vm.createContext({ console: actorConsole }) },
   );
   const fixture = () => {
     const classes = new Set(), properties = new Map();
@@ -123,7 +145,7 @@ function mermaidPage() {
     originalContent: fixture.source, diskVersion: { ...fixture.diskVersion } };
   const state = { tabs: [tab], pending: false, dirty: false, refuseClose: false, closed: 0,
     revision: 1, root: "headerless text", blocks: 0, loading: false };
-  const page = { console, setTimeout, clearTimeout, URL, location: { href: "file:///C:/owned/src/index.html" },
+  const page = { console: actorConsole, setTimeout, clearTimeout, URL, location: { href: "file:///C:/owned/src/index.html" },
     currentFilePath: fixture.path, originalMarkdown: fixture.source, undoHistory: [],
     undoRedoRendering: false, hasUnsavedChanges: true };
   page.window = page;
@@ -1008,13 +1030,18 @@ async function cleanupControls() {
 }
 
 (async () => {
+  if (args.length !== (companion ? 1 : 0))
+    throw new Error("Usage: node test-mermaid-popup-contracts.js [--companion]");
+  mermaid = fs.readFileSync(path.join(__dirname, "test-mermaid-render.js"), "utf8").replace(/\r\n/g, "\n");
+  popups = fs.readFileSync(path.join(__dirname, "test-popup-security.js"), "utf8").replace(/\r\n/g, "\n");
   await mermaidControls();
   await mermaidBreakoutControls();
   await popupGuardControls();
   await cancellationControls();
   await cleanupControls();
-  console.log("=== " + passed + "/" + passed + " Node-only contract controls passed ===");
+  output("=== " + passed + "/" + (passed + failures) + " passed ===");
+  if (failures) process.exitCode = 1;
 })().catch(error => {
-  console.error(error.stack || error);
+  output("Mermaid popup contract harness failed  -> " + String(error.stack || error), true);
   process.exitCode = 1;
 });

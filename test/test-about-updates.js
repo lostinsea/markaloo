@@ -425,9 +425,14 @@ if (typeof electron === "string") {
     // Switching captures the active draft into its tab before the cache oracle.
     await select(0);
     check(combinedRequired[0], tabs[0] !== tabs[1] && drafts[0].value !== drafts[1].value &&
-      drafts.every((draft, i) => draft.edit && draft.dirty && draft.start < draft.end &&
-        JSON.parse(draft.history).undo.includes(undoTargets[i]) &&
-        JSON.parse(draft.history).undo.includes(draft.value)) &&
+      drafts.every((draft, i) => {
+        const history = JSON.parse(draft.history);
+        return draft.edit && draft.dirty &&
+          draft.value === undoTargets[i] + "\nSecond independent revision.\n" &&
+          draft.start === 12 + i && draft.end === 28 + i && draft.direction === "backward" &&
+          same(history.undo, [{ source: bodies[i] }, { source: undoTargets[i] }]) &&
+          same(history.redo, []) && history.exactTypingSource === draft.value;
+      }) &&
       await exec(`window.CustomTabs.getTabs().filter(t=>${JSON.stringify(tabs)}.includes(t.id)).length===2&&
         window.CustomTabs.getTabs().filter(t=>${JSON.stringify(tabs)}.includes(t.id)).every(t=>t.hasUnsavedChanges)`), drafts);
     if (!(await panel()).toc) await click("toggleTocBtn");
@@ -529,19 +534,21 @@ if (typeof electron === "string") {
     let historyWorks = true;
     for (let i = 0; i < 2; i++) {
       await select(i);
-      // The history stores settled input snapshots, including the current one.
-      // Consume that entry before requiring a real transition to the first edit.
-      await exec("historyUndo();true");
-      await settle();
       await exec("historyUndo();true");
       await pageWait("combined real Undo " + i, `markdownEditor.value===${JSON.stringify(undoTargets[i])}&&
+        viewer.textContent.includes(${JSON.stringify("Unsaved combined " + (i ? "Beta" : "Alpha") + " witness.")})&&
         !viewer.textContent.includes('Second independent revision.')`);
+      const undoState = await state();
+      const undoSnapshot = JSON.parse(undoState.history);
       await exec("historyRedo();true");
-      await settle();
-      await exec("historyRedo();true");
-      await pageWait("combined real Redo " + i, `markdownEditor.value===${JSON.stringify(drafts[i].value)}`);
-      historyWorks = historyWorks && await exec(`hasUnsavedChanges&&
+      await pageWait("combined real Redo " + i, `markdownEditor.value===${JSON.stringify(drafts[i].value)}&&
+        viewer.textContent.includes('Second independent revision.')`);
+      const independentDirty = await exec(`hasUnsavedChanges&&
         !markdownEditor.value.includes(${JSON.stringify("Unsaved combined " + (i ? "Alpha" : "Beta") + " witness.")})`);
+      historyWorks = historyWorks && undoState.dirty &&
+        same(undoSnapshot.undo, [{ source: bodies[i] }]) &&
+        same(undoSnapshot.redo, [{ source: drafts[i].value }]) &&
+        undoSnapshot.exactTypingSource === undoTargets[i] && independentDirty;
       // Undo/Redo moves the caret by design; restore the original witness before
       // comparing the independently owned selection and history snapshots.
       await exec(`markdownEditor.setSelectionRange(${drafts[i].start},${drafts[i].end},${JSON.stringify(drafts[i].direction)});true`);

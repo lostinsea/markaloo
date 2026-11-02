@@ -582,6 +582,150 @@ async function main() {
       "scripts/prove-table-fixes.js must detect a suite that did not run to " +
         "completion and report its regexes as unaudited rather than as orphans",
     );
+    // Execute the real mutation/restore/stop loop, never import its executable
+    // module. Every filesystem operation and suite launch below is owned by
+    // this in-memory fixture, including rescue writes and injected failures.
+    const runnerSource = harness.replace(/\r\n/g, "\n");
+    const runnerStart = runnerSource.indexOf("\nfunction anchorRe(s) {");
+    const runnerEnd = runnerSource.indexOf("\nif (fullHarnessReleaseRun) {", runnerStart);
+    const verdictStart = runnerSource.indexOf("\nfunction unlistedFailures(r, fails) {");
+    const verdictEnd = runnerSource.indexOf("\nfunction regexFingerprint(list) {", verdictStart);
+    const exitGate = runnerSource.match(/^const cleanResult = .+;$/m)?.[0];
+    if (runnerStart < 0 || runnerEnd < 0 || verdictStart < 0 || verdictEnd < 0 || !exitGate) {
+        throw new Error("Cannot extract the actual revert runner restoration/stop fixture");
+    }
+    const actualRunner = runnerSource.slice(verdictStart, verdictEnd) +
+        runnerSource.slice(runnerStart, runnerEnd) + "\n" + exitGate +
+        "\n({ bad, dirty, midRunEdits, stoppedAt, cleanResult });";
+    function exerciseRunner(mode) {
+        const a = path.join(ROOT, "proof-runner-owned-a.js");
+        const b = path.join(ROOT, "proof-runner-owned-b.js");
+        const before = new Map([
+          [a, Buffer.concat([Buffer.from([255]), Buffer.from("baseline\r\ncrlf\r\n")])],
+          [b, Buffer.from("baseline\nlf\n")],
+        ]);
+        const disk = new Map([...before].map(([file, bytes]) => [file, Buffer.from(bytes)]));
+        const externalBytes = Buffer.from([255, 13, 10, 65, 0]);
+        const launches = [];
+        const restores = [];
+        const lines = [];
+        const failNextRead = new Set();
+        const fakeFs = {
+          existsSync(file) { return disk.has(file); },
+          readFileSync(file, encoding) {
+            if (failNextRead.delete(file)) throw new Error("controlled restore read failure");
+            if (!disk.has(file)) throw new Error(`Unknown owned fixture file: ${file}`);
+            const bytes = Buffer.from(disk.get(file));
+            return encoding ? bytes.toString(encoding) : bytes;
+          },
+          writeFileSync(file, data) {
+            if (Buffer.isBuffer(data) && before.has(file)) {
+              restores.push(file);
+              if (file === a && mode === "restore-throws") throw new Error("controlled restore write failure");
+              if (file === a && mode === "lying-write") return;
+              if (file === a && mode === "readback-throws") failNextRead.add(file);
+            }
+            disk.set(file, Buffer.from(data));
+          },
+        };
+        const chosen = ["first", "second"].map(id => ({
+          id, file: a, from: "baseline", to: "mutant", what: id, suite: id,
+          also: { file: b, from: "baseline", to: "mutant" },
+          expect: [/^expected mutation failure$/], mustPass: [],
+        }));
+        const result = require("node:vm").runInNewContext(actualRunner, {
+          fs: fakeFs, path, ROOT, Buffer, chosen, argv: [], anchorsOnly: false,
+          console: {
+            log(...args) { lines.push(args.join(" ")); },
+            error(...args) { lines.push(args.join(" ")); },
+          },
+          additionalEdits(r) { return [r.also]; },
+          isApprovedFullHarnessDeferral() { return false; },
+          runSuite(suite) {
+            launches.push(suite);
+            if (launches.length === 1 && mode === "external-edit") disk.set(a, externalBytes);
+            if (launches.length === 1 && mode === "suite-throws") throw new Error("controlled suite failure");
+            return {
+              stdout: mode === "incomplete" ? "PASS live setup\n" : "PASS live setup\n=== 1/1 passed ===\n",
+              stderr: "", exitCode: mode === "abnormal" ? 139 : 0,
+            };
+          },
+          suiteRunHealth(run) {
+            const healthy = run.exitCode === 0 && run.stdout.includes("=== 1/1 passed ===");
+            return {
+              healthy, reasons: healthy ? [] : ["controlled incomplete or abnormal suite"],
+              transcript: { parentLines: run.stdout.split("\n") },
+            };
+          },
+          exactShutdownTailForMutation() { return null; },
+          proofOnlyProtocolProblems() { return []; },
+          requiredPassingAssertionProblems() {
+            return mode === "missing-required-pass" ? ["controlled missing required passing assertion"] : [];
+          },
+          boundedTranscriptDiagnostics() { return []; },
+          mutationFailureNames() { return []; },
+          assertionNameOf(line) { return line; },
+          expectedFailureEvidenceProblems() { return []; },
+          printFailures() { throw new Error("A green controlled suite has no failure lines"); },
+        }, { timeout: 1000 });
+        return {
+          ...result, a, b, before, disk, externalBytes, launches, restores, lines,
+          restored: [...before].every(([file, bytes]) => disk.get(file)?.equals(bytes)),
+          stoppedBeforeVerdict: !lines.some(line => /\s(?:VACUOUS|PROVEN)\s/.test(line)),
+        };
+    }
+    const exact = exerciseRunner("healthy");
+    check("the revert runner restores exact raw LF and CRLF bytes",
+        exact.before.get(exact.a).includes(Buffer.from("\r\n")) &&
+        !exact.before.get(exact.b).includes(Buffer.from("\r\n")) &&
+        !Buffer.from(exact.before.get(exact.a).toString("utf8")).equals(exact.before.get(exact.a)) &&
+        exact.restored && exact.dirty === 0 && exact.midRunEdits === 0 &&
+        exact.launches.join(",") === "first,second" && exact.restores.length === 4,
+        JSON.stringify({ launches: exact.launches, restores: exact.restores, dirty: exact.dirty }));
+    const failedRestore = exerciseRunner("restore-throws");
+    check("the revert runner attempts every restoration after an independent write failure",
+        failedRestore.restores.join(",") === [failedRestore.a, failedRestore.b].join(",") &&
+        failedRestore.disk.get(failedRestore.b).equals(failedRestore.before.get(failedRestore.b)) &&
+        !failedRestore.disk.get(failedRestore.a).equals(failedRestore.before.get(failedRestore.a)) &&
+        failedRestore.lines.some(line => line.includes("controlled restore write failure")) &&
+        failedRestore.launches.join(",") === "first" && failedRestore.stoppedAt === "first" &&
+        failedRestore.stoppedBeforeVerdict && !failedRestore.cleanResult,
+        JSON.stringify({ launches: failedRestore.launches, restores: failedRestore.restores, dirty: failedRestore.dirty }));
+    const unverified = ["lying-write", "readback-throws"].map(mode => {
+        try { return { mode, result: exerciseRunner(mode) }; }
+        catch (error) { return { mode, error: String(error?.stack ?? error) }; }
+    });
+    check("the revert runner stops on an unverified restored byte snapshot",
+        unverified.every(({ result }) =>
+          result !== undefined &&
+          result.launches.join(",") === "first" && result.stoppedAt === "first" &&
+          result.restores.join(",") === [result.a, result.b].join(",") &&
+          result.stoppedBeforeVerdict && !result.cleanResult) &&
+        unverified[0].result.lines.some(line => line.includes("RESTORE MISMATCH")) &&
+        unverified[1].result.lines.some(line => line.includes("controlled restore read failure")),
+        JSON.stringify(unverified.map(({ mode, result, error }) => result === undefined
+          ? { mode, error }
+          : { mode, launches: result.launches, stoppedAt: result.stoppedAt })));
+    const edited = exerciseRunner("external-edit");
+    check("the revert runner rescues a mid-run edit but refuses further mutation",
+        edited.disk.get(edited.a + ".mid-run-edit")?.equals(edited.externalBytes) &&
+        edited.midRunEdits === 1 && edited.restored && edited.dirty === 0 &&
+        edited.launches.join(",") === "first" && edited.stoppedAt === "first" &&
+        edited.stoppedBeforeVerdict && !edited.cleanResult &&
+        edited.lines.some(line => line.includes("1 later selected revert(s) UNRUN")),
+        JSON.stringify({ launches: edited.launches, midRunEdits: edited.midRunEdits, dirty: edited.dirty }));
+    const unusable = ["incomplete", "abnormal", "suite-throws", "missing-required-pass"].map(exerciseRunner);
+    check("the revert runner never starts another mutation after an unusable or abnormal run",
+        unusable.every(result =>
+          result.launches.join(",") === "first" && result.stoppedAt === "first" &&
+          result.restored && result.dirty === 0 && result.stoppedBeforeVerdict && !result.cleanResult),
+        JSON.stringify(unusable.map(result => ({ launches: result.launches, stoppedAt: result.stoppedAt }))));
+    check("the revert runner continues collecting healthy ordinary proof failures",
+        exact.launches.join(",") === "first,second" && exact.bad === 2 &&
+        exact.stoppedAt === null && !exact.cleanResult &&
+        exact.lines.filter(line => /\sVACUOUS\s/.test(line)).length === 2 &&
+        !exact.lines.some(line => line.includes("BATCH STOPPED")),
+        JSON.stringify({ launches: exact.launches, bad: exact.bad, stoppedAt: exact.stoppedAt }));
   }
   check("package.json declares build.files", Array.isArray(files) && files.length > 0);
   if (!Array.isArray(files)) {
@@ -1162,8 +1306,13 @@ async function main() {
   ];
   const teardownQuestionCommand = "node test/test-teardown-question-source.js " +
     "test/test-tab-refresh.js test/teardown-question-current-bindings.json src/main.js";
+  const lifecycleSourceCommand = "node test/test-shutdown-lifecycle-source.js --companion";
+  const mermaidSourceCommand = "node test/test-mermaid-popup-contracts.js";
+  const mermaidCompanionCommand = mermaidSourceCommand + " --companion";
   const actorContractCommands = [
-    ...actorContractFiles.map(file => "node test/" + file), teardownQuestionCommand,
+    ...actorContractFiles.map(file => file === "test-shutdown-lifecycle-source.js"
+      ? lifecycleSourceCommand : file === "test-mermaid-popup-contracts.js"
+        ? mermaidCompanionCommand : "node test/" + file), teardownQuestionCommand,
   ];
   const actorContractCommand = actorContractCommands.join(" && ");
   const preservedOrdinaryGroups = [
@@ -1177,8 +1326,8 @@ async function main() {
       preservedOrdinaryGroups.map(group => "npm run test:" + group).join(" && "),
     "test:tabs": "npm run test:actor-contracts && node test/test-reload-transport-contract.js && node test/test-owned-transport-contract.js && electron test/test-tab-refresh.js",
     "test:security": "node test/test-security-actor-contracts.js && electron test/test-render-security.js",
-    "test:popups": "node test/test-mermaid-popup-contracts.js && node --check src/main.js && node --check test/test-popup-security.js && electron test/test-popup-security.js",
-    "test:mermaid": "node test/test-mermaid-popup-contracts.js && electron test/test-mermaid-render.js",
+    "test:popups": mermaidCompanionCommand + " && node --check src/main.js && node --check test/test-popup-security.js && electron test/test-popup-security.js",
+    "test:mermaid": mermaidCompanionCommand + " && electron test/test-mermaid-render.js",
   };
   const actorContractsRouted = scripts =>
     scripts["test:actor-contracts"] === actorContractCommand &&
@@ -1189,6 +1338,8 @@ async function main() {
         "teardown-question-current-bindings.json"].every(file => fs.existsSync(path.join(ROOT, "test", file))));
   check("Node contracts gate the preserved ordinary suite and direct actor entrypoints",
     actorContractsRouted(pkg.scripts));
+  check("Mermaid source controls have a standalone untagged Node entrypoint",
+    pkg.scripts["test:mermaid-source"] === mermaidSourceCommand);
   check("actor routing oracle rejects omissions duplicates late gates and swallowed failures",
     actorContractsRouted(pkg.scripts) &&
       actorContractCommands.every(omitted => !actorContractsRouted({
@@ -1200,6 +1351,26 @@ async function main() {
         "test:actor-contracts": actorContractCommand + " && node test/test-companion-accounting-contracts.js" }) &&
       !actorContractsRouted({ ...pkg.scripts,
         "test:actor-contracts": actorContractCommand.replace(" && ", " || ") }) &&
+      [lifecycleSourceCommand.replace(" --companion", ""),
+        lifecycleSourceCommand.replace("--companion", "--unknown"),
+        lifecycleSourceCommand + " extra"].every(replacement => !actorContractsRouted({
+        ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand.replace(lifecycleSourceCommand, replacement),
+      })) &&
+      [
+        ["test:actor-contracts", actorContractCommand],
+        ["test:popups", gatedActorCommands["test:popups"]],
+        ["test:mermaid", gatedActorCommands["test:mermaid"]],
+      ].every(([name, command]) =>
+        [mermaidSourceCommand,
+          mermaidCompanionCommand.replace("--companion", "--unknown"),
+          mermaidCompanionCommand + " extra"].every(replacement => !actorContractsRouted({
+          ...pkg.scripts,
+          [name]: command.replace(mermaidCompanionCommand, replacement),
+        }))) &&
+      !actorContractsRouted({ ...pkg.scripts,
+        "test:actor-contracts": actorContractCommand.replace(
+          "node test/test-default-save-contracts.js", "node test/test-default-save-contracts.js --companion") }) &&
       !actorContractsRouted({ ...pkg.scripts,
         test: preservedOrdinaryGroups.map(group => "npm run test:" + group).join(" && ") +
           " && npm run test:actor-contracts" }) &&
@@ -3229,7 +3400,7 @@ async function main() {
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
-      "test:document-editor": "npm run test:editor-history && node --check test/test-document-editor.js && electron test/test-document-editor.js",
+      "test:document-editor": "npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
       "test:editor-history": "node test/test-editor-history-controls.js",
       "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
       "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
@@ -3242,12 +3413,15 @@ async function main() {
       if (typeof scripts[name] !== "string" || ancestors.includes(name)) return null;
       const calls = [name];
       for (const command of scripts[name].split(/\s*&&\s*/)) {
+        const forwardedHistory = name === "test:document-editor" &&
+          command.trim() === "npm run test:editor-history -- --companion";
         const match = command.trim().match(/^npm\s+(?:run\s+)?([\w:-]+)$/);
-        if (!match) {
+        const nestedName = forwardedHistory ? "test:editor-history" : match?.[1];
+        if (!nestedName) {
           if (/(?:^|\s)npm(?:\s|$)/.test(command)) return null;
           continue;
         }
-        const nested = orderedCalls(scripts, match[1], [...ancestors, name]);
+        const nested = orderedCalls(scripts, nestedName, [...ancestors, name]);
         if (!nested) return null;
         calls.push(...nested);
       }
@@ -3310,6 +3484,18 @@ async function main() {
         "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
         "test:features": nestedCellRoutes["test:features"] + " && npm run test:editor-history" }, "test")));
+    check("history companion forwarding requires its exact child and parent and retains cycle detection",
+      JSON.stringify(orderedCalls(nestedCellRoutes, "test:document-editor")) ===
+        JSON.stringify(["test:document-editor", "test:editor-history"]) &&
+      [
+        ["test:document-editor", "npm run test:editor-history -- --unknown"],
+        ["test:document-editor", "npm run test:editor-history -- --companion extra"],
+        ["test:document-editor", "npm run test:editor-scroll -- --companion"],
+        ["test:syntax", "npm run test:editor-history -- --companion"],
+      ].every(([name, command]) =>
+        orderedCalls({ ...nestedCellRoutes, [name]: command }, name) === null) &&
+      orderedCalls({ ...nestedCellRoutes,
+        "test:editor-history": "npm run test:document-editor" }, "test:document-editor") === null);
     function phaseSelection(file, context) {
       const expressions = [...stripJsComments(read(file)).matchAll(/const phases = ([\s\S]*?);\r?\n/g)];
       if (expressions.length !== 1) return null;

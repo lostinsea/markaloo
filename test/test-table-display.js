@@ -536,9 +536,54 @@ async function run(win) {
   }
 
   async function commitOwnedTableGrid() {
-    await exec("tableCellUpdate.click();true");
-    await waitForTableState("table transaction render", `!tableCellDialog.open&&!tableCellSession&&
-      editorScroll.isCurrentSource(markdownEditor.value)&&!loadingScreen.classList.contains('active')`);
+    let installed = false;
+    try {
+      await exec(`(() => {
+        if(window.__tableCommitObservation)throw Error('Table commit observation already owned');
+        const state={session:tableCellSession,real:window.renderMarkdown,calls:0,receipt:null};
+        state.wrapper=async function(...args){
+          const owned=tableCellSession===state.session&&state.session.submitting&&state.session.applied;
+          const result=await state.real.apply(this,args);
+          if(owned){
+            state.calls++;
+            const tab=window.CustomTabs.getActiveTab(),bounds=viewer.getBoundingClientRect();
+            state.receipt={gen:viewerMutationGeneration(),render:renderGeneration,source:args[0],
+              owned:tableCellSession===state.session&&state.session.submitting&&state.session.applied&&
+                currentDocumentActionOwner()===state.session.selection.tab&&tab===state.session.selection.tab,
+              split:contentWrapper.classList.contains('split-view'),
+              tables:[...viewer.querySelectorAll('.table-container')].map(container=>{
+                const table=container.querySelector('table'),rect=container.getBoundingClientRect();
+                return {start:editorScroll.tableSource(table)?.start,
+                  width:Math.round(rect.width),preferred:Math.round(preferredTableWidth(container)),
+                  breakout:container.classList.contains('table-breakout'),
+                  wrap:table.classList.contains('wrap-anyway'),
+                  scrolls:container.scrollWidth>container.clientWidth+1,
+                  outside:rect.left<-1||rect.right>innerWidth+1||
+                    rect.left<bounds.left-1||rect.right>bounds.right+1};
+              })};
+          }
+          return result;
+        };
+        window.__tableCommitObservation=state;
+        window.renderMarkdown=state.wrapper;
+        return true;
+      })()`);
+      installed = true;
+      await exec("tableCellUpdate.click();true");
+      await waitForTableState("table transaction render", `!tableCellDialog.open&&!tableCellSession&&
+        editorScroll.isCurrentSource(markdownEditor.value)&&!loadingScreen.classList.contains('active')`);
+      return JSON.parse(await exec(`JSON.stringify({
+        calls:window.__tableCommitObservation.calls,receipt:window.__tableCommitObservation.receipt
+      })`));
+    } finally {
+      if (installed) await exec(`(() => {
+        const state=window.__tableCommitObservation;
+        if(!state||window.renderMarkdown!==state.wrapper)throw Error('Table commit observation lost its owner');
+        window.renderMarkdown=state.real;
+        delete window.__tableCommitObservation;
+        return true;
+      })()`);
+    }
   }
 
   const m = JSON.parse(await exec(MEASURE));
@@ -2071,6 +2116,8 @@ async function run(win) {
   const insertExpected = insertSource + insertMarkdown;
   const insertFixture = await ownTableFixture("create-wide", insertSource);
   let inserted;
+  let insertCompletion;
+  let fittedReference;
   try {
     const opening = await openOwnedTableGrid("INSERT", { columns: 14, rows: 1 });
     check("visual Create opens with honest defaults and no automatically selected cell",
@@ -2079,7 +2126,14 @@ async function run(win) {
     await exec(`tableCellSession.rows.forEach((row,r)=>row.cells.forEach((cell,c)=>{
       cell.input.textContent=${JSON.stringify(insertRows)}[r][c];
     }));true`);
-    await commitOwnedTableGrid();
+    fittedReference = await exec(`(() => {
+      const references=[...viewer.querySelectorAll('.table-container')]
+        .filter(c=>editorScroll.tableSource(c.querySelector('table'))?.start===${referenceOffset});
+      const reference=references[0];
+      return references.length===1&&preferredTableWidth(reference)>reference.getBoundingClientRect().width&&
+        reference.scrollWidth<=reference.clientWidth+1;
+    })()`);
+    insertCompletion = await commitOwnedTableGrid();
     inserted = JSON.parse(await exec(`JSON.stringify((() => {
       const all=[...viewer.querySelectorAll('.table-container')];
       // Identical content is not identity. Both tables have exact source receipts.
@@ -2119,19 +2173,34 @@ async function run(win) {
     inserted.added === true && inserted.exact === true && inserted.undo === 1,
     JSON.stringify(inserted),
   );
+  const completedInsert = insertCompletion.receipt?.tables.filter(t => t.start === insertSource.length);
+  const completedReference = insertCompletion.receipt?.tables.filter(t => t.start === referenceOffset);
+  const completionSetup = fittedReference === true && insertCompletion.calls === 1 &&
+    insertCompletion.receipt?.owned === true && insertCompletion.receipt.source === insertExpected &&
+    completedInsert?.length === 1 && completedReference?.length === 1;
+  check("visual Create observes one real owned render after its reference already needs fitting",
+    completionSetup, JSON.stringify({ fittedReference, insertCompletion }));
   check(
     "a visually inserted wide table uses the same real preview layout as its source-rendered equivalent",
-    inserted.split === true && inserted.preferred > inserted.containerWidth &&
+    completionSetup && insertCompletion.receipt.split === true &&
+      completedInsert[0].preferred > completedInsert[0].width &&
+      completedInsert[0].breakout === false && completedReference[0].breakout === false &&
+      completedInsert[0].width === completedReference[0].width &&
+      completedInsert[0].preferred === completedReference[0].preferred &&
+      completedInsert[0].wrap === completedReference[0].wrap &&
+      inserted.split === true && inserted.preferred > inserted.containerWidth &&
       inserted.hasBreakout === false && inserted.referenceBreakout === false &&
       inserted.containerWidth === inserted.referenceWidth && inserted.preferred === inserted.referencePreferred &&
       inserted.wrap === inserted.referenceWrap,
-    JSON.stringify(inserted),
+    JSON.stringify({ inserted, insertCompletion }),
   );
   check(
     "a table inserted from the context menu does not scroll sideways",
-    inserted.scrolls === false && inserted.referenceScrolls === false &&
+    completionSetup && completedInsert[0].scrolls === false && completedReference[0].scrolls === false &&
+      completedInsert[0].outside === false && completedReference[0].outside === false &&
+      inserted.scrolls === false && inserted.referenceScrolls === false &&
       inserted.offWindow === false && inserted.outsideViewer === false,
-    JSON.stringify(inserted),
+    JSON.stringify({ inserted, insertCompletion }),
   );
 
   await captureScreenshot(win, "table-display");
@@ -4480,8 +4549,11 @@ async function run(win) {
       owner:tab.id,current:currentDocumentActionOwner()===tab,
       identity:window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession())};
   })())`).then(JSON.parse);
-  async function recordTableCommit(site, before, expected, fixture) {
+  async function recordTableCommit(site, before, expected, fixture, completion) {
     const after = await mutationState();
+    tableMutSites[site + "Completion"] = completion;
+    tableMutSites[site + "CompletionDelta"] = completion.receipt?.gen - before.gen;
+    tableMutSites[site + "CompletionSource"] = completion.receipt?.source === expected;
     tableMutSites[site + "Delta"] = after.gen - before.gen;
     tableMutSites[site + "RenderDelta"] = after.render - before.render;
     tableMutSites[site + "Exact"] = after.exact === expected && after.cache === expected && after.undo === 1 &&
@@ -4510,8 +4582,8 @@ async function run(win) {
       ])}[r][c];
     }));true`);
     const beforeInsert = await mutationState();
-    await commitOwnedTableGrid();
-    const afterInsert = await recordTableCommit("tableInsert", beforeInsert, insertedMutationSource, fixture);
+    const completion = await commitOwnedTableGrid();
+    const afterInsert = await recordTableCommit("tableInsert", beforeInsert, insertedMutationSource, fixture, completion);
     tableMutSites.tableInsertAdded = afterInsert.count - beforeInsert.count;
   });
   // Updates start from independently authored source, not an insertion used as setup.
@@ -4520,8 +4592,8 @@ async function run(win) {
     await exec(`window.__tableMutationOld=viewer.querySelector('.table-container');
       tableCellSession.rows[1].cells[0].input.textContent='replacement mutation cell one';true`);
     const beforeReplace = await mutationState();
-    await commitOwnedTableGrid();
-    const afterReplace = await recordTableCommit("tableReplace", beforeReplace, replacedMutationSource, fixture);
+    const completion = await commitOwnedTableGrid();
+    const afterReplace = await recordTableCommit("tableReplace", beforeReplace, replacedMutationSource, fixture, completion);
     tableMutSites.tableReplaceSwapped = afterReplace.count === beforeReplace.count &&
       await exec("!viewer.contains(window.__tableMutationOld)");
   });
@@ -4530,8 +4602,8 @@ async function run(win) {
     await exec(`window.__tableMutationOld=viewer.querySelector('.table-container');
       tableCellSession.rows[1].cells[1].input.textContent='selected replacement two';true`);
     const beforeSelected = await mutationState();
-    await commitOwnedTableGrid();
-    const afterSelected = await recordTableCommit("tableSelected", beforeSelected, selectedMutationSource, fixture);
+    const completion = await commitOwnedTableGrid();
+    const afterSelected = await recordTableCommit("tableSelected", beforeSelected, selectedMutationSource, fixture, completion);
     tableMutSites.tableSelectedSwapped = afterSelected.count === beforeSelected.count &&
       await exec("!viewer.contains(window.__tableMutationOld)");
   });
@@ -4658,21 +4730,30 @@ async function run(win) {
       mutSites.mermaidDeleteRemoved === true,
     JSON.stringify(mutSites),
   );
+  check("each source-owned table transaction records its actual render completion",
+    ["tableInsert", "tableReplace", "tableSelected"].every(site =>
+      mutSites[site + "Completion"].calls === 1 &&
+      mutSites[site + "Completion"].receipt?.owned === true &&
+      mutSites[site + "CompletionSource"] === true),
+    JSON.stringify(mutSites));
   // Separate observations prevent one successful operation hiding another.
   // Async render legs can include post-render wrappers; synchronous deletes cannot.
   check(
     "visual table insertion adopts exact owned source once and invalidates the previous viewer layout",
-    mutSites.tableInsertDelta >= 1 && mutSites.tableInsertRenderDelta === 1 && mutSites.tableInsertExact === true,
+    mutSites.tableInsertCompletionDelta >= 1 && mutSites.tableInsertDelta >= 1 &&
+      mutSites.tableInsertRenderDelta === 1 && mutSites.tableInsertExact === true,
     JSON.stringify(mutSites),
   );
   check(
     "whole-table Update adopts only the changed source once and invalidates the previous viewer layout",
-    mutSites.tableReplaceDelta >= 1 && mutSites.tableReplaceRenderDelta === 1 && mutSites.tableReplaceExact === true,
+    mutSites.tableReplaceCompletionDelta >= 1 && mutSites.tableReplaceDelta >= 1 &&
+      mutSites.tableReplaceRenderDelta === 1 && mutSites.tableReplaceExact === true,
     JSON.stringify(mutSites),
   );
   check(
     "selected-row Update preserves unselected source and invalidates the previous viewer layout",
-    mutSites.tableSelectedDelta >= 1 && mutSites.tableSelectedRenderDelta === 1 && mutSites.tableSelectedExact === true,
+    mutSites.tableSelectedCompletionDelta >= 1 && mutSites.tableSelectedDelta >= 1 &&
+      mutSites.tableSelectedRenderDelta === 1 && mutSites.tableSelectedExact === true,
     JSON.stringify(mutSites),
   );
   check(

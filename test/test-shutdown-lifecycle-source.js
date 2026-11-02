@@ -6,13 +6,28 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const sourcePath = process.argv[2] || path.join(__dirname, "test-tab-refresh.js");
+const companion = process.argv.at(-1) === "--companion";
+const args = process.argv.slice(2, companion ? -1 : undefined);
+if (args.length > 1 || args.some(argument => !argument || argument.startsWith("--")))
+  throw new Error("Usage: node test-shutdown-lifecycle-source.js [sourcePath] [--companion]");
+const output = (message, fatal = false) => {
+  const prefix = companion ? `[companion ${fatal ? "stderr" : "stdout"}] ` : "";
+  for (const line of String(message).split(/\r\n|\r|\n/))
+    (fatal ? console.error : console.log)(prefix + line);
+};
+const sourcePath = args[0] || path.join(__dirname, "test-tab-refresh.js");
 const source = fs.readFileSync(sourcePath, "utf8");
 let passed = 0;
+let failures = 0;
 const check = (name, body) => {
-  body();
-  passed += 1;
-  console.log("PASS  lifecycle source " + name);
+  try {
+    body();
+    passed += 1;
+    output("PASS  lifecycle source " + name);
+  } catch (error) {
+    failures += 1;
+    output("FAIL  lifecycle source " + name + "  -> " + error.stack);
+  }
 };
 const deferred = () => {
   let resolve;
@@ -29,19 +44,31 @@ function fixture(options = {}) {
   const processorGate = deferred();
   const renderGate = deferred();
   const log = [];
-  const owner = { tabId: "tab-1", pageSession: "page-1" };
+  const pageSession = "page-1";
+  const owner = { tabId: options.wrongTab ? "foreign-tab" : "tab-1",
+    pageSession: options.wrongPage ? "foreign-page" : pageSession };
   const tab = {
-    id: owner.tabId, filePath, content: text, originalContent: text,
+    id: "tab-1", filePath, content: text, originalContent: text,
     hasUnsavedChanges: false, diskVersion: { dev: 1, ino: 2, size: 23, mtimeMs: 4, ctimeMs: 5 },
   };
+  const clock = { now: 0, waits: [] };
+  const viewer = { textContent: "Exact physical fixturesecond paragraph" };
   const dialog = { showOpenDialog() { throw new Error("Unowned chooser used"); } };
   const originalChooser = dialog.showOpenDialog;
   const tabs = [tab];
   const page = {
     originalMarkdown: text, currentFilePath: filePath,
-    getReloadRequestSession: () => owner.pageSession,
-    queryDocumentDeletionState: () => ({ known: !options.unknownOwner, unresolved: false }),
-    document: { getElementById: () => ({ textContent: "Exact physical fixturesecond paragraph" }) },
+    getReloadRequestSession: () => pageSession,
+    queryDocumentDeletionState: () => ({ known: !options.unknownOwner,
+      unresolved: options.unresolvedOwner === true }),
+    document: { getElementById: () => viewer },
+    Date: { now: () => clock.now },
+    setTimeout: (callback, delay) => {
+      assert.equal(delay, 25, "Actual restore polling retains its finite interval");
+      clock.waits.push(delay); clock.now += delay;
+      options.afterDelay?.({ page, tab, viewer, clock, text });
+      callback();
+    },
     CustomTabs: {
       getActiveTab: () => tabs.at(-1),
       getTabs: () => tabs,
@@ -115,7 +142,7 @@ function fixture(options = {}) {
     return false;
   }, work => work, require);
   return { ...helpers, exec, filePath, text, paintMarker, page, tab, log, dialog,
-    originalChooser, processorGate, renderGate, tabs };
+    originalChooser, processorGate, renderGate, tabs, clock, viewer, owner, pageSession };
 }
 
 async function main() {
@@ -201,8 +228,82 @@ async function main() {
     current.exec, current.filePath, current.text, current.paintMarker);
   check("checks the restored owner and settles the actual layout boundary", () => {
     assert.equal(restored.owner.tabId, current.tab.id);
+    assert.equal(restored.pageSession, current.pageSession);
+    assert.equal(restored.owner.pageSession, current.pageSession);
+    assert.equal(current.page.originalMarkdown, current.text);
+    assert.equal(current.viewer.textContent.includes(current.paintMarker), true);
+    assert.equal(current.clock.waits.length, 0);
     assert.equal(current.log.at(-1), "layout");
   });
+  const restoreTimeout = "Shutdown lifecycle restore did not reach its painted authenticated owner";
+  for (const [label, option] of [
+    ["missing owner", "missingOwner"], ["wrong tab", "wrongTab"],
+    ["wrong page", "wrongPage"], ["wrong descriptor", "wrongDescriptor"],
+    ["unknown Main owner", "unknownOwner"], ["unresolved Main owner", "unresolvedOwner"],
+  ]) {
+    const negative = fixture({ [option]: true });
+    assert.equal(negative.page.getReloadRequestSession(), "page-1",
+      "Expected page session is independent of the returned owner");
+    assert.equal(negative.tab.id, "tab-1", "Expected tab is independent of the returned owner");
+    assert.equal(negative.tab.content, negative.text);
+    assert.equal(negative.tab.originalContent, negative.text);
+    assert.equal(negative.page.originalMarkdown, negative.text);
+    assert.equal(negative.page.currentFilePath, negative.filePath);
+    assert.equal(negative.tab.hasUnsavedChanges, false);
+    assert.equal(negative.viewer.textContent.includes(negative.paintMarker), true);
+    const observedOwner = negative.page.CustomTabs.getDocumentIdentityForTab(
+      negative.tab.id, negative.filePath, negative.pageSession);
+    const descriptor = negative.page.CustomTabs.getDocumentDescriptor(negative.tab.id);
+    const deletion = negative.page.queryDocumentDeletionState(negative.filePath, observedOwner);
+    const invalid = {
+      missingOwner: observedOwner === null,
+      wrongTab: observedOwner?.tabId !== negative.tab.id,
+      wrongPage: observedOwner?.pageSession !== negative.pageSession,
+      wrongDescriptor: descriptor.logicalPath !== negative.tab.filePath,
+      unknownOwner: deletion.known === false,
+      unresolvedOwner: deletion.unresolved === true,
+    };
+    assert.equal(invalid[option], true, "The specific invalid restored-owner setup must be present");
+    let restoredOwner, timeout;
+    try {
+      restoredOwner = await negative.settleShutdownLifecycleRestore(
+        negative.exec, negative.filePath, negative.text, negative.paintMarker);
+    } catch (error) {
+      if (error.name !== "Error" || error.message !== restoreTimeout) throw error;
+      timeout = error;
+    }
+    check("restored-owner gate refuses " + label, () => {
+      assert.equal(timeout?.message, restoreTimeout, "The exact actual helper timeout must refuse the owner");
+      assert.equal(restoredOwner, undefined);
+      assert.deepEqual(negative.log, [], "Invalid ownership must never reach layout");
+      assert.equal(negative.clock.now, 8000, "The actual polling deadline must be exhausted");
+      assert.equal(negative.clock.waits.length, 320);
+      assert.equal(negative.clock.waits.every(delay => delay === 25), true);
+    });
+  }
+  for (const delayed of ["source", "paint"]) {
+    const recovery = fixture({ afterDelay: ({ page, viewer, clock, text }) => {
+      if (clock.waits.length !== 2) return;
+      if (delayed === "source") page.originalMarkdown = text;
+      else viewer.textContent = "Exact physical fixturesecond paragraph";
+    } });
+    if (delayed === "source") recovery.page.originalMarkdown = "Still restoring source";
+    else recovery.viewer.textContent = "Still restoring paint";
+    assert.equal(delayed === "source" ? recovery.page.originalMarkdown === recovery.text :
+      recovery.viewer.textContent.includes(recovery.paintMarker), false,
+    "Delayed recovery starts with its actual source or paint requirement unsatisfied");
+    const recovered = await recovery.settleShutdownLifecycleRestore(
+      recovery.exec, recovery.filePath, recovery.text, recovery.paintMarker);
+    check("recovers delayed restored " + delayed + " before settling layout", () => {
+      assert.equal(recovered.owner.tabId, recovery.tab.id);
+      assert.equal(recovered.owner.pageSession, recovery.pageSession);
+      assert.equal(recovery.page.originalMarkdown, recovery.text);
+      assert.equal(recovery.viewer.textContent.includes(recovery.paintMarker), true);
+      assert.deepEqual(recovery.clock.waits, [25, 25]);
+      assert.equal(recovery.clock.now, 50);
+      assert.deepEqual(recovery.log, ["layout"]);
+    });
+  }
   const failedLayout = fixture({ layoutFailure: true });
   await assert.rejects(failedLayout.settleShutdownLifecycleRestore(
     failedLayout.exec, failedLayout.filePath, failedLayout.text, failedLayout.paintMarker),
@@ -226,10 +327,12 @@ async function main() {
       assert.equal(negative.log.includes("layout"), false);
     });
   }
-  console.log(`=== ${passed}/${passed} lifecycle source controls passed; no Main/native execution ===`);
+  output("Lifecycle source controls; no Main/native execution");
+  output(`=== ${passed}/${passed + failures} passed ===`);
+  if (failures) process.exitCode = 1;
 }
 
 main().catch(error => {
-  console.error(error);
+  output("FAIL  lifecycle source harness completed  -> " + error.stack, true);
   process.exitCode = 1;
 });

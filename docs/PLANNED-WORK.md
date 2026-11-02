@@ -475,35 +475,147 @@ section is kept here so the register has a visible edge.
     attestations and publication are skipped. The draft has no assets.
     Keep the tag/commit fixed during diagnosis; do not bypass or blindly retry.
     Any tag/version remedy needs a separate user decision.
-  - Astra locates the Shared rejection before native input. The receipt cannot
-    distinguish the Header 2 selection from the following Delete click.
-    Nested-bottom wheel input transfers preview ownership, but neither pane moves.
-    Its receipt lacks the actual hit target, nested edge and current outer travel.
-    No production cause or production correction is established.
-    Sol handed back failure context and an intermediate selection assertion
-    in the existing Shared test, plus wheel setup/edge records in editor-scroll.
-    Working-tree Source/VM checks pass 843/843; editor-scroll syntax passes.
-    Independent Sol/Luna actual-code reviews are clear; no blocking disagreement.
-    Runtime is unrun.
-    The wheel hit test measures the supplied point before input; it does not
-    observe the received native event. Original movement assertions remain.
+  - Diagnostic CI identifies the Shared target as Header 2, before Delete.
+    Its interior click hits a resize handle. Astra traces initial fitting:
+    widths change after the rectangles are read, leaving stale handle geometry.
+    Sol adds synchronous post-fit remeasurement and immediate geometry/reset
+    coverage. Working-tree Source/VM checks pass 854/854; targeted `R1189`
+    sensitivity passes with exact failures and surviving controls.
+    Follow-up CI no longer hits the stale handle; Header 2 confirmation,
+    deletion and Cancel complete. That earlier run exposed two test defects:
+    LF textarea text compared with exact CRLF source, and a 275px-per-column
+    requirement exceeding the measured data budget. Corrections preserve
+    exact source and require measured allocation plus real cross-viewport growth.
+    Independent Sol/Luna reviews clear those corrections. Targeted
+    `R1190`/`R1191`/`R1192` sensitivity passes with exact failures and controls.
+    CI `41383947057` passes Source 854/854, then Input stops at 751/752
+    with a 4000ms renderer-command timeout after admitting fixture 113.
+    The fail-fast partition chain never starts Remaining or Shared.
+    CI `41388283670` then passes the full original table command:
+    Source 854/854; native Input 2163/2163, Remaining 558/558, Shared 145/145.
+    Header 2, exact source/history and both corrected width assertions pass.
+    The prior Input timeout does not recur; its cause is still unknown.
+  - Nested-bottom wheel setup, target hit, available travel and post-edge checks
+    pass, but neither outer pane moves. The nested position changes 976 to 975.
+    Top chaining and exact contain/none checks pass. No wheel remedy is proven.
+    Sol adds finite passive received-event records to the existing calls:
+    trusted target, direction, position and cancellation through disposal.
+    Native input, timing, movement and containment assertions remain unchanged.
+    Hosted evidence confirms one trusted, uncancelled event in the intended
+    nested block for each case. Bottom still fails after receipt; its cause
+    is not established. Engine dependencies and the original test match 0.11.3;
+    the user approved one isolated 0.11.3 comparison with the same logging
+    and normal command. Diagnostic `d7caaded` keeps the exact `87863807` app
+    and dependencies; only the reviewed test and CI collection are overlaid.
+    Its normal scroll command passes 295/295 versus candidate 294/295.
+    Engine, fixture, full scenario sequence and received wheel records match.
+    Baseline bottom chaining moves both panes; the candidate does not.
+    Preview layout already differs before the wheel, after the first diagram.
+    Astra identifies breakout CSS reaching split view despite disabled breakout.
+    Sol authored a narrow mode-scoping contrast with source and native Mermaid
+    coverage. Independent Sol/Luna reviews clear the actual change.
+    CI `41393529950` passes the original scroll suite 295/295.
+    All four wheel transactions match 0.11.3, including bottom chaining
+    and exact containment. The preview geometry matches baseline again.
+    This supports the CSS correction, not an engine-internal clamp explanation.
+    Mermaid initially stops before the new mode checks: 13d requires the old
+    first-statement shape, while the generation counter remains synchronous.
+    Sol retains the counter and adds real entry calibration.
+    Label-fit setup and cleanup also use bare IPC despite the isolated bridge;
+    both references already exist in 0.11.3. Only those directly related
+    receivers are corrected to reach the Mermaid compatibility checks.
+    CI `41395487174` passes Source 72/72 and native Mermaid 157/157,
+    including entry calibration, real reload and the reader/split mode checks.
+    The saved 150% reader and split captures are viewed. They are narrow
+    geometry fixtures, not a minimum-layout or printed-page acceptance claim.
+  - Introduced CI integration defects are being corrected separately:
+    load actual menu-dismissal dependencies in the default-save VM fixture;
+    retain strict failure formatting and source bindings; reconcile the exact
+    counted-revert inventory without weakening its equality check.
+    Existing focused Node controls pass. Independent reviews clear those
+    repairs and the simple reanchors. Semantic replacements remain separate:
+    `R659` now retains the original phase-two Main/native selection claim
+    and genuine accepted-selection observation; independent Sol/Luna review
+    clears the code.
+    Its exact mutation now carries a fixed, paired whole-suite provenance pin.
+    The unchanged strict source gate passes that staged pair and rejects drift;
+    native sensitivity is still unrun.
+    Source-only owner coverage has a separately proven `R1193`, not a native
+    replacement.
+    `R1167` now proves the intended stale-idle fault with its surviving controls.
+    Output correction preserves all checks and separates the nested child
+    from its parent. `R1194` proves the exact companion-routing restriction.
+    Corrected lifecycle output preserves its failures and keeps child footers
+    separate from native completion. The full Node actor prerequisite passes.
+    Targeted `R681`/`R684`/`R688`/`R703`/`R797` sensitivities pass with exact
+    failures and surviving controls; the HTML is restored byte for byte.
+    Mermaid source controls now count assertion failures and distinguish
+    standalone completion from all three parent companions. Sol/Luna reviews
+    clear the reporter and exact caller routing.
+    `R1195`/`R1196` independently prove each CSS selector guard; `R1197`
+    proves the untagged standalone route. Exact failures and healthy controls
+    pass; styles and package are restored byte for byte.
+    Native `R68`/`R434`/`R445`/`R1025`/`R659` sensitivities remain unrun.
+    The approved existing Windows job will run their fixed sequential command
+    after the original native checks and evidence upload, before ordinary
+    acceptance. Attempted proofs retain actual exits and logs in a separate
+    artifact; skipped proofs remain unrun, not passed.
+    Astra identifies unsafe continuation after rescued edits or unverified
+    restoration. Sol adds immediate raw-byte verification and a stop before
+    another mutant when restoration or suite completion is uncertain.
+    Independent Sol/Luna reviews clear the correction and workflow change.
+    `R1198`/`R1199` sensitivity proves the guards with exact failures and
+    surviving controls. All tracked-file byte digests match after restoration.
+    Current anchors resolve, which proves anchor availability only.
   - User requires any introduced app or test defect fixed before release.
     No test waiver or new focused CI option is authorized. The prior release's
     gate passed; this alone does not classify the new failures as regressions.
-    Existing full CI stops at editor-scroll before reaching table-cells and
-    does not retain their detailed receipts.
-    User approved independent execution of both actual commands and evidence
-    retention in existing `ci.yml`, without adding an option or workflow.
-    Sol implemented that narrow change. Luna identified the separately named
-    editor-scroll sentinel capture; its exact path is now included.
+    Existing `ci.yml` runs both actual commands independently before the
+    fail-fast acceptance chain and retains their detailed receipts.
+    User approved this collection without adding an option or workflow.
+    Artifact paths include both table and separately named editor-scroll
+    sentinel captures when produced.
     Independent Sol/Luna reviews clear the corrected collection; no blocking
     disagreement remains.
     Both exits are recorded; either failure still fails CI. Existing logs,
     JSON, screenshots and any produced sentinel capture are retained.
-    Setup failures remain failures, not test passes. No CI run is dispatched yet.
+    Setup failures remain failures, not test passes.
+    Diagnostic commit `81c85c59` is pushed to the feature branch only.
+    Nonpublishing CI run `41378022584` failed both commands and retained evidence.
+    Follow-up native repair commit `632be796` is pushed to the feature branch only.
+    Nonpublishing CI `41381426951` retains both commands' evidence:
+    Shared 142/144; scroll 294/295. Both gates remain failed.
+    Reviewed VM, formatter and strict-binding repairs are pushed as `d719b531`.
+    Reviewed Shared test corrections are pushed as `00647655`; their actual
+    Windows collection is complete: scroll remains 294/295; Input times out
+    before the corrected Shared partition starts. Both commands exit 1.
+    Reviewed CI-only continuation `c6516585` preserves those original exits
+    and collects Shared once only after a failed Input exit proves it unstarted.
+    CI `41388283670` passes the original table command; no supplement runs.
+    Scroll remains 294/295 with the same bottom-wheel failure.
+    Reviewed CSS, Mermaid checks and independent Mermaid collection are pushed
+    as `38f94181`. Nonpublishing CI `41393529950` runs that exact commit.
+    Table and scroll commands pass; Mermaid exits 1 before the new mode checks.
+    Reviewed Mermaid calibration and document-event setup corrections are
+    pushed as `ec7aa877`, including only the matching `R104` assertion name.
+    Nonpublishing CI `41395487174` verifies that exact correction:
+    the original table, scroll and Mermaid commands all exit 0.
+    No supplemental Shared run is needed. The overall run still fails:
+    the audit reaches the pending scanner false positive, and ordinary
+    acceptance fails the About combined fixture and times out at real Undo 0.
+    Astra identifies an introduced test-integration mismatch: the unchanged
+    fixture expects string/current-state history and performs double Undo/Redo,
+    while 0.12 records exact pre-change objects. Sol corrects the setup and
+    uses one real transition each way, retaining exact document restoration,
+    disk, updater and sentinel checks. Source history controls pass 29/29;
+    independent Sol/Luna reviews clear the correction. The actual native
+    combined route remains pending.
+    Wheel input and assertions are unchanged; source reporting and proof
+    maintenance remain separate working-tree changes.
     Reviewed diagnostic tests stay out of the frozen `v0.12.0` tag.
-    Production, release workflow, tag and version are unchanged. The draft
-    stays unpublished and the installed app is untouched.
+    Other test/proof repairs remain separate working-tree changes.
+    Release workflow, frozen tag/version and installed app remain unchanged.
+    The draft stays unpublished.
 
 - `unattended-visible-app-qualification` - **DEFERRED UNTIL AFTER CURRENT 0.12 WORK; NOT IMPLEMENTED**.
   - Visible checks must not need the user to launch the app.

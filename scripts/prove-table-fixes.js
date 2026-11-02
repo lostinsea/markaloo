@@ -525,6 +525,187 @@ const SEARCH_LAYOUT_CONTROLS = [
 ];
 
 const REVERTS = [
+  {
+    id: "R1199", what: "continue the mutation batch after an unusable suite",
+    file: path.join(ROOT, "scripts", "prove-table-fixes.js"),
+    from: "    bad += 1;\n    stoppedAt = r.id;\n    break;\n  }\n  const fails = mutationFailureNames(run);",
+    to: "    bad += 1;\n    continue;\n  }\n  const fails = mutationFailureNames(run);",
+    suite: "test:packaging",
+    expect: [/^the revert runner never starts another mutation after an unusable or abnormal run$/],
+    mustPass: [
+      /^the revert runner restores exact raw LF and CRLF bytes$/,
+      /^the revert runner rescues a mid-run edit but refuses further mutation$/,
+      /^the revert runner continues collecting healthy ordinary proof failures$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1198", what: "trust a restore write without verifying its actual bytes",
+    file: path.join(ROOT, "scripts", "prove-table-fixes.js"),
+    from: "    try {\n      if (!fs.readFileSync(file).equals(before)) {",
+    to: "    try {\n      if (false && !fs.readFileSync(file).equals(before)) {",
+    suite: "test:packaging",
+    expect: [/^the revert runner stops on an unverified restored byte snapshot$/],
+    mustPass: [
+      /^the revert runner restores exact raw LF and CRLF bytes$/,
+      /^the revert runner attempts every restoration after an independent write failure$/,
+      /^the revert runner rescues a mid-run edit but refuses further mutation$/,
+      /^the revert runner continues collecting healthy ordinary proof failures$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1197", what: "tag the standalone Mermaid source suite as a parent companion",
+    file: path.join(ROOT, "package.json"),
+    from: '"test:mermaid-source": "node test/test-mermaid-popup-contracts.js",',
+    to: '"test:mermaid-source": "node test/test-mermaid-popup-contracts.js --companion",',
+    suite: "test:packaging",
+    expect: [/^Mermaid source controls have a standalone untagged Node entrypoint$/],
+    mustPass: [
+      /^all actor contracts run as standalone Node commands rather than unawaited imports$/,
+      /^Node contracts gate the preserved ordinary suite and direct actor entrypoints$/,
+      /^actor routing oracle rejects omissions duplicates late gates and swallowed failures$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1196", what: "fit Mermaid SVGs outside the renderer-owned reader breakout",
+    file: path.join(ROOT, "src", "styles.css"),
+    from: ".markdown-body .mermaid-container.mermaid-breakout > .mermaid > svg {",
+    to: ".markdown-body .mermaid-container > .mermaid > svg {",
+    suite: "test:mermaid-source",
+    expect: [/^reader Mermaid sizing is confined to renderer-owned breakout containers$/],
+    mustPass: [
+      /^reader Mermaid breakout preserves native SVG geometry and proportional envelope$/,
+      /^split Mermaid clears prior reader breakout without SVG measurement$/,
+      /^Mermaid print and preview caps retain native non-enlarging dimensions$/,
+      /^process exit before verified cleanup refuses fixture sweeping synchronously$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1195", what: "expose Mermaid overflow outside the renderer-owned reader breakout",
+    file: path.join(ROOT, "src", "styles.css"),
+    from: ".markdown-body .mermaid-container.mermaid-breakout > .mermaid {",
+    to: ".markdown-body .mermaid-container > .mermaid {",
+    suite: "test:mermaid-source",
+    expect: [/^reader Mermaid sizing is confined to renderer-owned breakout containers$/],
+    mustPass: [
+      /^reader Mermaid breakout preserves native SVG geometry and proportional envelope$/,
+      /^split Mermaid clears prior reader breakout without SVG measurement$/,
+      /^Mermaid print and preview caps retain native non-enlarging dimensions$/,
+      /^process exit before verified cleanup refuses fixture sweeping synchronously$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1194", what: "accept history companion forwarding from the wrong parent",
+    file: path.join(ROOT, "test", "test-packaging.js"),
+    from: 'const forwardedHistory = name === "test:document-editor" &&',
+    to: "const forwardedHistory = true &&",
+    suite: "test:packaging",
+    expect: [/^history companion forwarding requires its exact child and parent and retains cycle detection$/],
+    mustPass: [
+      /^the feature aggregate contains each accepted behavioral suite exactly once$/,
+      /^feature reachability oracle rejects omitted duplicate reordered and cyclic routes$/,
+      /^feature gate follows the editor history subroute and rejects omission or duplication$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1193",
+    suite: "test:shutdown-lifecycle-source",
+    what: "let painted restored source settle without its authenticated document owner",
+    why: "Exercise the actual restore helper's owner gate independently of R659's " +
+      "native selection evidence. This source proof does not certify Main or native restoration.",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from:
+      "          descriptor?.logicalPath === tab.filePath &&\n" +
+      "          owner?.tabId === tab.id && owner?.pageSession === pageSession &&\n" +
+      "          deletion?.known === true && deletion.unresolved === false &&\n",
+    to: "",
+    expect: [
+      /^lifecycle source restored-owner gate refuses missing owner$/,
+      /^lifecycle source restored-owner gate refuses wrong tab$/,
+      /^lifecycle source restored-owner gate refuses wrong page$/,
+      /^lifecycle source restored-owner gate refuses wrong descriptor$/,
+      /^lifecycle source restored-owner gate refuses unknown Main owner$/,
+      /^lifecycle source restored-owner gate refuses unresolved Main owner$/,
+    ],
+    mustPass: [
+      /^lifecycle source checks the restored owner and settles the actual layout boundary$/,
+      /^lifecycle source recovers delayed restored source before settling layout$/,
+      /^lifecycle source recovers delayed restored paint before settling layout$/,
+      /^lifecycle source does not hide an unexpected restored-layout failure$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 6,
+  },
+  {
+    id: "R1190", what: "compare LF textarea text with exact CRLF source after a header click",
+    file: path.join(ROOT, "test", "test-table-cell-editor.js"),
+    from: "!tableCellSession.confirmation&&window.CustomTabs.snapshotExactEditorContent()===${JSON.stringify(createDeletionSource)}&&",
+    to: "!tableCellSession.confirmation&&markdownEditor.value===${JSON.stringify(createDeletionSource)}&&",
+    suite: "test:table-cells-source",
+    expect: [/^shared pointer Source actual Header 2 assertion accepts exact current selection column source history and no Save$/],
+    mustPass: [
+      /^shared pointer Source Header 2 fixture separates LF editor text from exact CRLF source$/,
+      /^shared pointer Source actual Header 2 assertion rejects independent selection column highlight pending source history and Save violations$/,
+      /^shared pointer Source existing hit-test refusal sends no native input and has no wait retry or fallback$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1191", what: "require an impossible fixed column width instead of its actual available budget",
+    file: path.join(ROOT, "test", "test-table-cell-editor.js"),
+    from: "geometry.data.every(width => Math.abs(width - share) < 1)",
+    to: "geometry.data.every(width => width >= 275)",
+    suite: "test:table-cells-source",
+    expect: [
+      /^shared opening Source actual budget assertion accepts fully allocated fractional data columns$/,
+      /^shared opening Source actual budget assertion rejects underfilled unequal missing split or narrow columns$/,
+    ],
+    mustPass: [
+      /^shared opening Source fractional fixture fills its measured budget below the old threshold$/,
+      /^shared opening Source actual growth assertion requires its existing narrower comparison$/,
+      /^shared pointer Source actual Header 2 assertion accepts exact current selection column source history and no Save$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1192", what: "accept a wider outer popup without actual data-column growth",
+    file: path.join(ROOT, "test", "test-table-cell-editor.js"),
+    from: "      wideOpening[0].popup > narrowOpening[0].popup && wideOpening[0].client > narrowOpening[0].client &&\n" +
+      "      wideOpening[0].data.length === narrowOpening[0].data.length &&\n" +
+      "      wideOpening[0].data.every((width, index) => width > narrowOpening[0].data[index] + 1),",
+    to: "      wideOpening[0].popup > narrowOpening[0].popup,",
+    suite: "test:table-cells-source",
+    expect: [/^shared opening Source actual growth assertion requires its existing narrower comparison$/],
+    mustPass: [
+      /^shared opening Source actual budget assertion accepts fully allocated fractional data columns$/,
+      /^shared opening Source actual budget assertion rejects underfilled unequal missing split or narrow columns$/,
+      /^shared pointer Source actual Header 2 assertion accepts exact current selection column source history and no Save$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1189", what: "publish stale cell geometry after initial column fitting",
+    file: RENDERER,
+    from: "      // Fitting reflows cells; publish handles from their new boundaries immediately.\n" +
+      "      return position();",
+    to: "",
+    suite: "test:table-cells-source",
+    expect: [
+      /^initial-fit handles overlay and ARIA immediately use post-fit cell geometry$/,
+      /^initial-fit separator no longer intercepts the unchanged Header 2 interior click point$/,
+      /^automatic reset immediately remeasures handles overlay and ARIA after refitting$/,
+    ],
+    mustPass: [
+      /^initial-fit geometry setup changes natural label and data widths before observer delivery$/,
+      /^automatic reset geometry setup owns genuinely changed manual widths$/,
+      /^cell pointer sizing also enforces the data minimum$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+  },
   // New column/toolbar source-only proposals; sensitivity has not been executed.
   {
     id: "R1185", what: "reverse logical gaps that share an empty physical slot",
@@ -1287,8 +1468,8 @@ const REVERTS = [
   {
     id: "R1137", what: "let the global margin reset pin the cell modal to the viewport corner",
     file: CSS,
-    from: "  padding: 0;\n  margin: auto;\n  width: min(1100px, calc(100vw - 48px));",
-    to: "  padding: 0;\n  width: min(1100px, calc(100vw - 48px));",
+    from: "  padding: 0;\n  margin: auto;\n  width: calc(100vw - 48px);",
+    to: "  padding: 0;\n  width: calc(100vw - 48px);",
     suite: "test:table-cells-menus",
     expect: [
       /^cell dialog has an opaque themed centered contained surface in light mode$/,
@@ -2119,11 +2300,24 @@ const REVERTS = [
   },
   {
     id: "R68",
-    what: "context-menu Insert/Edit Table never applies breakout (the one table kind that still scrolls sideways)",
+    what: "skip normal preview layout while an owned visual Create is rendering",
     file: RENDERER,
-    from: "  applyTableBreakout(); // context-menu insert/edit builds its own container",
-    to: "  /* applyTableBreakout() reverted for proof */",
-    expect: [/inserted from the context menu is widened/],
+    from: "function applyWideContentLayout(onlyContainer = null) {",
+    to: "function applyWideContentLayout(onlyContainer = null) {\n" +
+      "  if (tableCellSession?.submitting && tableCellSession.applied &&\n" +
+      "      tableCellSession.mode === TableCellMode.INSERT &&\n" +
+      "      currentDocumentActionOwner() === tableCellSession.selection.tab) return;",
+    suite: "test:tables",
+    expect: [
+      /^a visually inserted wide table uses the same real preview layout as its source-rendered equivalent$/,
+      /^a table inserted from the context menu does not scroll sideways$/,
+    ],
+    mustPass: [
+      /^visual Create opens with honest defaults and no automatically selected cell$/,
+      /^the context-menu table path really inserted a table$/,
+      /^visual Create observes one real owned render after its reference already needs fitting$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
     id: "R69",
@@ -7618,8 +7812,8 @@ const REVERTS = [
     // over the file.
     what: "let Ctrl+Z mutate the document in VIEW mode, so the next note auto-saves the reverted text",
     file: RENDERER,
-    from: "document.addEventListener('keydown', (e) => {\n  if (!isEditMode) return;\n  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {",
-    to: "document.addEventListener('keydown', (e) => {\n  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {",
+    from: "document.addEventListener('keydown', (e) => {\n  if (!isEditMode || e.isComposing || editorHistoryComposing()) return;\n  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {",
+    to: "document.addEventListener('keydown', (e) => {\n  if (e.isComposing || editorHistoryComposing()) return;\n  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {",
     expect: [
       /Ctrl\+Z does not alter the document in view mode/,
       /the store and the file still agree after a view-mode Ctrl\+Z/,
@@ -12665,8 +12859,8 @@ const REVERTS = [
     // comparison beside it is decorative.
     what: "move the pinned required-variable count by one",
     file: THEME_TEST,
-    from: "const REQUIRED_COUNTS = { light: 61, dark: 61 };",
-    to: "const REQUIRED_COUNTS = { light: 61, dark: 60 };",
+    from: "const REQUIRED_COUNTS = { light: 62, dark: 62 };",
+    to: "const REQUIRED_COUNTS = { light: 62, dark: 61 };",
     suite: "test:theme",
     expect: [/the derived required-variable list is the pinned measured size/],
   },
@@ -14092,40 +14286,30 @@ const REVERTS = [
         },
         {
           id: "R434",
-          // FOUR DIRECT-MUTATION SITES, FOUR REVERTS. R431 proves a NOTED
-          // mutation stands a pending anchor down and R432 proves the product
-          // notes the code-block wrap. Neither says anything about the paths
-          // that insert or remove nodes without a render at all - and review
-          // found those HALF-COVERED: both render-into-DOM functions reported
-          // their `replace` branch and stayed silent on their `insert` branch.
-          //
-          // One revert per site because one revert cannot tell which site went
-          // silent, and a site that goes silent is invisible to every other
-          // assertion in the file. Same precedent as R203-R206.
-          //
-          // CORRECTION, recorded rather than rewritten: "reported their
-          // `replace` branch" describes the PRODUCT at the time, not the
-          // COVERAGE. Those two replace branches had no revert and no probe
-          // until R445/R446, so for a while this comment read as if they were
-          // pinned when nothing drove them at all.
-          what: "stop reporting a DOM table insert as a viewer mutation",
+          // Suppress this transaction's notifications, not the DOM mutation or other modes.
+          what: "stop reporting an owned table insertion as a viewer mutation",
           file: path.join(SRC, "renderer.js"),
-          from:
-            "    // Adds a table container to #viewer, shifting everything below it. The\n" +
-            "    // replace branch above was told; this one is just as structural.\n" +
-            "    noteViewerMutation();\n" +
-            "    const anchor = getDomInsertAnchor();",
-          to: "    const anchor = getDomInsertAnchor();",
+          from: "function noteViewerMutation() {\n  viewerMutationGen++;\n}",
+          to: "function noteViewerMutation() {\n" +
+            "  if (tableCellSession?.submitting && tableCellSession.applied &&\n" +
+            "      tableCellSession.mode === TableCellMode.INSERT &&\n" +
+            "      currentDocumentActionOwner() === tableCellSession.selection.tab) return;\n" +
+            "  viewerMutationGen++;\n}",
           suite: "test:tables",
           expect: [
-            /^inserting a table into the DOM is reported as a viewer mutation$/,
+            /^visual table insertion adopts exact owned source once and invalidates the previous viewer layout$/,
           ],
           mustPass: [
-            // The insert itself must still happen, or this reads as a missing
-            // notification when the product had stopped inserting.
-            /^each direct viewer-mutation path under test really inserted or removed the node it reports$/,
+            /^each table transaction and direct viewer-mutation path really changes its intended node$/,
+            /^each source-owned table transaction records its actual render completion$/,
+            /^whole-table Update adopts only the changed source once and invalidates the previous viewer layout$/,
+            /^selected-row Update preserves unselected source and invalidates the previous viewer layout$/,
             /^deleting a table from the DOM is reported as a viewer mutation$/,
+            /^inserting a mermaid diagram into the DOM is reported as a viewer mutation$/,
+            /^replacing a mermaid diagram in the DOM is reported as a viewer mutation$/,
+            /^deleting a mermaid diagram from the DOM is reported as a viewer mutation$/,
           ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
         {
           id: "R435",
@@ -14143,8 +14327,8 @@ const REVERTS = [
             /^deleting a table from the DOM is reported as a viewer mutation$/,
           ],
           mustPass: [
-            /^each direct viewer-mutation path under test really inserted or removed the node it reports$/,
-            /^inserting a table into the DOM is reported as a viewer mutation$/,
+            /^each table transaction and direct viewer-mutation path really changes its intended node$/,
+            /^visual table insertion adopts exact owned source once and invalidates the previous viewer layout$/,
           ],
         },
         {
@@ -14162,7 +14346,7 @@ const REVERTS = [
             /^inserting a mermaid diagram into the DOM is reported as a viewer mutation$/,
           ],
           mustPass: [
-            /^each direct viewer-mutation path under test really inserted or removed the node it reports$/,
+            /^each table transaction and direct viewer-mutation path really changes its intended node$/,
             /^deleting a mermaid diagram from the DOM is reported as a viewer mutation$/,
           ],
         },
@@ -14181,42 +14365,35 @@ const REVERTS = [
             /^deleting a mermaid diagram from the DOM is reported as a viewer mutation$/,
           ],
           mustPass: [
-            /^each direct viewer-mutation path under test really inserted or removed the node it reports$/,
+            /^each table transaction and direct viewer-mutation path really changes its intended node$/,
             /^inserting a mermaid diagram into the DOM is reported as a viewer mutation$/,
           ],
         },
         {
           id: "R445",
-          // THE TWO `replace` BRANCHES, WHICH THE CELL THAT EXISTS FOR THEM
-          // NEVER DROVE.
-          //
-          // R434-R437's own comment records that review found the two
-          // render-into-DOM functions half-covered: each reported `replace` and
-          // stayed silent on `insert`. The fix wired the insert branches - and
-          // the four legs written to prove it drove insert and delete only. So
-          // the branches that prompted the whole cell were themselves unpinned:
-          // deleting either noteViewerMutation() left the suite green.
-          //
-          // These are not theoretical paths. `replace` is the context-menu
-          // "Edit Table" / "Edit Diagram" flow, i.e. the one a reader actually
-          // reaches, and it reparents a live node while a zoom anchor may be
-          // pending against the node it destroys.
-          what: "stop reporting a DOM table replace as a viewer mutation",
+          what: "stop reporting an owned whole-table Update as a viewer mutation",
           file: path.join(SRC, "renderer.js"),
-          from:
-            "      // Reparents a live node; see addCodeBlockCopyButtons for why the zoom\n" +
-            "      // anchor has to be told.\n" +
-            "      noteViewerMutation();\n" +
-            "      replaceEl.parentElement.replaceChild(container, replaceEl);",
-          to: "      replaceEl.parentElement.replaceChild(container, replaceEl);",
+          from: "function noteViewerMutation() {\n  viewerMutationGen++;\n}",
+          to: "function noteViewerMutation() {\n" +
+            "  if (tableCellSession?.submitting && tableCellSession.applied &&\n" +
+            "      tableCellSession.mode === TableCellMode.UPDATE_TABLE &&\n" +
+            "      currentDocumentActionOwner() === tableCellSession.selection.tab) return;\n" +
+            "  viewerMutationGen++;\n}",
           suite: "test:tables",
           expect: [
-            /^replacing a table in the DOM is reported as a viewer mutation$/,
+            /^whole-table Update adopts only the changed source once and invalidates the previous viewer layout$/,
           ],
           mustPass: [
-            /^each direct viewer-mutation path under test really inserted or removed the node it reports$/,
+            /^each table transaction and direct viewer-mutation path really changes its intended node$/,
+            /^each source-owned table transaction records its actual render completion$/,
+            /^visual table insertion adopts exact owned source once and invalidates the previous viewer layout$/,
+            /^selected-row Update preserves unselected source and invalidates the previous viewer layout$/,
+            /^deleting a table from the DOM is reported as a viewer mutation$/,
+            /^inserting a mermaid diagram into the DOM is reported as a viewer mutation$/,
             /^replacing a mermaid diagram in the DOM is reported as a viewer mutation$/,
+            /^deleting a mermaid diagram from the DOM is reported as a viewer mutation$/,
           ],
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
         },
         {
           id: "R446",
@@ -14236,8 +14413,8 @@ const REVERTS = [
             /^replacing a mermaid diagram in the DOM is reported as a viewer mutation$/,
           ],
           mustPass: [
-            /^each direct viewer-mutation path under test really inserted or removed the node it reports$/,
-            /^replacing a table in the DOM is reported as a viewer mutation$/,
+            /^each table transaction and direct viewer-mutation path really changes its intended node$/,
+            /^whole-table Update adopts only the changed source once and invalidates the previous viewer layout$/,
           ],
         },
         {
@@ -14642,11 +14819,13 @@ const REVERTS = [
             '              "libs/prismjs/prism-bundle.js",\n' +
             '              "src/file-helpers-core.js",\n' +
             '              "src/file-helpers.js",\n' +
+            '              "src/reload-request.js",\n' +
             "            ]) {",
           to:
             '              "libs/prismjs/components/prism-core.min.js",\n' +
             '              "src/file-helpers-core.js",\n' +
             '              "src/file-helpers.js",\n' +
+            '              "src/reload-request.js",\n' +
             "            ]) {",
           suite: "test:packaging",
           expect: [
@@ -18346,28 +18525,55 @@ const REVERTS = [
   {
     id: "R659",
     suite: "test:tabs",
-    what:
-      "let the phase-two reload gate settle on any tracking selection instead of " +
-      "the accepted selection whose owner is the restored physical active document",
-    why:
-      "The unchanged assertion still verifies the selected owner's accepted " +
-      "identity against the restored physical document, so this test-only " +
-      "mutation makes absent owner evidence observable without turning the " +
-      "wait timeout into a harness crash.",
+    what: "let the phase-two readiness gate accept any tracking record without its physical-owner witness",
+    why: "The original selection assertion must reject missing accepted-owner evidence. " +
+      "A separate genuine native selection keeps continuation safe without healing that failed claim.",
     file: path.join(ROOT, "test", "test-tab-refresh.js"),
     from:
-      "            restoredOwner = await captureRestoredOwner();\n" +
-      "            return trackingSelections.some(isCurrentTrackingSelection);\n",
+      "        const selectionReady = await waitUntil(async () => {\n" +
+      "          const selectionSnapshot = await observeOrdinaryShutdownFixtures(exec);",
     to:
-      "            return trackingSelections.length > 0; /* reverted for proof: any selection settles the wait */\n",
+      "        const selectionReady = await waitUntil(async () => {\n" +
+      "          if (fixtureName === 'valid-revision') return tracking.records.length > 0;\n" +
+      "          const selectionSnapshot = await observeOrdinaryShutdownFixtures(exec);",
+    also: [{
+      file: path.join(ROOT, "test", "teardown-question-current-bindings.json"),
+      from:
+        '{\n' +
+        '  "suite": "1bf98cae176fa4b47f2524aed0673748a7aefdefde09e62899d9304b1d560929",\n' +
+        '  "main": "9eafa7bb8a5f112db4785b6bc196825f5ffaa0d37c78b51e5a1edb78705ba839",\n' +
+        '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
+        '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
+        '  "closedRegistration": "0b1bc610dc956875a2bd47067a3ade856f8d43c8c23a029064d425350b04d606",\n' +
+        '  "consumerGetter": "29853d16f400d3deb3bf0fbc5ee6d42ebe49d73f8d6ce0f76b54ae5982704f3d",\n' +
+        '  "chooseCapability": "c16d201645f6902bc33a4a4aa4937a56c71fd2f818e8131872e699723ff0db15",\n' +
+        '  "boundedWork": "83669ccb6885da5bfb7609a017bfa80d837ad504c8881ee094e53a55a7aa2eaf"\n' +
+        '}\n',
+      to:
+        '{\n' +
+        '  "suite": "608cd43ba7c3acfe0652e6c407e3728b8f03477f3e99f5ae3d0041150b5ee0d7",\n' +
+        '  "main": "9eafa7bb8a5f112db4785b6bc196825f5ffaa0d37c78b51e5a1edb78705ba839",\n' +
+        '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
+        '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
+        '  "closedRegistration": "0b1bc610dc956875a2bd47067a3ade856f8d43c8c23a029064d425350b04d606",\n' +
+        '  "consumerGetter": "29853d16f400d3deb3bf0fbc5ee6d42ebe49d73f8d6ce0f76b54ae5982704f3d",\n' +
+        '  "chooseCapability": "c16d201645f6902bc33a4a4aa4937a56c71fd2f818e8131872e699723ff0db15",\n' +
+        '  "boundedWork": "83669ccb6885da5bfb7609a017bfa80d837ad504c8881ee094e53a55a7aa2eaf"\n' +
+        '}\n',
+    }],
     expect: [
-      /^the valid-revision phase-two reload selects a restored physical owner before reset$/,
+      /^the valid-revision phase-two reload selects a restored physical owner before its request$/,
     ],
     mustPass: [
       /^the valid-revision reload fixture starts with restored physical paths to select$/,
       /^the valid-dirty reload fixture starts with restored physical paths to select$/,
       /^the sender-gate reload fixture starts with restored physical paths to select$/,
+      /^the valid-dirty phase-two reload selects a restored physical owner before its request$/,
+      /^valid-revision continuation has a freshly verified physical owner and genuine accepted Main selection$/,
+      /^valid-revision phase-two tracking observation restores the original native listener$/,
+      /^a valid clean revision reaches phase-two commit and a duplicate response cannot close twice$/,
     ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "R660",
@@ -18799,6 +19005,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
@@ -18807,6 +19014,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="utils.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
@@ -18886,6 +19094,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
@@ -18895,6 +19104,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="mermaid-config.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
@@ -18987,6 +19197,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>',
           to:
             '    <script src="emoji-map.js"></script>\n' +
@@ -18997,6 +19208,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="context-menu-utils.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>',
@@ -19320,6 +19532,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>',
           to:
@@ -19328,6 +19541,7 @@ const REVERTS = [
             '    <script src="app-dialogs.js"></script>\n' +
             '    <script src="inline-formatting.js"></script>\n' +
             '    <script src="table-cell-editor.js"></script>\n' +
+            '    <script src="reload-request.js"></script>\n' +
             '    <script src="renderer.js"></script>\n' +
             '    <script src="custom-tabs.js"></script>\n' +
             '    <script src="file-helpers-core.js"></script>',
@@ -21259,8 +21473,8 @@ const REVERTS = [
           id: "R797",
           what: "load the browser document registry after both consumers",
           file: HTML,
-          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="inline-formatting.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
-          to: '    <script src="app-dialogs.js"></script>\n    <script src="inline-formatting.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
+          from: '    <script src="document-events.js"></script>\n    <script src="app-dialogs.js"></script>\n    <script src="inline-formatting.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="reload-request.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>',
+          to: '    <script src="app-dialogs.js"></script>\n    <script src="inline-formatting.js"></script>\n    <script src="table-cell-editor.js"></script>\n    <script src="reload-request.js"></script>\n    <script src="renderer.js"></script>\n    <script src="custom-tabs.js"></script>\n    <script src="document-events.js"></script>',
           suite: "test:packaging",
           expect: [
             /^SEC-08 document-events\.js loads exactly once before both consumers$/,
@@ -23725,9 +23939,9 @@ const REVERTS = [
         },
         {
           id: "R934", what: "expire the actionable File Updated notice after ten seconds",
-          file: RENDERER,
-          from: "  toast.classList.add('show');\n  fileUpdateNotificationShown = true;",
-          to: "  toast.classList.add('show');\n  fileUpdateNotificationShown = true;\n  setTimeout(dismissFileUpdateNotification, 10000);",
+          file: path.join(SRC, "reload-request.js"),
+          from: "      toast.classList.add('show');\n      state.promptShown = true;",
+          to: "      toast.classList.add('show');\n      state.promptShown = true;\n      setTimeout(dismissFileUpdateNotification, 10000);",
           suite: "test:reading",
           expect: [/^File Updated remains visible beyond its former ten-second expiry$/],
           mustPass: [/^watcher notice leaves original document bytes until Reload$/,
@@ -24851,14 +25065,12 @@ const REVERTS = [
           requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
         },
         {
-          id: "R1025", what: "allow the previous editor's deferred work to run in another document",
+          id: "R1025", what: "allow the previous editor's deferred preview to run in another document",
           file: RENDERER,
-          from: "  cancelEditorDeferredWork();\n  editorModeRevision++;\n  editorScroll.reset();",
-          to: "  editorModeRevision++;\n  editorScroll.reset();",
+          // R1167 separately proves that stale idle work cannot end another owner's history group.
+          from: "  cancelEditorDeferredWork();\n  editorModeRevision++;\n  tableCellSession?.sizing?.refresh();\n  editorScroll.reset();",
+          to: "  editorModeRevision++;\n  tableCellSession?.sizing?.refresh();\n  editorScroll.reset();",
           also: [{
-            from: "    if (!exact && isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      historyPush(markdownEditor.value);",
-            to: "    if (!exact && isEditMode) {\n      historyPush(markdownEditor.value);",
-          }, {
             from: "    if (isEditMode && fileOpenSequence === sequence && editorModeRevision === revision) {\n      renderMarkdown(markdownEditor.value);",
             to: "    if (isEditMode) {\n      renderMarkdown(markdownEditor.value);",
           }],
@@ -26714,7 +26926,11 @@ function proveCompanionTranscriptRoles() {
       r.requireMustPassAssertions === true && r.mustPass.length > 0) &&
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
-      .join(",") === "R1136,R1137,R1138,R1139,R1140,R1141,R1116,R1117,R1118,R1119,R1120,R1121,R1122,R1123,R1124,R1125,R1115,R1111,R1112,R1113,R72,R454,R455,R467,R504,R319,R320,R530,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R831,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
+      .join(",") ===
+        "R1199,R1198,R1197,R1196,R1195,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +
+        "R1136,R1137,R1138,R1139,R1140,R1141,R1116,R1117,R1118,R1119,R1120,R1121,R1122,R1123,R1124,R1125,R1115,R1111,R1112,R1113," +
+        "R68,R72,R449,R451,R452,R454,R455,R456,R457,R458,R459,R460,R467,R504,R450,R185," +
+        "R319,R320,R434,R445,R530,R659,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R831,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>
       exactShutdownTailForMutation(r) === TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL,
@@ -27059,6 +27275,9 @@ function proveCompanionTranscriptRoles() {
     console.error(
       "SELF-CHECK FAILED: companion assertion evidence or parent transcript health lost its role separation.",
     );
+    console.error("Counted inventory: " + REVERTS.filter((record) =>
+      Number.isSafeInteger(record.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(record.id))
+      .map(record => record.id).join(","));
     process.exit(2);
   }
 }
@@ -27086,6 +27305,13 @@ function proveCompanionTranscriptRoles() {
 // summary) build the line into a variable or an array and print it later, so a
 // console.log-shaped detector reported a clean sweep while never reading the
 // largest suite in the project.
+function isEvidenceAttachingFailFormatter(line) {
+  const text = line.trim();
+  return !/^(?:\/\/|\/\*|\*)/.test(text) &&
+    /(["'`])(?:[ \t]|\\[nrt])*FAIL\b/.test(text) &&
+    /\$\{|\s\+\s|",\s*\S|',\s*\S/.test(text);
+}
+
 function failFormatterLines() {
   const out = [];
   const dir = path.join(ROOT, "test");
@@ -27093,8 +27319,7 @@ function failFormatterLines() {
     const src = fs.readFileSync(path.join(dir, f), "utf8");
     for (const l of src.split(/\r?\n/)) {
       const t = l.trim();
-      if (t.startsWith("//") || t.startsWith("*")) continue;
-      if (/(["'`])[^"'`]*\bFAIL\b/.test(t)) out.push([f, t]);
+      if (isEvidenceAttachingFailFormatter(t)) out.push([f, t]);
     }
   }
   return out;
@@ -27131,6 +27356,38 @@ function proveNameAnchoring() {
     }
   }
 
+  const formatterCases = [
+    ["exact popup boundary", 'vm.runInContext(between(popups, "async function openPopup(", "// FAIL CLOSED."), context);', false, false],
+    ["prose FAIL mention", 'console.log("An observed FAIL is prose: " + detail);', false, false],
+    ["line comment", '// console.error("FAIL " + name + ": " + detail);', false, false],
+    ["block comment", '/* console.error("FAIL " + name + ": " + detail); */', false, false],
+    ["static failure without evidence", 'console.error("FAIL static fatal");', false, false],
+    ["colon evidence", 'console.error("FAIL " + name + ": " + error.stack);', true, true],
+    ["newline stack", 'console.error("FAIL " + name + "\\n" + error.stack);', true, true],
+    ["interpolated newline", 'console.error(`FAIL ${name}\\n${error.stack}`);', true, true],
+    ["second console argument", 'console.error("FAIL assertion", detail);', true, true],
+    ["old dash separator", 'const line = "FAIL " + name + " - " + detail;', true, true],
+    ["old space separator", 'const line = "FAIL " + name + "  " + detail;', true, true],
+    ["arrow concatenation", 'console.error("FAIL " + name + "  -> " + detail);', true, false],
+    ["indented template prefix", 'console.error(`  FAIL ${name}  -> ${detail}`);', true, false],
+    ["conditional variable", 'const line = (ok ? "PASS " : "FAIL ") + name + (ok ? "" : "  -> " + detail);', true, false],
+    ["conditional array", 'lines.push(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : "  -> " + detail}`);', true, false],
+    ["escaped newline prefix", 'console.error("\\nFAIL " + name + "  -> " + detail);', true, false],
+    ["escaped whitespace prefix", 'console.error("\\r\\tFAIL " + name + "  -> " + detail);', true, false],
+    ["boundary beside actual malformed formatter", 'vm.runInContext(between(popups, "async function openPopup(", "// FAIL CLOSED."), context); console.error("FAIL " + name + ": " + detail);', true, true],
+  ];
+  for (const [label, line, expectedSelected, expectedOffender] of formatterCases) {
+    const selected = isEvidenceAttachingFailFormatter(line);
+    const offender = selected && !line.includes("  -> ");
+    if (selected !== expectedSelected || offender !== expectedOffender) {
+      console.error(
+        `SELF-CHECK FAILED: FAIL formatter discovery lost ${label} ` +
+          `(selected=${selected}, offender=${offender}, line=${JSON.stringify(line)}).`,
+      );
+      process.exit(2);
+    }
+  }
+
   // Every suite must separate its evidence with the arrow the reduction splits
   // on. A suite that does not is not loudly broken - it silently stops being
   // name-anchored, which is the failure this whole mechanism exists to remove.
@@ -27140,9 +27397,7 @@ function proveNameAnchoring() {
   // What matters is a formatter that appends a dynamic value - an interpolation,
   // a concatenation or a second console.log argument - since that is the text
   // an `expect` regex could otherwise be satisfied by.
-  const formatters = failFormatterLines().filter(([, l]) =>
-    /\$\{|\s\+\s|",\s*\S|',\s*\S/.test(l),
-  );
+  const formatters = failFormatterLines();
   // THE FLOOR IS THE MEASURED COUNT, NOT A ROUND NUMBER WITH HEADROOM. This
   // project has three recorded cases of a vacuity floor sitting so far below
   // the real population that the sweep could lose most of its coverage and
@@ -27661,7 +27916,45 @@ function anchorRe(s) {
   return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\n/g, "\\r?\\n"));
 }
 
+function restoreMutationFiles(r, originals, working, written) {
+  const errors = [];
+  for (const [file, before] of originals) {
+    try {
+      const expected = written.has(file) ? Buffer.from(working.get(file), "utf8") : before;
+      const onDisk = fs.readFileSync(file);
+      if (!onDisk.equals(expected)) {
+        midRunEdits += 1;
+        errors.push(new Error(`${path.relative(ROOT, file)} changed during ${r.id}`));
+        const rescue = `${file}.mid-run-edit`;
+        fs.writeFileSync(rescue, onDisk);
+        console.error(
+          `\nEDITED MID-RUN: ${path.relative(ROOT, file)} changed while ${r.id}'s revert was applied.` +
+            `\n  The harness is about to restore its own snapshot, which would discard that change.` +
+            `\n  A copy has been saved to ${path.relative(ROOT, rescue)} - diff it before deleting.`,
+        );
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      fs.writeFileSync(file, before);
+    } catch (error) {
+      errors.push(error);
+      console.error(`\nRESTORE FAILED: ${path.relative(ROOT, file)} could not be restored after ${r.id}.`);
+    }
+    try {
+      if (!fs.readFileSync(file).equals(before)) {
+        throw new Error(`RESTORE MISMATCH: ${path.relative(ROOT, file)} differs from its original raw bytes after ${r.id}`);
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length) throw new AggregateError(errors, `Cannot continue after restoring ${r.id}`);
+}
+
 let bad = 0;
+let stoppedAt = null;
 // Counted separately from `bad` and from the proven total, so a withdrawn
 // proof can never be mistaken for a passing one in the summary line.
 let skipped = 0;
@@ -27689,7 +27982,7 @@ const snapshots = new Map();
 // revert. Report it per-revert instead, so one stale path cannot hide the state
 // of the other 190.
 const absentFiles = [...touched].filter((f) => !fs.existsSync(f));
-for (const f of touched) if (!absentFiles.includes(f)) snapshots.set(f, fs.readFileSync(f, "utf8"));
+for (const f of touched) if (!absentFiles.includes(f)) snapshots.set(f, fs.readFileSync(f));
 
 for (const r of chosen) {
   // A revert may need more than one paired edit - sometimes in DIFFERENT files
@@ -27706,9 +27999,9 @@ for (const r of chosen) {
       setupFailed = `file does not exist: ${path.relative(ROOT, e.file)}`;
       break;
     }
-    if (!originals.has(e.file)) originals.set(e.file, fs.readFileSync(e.file, "utf8"));
+    if (!originals.has(e.file)) originals.set(e.file, fs.readFileSync(e.file));
   }
-  const working = new Map(originals);
+  const working = new Map([...originals].map(([file, bytes]) => [file, bytes.toString("utf8")]));
   for (const e of setupFailed ? [] : edits) {
     // `to` is written with plain \n and expanded to the file's own EOL below.
     // A literal \r\n therefore becomes \r\r\n - a lone CR, which silently marks
@@ -27786,6 +28079,7 @@ for (const r of chosen) {
   // check. `written` records what actually landed so the verify step below can
   // tell "someone else edited this" apart from "the harness never wrote it".
   let run;
+  const mutationErrors = [];
   const written = new Set();
   try {
     for (const [file, text] of working) {
@@ -27793,53 +28087,22 @@ for (const r of chosen) {
       written.add(file);
     }
     run = runSuite(r.suite);
+  } catch (error) {
+    mutationErrors.push(error);
   } finally {
-    // VERIFY BEFORE RESTORE. The restore below is a blind overwrite from a
-    // snapshot taken before the run, so anything written to one of these files
-    // WHILE the suite was running - a hand edit, an editor autosave, a second
-    // agent, a concurrent harness run - is silently deleted here, with no diff
-    // and no warning. `--anchors` cannot cover this: it detects RESIDUE (a
-    // revert left applied) by checking that every `from` still resolves, and a
-    // restore that reinstates the pre-run snapshot leaves every anchor
-    // resolving perfectly while the interim work is gone.
-    //
-    // So compare what is on disk against what the harness itself last wrote.
-    // If they differ, the difference is someone else's and must not be thrown
-    // away: park it beside the file and say so loudly, then restore.
-    //
-    // EVERY FILE IS RESTORED INDEPENDENTLY. A throw while verifying or rescuing
-    // one file must not skip the restore of the ones after it - that would turn
-    // a rescue attempt into the partial-application failure this block exists to
-    // prevent. Errors are collected and re-raised once every file is back.
-    const restoreErrors = [];
-    for (const [file, text] of originals) {
-      try {
-        const expected = written.has(file) ? working.get(file) : undefined;
-        const onDisk = fs.readFileSync(file, "utf8");
-        if (expected !== undefined && onDisk !== expected) {
-          const rescue = `${file}.mid-run-edit`;
-          fs.writeFileSync(rescue, onDisk);
-          midRunEdits += 1;
-          console.error(
-            `\nEDITED MID-RUN: ${path.relative(ROOT, file)} changed while ${r.id}'s revert was applied.` +
-              `\n  The harness is about to restore its own snapshot, which would discard that change.` +
-              `\n  A copy has been saved to ${path.relative(ROOT, rescue)} - diff it before deleting.`,
-          );
-        }
-      } catch (err) {
-        restoreErrors.push(err);
-      }
-      try {
-        fs.writeFileSync(file, text);
-      } catch (err) {
-        restoreErrors.push(err);
-        console.error(
-          `\nRESTORE FAILED: ${path.relative(ROOT, file)} could not be restored after ${r.id}.` +
-            `\n  The revert may still be applied. Run --anchors before trusting the tree.`,
-        );
-      }
+    // Rescue unexpected writes, attempt every raw restore, then read each back.
+    // Even a rescued conflict makes this batch unsafe to continue.
+    try { restoreMutationFiles(r, originals, working, written); }
+    catch (error) { mutationErrors.push(error); }
+  }
+  if (mutationErrors.length) {
+    bad += 1;
+    stoppedAt = r.id;
+    for (const error of mutationErrors) {
+      console.error(`${r.id}  STOPPED       ${String(error.stack || error)}`);
+      for (const cause of error.errors || []) console.error(String(cause.stack || cause));
     }
-    if (restoreErrors.length) throw restoreErrors[0];
+    break;
   }
   const checkedRun = suiteRunHealth(run, r.suite, {
     mutationRun: true,
@@ -27869,7 +28132,8 @@ for (const r of chosen) {
       }
     }
     bad += 1;
-    continue;
+    stoppedAt = r.id;
+    break;
   }
   const fails = mutationFailureNames(run);
   const failNames = fails.map(assertionNameOf);
@@ -27997,12 +28261,21 @@ for (const r of chosen) {
   }
 }
 
+if (stoppedAt) {
+  const remaining = chosen.length - chosen.findIndex(r => r.id === stoppedAt) - 1;
+  console.error(`\nBATCH STOPPED after ${stoppedAt}; ${remaining} later selected revert(s) UNRUN.`);
+}
+
 // Every file the harness touched must be byte-identical to how it was found.
 let dirty = 0;
 for (const [f, before] of snapshots) {
-  if (fs.readFileSync(f, "utf8") !== before) {
+  try {
+    if (fs.readFileSync(f).equals(before)) continue;
     dirty++;
     console.error(`\nLEFT MODIFIED: ${f} - a revert was not restored. Check git diff before trusting anything above.`);
+  } catch (error) {
+    dirty++;
+    console.error(`\nRESTORE CHECK FAILED: ${f} - ${String(error.stack || error)}`);
   }
 }
 
@@ -28016,7 +28289,7 @@ if (fullHarnessReleaseRun) {
 const deferredSummary = [...deferred.entries()]
   .sort(([left], [right]) => left.localeCompare(right))
   .map(([id, approval]) => `${id}: ${approval.reason}`);
-const cleanResult = bad === 0 && dirty === 0 && midRunEdits === 0;
+const cleanResult = bad === 0 && dirty === 0 && midRunEdits === 0 && stoppedAt === null;
 
 console.log(
   anchorsOnly

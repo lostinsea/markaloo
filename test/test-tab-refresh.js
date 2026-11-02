@@ -41726,6 +41726,8 @@ async function observeOrdinaryShutdownFixtures(exec) {
       })),
       dirty: tabs.__dirtyTabNames(),
       activeId: tabs.getActiveTabId(),
+      pageSession,
+      activeSelectionGeneration: window.getActiveFileSelectionGeneration(),
       activeDomIds: Array.from(document.querySelectorAll('.tab.active'),
         element => element.dataset.tabId),
       currentFilePath: window.currentFilePath,
@@ -43553,22 +43555,99 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
         entry => entry.path === selectedPath);
       if (!fixture) throw new Error(`${fixtureName} does not own its selected fixture`);
       const generation = __shutdown.state().rendererGeneration;
-      wc.reload();
-      if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
-          __shutdown.state().rendererGeneration > generation, 20000)) {
-        throw new Error(`${fixtureName} did not reach a replacement renderer`);
-      }
-      await settleShutdownLifecycleRestore(exec, fixture.path, fixture.content,
-        fixture.path === fileQ1 ? "Q_ALPHA" : "Q_BETA");
-      const after = await observeOrdinaryShutdownFixtures(exec);
-      const restored = JSON.stringify(after.tabs.map(tab => tab.filePath).sort()) ===
+      const restoredPhysicalOwners = snapshot =>
+        JSON.stringify(snapshot.tabs.map(tab => tab.filePath).sort()) ===
           JSON.stringify(physicalPaths) &&
-        after.currentFilePath === selectedPath &&
-        after.tabs.every(tab => tab.owner?.documentRef === tab.descriptor?.ref &&
+        snapshot.currentFilePath === selectedPath &&
+        snapshot.tabs.every(tab => tab.owner?.documentRef === tab.descriptor?.ref &&
           __shutdown.documentAdmissionIsCurrent(tab.descriptor?.ref));
-      check(selectionSetupName, restored, JSON.stringify({ before, after, layout }));
-      if (!restored) throw new Error(`${fixtureName} did not restore its exact physical owners`);
-      return after;
+      const matchesRestoredSelection = (record, snapshot, mainState) => {
+        const active = snapshot.tabs.find(tab => tab.id === snapshot.activeId);
+        const identity = active?.owner;
+        const descriptor = active?.descriptor;
+        const data = record.data;
+        const owner = record.reply?.approvedOwner ?? data?.owner;
+        return !!(
+          record.channel === "select-file-tracking" && record.replies === 1 &&
+          record.reply?.accepted === true && data && owner && identity && descriptor &&
+          mainState.renderer === "ready" && mainState.rendererGeneration > generation &&
+          typeof snapshot.pageSession === "string" && snapshot.pageSession.length > 0 &&
+          snapshot.pageSession === mainState.rendererPageSession &&
+          data.pageSession === snapshot.pageSession &&
+          data.rendererGeneration === mainState.rendererGeneration &&
+          data.filePath === selectedPath && active.filePath === selectedPath &&
+          snapshot.currentFilePath === selectedPath && descriptor.logicalPath === selectedPath &&
+          identity.pageSession === snapshot.pageSession &&
+          identity.rendererGeneration === mainState.rendererGeneration &&
+          identity.tabId === snapshot.activeId && owner.tabId === identity.tabId &&
+          owner.pageSession === snapshot.pageSession &&
+          owner.rendererGeneration === mainState.rendererGeneration &&
+          Number.isSafeInteger(identity.documentGeneration) && identity.documentGeneration > 0 &&
+          owner.documentGeneration === identity.documentGeneration &&
+          typeof identity.pathKey === "string" && identity.pathKey.length > 0 &&
+          owner.pathKey === identity.pathKey &&
+          typeof descriptor.ref === "string" && descriptor.ref.length > 0 &&
+          owner.documentRef === identity.documentRef && identity.documentRef === descriptor.ref &&
+          Number.isSafeInteger(snapshot.activeSelectionGeneration) &&
+          snapshot.activeSelectionGeneration > 0 &&
+          owner.selectionGeneration === snapshot.activeSelectionGeneration
+        );
+      };
+      const originalTrackingListener = ipcMain.listeners("select-file-tracking")[0];
+      const tracking = observeNativeDocumentPorts(win, ["select-file-tracking"]);
+      return withOrdinaryShutdownCleanup(async () => {
+        wc.reload();
+        if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&
+            __shutdown.state().rendererGeneration > generation, 20000)) {
+          throw new Error(`${fixtureName} did not reach a replacement renderer`);
+        }
+        await settleShutdownLifecycleRestore(exec, fixture.path, fixture.content,
+          fixture.path === fileQ1 ? "Q_ALPHA" : "Q_BETA");
+        let gateOwner = null;
+        const selectionReady = await waitUntil(async () => {
+          const selectionSnapshot = await observeOrdinaryShutdownFixtures(exec);
+          const mainState = __shutdown.state();
+          return tracking.records.some(record => {
+            if (!matchesRestoredSelection(record, selectionSnapshot, mainState)) return false;
+            gateOwner = record.reply?.approvedOwner ?? record.data.owner;
+            return true;
+          });
+        }, 10000);
+        const after = await observeOrdinaryShutdownFixtures(exec);
+        const restored = restoredPhysicalOwners(after);
+        const mainState = __shutdown.state();
+        check(selectionSetupName, restored && selectionReady && gateOwner !== null &&
+          tracking.records.some(record =>
+            (record.reply?.approvedOwner ?? record.data?.owner) === gateOwner &&
+            matchesRestoredSelection(record, after, mainState)),
+        JSON.stringify({ before, after, layout, selectionReady, gateOwner, records: tracking.records }));
+
+        // A later live witness can make continuation safe, never repair the gate's earlier claim.
+        let continuation = null;
+        const continuationReady = await waitUntil(async () => {
+          const snapshot = await observeOrdinaryShutdownFixtures(exec);
+          const currentMain = __shutdown.state();
+          if (!restoredPhysicalOwners(snapshot) ||
+              !tracking.records.some(record => matchesRestoredSelection(record, snapshot, currentMain))) {
+            return false;
+          }
+          continuation = snapshot;
+          return true;
+        }, 10000);
+        check(`${fixtureName} continuation has a freshly verified physical owner and genuine accepted Main selection`,
+          continuationReady && continuation !== null,
+          JSON.stringify({ continuation, records: tracking.records }));
+        if (!continuationReady) {
+          throw new Error(`${fixtureName} did not restore its exact physical owners and accepted Main selection`);
+        }
+        return continuation;
+      }, [() => {
+        tracking.restore();
+        const listeners = ipcMain.listeners("select-file-tracking");
+        const restored = listeners.length === 1 && listeners[0] === originalTrackingListener;
+        check(`${fixtureName} phase-two tracking observation restores the original native listener`, restored);
+        if (!restored) throw new Error(`${fixtureName} leaked its phase-two tracking observer`);
+      }]);
     };
 
     await restoreCleanDocuments();

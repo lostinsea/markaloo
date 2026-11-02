@@ -144,8 +144,32 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Keep the full acceptance suite and existing audit gates after the
-      # independent collection. A failed collection still fails this job.
+      # Prove these repairs before unrelated ordinary-suite failures can hide
+      # them. The finished native collection is a prerequisite, not a waiver.
+      - name: Prove selected regression repairs sequentially
+        id: selected_proofs
+        shell: pwsh
+        run: |
+          "STARTED" | Set-Content ci-test-results\selected-proofs-status.txt
+          node scripts/prove-table-fixes.js R68 R434 R445 R1025 R659 2>&1 |
+            Tee-Object -FilePath ci-test-results\selected-proofs.log
+          $proofExit = $LASTEXITCODE
+          "exit=$proofExit" | Set-Content ci-test-results\selected-proofs-status.txt
+          exit $proofExit
+
+      - name: Retain selected regression proof evidence
+        if: ${{ always() && steps.selected_proofs.outcome != '' && steps.selected_proofs.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-regression-proofs
+          path: |
+            ci-test-results/selected-proofs-status.txt
+            ci-test-results/selected-proofs.log
+          if-no-files-found: error
+          retention-days: 7
+
+      # Keep the full acceptance suite and existing audit gates. A failed
+      # collection or proof still fails this job.
       - name: Run feature acceptance before the legacy suite
         run: npm test
 
@@ -167,9 +191,9 @@ jobs:
   #
   # `--expects` is the check for it. It runs each referenced suite ONCE on the
   # CLEAN tree and verifies every regex names a live assertion. It is READ-ONLY:
-  # it exits before the harness reaches the mutation loop, so it never rewrites
-  # the working tree - which is why it can run in CI at all, and why the full
-  # harness (which does rewrite it, and is machine-exclusive) still cannot.
+  # it exits before the harness reaches the mutation loop, so this audit never
+  # rewrites the working tree. The fixed proof step above runs mutations
+  # sequentially on its separate owned runner.
   #
   # A SEPARATE JOB, not a step, and that is deliberate: it runs the same suites
   # as `npm test`, so appending it there would double the wall clock for no
