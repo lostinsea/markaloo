@@ -271,14 +271,130 @@ async function correspondence(direction, text, name, occurrence = 0, allowShared
     value.sharedRow.sharedContentVisible && value.sharedRow.sameRenderedRow), value);
   return value;
 }
-async function nativeWheel(side, deltaY, selector = null) {
-  const point = await exec(`(() => {
-    const r=(${selector ? `viewer.querySelector(${JSON.stringify(selector)})` : side === "editor" ? "markdownEditor" : "viewer"}).getBoundingClientRect();
-    return {x:Math.round(r.left+Math.min(150,r.width/2)),y:Math.round(r.top+${selector ? "Math.min(60,r.height/2)" : "100"})};
+const nestedWheelStateSource = `(p,owner=getEditorScrollDiagnostics().owner)=>{
+  const position=element=>{
+    const top=element.scrollTop,scrollHeight=element.scrollHeight,clientHeight=element.clientHeight;
+    return {top,scrollHeight,clientHeight,range:Math.max(0,scrollHeight-clientHeight)};
+  };
+  return {nested:position(p),outer:{editor:position(markdownEditor),preview:position(viewer),owner}};
+}`;
+let nestedWheelReceiptSequence = 0;
+async function nativeWheel(side, deltaY, selector = null, record = null) {
+  const receiptOwner = record ? ++nestedWheelReceiptSequence : null;
+  let failed = false, primaryFailure;
+  try {
+    const sampled = await exec(`(() => {
+    const target=${selector ? `viewer.querySelector(${JSON.stringify(selector)})` : side === "editor" ? "markdownEditor" : "viewer"},r=target.getBoundingClientRect();
+    const point={x:Math.round(r.left+Math.min(150,r.width/2)),y:Math.round(r.top+${selector ? "Math.min(60,r.height/2)" : "100"})};
+    if(${!!record}){
+      const state=(${nestedWheelStateSource})(target),style=getComputedStyle(target);
+      const identity=element=>element?({tag:element.tagName,id:element.id,
+        className:typeof element.className==='string'?element.className:null,connected:element.isConnected}):null;
+      const path=element=>{
+        const indexes=[];let node=element;
+        while(node&&node!==viewer){
+          const parent=node.parentElement;if(!parent)return null;
+          indexes.unshift(Array.prototype.indexOf.call(parent.children,node));node=parent;
+        }
+        return node===viewer?indexes:null;
+      };
+      const hit=document.elementFromPoint(point.x,point.y);
+      if(window.__nestedWheelReceipt)throw new Error('Nested wheel receipt already owned');
+      const owner=${receiptOwner},events=[],references=[],seen=new WeakSet();
+      let active=true,eventCount=0,overflow=false;
+      const phase=event=>({eventPhase:event.eventPhase,cancelable:event.cancelable,defaultPrevented:event.defaultPrevented});
+      const capture=event=>{
+        if(!active||seen.has(event))return;
+        seen.add(event);eventCount++;
+        if(events.length===2){overflow=true;return;}
+        const top=target.scrollTop,scrollHeight=target.scrollHeight,clientHeight=target.clientHeight;
+        references.push(event);
+        events.push({target:identity(event.target),targetPath:path(event.target),
+          targetIsSelectedPre:event.target===target,
+          containedInIntendedPre:!!event.target?.nodeType&&target.contains(event.target),
+          isTrusted:event.isTrusted,clientX:event.clientX,clientY:event.clientY,
+          deltaX:event.deltaX,deltaY:event.deltaY,deltaMode:event.deltaMode,
+          ctrlKey:event.ctrlKey,metaKey:event.metaKey,altKey:event.altKey,shiftKey:event.shiftKey,
+          nested:{connected:target.isConnected,top,scrollHeight,clientHeight,range:Math.max(0,scrollHeight-clientHeight)},
+          capture:phase(event),bubble:null,microtask:null,afterDispatch:null});
+      };
+      const bubble=event=>{
+        if(!active)return;
+        const index=references.indexOf(event);if(index<0)return;
+        const item=events[index];item.bubble=phase(event);
+        queueMicrotask(()=>{if(active)item.microtask=phase(event);});
+      };
+      const collector={owner,dispose(){
+        active=false;
+        document.removeEventListener('wheel',capture,true);
+        document.removeEventListener('wheel',bubble,false);
+        for(let index=0;index<events.length;index++)events[index].afterDispatch=phase(references[index]);
+        if(window.__nestedWheelReceipt!==collector)throw new Error('Nested wheel receipt ownership changed');
+        delete window.__nestedWheelReceipt;
+        references.length=0;
+        return {installed:true,eventCount,overflow,events};
+      }};
+      window.__nestedWheelReceipt=collector;
+      document.addEventListener('wheel',capture,{capture:true,passive:true});
+      document.addEventListener('wheel',bubble,{passive:true});
+      return {point,pre:{...state,nested:{...state.nested,overflowY:style.overflowY,
+        overscrollBehaviorY:style.overscrollBehaviorY},selectedPre:identity(target),selectedPrePath:path(target),
+        point,hit:{identity:identity(hit),path:path(hit),containedInIntendedPre:target.contains(hit)}}};
+    }
+    return point;
   })()`);
-  win.focus();
-  win.webContents.sendInputEvent({ type: "mouseWheel", ...point, deltaX: 0, deltaY });
-  await settle();
+    const point = record ? sampled.point : sampled;
+    if (record) {
+      record.evidence = "DOM hit sampled before input; received event phases are recorded separately.";
+      record.request = { side, selector, deltaX: 0, deltaY };
+      record.pre = sampled.pre;
+      const { nested, outer, hit, selectedPre, selectedPrePath } = record.pre;
+      const up = record.case === "top";
+      record.setup = {
+        intendedPre: selectedPre.tag === "PRE" && selectedPre.connected && selectedPrePath !== null,
+        nestedOverflow: nested.range > 1,
+        effectiveOverflow: nested.overflowY === "auto",
+        requestedEdge: up ? nested.top <= 1 : nested.top >= nested.range - 1,
+        pointDescendantHit: hit.containedInIntendedPre && hit.path !== null,
+        expectedBehavior: nested.overscrollBehaviorY === record.expectedBehavior,
+        ownerEditor: outer.owner === "editor",
+        editorTravel: (up ? outer.editor.top : outer.editor.range - outer.editor.top) > 5,
+        previewTravel: (up ? outer.preview.top : outer.preview.range - outer.preview.top) > 5,
+      };
+      check(`nested native wheel ${record.case} has overflowing edge hit behavior owner and outer-travel setup`,
+        Object.values(record.setup).every(Boolean), record);
+    }
+    win.focus();
+    win.webContents.sendInputEvent({ type: "mouseWheel", ...point, deltaX: 0, deltaY });
+    await settle();
+  } catch (error) {
+    failed = true; primaryFailure = error;
+    throw error;
+  } finally {
+    if (record) {
+      try {
+        record.received = await exec(`(() => {
+          const collector=window.__nestedWheelReceipt;
+          if(!collector)return {installed:false,eventCount:0,overflow:false,events:[]};
+          if(collector.owner!==${receiptOwner})throw new Error('Cannot dispose another nested wheel receipt');
+          return collector.dispose();
+        })()`);
+      } catch (error) {
+        if (failed) throw new AggregateError([primaryFailure, error], "Wheel input and receipt cleanup failed");
+        throw error;
+      }
+    }
+  }
+  if (record) {
+    const observed = record.received, event = observed.events[0];
+    check(`nested native wheel ${record.case} receives one trusted matching event`,
+      observed.installed && observed.eventCount === 1 && !observed.overflow &&
+      event?.isTrusted && event.containedInIntendedPre && event.nested.connected &&
+      event.clientX === record.pre.point.x && event.clientY === record.pre.point.y &&
+      event.deltaX === 0 && Number.isFinite(event.deltaY) &&
+      (record.case === "top" ? event.deltaY < 0 : event.deltaY > 0) &&
+      !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey, observed);
+  }
 }
 async function nativeClick(selector) {
   const point = await exec(`(() => {
@@ -934,6 +1050,11 @@ async function run() {
       check("horizontal and nested vertical scrollports remain independent",
         independent.overflows && Math.abs(independent.left - 90) < 1 && Math.abs(independent.top - 90) < 1 &&
         JSON.stringify(independent.before) === JSON.stringify(independent.after), independent);
+      receipt.nestedWheel = {};
+      const nestedWheelAfter = expression => exec(`(() => {
+        const after=${expression};
+        return {after,post:(${nestedWheelStateSource})(viewer.querySelector('pre:not(.mermaid)'),after.owner)};
+      })()`);
       for (const bottom of [true, false]) {
         await exec(`(() => {
           const p=viewer.querySelector('pre:not(.mermaid)'),r=p.getBoundingClientRect(),v=viewer.getBoundingClientRect();
@@ -944,12 +1065,23 @@ async function run() {
         await settle();
         await exec("markdownEditor.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));true");
         const before = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
-        await nativeWheel("preview", bottom ? -70 : 70, "pre:not(.mermaid)");
-        const after = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,...getEditorScrollDiagnostics()})");
+        const key = bottom ? "bottom" : "top";
+        const wheel = receipt.nestedWheel[key] = { case: key, expectedBehavior: "auto", before };
+        await nativeWheel("preview", bottom ? -70 : 70, "pre:not(.mermaid)", wheel);
+        const observed = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,...getEditorScrollDiagnostics()})");
+        const after = observed.after;
+        wheel.after = after; wheel.post = observed.post;
+        wheel.deltas = { nested: wheel.post.nested.top - wheel.pre.nested.top,
+          editor: after.editor - before.editor, preview: after.preview - before.preview,
+          sampledEditor: wheel.post.outer.editor.top - wheel.pre.outer.editor.top,
+          sampledPreview: wheel.post.outer.preview.top - wheel.pre.outer.preview.top };
         check(`native wheel chaining at the nested ${bottom ? "bottom" : "top"} follows direct preview intent`,
           before.owner === "editor" && after.owner === "preview" &&
           (after.preview - before.preview) * (bottom ? 1 : -1) > 5 &&
           (after.editor - before.editor) * (bottom ? 1 : -1) > 5, { before, after });
+        wheel.postEdge = wheel.post.nested.range > 1 &&
+          (bottom ? wheel.post.nested.top >= wheel.post.nested.range - 1 : wheel.post.nested.top <= 1);
+        check(`nested native wheel ${key} retains its requested nested edge after input`, wheel.postEdge, wheel);
       }
       for (const behavior of ["contain", "none"]) {
         await exec(`(() => {
@@ -959,10 +1091,19 @@ async function run() {
         })()`);
         await settle();
         const before = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
-        await nativeWheel("preview", -70, "pre:not(.mermaid)");
-        const after = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+        const wheel = receipt.nestedWheel[behavior] = { case: behavior, expectedBehavior: behavior, before };
+        await nativeWheel("preview", -70, "pre:not(.mermaid)", wheel);
+        const observed = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+        const after = observed.after;
+        wheel.after = after; wheel.post = observed.post;
+        wheel.deltas = { nested: wheel.post.nested.top - wheel.pre.nested.top,
+          editor: after.editor - before.editor, preview: after.preview - before.preview,
+          sampledEditor: wheel.post.outer.editor.top - wheel.pre.outer.editor.top,
+          sampledPreview: wheel.post.outer.preview.top - wheel.pre.outer.preview.top };
         check(`nested overscroll ${behavior} preserves outer position and ownership`,
           before.owner === "editor" && JSON.stringify(before) === JSON.stringify(after), { before, after });
+        wheel.postEdge = wheel.post.nested.range > 1 && wheel.post.nested.top >= wheel.post.nested.range - 1;
+        check(`nested native wheel ${behavior} retains its requested nested edge after input`, wheel.postEdge, wheel);
       }
       await exec("viewer.querySelector('pre:not(.mermaid)').removeAttribute('style');viewer.querySelector('pre:not(.mermaid) code').removeAttribute('style');true");
       await settle();
