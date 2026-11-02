@@ -2452,24 +2452,25 @@ async function run(win) {
           return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
         };
         // renderGeneration is the observable, NOT a patched window.renderMarkdown:
-        // renderMarkdown() does ++renderGeneration as its first statement, so the
-        // delta is exact and synchronous. A patched window.renderMarkdown was
-        // tried first and counted 0 even with the defect present, so it is not
-        // trustworthy here.
-        //
-        // The admitted fixture supplies the real source used by the fallback.
+        // the three known entry calls are synchronous, before its increment.
+        // Calibrate the real call before awaiting; a patched window function
+        // previously counted 0 even with the defect present.
+        const calibrationSource = originalMarkdown;
+        const calibrationBefore = renderGeneration;
+        const calibrationRender = window.renderMarkdown(calibrationSource, 'full');
+        const calibrationAfter = renderGeneration;
+        await calibrationRender;
+        await whenMermaidSettled();
         const genBefore = renderGeneration;
         document.body.classList.add('dark-mode');
         await updateMermaidTheme(true);
         await whenMermaidSettled();
         await new Promise(r => setTimeout(r, 300));
         const fullRenders = renderGeneration - genBefore;
-        // The observable is only exact while the increment really is the first
-        // statement. If a refactor moves anything in front of it - especially
-        // anything awaited - this scenario silently becomes a race that always
-        // reads 0 and therefore always passes.
+        // Admit only this exact synchronous prelude, not an arbitrary prefix
+        // that could await before the counter becomes observable.
         const observableIsSynchronous =
-          /^[^{]*\\{\\s*(\\/\\/[^\\n]*\\n\\s*)*(const|let|var)\\s+\\w+\\s*=\\s*\\+\\+renderGeneration/.test(
+          /^async function renderMarkdown\\(content, forceMode = null\\) \\{\\s*hideDocumentContextMenus\\(true\\);\\s*tableColumnSizing\\.reset\\(\\);\\s*tableCellSession\\?\\.sizing\\?\\.refresh\\(\\);\\s*const generation = \\+\\+renderGeneration;/.test(
             String(window.renderMarkdown)
           );
         const good = [...document.querySelectorAll('#viewer .mermaid')]
@@ -2478,6 +2479,9 @@ async function run(win) {
         return {
           fullRenders,
           observableIsSynchronous,
+          calibrationBefore,
+          calibrationAfter,
+          calibrationSourceMatches: calibrationSource === ${JSON.stringify(DOC_MIXED)},
           goodFound: !!good,
           goodLum: shape ? lum(getComputedStyle(shape).fill) : null
         };
@@ -2493,8 +2497,9 @@ async function run(win) {
     await sentinel.unmute();
   }
   check(
-    "13d's render observable is still the synchronous first statement",
-    themed.observableIsSynchronous === true,
+    "13d's render observable advances synchronously at render entry",
+    themed.observableIsSynchronous === true && themed.calibrationSourceMatches === true &&
+      themed.calibrationAfter === themed.calibrationBefore + 1,
     JSON.stringify(themed),
   );
   check(
@@ -3666,7 +3671,7 @@ async function run(win) {
 
   await exec(`window.__fitReplies = [];
     window.__fitReplyListener = (_event, data) => window.__fitReplies.push(data);
-    ipcRenderer.on('file-reload-result', window.__fitReplyListener); null`);
+    window.FoliaDocumentEvents.on('file-reload-result', window.__fitReplyListener); null`);
   async function reloadFit() {
     const before = await exec(`window.__fitReplies.length`);
     await exec(`document.getElementById('reloadFileBtn').click(); null`);
@@ -4085,7 +4090,7 @@ async function run(win) {
       Math.abs(wideSplit.nativeHeight - wideReader?.nativeHeight) <= 1,
     JSON.stringify(wideSplit));
   await exec(`contentWrapper.classList.remove('split-view'); null`);
-  await exec(`ipcRenderer.removeListener('file-reload-result', window.__fitReplyListener); null`);
+  await exec(`window.FoliaDocumentEvents.removeListener('file-reload-result', window.__fitReplyListener); null`);
 
   // Everything above ran with the sentinel watching. This is the assertion the
   // end-of-run screenshot could never make: nothing visibly broke at any point

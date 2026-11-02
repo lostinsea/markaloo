@@ -2808,7 +2808,7 @@ const REVERTS = [
       // ever stopped reaching the renderer's own binding, the fallback would not
       // fire, `fullRenders` would stay 0, and R104 would go VACUOUS with the
       // defect fully present. These two assertions fail loudly in that case.
-      /13d's render observable is still the synchronous first statement/,
+      /13d's render observable advances synchronously at render entry/,
       /window\.originalMarkdown really writes through to the renderer's own binding/,
     ],
   },
