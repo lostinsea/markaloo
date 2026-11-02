@@ -78,13 +78,50 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force ci-test-results | Out-Null
-          "table-cells=NOT-RUN`neditor-scroll=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
+          "table-cells=NOT-RUN`neditor-scroll=NOT-RUN`nshared-supplemental=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
           npm run test:table-cells 2>&1 | Tee-Object -FilePath ci-test-results\table-cells.log
           $tableExit = $LASTEXITCODE
-          "table-cells=$tableExit`neditor-scroll=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
+          "table-cells=$tableExit`neditor-scroll=NOT-RUN`nshared-supplemental=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
           npm run test:editor-scroll 2>&1 | Tee-Object -FilePath ci-test-results\editor-scroll.log
           $scrollExit = $LASTEXITCODE
-          "table-cells=$tableExit`neditor-scroll=$scrollExit" | Set-Content ci-test-results\exit-codes.txt
+          "table-cells=$tableExit`neditor-scroll=$scrollExit`nshared-supplemental=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
+          $sharedSupplementalExit = "NOT-RUN"
+          $inputReceiptPath = "screenshots\table-cell-editor\input\last-run.json"
+          if ($tableExit -eq 0) {
+            $sharedReason = "The full table command succeeded; no supplemental attempt."
+          } elseif (Test-Path "screenshots\table-cell-editor\shared") {
+            $sharedReason = "Shared has startup evidence; it must not be retried."
+          } elseif (-not (Test-Path $inputReceiptPath)) {
+            $sharedReason = "No Input exit receipt proves that the chain stopped before Shared."
+          } else {
+            $inputReceipt = $null
+            $sharedReason = "Input does not record a failed exit; Shared was not retried."
+            try {
+              $inputReceipt = Get-Content -Raw $inputReceiptPath | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
+            } catch {
+              $sharedReason = "Input receipt could not be read: $($_.Exception.Message)"
+              Write-Warning $sharedReason
+            }
+            if ($null -ne $inputReceipt) {
+              $code = $inputReceipt.detail.code
+              if ($inputReceipt -is [System.Management.Automation.PSCustomObject] -and
+                  $inputReceipt.detail -is [System.Management.Automation.PSCustomObject] -and
+                  $inputReceipt.partition -is [string] -and $inputReceipt.partition -ceq "input" -and
+                  $inputReceipt.stage -is [string] -and $inputReceipt.stage -ceq "exit" -and
+                  ($code -is [int] -or $code -is [long]) -and $code -ne 0) {
+                # Input's failed exit stops the existing && chain before Shared.
+                $sharedReason = "Input exited $code before Shared; attempting Shared once."
+                $sharedSupplementalExit = "STARTED"
+                $sharedReason | Set-Content ci-test-results\shared-supplemental-status.txt
+                "table-cells=$tableExit`neditor-scroll=$scrollExit`nshared-supplemental=$sharedSupplementalExit" | Set-Content ci-test-results\exit-codes.txt
+                & .\node_modules\.bin\electron.cmd test\test-table-cell-editor.js --partition=shared 2>&1 |
+                  Tee-Object -FilePath ci-test-results\table-cells-shared-supplemental.log
+                $sharedSupplementalExit = $LASTEXITCODE
+              }
+            }
+          }
+          "exit=$sharedSupplementalExit`nreason=$sharedReason" | Set-Content ci-test-results\shared-supplemental-status.txt
+          "table-cells=$tableExit`neditor-scroll=$scrollExit`nshared-supplemental=$sharedSupplementalExit" | Set-Content ci-test-results\exit-codes.txt
           if ($tableExit -ne 0 -or $scrollExit -ne 0) { exit 1 }
 
       - name: Retain Windows table and scroll evidence
