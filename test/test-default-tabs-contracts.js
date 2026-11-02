@@ -32,7 +32,7 @@ const originalJoin = between(source,
   "\n  const openDefaultFixture =");
 const admissionHelper = between(source,
   "  const openDefaultFixture = async (filePath, body, marker) => {",
-  "\n  const tabCAdmission =");
+  "\n  const defaultSaveFixtureBody =");
 const finalOracle = between(source,
   "  const raceOwns = (snapshot, fixture, text) =>",
   '\n  await clearFixtureTabs("file-open race teardown")');

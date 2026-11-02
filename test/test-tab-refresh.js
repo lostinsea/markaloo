@@ -22021,6 +22021,10 @@ async function run(win) {
   }
   const openDefaultFixture = async (filePath, body, marker) => {
     const failures = [];
+    const failurePhases = [];
+    let phase = "checking observation availability";
+    let localOwner = "unobserved";
+    let mainOwner = "unobserved";
     let installed = false;
     let snapshot;
     let chooserCalls = 0;
@@ -22039,10 +22043,13 @@ async function run(win) {
         throw new Error("Default-fixture observation is already occupied");
       }
       installed = true;
+      phase = "installing page observation";
       await installDialogBatchPageObservation(exec);
       await exec(`window.__dialogBatchNative.phase = 'default fixture'; true`);
       restoreChooser = replaceMethod(dialog, "showOpenDialog", chooseFixture);
+      phase = "opening native chooser";
       await exec("window.folia.openFileDialog()");
+      phase = "waiting for original processor";
       const reached = await waitUntil(async () => {
         if (chooserFailure) throw chooserFailure;
         return exec(`window.__dialogBatchNative.processors.length > 0`);
@@ -22050,9 +22057,11 @@ async function run(win) {
       if (!reached || chooserCalls !== 1) {
         throw new Error("Default fixture did not reach its actual file-open processor");
       }
+      phase = "joining original processor and render";
       await boundedDialogWork(exec(`(${joinDefaultFileOpenWork.toString()})(
         ${JSON.stringify([{ path: filePath, prefix: body.slice(0, 24) }])},
         'default fixture')`), "default-fixture original processor and rendering", 8000);
+      phase = "capturing rendered owner";
       snapshot = await exec(`(() => {
         const tab = window.CustomTabs.getActiveTab();
         return {
@@ -22069,24 +22078,33 @@ async function run(win) {
           viewer: document.getElementById('viewer').textContent,
         };
       })()`);
+      phase = "settling session layout";
       await exec("window.CustomTabs.settleSessionLayout()");
+      phase = "flushing Main";
       await exec("window.folia.getVersion()");
-      if (snapshot.path !== filePath || snapshot.original !== body ||
+      phase = "validating captured owner";
+      localOwner = !(snapshot.path !== filePath || snapshot.original !== body ||
           snapshot.tab?.path !== filePath || snapshot.tab.content !== body ||
           snapshot.tab.original !== body || snapshot.tab.dirty !== false ||
           snapshot.owner?.tabId !== snapshot.tab.id ||
           snapshot.owner?.documentRef !== snapshot.descriptor?.ref ||
           snapshot.descriptor?.logicalPath !== filePath ||
           snapshot.pending.count !== 0 || snapshot.unsaved !== false ||
-          snapshot.frozen !== false || !snapshot.viewer.includes(marker) ||
-          !(await defaultMainOwns(snapshot))) {
+          snapshot.frozen !== false || !snapshot.viewer.includes(marker));
+      if (localOwner) {
+        phase = "checking Main currentness";
+        mainOwner = await defaultMainOwns(snapshot);
+      }
+      if (!localOwner || !mainOwner) {
         throw new Error("Default fixture has no clean rendered Main owner: " +
           JSON.stringify(snapshot));
       }
     } catch (error) {
       failures.push(error);
+      failurePhases.push(phase);
     } finally {
       if (restoreChooser) {
+        phase = "restoring chooser";
         try {
           if (dialog.showOpenDialog !== chooseFixture) {
             throw new Error("Default-fixture chooser ownership changed");
@@ -22094,23 +22112,51 @@ async function run(win) {
           restoreChooser();
         } catch (error) {
           failures.push(error);
+          failurePhases.push(phase);
         }
       }
       if (installed) {
+        phase = "restoring page observation";
         try {
           if (await restoreDialogBatchPageObservation(exec) !== true) {
             throw new Error("Default-fixture observation cleanup was not confirmed");
           }
         } catch (error) {
           failures.push(error);
+          failurePhases.push(phase);
         }
       }
     }
-    if (failures.length) throw new AggregateError(failures, "Default fixture admission failed");
+    if (failures.length) {
+      throw new AggregateError(failures, "Default fixture admission failed: " +
+        JSON.stringify({
+          phase, chooserCalls, localOwner, mainOwner,
+          captured: snapshot ? {
+            pathMatches: snapshot.path === filePath,
+            sourceMatches: snapshot.original === body,
+            tabSourceMatches: snapshot.tab?.content === body,
+            markerPresent: typeof snapshot.viewer === "string" ?
+              snapshot.viewer.includes(marker) : "unobserved",
+            ownerTabMatches: snapshot.owner && snapshot.tab ?
+              snapshot.owner.tabId === snapshot.tab.id : "unobserved",
+            ownerRefMatches: snapshot.owner && snapshot.descriptor ?
+              snapshot.owner.documentRef === snapshot.descriptor.ref : "unobserved",
+            pendingCount: snapshot.pending?.count ?? "unobserved",
+            unsaved: snapshot.unsaved ?? "unobserved", frozen: snapshot.frozen ?? "unobserved",
+          } : "unobserved",
+          failures: failures.map((error, index) => ({
+            phase: failurePhases[index], name: error?.name ?? typeof error,
+            message: error?.message ?? String(error), stack: error?.stack ?? "unavailable",
+          })),
+        }));
+    }
     return snapshot;
   };
+  const defaultSaveFixtureBody = fs.readFileSync(fileA, "utf8");
+  check("default view-mode Save fixture retains the exact SPLIT disk setup",
+    defaultSaveFixtureBody === longDoc("SPLIT"));
   const tabCAdmission = await openDefaultFixture(
-    fileA, fs.readFileSync(fileA, "utf8"), "Alpha");
+    fileA, defaultSaveFixtureBody, "SPLIT body 0");
   const tabC = tabCAdmission.tab.id;
   const undoSave = await exec(`
     (async () => {

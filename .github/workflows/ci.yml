@@ -223,6 +223,7 @@ jobs:
             ci-test-results/selected-proofs.log
             ci-test-results/tabs-unusable.stdout.log
             ci-test-results/tabs-unusable.stderr.log
+            screenshots/tab-refresh-FAILED.png
             tmp/about-updates/
           if-no-files-found: error
           retention-days: 7
@@ -291,6 +292,7 @@ jobs:
           path: |
             ci-test-results/tabs-unusable.stdout.log
             ci-test-results/tabs-unusable.stderr.log
+            screenshots/tab-refresh-FAILED.png
           if-no-files-found: error
           retention-days: 7
 

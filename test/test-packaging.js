@@ -1488,6 +1488,33 @@ async function main() {
       !actorContractsRouted({ ...pkg.scripts,
         "test:actor-contracts": actorContractCommands.slice(0, -1).join(" && ") +
           " || " + teardownQuestionCommand }));
+  let defaultFixtureSourceOutput = "";
+  let defaultFixtureSourceError = null;
+  try {
+    defaultFixtureSourceOutput = execFileSync(process.execPath,
+      [path.join(ROOT, "test", "test-default-save-contracts.js")],
+      { cwd: ROOT, encoding: "utf8", timeout: 30000, windowsHide: true, stdio: "pipe" });
+  } catch (error) {
+    defaultFixtureSourceError = {
+      message: error.message, status: error.status, signal: error.signal,
+      stdout: String(error.stdout || ""), stderr: String(error.stderr || ""),
+    };
+  }
+  const defaultFixtureSourceSummary =
+    "276 source/VM controls passed; 0 groups failed; native execution NOT RUN";
+  const defaultFixtureSourcePassed = (output, error) =>
+    !error && output.trim() === defaultFixtureSourceSummary;
+  check("default fixture source controls preserve SPLIT admission and original failure evidence",
+    defaultFixtureSourcePassed(defaultFixtureSourceOutput, defaultFixtureSourceError),
+    JSON.stringify(defaultFixtureSourceError || { stdout: defaultFixtureSourceOutput }));
+  check("default fixture source gate rejects zero partial duplicate and failed control results",
+    defaultFixtureSourcePassed(defaultFixtureSourceSummary, null) &&
+      [defaultFixtureSourceSummary.replace("276 ", "0 "),
+        defaultFixtureSourceSummary.replace("276 ", "275 "),
+        defaultFixtureSourceSummary + "\n" + defaultFixtureSourceSummary,
+        defaultFixtureSourceSummary.replace("0 groups failed", "1 groups failed")]
+        .every(output => !defaultFixtureSourcePassed(output, null)) &&
+      !defaultFixtureSourcePassed(defaultFixtureSourceSummary, { status: 1 }));
   const reloadPreflight = 'require("./test-reload-transport-contract.js").run(check);';
   check("direct focused and companion tabs launches cannot omit the actual-code contract preflight",
     /^try \{\r?\n  require\("\.\/test-reload-transport-contract\.js"\)\.run\(check\);\r?\n\} catch \(error\) \{\r?\n  failStartup\("reload contract", error\);\r?\n\}/m.test(reloadHarness) &&

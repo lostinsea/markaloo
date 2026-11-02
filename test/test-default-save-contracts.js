@@ -89,6 +89,261 @@ function sourceContracts() {
   ]) check(actors.includes(expression), "Retained queue/deadline contract: " + expression);
 }
 
+const turn = () => new Promise(resolve => setImmediate(resolve));
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
+const defaultAdmissionSource = between(source, "  const defaultMainOwns = async (snapshot) => {",
+  "  const defaultSaveFixtureBody = ");
+const defaultAdmissionCaller = between(source, "  const defaultSaveFixtureBody = ",
+  "  const undoSave = await exec(");
+const longDocSource = between(source, "  const longDoc = (marker) =>",
+  '\n\n  write(fileA, longDoc("V1"));');
+const longDoc = vm.compileFunction(longDocSource + "\nreturn longDoc;")();
+
+function defaultAdmissionFixture(options = {}) {
+  const fixture = pageFixture(), { page, control, context } = fixture;
+  const body = options.body ?? longDoc("SPLIT");
+  if (options.deletionState) control.query = options.deletionState;
+  Object.assign(control.tab, { content: body, originalContent: body, hasUnsavedChanges: false });
+  page.originalMarkdown = page.markdownEditor.value = body;
+  page.viewer.textContent = body;
+  page.hasUnsavedWorkForReload = () => false;
+  const getElement = page.document.getElementById;
+  page.document.getElementById = id => id === "viewer" ? page.viewer : getElement(id);
+  control.pending.count = 0;
+  const processor = deferred(), render = deferred();
+  const trace = [], setup = [];
+  let reads = 0, snapshotReads = 0, currentCalls = 0, ownerReads = 0, deletionReads = 0;
+  let observation;
+  const win = {}, chooserOptions = { properties: ["openFile"] };
+  const dialog = { showOpenDialog() { throw new Error("Unintercepted chooser"); } };
+  const originalChooser = Object.getOwnPropertyDescriptor(dialog, "showOpenDialog");
+  page.folia.queryDocumentDeletionState = () => { deletionReads++; return control.query; };
+  page.CustomTabs.settleSessionLayout = async () => { trace.push("layout"); };
+  page.folia.getVersion = async () => { trace.push("Main flush"); };
+  page.folia.openFileDialog = async () => {
+    trace.push("chooser");
+    const choice = await dialog.showOpenDialog(win, chooserOptions);
+    assert.deepEqual(Array.from(choice.filePaths), [control.tab.filePath]);
+    const record = { packet: { path: control.tab.filePath }, eventUndefined: true,
+      phase: observation.phase, settled: false };
+    record.promise = processor.promise.then(() => {
+      record.settled = true;
+      const painted = { prefix: body.slice(0, 24), phase: observation.phase, settled: false };
+      painted.promise = render.promise.then(() => { painted.settled = true; });
+      observation.renders.push(painted);
+      return true;
+    });
+    observation.processors.push(record);
+  };
+  const host = {
+    win, dialog, expectedChooserOptions: chooserOptions,
+    isDeepStrictEqual: require("node:util").isDeepStrictEqual,
+    __shutdown: {
+      documentAdmissionIsCurrent: () => { currentCalls++; return options.current !== false; },
+      documentSessionState: () => {
+        ownerReads++;
+        const owner = { ...control.owner, readTarget: control.descriptor.readTarget };
+        if (options.wrongMainOwner) owner.documentGeneration++;
+        return { owners: [owner] };
+      },
+    },
+    exec: async script => {
+      if (script.includes("const tab = window.CustomTabs.getActiveTab();")) {
+        snapshotReads++;
+        options.beforeSnapshot?.(fixture);
+      }
+      const value = await vm.runInContext(script, context, { timeout: 1000 });
+      return value === undefined ? undefined : clone(value);
+    },
+    installDialogBatchPageObservation: async () => {
+      observation = { processors: [], renders: [], phase: "" };
+      page.__dialogBatchNative = observation;
+      trace.push("install");
+    },
+    restoreDialogBatchPageObservation: async () => {
+      trace.push("restore observation");
+      await Promise.allSettled([...observation.processors, ...observation.renders]
+        .map(record => record.promise));
+      assert.equal(page.__dialogBatchNative, observation);
+      delete page.__dialogBatchNative;
+      if (options.observationError) throw options.observationError;
+      return true;
+    },
+    replaceMethod: (object, key, replacement) => {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      Object.defineProperty(object, key, { ...descriptor, value: replacement });
+      return () => {
+        trace.push("restore chooser");
+        Object.defineProperty(object, key, descriptor);
+        if (options.chooserError) throw options.chooserError;
+      };
+    },
+    waitUntil: async (predicate, budget) => { assert.equal(budget, 8000); return predicate(); },
+    boundedDialogWork: (work, label, budget) => {
+      assert.equal(label, "default-fixture original processor and rendering");
+      assert.equal(budget, 8000);
+      trace.push("join");
+      return work;
+    },
+    fs: { readFileSync: (file, encoding) => {
+      assert.equal(file, control.tab.filePath);
+      assert.equal(encoding, "utf8");
+      reads++;
+      return body;
+    } },
+    fileA: control.tab.filePath, longDoc,
+    check: (name, condition) => setup.push({ name, condition }),
+  };
+  const api = vm.runInNewContext(`(() => {
+    ${defaultAdmissionSource}
+    return { openDefaultFixture, caller: async () => {
+      ${defaultAdmissionCaller}
+      return { tabCAdmission, tabC };
+    } };
+  })()`, host, { timeout: 1000 });
+  const start = (caller = false, marker = "SPLIT body 0") => {
+    let settled = false;
+    const work = caller ? api.caller() : api.openDefaultFixture(control.tab.filePath, body, marker);
+    const outcome = work.then(value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; });
+    return { outcome, settled: () => settled };
+  };
+  const finish = async work => {
+    await turn();
+    processor.resolve();
+    await turn();
+    const renderHeld = !work.settled() && snapshotReads === 0 &&
+      observation.renders.length === 1 && observation.renders[0].settled === false;
+    if (options.renderError) render.reject(options.renderError);
+    else render.resolve();
+    const result = await work.outcome;
+    check(renderHeld, "Actual default admission joins its original unfinished render before reading ownership");
+    return result;
+  };
+  const restored = () => {
+    const descriptor = Object.getOwnPropertyDescriptor(dialog, "showOpenDialog");
+    return !Object.hasOwn(page, "__dialogBatchNative") &&
+      Reflect.ownKeys(originalChooser).every(key => descriptor[key] === originalChooser[key]) &&
+      trace.filter(step => step === "restore chooser").length === 1 &&
+      trace.filter(step => step === "restore observation").length === 1;
+  };
+  return { fixture, body, trace, setup, start, finish, restored,
+    counts: () => ({ reads, snapshotReads, currentCalls, ownerReads, deletionReads }) };
+}
+
+async function defaultFixtureCallerContracts() {
+  const fixture = defaultAdmissionFixture(), work = fixture.start(true);
+  await turn();
+  check(!work.settled() && fixture.counts().snapshotReads === 0 &&
+    fixture.trace.includes("join") && !fixture.trace.includes("layout"),
+  "Actual default admission waits for the original processor before reading its owner");
+  const result = await fixture.finish(work);
+  check(!result.error, "Actual default Save caller completes with its original clean SPLIT body and marker");
+  check(fixture.counts().reads === 1 && fixture.setup.length === 1 &&
+    fixture.setup[0].condition === true && fixture.body === longDoc("SPLIT") &&
+    fixture.body.includes("SPLIT body 0") && !fixture.body.includes("Alpha") &&
+    result.value.tabC === fixture.fixture.control.tab.id &&
+    fixture.counts().currentCalls === 1 && fixture.counts().ownerReads === 1 &&
+    fixture.counts().deletionReads === 1 && fixture.restored(),
+  "Actual default Save caller admits its exact once-read SPLIT body through the genuine helper");
+  const wrong = defaultAdmissionFixture({ body: "# Alpha\n\nstale disk body\n" });
+  const failed = await wrong.finish(wrong.start(true));
+  check(failed.error?.name === "AggregateError" && wrong.setup[0].condition === false &&
+    wrong.counts().reads === 1 && wrong.counts().currentCalls === 0 && wrong.restored(),
+  "Actual caller rejects the wrong disk setup rather than rewriting the fixture or hiding the check");
+}
+
+async function defaultFixtureOwnerContracts() {
+  for (const [label, beforeSnapshot] of [
+    ["source", ({ page }) => { page.originalMarkdown = "WRONG SOURCE"; }],
+    ["cached source", ({ control }) => { control.tab.content = "WRONG CACHE"; }],
+    ["original source", ({ control }) => { control.tab.originalContent = "WRONG BASELINE"; }],
+    ["owner", ({ control }) => { control.owner.tabId++; }],
+    ["reference", ({ control }) => { control.owner.documentRef = "FOREIGN"; }],
+    ["pending save", ({ control }) => { control.pending.count = 1; }],
+    ["dirty state", ({ control }) => { control.tab.hasUnsavedChanges = true; }],
+  ]) {
+    const fixture = defaultAdmissionFixture({ beforeSnapshot });
+    const result = await fixture.finish(fixture.start());
+    check(result.error?.name === "AggregateError" && fixture.counts().currentCalls === 0 &&
+      fixture.counts().deletionReads === 0 && fixture.restored(),
+    "Actual admission rejects " + label + " without evaluating short-circuited Main predicates");
+  }
+  for (const [options, ownerReads, deletionReads] of [
+    [{ current: false }, 0, 0],
+    [{ wrongMainOwner: true }, 1, 0],
+    [{ deletionState: { known: false, unresolved: false } }, 1, 1],
+    [{ deletionState: { known: true, unresolved: true } }, 1, 1],
+  ]) {
+    const fixture = defaultAdmissionFixture(options);
+    const result = await fixture.finish(fixture.start());
+    check(result.error?.name === "AggregateError" && fixture.counts().currentCalls === 1 &&
+      fixture.counts().ownerReads === ownerReads &&
+      fixture.counts().deletionReads === deletionReads && fixture.restored(),
+    "Actual admission rejects noncurrent, foreign, unknown or unresolved Main ownership without extra queries");
+  }
+}
+
+async function defaultFixtureDiagnosticsContracts() {
+  const stale = defaultAdmissionFixture();
+  const rejected = await stale.finish(stale.start(false, "Alpha"));
+  const prefix = "Default fixture admission failed: ";
+  check(rejected.error?.name === "AggregateError" && rejected.error.message.startsWith(prefix),
+    "Actual default admission retains inspectable failure-only diagnostic evidence");
+  const detail = JSON.parse(rejected.error.message.slice(prefix.length));
+  check(detail.captured.sourceMatches === true && detail.captured.markerPresent === false &&
+    detail.localOwner === false && detail.mainOwner === "unobserved" &&
+    stale.counts().currentCalls === 0 && stale.counts().deletionReads === 0 && stale.restored(),
+  "Actual failure evidence distinguishes a stale Alpha marker without retrying Main predicates");
+  const operation = new RangeError("original render sentinel");
+  const chooser = new Error("original chooser cleanup sentinel");
+  const observation = new TypeError("original observation cleanup sentinel");
+  const failed = defaultAdmissionFixture({
+    renderError: operation, chooserError: chooser, observationError: observation,
+  });
+  const result = await failed.finish(failed.start());
+  const diagnostic = JSON.parse(result.error.message.slice(prefix.length));
+  const expected = [operation, chooser, observation];
+  check(result.error.errors.length === expected.length &&
+    expected.every((error, index) => result.error.errors[index] === error &&
+      diagnostic.failures[index].name === error.name &&
+      diagnostic.failures[index].message === error.message &&
+      diagnostic.failures[index].stack === error.stack) &&
+    diagnostic.failures[0].phase === "joining original processor and render" &&
+    diagnostic.failures[1].phase === "restoring chooser" &&
+    diagnostic.failures[2].phase === "restoring page observation" &&
+    diagnostic.captured === "unobserved" && diagnostic.mainOwner === "unobserved" &&
+    failed.counts().snapshotReads === 0 && failed.counts().currentCalls === 0 && failed.restored(),
+  "Actual aggregate retains original operation and independent cleanup errors in the outer stack");
+  check(expected.every(error => result.error.stack.includes(error.message)),
+    "The existing outer stack printer can see each original operation and cleanup failure");
+  const malformed = defaultAdmissionFixture({
+    beforeSnapshot: ({ page }) => { page.viewer.textContent = null; },
+  });
+  const malformedResult = await malformed.finish(malformed.start());
+  const malformedDetail = JSON.parse(malformedResult.error.message.slice(prefix.length));
+  check(malformedResult.error.errors[0].name === "TypeError" &&
+    malformedDetail.captured.markerPresent === "unobserved" &&
+    malformedDetail.failures[0].phase === "validating captured owner" &&
+    malformedDetail.mainOwner === "unobserved" &&
+    malformed.counts().currentCalls === 0 && malformed.restored(),
+  "Diagnostic formatting cannot replace the original malformed-viewer validation error");
+  const missing = defaultAdmissionFixture({
+    beforeSnapshot: ({ page }) => { page.CustomTabs.getDocumentIdentityForTab = () => null; },
+  });
+  const missingResult = await missing.finish(missing.start());
+  const missingDetail = JSON.parse(missingResult.error.message.slice(prefix.length));
+  check(missingDetail.captured.ownerTabMatches === "unobserved" &&
+    missingDetail.captured.ownerRefMatches === "unobserved" &&
+    missingDetail.mainOwner === "unobserved" && missing.counts().currentCalls === 0 &&
+    missing.restored(),
+  "Missing captured identities are unobserved rather than matching two absent fields");
+}
+
 function pageFixture() {
   const saved = "# Alpha\n\nSAVED\n";
   const typed = "# Alpha\n\nTYPED\n";
@@ -978,7 +1233,8 @@ async function questionObserverContracts() {
   for (const run of [sourceContracts, consentContracts, requestContracts,
     subscriptionContracts, sameTaskContracts, deliveryContracts,
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
-    inputMenuContracts]) {
+    inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,
+    defaultFixtureDiagnosticsContracts]) {
     try { await run(); }
     catch (error) {
       failures++;
