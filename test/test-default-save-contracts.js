@@ -804,7 +804,290 @@ function execBody(start, end, values = {}) {
   return vm.runInNewContext(raw.slice(raw.indexOf("`"), raw.lastIndexOf("`") + 1), values);
 }
 
-function sameTaskContracts() {
+async function discardHistoryContracts() {
+  const historyController = fs.readFileSync(
+    path.join(__dirname, "test-editor-history-controls.js"), "utf8").replace(/\r\n/g, "\n");
+  const historyFixture = vm.runInNewContext(`(() => {
+    ${between(historyController, 'const root = path.join(__dirname, "..");', "\nfor (const [id")}
+    return fixture;
+  })()`, { __dirname, fs: { readFileSync: (file, encoding) => {
+    const relative = path.relative(path.join(__dirname, "..", "src"), file);
+    assert.ok(!relative.startsWith("..") && !path.isAbsolute(relative));
+    return fs.readFileSync(path.join(producerRoot, relative), encoding);
+  } }, path, vm, assert, console, Event });
+  const beforeBody = execBody("  const discardBefore = await exec(`", "\n  const s7Question = ");
+  const afterBody = execBody("  const discardAfter = await exec(`", "\n  const s7Questions = ");
+  const guard = (name, discard) => {
+    let accepted;
+    const text = between(source, '  check(\n    "' + name + '",', "\n  );") + "\n  );";
+    vm.runInNewContext("const discard = " + JSON.stringify(discard) + ";\n" + text,
+      { discardOut: JSON.stringify(discard),
+      isDeepStrictEqual: require("node:util").isDeepStrictEqual,
+      check: (_name, condition) => { accepted = condition; } });
+    return accepted === true;
+  };
+  const diverged = "the edit-mode session really did diverge from the saved content";
+  const repainted = "the preview is repainted from the saved content, not left showing the discard";
+  const restored = "undo cannot resurrect discarded content, and older undo points survive";
+  const make = () => {
+    const f = historyFixture(), c = f.context;
+    f.seed("# Alpha\n\nS7_SAVED\n");
+    c.isEditMode = false;
+    c.viewer = { textContent: c.originalMarkdown };
+    Object.defineProperty(c.window, "originalMarkdown", { get: () => c.originalMarkdown });
+    c.markdownEditor.dispatchEvent = event => f.emit(event.type);
+    vm.runInContext(between(renderer, "function captureEditSessionBaseline(force)",
+      "\n// Called by custom-tabs.js"), c);
+    c.toggleEditBtn = { click: () => {
+      c.isEditMode = true;
+      actualOpenPrimer(c);
+    } };
+    const render = c.renderMarkdown;
+    c.renderMarkdown = content => { c.viewer.textContent = content; return render(content); };
+    return f;
+  };
+  const actualOpenPrimer = context => vm.runInContext(between(renderer,
+    "    captureEditSessionBaseline(true);\n    markdownEditor.value",
+    "\n    if (!editorScroll.enter())"), context);
+  const execute = async (f, body) => {
+    let settled = false;
+    const outcome = vm.runInContext(body, f.context, { timeout: 1000 })
+      .then(value => { settled = true; return { value: clone(value) }; },
+        error => { settled = true; return { error }; });
+    // Drain the existing controller's discrete jobs, not native wall-clock waits.
+    for (let turnIndex = 0; turnIndex < 20 && !settled; turnIndex++) {
+      for (const [id, callback] of [...f.timers]) { f.timers.delete(id); callback(); }
+      f.finishRenders(); f.flushMicrotasks(); await turn();
+    }
+    assert.ok(settled, "Actual S7 history work must settle under the existing controlled scheduler");
+    return outcome;
+  };
+  const actual = make();
+  const before = await execute(actual, beforeBody);
+  assert.ifError(before.error);
+  check(guard(diverged, { before: before.value }),
+    "Actual S7 inputs and Undo Undo Redo finish at exact EARLY with OLD SAVED undo and TYPED redo: " +
+      JSON.stringify(before.value));
+  for (const changed of [
+    { viewerShowsEarly: false, viewerShowsSaved: true },
+    { viewerShowsEarly: false, viewerShowsSaved: false },
+    { content: "# Alpha\n\nS7_TYPED\n" }, { undoSources: ["# Alpha\n\nS7_SAVED\n"] },
+    { redoSources: [] },
+  ]) check(!guard(diverged, { before: { ...before.value, ...changed } }),
+    "Actual S7 native divergence gate refuses wrong source preview or exact history: " + JSON.stringify(changed));
+  for (const [label, body] of [
+    ["first Undo", beforeBody.replace("      historyUndo();", "")],
+    ["second Undo", beforeBody.replace(
+      "      historyUndo();\n      await new Promise(r => setTimeout(r, 400));\n      historyRedo();",
+      "      await new Promise(r => setTimeout(r, 400));\n      historyRedo();")],
+    ["Redo", beforeBody.replace("      historyRedo();", "")],
+  ]) {
+    assert.notEqual(body, beforeBody, "Counterfactual must remove the named actual S7 history call");
+    const result = await execute(make(), body);
+    assert.ifError(result.error);
+    check(!guard(diverged, { before: result.value }),
+      "Actual S7 native divergence gate rejects a missing " + label);
+  }
+  const unpainted = make(), ordinaryRender = unpainted.context.renderMarkdown;
+  unpainted.context.renderMarkdown = content => content.includes("S7_TYPED")
+    ? { then: done => done() } : ordinaryRender(content);
+  const rejected = await execute(unpainted, beforeBody);
+  check(!!rejected.error && /actual TYPED source and preview/.test(rejected.error.message) &&
+    unpainted.context.markdownEditor.value === "# Alpha\n\nS7_TYPED\n",
+  "S7 refuses missing TYPED preview before any Undo or Redo can conceal the failed setup");
+  actual.run("{" + between(renderer, "      const baseline = editSessionBaseline;",
+    "      // The tab record holds its own copy") + "}");
+  actual.context.isEditMode = false;
+  actual.context.renderMarkdown(actual.context.originalMarkdown);
+  actual.finishRenders();
+  const after = await execute(actual, afterBody);
+  assert.ifError(after.error);
+  check(guard(repainted, after.value) && guard(restored, after.value),
+    "Actual history restore and native post-discard guards exclude both edits and preserve mandatory OLD Undo");
+  for (const marker of ["S7_EARLY", "S7_TYPED"]) {
+    const leftover = clone(after.value);
+    leftover.after["viewerShows" + (marker === "S7_EARLY" ? "Early" : "Typed")] = true;
+    check(!guard(repainted, leftover), "Native discard preview gate rejects leftover " + marker);
+    for (const stack of ["undoSources", "redoSources"]) {
+      const resurrected = clone(after.value);
+      resurrected.after[stack].push("# Alpha\n\n" + marker + "\n");
+      check(!guard(restored, resurrected),
+        "Native discarded-history gate rejects " + marker + " remaining in " + stack);
+    }
+  }
+  const lostOld = clone(after.value); lostOld.undone.olderPointReached = false;
+  check(!guard(restored, lostOld), "The original older Undo point remains mandatory after discard");
+}
+
+function reloadPreviewFixture(options = {}) {
+  const fixture = pageFixture(), { page, control, context } = fixture;
+  const content = "# Beta\n\nS9D_SECOND\n";
+  control.tab.filePath = page.currentFilePath = "C:\\fixture\\beta.md";
+  Object.assign(control.tab, { content, originalContent: content, hasUnsavedChanges: false });
+  Object.assign(control.owner, { pathKey: control.tab.filePath.toLowerCase() });
+  Object.assign(control.descriptor, { pathKey: control.owner.pathKey,
+    logicalPath: control.tab.filePath, readTarget: control.tab.filePath });
+  Object.assign(control.state, { dirty: false });
+  Object.assign(page, { originalMarkdown: content, hasUnsavedChanges: false,
+    undoHistory: ["# Beta\n\nS9D_BASE\n"], redoHistory: [], exactTypingSource: content });
+  page.markdownEditor.value = content;
+  page.viewer.textContent = "# Beta\n\nS9D_FIRST\n";
+  control.pending.count = 0;
+  control.disk = content;
+  control.current = true;
+  const other = { id: 22, filePath: "C:\\fixture\\other.md",
+    content: "OTHER", originalContent: "OTHER", hasUnsavedChanges: false };
+  page.CustomTabs.getTabs = () => [control.tab, other];
+  vm.runInContext(between(renderer, "function historySnapshot()", "\nfunction historyRestore("), context);
+  const render = deferred(), renders = [], reloads = [];
+  let paint, mainQueries = 0;
+  page.renderMarkdown = text => {
+    renders.push(text);
+    paint = render.promise.then(() => {
+      page.viewer.textContent = options.viewer ?? text;
+    });
+    return paint;
+  };
+  const setup = between(source, "  if (scenario9dSucceeded) {",
+    "    const reloaded = await readDefaultSaveDocument();")
+    .slice("  if (scenario9dSucceeded) {".length);
+  const mainOwnership = between(source, "  const defaultMainOwns = async (snapshot) => {",
+    "\n  async function joinDefaultFileOpenWork");
+  const api = vm.runInNewContext(`(() => {
+    ${mainOwnership}
+    ${helpers}
+    return async () => {
+      ${setup}
+      return { reloadBefore, reloadCompletion };
+    };
+  })()`, {
+    fileB: control.tab.filePath, diskTwo: content, saveTabB: control.tab.id,
+    isDeepStrictEqual: require("node:util").isDeepStrictEqual,
+    __shutdown: {
+      documentAdmissionIsCurrent: () => control.current,
+      documentSessionState: () => ({ owners: [{
+        ...control.owner, readTarget: control.descriptor.readTarget,
+      }] }),
+    },
+    exec: async script => {
+      const value = await vm.runInContext(script, context, { timeout: 1000 });
+      if (script.includes("window.folia.queryDocumentDeletionState(") &&
+          ++mainQueries === 2) options.afterMainQuery?.({ page, control });
+      return value === undefined ? undefined : clone(value);
+    },
+    fs: { readFileSync: (file, encoding) => {
+      assert.equal(file, control.tab.filePath); assert.equal(encoding, "utf8");
+      return control.disk;
+    } },
+    boundedDialogWork: (work, label) => {
+      assert.equal(label, "Scenario 9e saved preview render"); return work;
+    },
+    reloadSelectedAndWait: async (...args) => {
+      reloads.push(args);
+      control.disk = args[4];
+      return { dispatched: true, landed: true };
+    },
+  }, { timeout: 1000 });
+  const start = () => {
+    let settled = false;
+    const outcome = api().then(value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; });
+    return { outcome, settled: () => settled };
+  };
+  const finish = async (work, mutate = () => {}) => {
+    await turn();
+    const held = renders.length === 1 && !work.settled() &&
+      reloads.length === 0 && control.disk === content &&
+      page.viewer.textContent.includes("S9D_FIRST");
+    mutate({ page, control, other });
+    if (options.renderError) render.reject(options.renderError);
+    else render.resolve();
+    const result = await work.outcome;
+    if (paint) await Promise.allSettled([paint]);
+    return { ...result, held };
+  };
+  return { page, control, other, content, renders, reloads, start, finish };
+}
+
+async function reloadPreviewContracts() {
+  const positive = reloadPreviewFixture();
+  const completed = await positive.finish(positive.start());
+  check(completed.held,
+    "S9e awaits the original saved SECOND render before any external write or Reload");
+  check(!completed.error && positive.renders.length === 1 &&
+    positive.renders[0] === positive.content &&
+    completed.value.reloadBefore.viewer.includes("S9D_SECOND") &&
+    !completed.value.reloadBefore.viewer.includes("S9E_RELOADED") &&
+    positive.page.originalMarkdown === positive.content &&
+    positive.page.markdownEditor.value === positive.content &&
+    positive.control.tab.originalContent === positive.content,
+  "S9e actual production caller paints only captured saved bytes without changing source or baseline");
+  check(JSON.stringify(positive.reloads) === JSON.stringify([[positive.control.tab.id,
+    positive.control.tab.filePath, "S9D_SECOND", "S9E_RELOADED", "# Beta\n\nS9E_RELOADED\n"]]) &&
+    completed.value.reloadCompletion.landed === true,
+  "Only exact saved-preview completion admits the unchanged explicit Reload actor");
+  for (const viewer of ["# Beta\n\nS9D_FIRST\n", "# Beta\n\nS9E_RELOADED\n",
+    "# Beta\n\nS9D_FIRST\nS9D_SECOND\n"]) {
+    const stale = reloadPreviewFixture({ viewer });
+    const result = await stale.finish(stale.start());
+    check(result.held && !!result.error && stale.reloads.length === 0 &&
+      stale.control.disk === stale.content,
+    "S9e refuses a fulfilled original render with stale or future Reload DOM: " + viewer.trim());
+  }
+  for (const [label, mutate] of [
+    ["source", ({ page }) => { page.originalMarkdown = "WRONG"; }],
+    ["editor", ({ page }) => { page.markdownEditor.value = "WRONG"; }],
+    ["cache", ({ control }) => { control.tab.content = "WRONG"; }],
+    ["baseline", ({ control }) => { control.tab.originalContent = "WRONG"; }],
+    ["dirty tab", ({ control }) => { control.tab.hasUnsavedChanges = true; }],
+    ["dirty editor", ({ page }) => { page.hasUnsavedChanges = true; }],
+    ["pending Save", ({ control }) => { control.pending.count = 1; }],
+    ["pending revision", ({ control }) => { control.pending.revision++; }],
+    ["owner", ({ control }) => { control.owner.documentGeneration++; }],
+    ["descriptor", ({ control }) => { control.descriptor.ref = "OTHER"; }],
+    ["selection", ({ control }) => { control.selection++; }],
+    ["history", ({ page }) => { page.undoHistory.push("OTHER"); }],
+    ["other tab", ({ other }) => { other.content = "OTHER CHANGE"; }],
+    ["disk", ({ control }) => { control.disk = "EXTERNAL"; }],
+    ["Main currentness", ({ control }) => { control.current = false; }],
+    ["Main deletion witness", ({ control }) => { control.query.known = false; }],
+  ]) {
+    const changed = reloadPreviewFixture();
+    const result = await changed.finish(changed.start(), mutate);
+    check(result.held && !!result.error && changed.reloads.length === 0,
+      "S9e refuses " + label + " drift during its original render before any Reload");
+  }
+  for (const [label, afterMainQuery] of [
+    ["source", ({ page }) => { page.originalMarkdown = "WRONG"; }],
+    ["pending Save", ({ control }) => { control.pending.count = 1; }],
+  ]) {
+    const changed = reloadPreviewFixture({ afterMainQuery });
+    const result = await changed.finish(changed.start());
+    check(result.held && !!result.error && changed.reloads.length === 0,
+      "S9e final page witness refuses " + label + " drift during Main currentness query");
+  }
+  const failure = new RangeError("original saved-preview render failure");
+  const rejected = reloadPreviewFixture({ renderError: failure });
+  const result = await rejected.finish(rejected.start());
+  check(result.error === failure && rejected.reloads.length === 0 &&
+    rejected.control.disk === rejected.content,
+  "S9e retains original render rejection and never dispatches external work");
+  for (const [label, mutate] of [
+    ["source", f => { f.page.originalMarkdown = "WRONG"; }],
+    ["dirty", f => { f.page.hasUnsavedChanges = true; }],
+    ["pending", f => { f.control.pending.count = 1; }],
+    ["Main currentness", f => { f.control.current = false; }],
+  ]) {
+    const initial = reloadPreviewFixture();
+    mutate(initial);
+    const result = await initial.finish(initial.start());
+    check(!!result.error && initial.renders.length === 0 && initial.reloads.length === 0 &&
+      initial.control.disk === initial.content,
+    "S9e refuses initial " + label + " without invoking a preview producer");
+  }
+}
+
+async function sameTaskContracts() {
   const race = execBody("  const raceDispatch = await exec(`", "  const raceSettled =");
   const during = execBody("  const duringDispatch = await exec(`", "  if (!await waitUntil(", {});
   const make = initial => {
@@ -838,6 +1121,25 @@ function sameTaskContracts() {
     inputState.editor === "# Beta\n\nS9B_AFTER\n" &&
     inputState.after.count === 1 && inputState.after.revision > inputState.before.revision,
   "Actual Save/later-input source keeps dispatched bytes separate from later editor bytes");
+  const second = make("# Beta\n\nS9D_FIRST\n"), completion = deferred();
+  Object.assign(second.page, {
+    currentFilePath: "C:\\fixture\\beta.md", originalMarkdown: "# Beta\n\nS9D_FIRST\n",
+    __defaultSaveQuestions: { questions: [] },
+    document: { getElementById: () => ({ open: false }) },
+    waitForPendingSaves: () => completion.promise,
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  const twoSaveBody = execBody("  const twoOut = await exec(`", "  const two = JSON.parse(twoOut);",
+    { twoQuestionStart: 0 });
+  const twoSaveWork = vm.runInNewContext(twoSaveBody, second.page);
+  const synchronous = second.calls.join(",") === "save,save" &&
+    JSON.stringify(second.writes) === JSON.stringify(
+      ["# Beta\n\nS9D_FIRST\n", "# Beta\n\nS9D_SECOND\n"]);
+  completion.resolve();
+  const twoSave = JSON.parse(await twoSaveWork);
+  check(synchronous && twoSave.dispatchedPending === 2 &&
+    twoSave.dispatchedRevision === twoSave.before.revision + 2 && twoSave.settled,
+  "Unchanged actual S9d dispatches FIRST and SECOND Saves synchronously with no input or render");
   const reloadGate = between(source, "  const scenario9dSucceeded =", "  // ---- Scenario 9e:");
   const gate = (two, diskTwo) => vm.runInNewContext(`(() => {
     ${reloadGate}
@@ -1234,7 +1536,7 @@ async function questionObserverContracts() {
     subscriptionContracts, sameTaskContracts, deliveryContracts,
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,
-    defaultFixtureDiagnosticsContracts]) {
+    defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

@@ -22269,6 +22269,55 @@ async function run(win) {
           dirty: other.hasUnsavedChanges })),
     };
   })()`);
+  const renderDefaultSaveReloadPreview = async (tabId, filePath, content) => {
+    const before = await readDefaultSaveDocument();
+    const historyBefore = await exec("historySnapshot()");
+    if (content !== "# Beta\n\nS9D_SECOND\n" || before.path !== filePath ||
+        before.tab?.id !== tabId || before.tab.path !== filePath ||
+        before.original !== content || before.editor !== content ||
+        before.tab.content !== content || before.tab.original !== content ||
+        before.dirty !== false || before.tab.dirty !== false || !before.editMode ||
+        before.pending.count !== 0 || before.frozen || before.question.open ||
+        !before.state.maintained || before.state.dirty || before.state.reloadConflict ||
+        before.state.deletionTombstone || fs.readFileSync(filePath, "utf8") !== content ||
+        !(await defaultMainOwns(before))) {
+      throw new Error("Scenario 9e preview needs the current clean saved SECOND document");
+    }
+    const renderedHistory = await boundedDialogWork(exec(`(async () => {
+      const before = ${JSON.stringify(before)}, tab = window.CustomTabs.getActiveTab();
+      const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+        tab.id, tab.filePath, window.getReloadRequestSession());
+      if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
+          window.currentFilePath !== before.path || !isEditMode || hasUnsavedChanges ||
+          markdownEditor.value !== before.editor || window.originalMarkdown !== before.original ||
+          tab.content !== before.tab.content || tab.originalContent !== before.tab.original ||
+          tab.hasUnsavedChanges !== false ||
+          !${JSON.stringify(saveIdentityFields)}.every(field => owner?.[field] === before.owner[field]) ||
+          JSON.stringify(window.CustomTabs.getDocumentDescriptor(tab.id)) !== JSON.stringify(before.descriptor) ||
+          JSON.stringify(window.CustomTabs.__documentState(tab)) !== JSON.stringify(before.state) ||
+          JSON.stringify(window.getPendingSaveStatus()) !== JSON.stringify(before.pending) ||
+          window.getActiveFileSelectionGeneration() !== before.selection ||
+          window.CustomTabs.isDocumentFrozen() ||
+          JSON.stringify(historySnapshot()) !== ${JSON.stringify(JSON.stringify(historyBefore))})
+        throw new Error('Scenario 9e saved preview owner changed before rendering');
+      await renderMarkdown(before.original);
+      return historySnapshot();
+    })()`), "Scenario 9e saved preview render");
+    const mainStillCurrent = await defaultMainOwns(before);
+    const after = await readDefaultSaveDocument();
+    const { viewer: previousViewer, ...beforeWitness } = before;
+    const { viewer: currentViewer, ...afterWitness } = after;
+    const previewUnchanged = isDeepStrictEqual(afterWitness, beforeWitness) &&
+      isDeepStrictEqual(renderedHistory, historyBefore) &&
+      isDeepStrictEqual(await exec("historySnapshot()"), historyBefore);
+    if (!mainStillCurrent || !previewUnchanged || !currentViewer.includes("S9D_SECOND") ||
+        currentViewer.includes("S9D_FIRST") ||
+        currentViewer.includes("S9E_RELOADED") ||
+        fs.readFileSync(filePath, "utf8") !== content) {
+      throw new Error("Scenario 9e saved preview did not preserve the clean SECOND owner");
+    }
+    return after;
+  };
   const editDefaultSaveDocument = async (content, marker) => {
     await exec("if (!isEditMode) toggleEditBtn.click(); null;");
     if (!await waitForCondition(exec, "isEditMode === true", 8000)) {
@@ -22560,6 +22609,13 @@ async function run(win) {
       markdownEditor.value = '# Alpha\\n\\nS7_TYPED\\n';
       markdownEditor.dispatchEvent(new Event('input'));
       await new Promise(r => setTimeout(r, 3600));
+      const typedPreview = {
+        content: markdownEditor.value,
+        viewerShowsTyped: viewer.textContent.includes('S7_TYPED'),
+      };
+      if (typedPreview.content !== '# Alpha\\n\\nS7_TYPED\\n' ||
+          typedPreview.viewerShowsTyped !== true)
+        throw new Error('Scenario 7 needs the actual TYPED source and preview before history movement');
       // Use undo and redo INSIDE the session before discarding. Both move
       // entries between the stacks without going through historyPush, so a
       // rollback that counts pushes drifts here and eats the pre-session entry.
@@ -22574,8 +22630,13 @@ async function run(win) {
       return {
         editMode: isEditMode,
         dirty: hasUnsavedChanges,
+        typedPreview,
+        viewerShowsEarly: viewer.textContent.includes('S7_EARLY'),
+        viewerShowsSaved: viewer.textContent.includes('S7_SAVED'),
         viewerShowsTyped: viewer.textContent.includes('S7_TYPED'),
         undoDepth: undoHistory.length,
+        undoSources: undoHistory.map(entry => typeof entry === 'string' ? entry : entry.source),
+        redoSources: redoHistory.map(entry => typeof entry === 'string' ? entry : entry.source),
         content: markdownEditor.value,
       };
     })()
@@ -22589,8 +22650,11 @@ async function run(win) {
         dirty: hasUnsavedChanges,
         textareaMatchesStore: markdownEditor.value === window.originalMarkdown,
         storeIsSaved: window.originalMarkdown.includes('S7_SAVED'),
+        viewerShowsEarly: viewer.textContent.includes('S7_EARLY'),
         viewerShowsTyped: viewer.textContent.includes('S7_TYPED'),
         viewerShowsSaved: viewer.textContent.includes('S7_SAVED'),
+        undoSources: undoHistory.map(entry => typeof entry === 'string' ? entry : entry.source),
+        redoSources: redoHistory.map(entry => typeof entry === 'string' ? entry : entry.source),
       };
       historyUndo();
       await new Promise(r => setTimeout(r, 1000));
@@ -22645,8 +22709,16 @@ async function run(win) {
     "the edit-mode session really did diverge from the saved content",
     discard.before.editMode === true &&
       discard.before.dirty === true &&
-      discard.before.viewerShowsTyped === true &&
-      discard.before.undoDepth > 1,
+      discard.before.typedPreview.content === "# Alpha\n\nS7_TYPED\n" &&
+      discard.before.typedPreview.viewerShowsTyped === true &&
+      discard.before.content === "# Alpha\n\nS7_EARLY\n" &&
+      discard.before.viewerShowsEarly === true &&
+      discard.before.viewerShowsSaved === false &&
+      discard.before.viewerShowsTyped === false &&
+      discard.before.undoDepth > 1 &&
+      isDeepStrictEqual(discard.before.undoSources,
+        ["# Alpha\n\nS7_OLD_UNDO_POINT\n", "# Alpha\n\nS7_SAVED\n"]) &&
+      isDeepStrictEqual(discard.before.redoSources, ["# Alpha\n\nS7_TYPED\n"]),
     discardOut,
   );
   check(
@@ -22667,12 +22739,15 @@ async function run(win) {
   );
   check(
     "the preview is repainted from the saved content, not left showing the discard",
-    discard.after.viewerShowsSaved === true && discard.after.viewerShowsTyped === false,
+    discard.after.viewerShowsSaved === true && discard.after.viewerShowsTyped === false &&
+      discard.after.viewerShowsEarly === false,
     discardOut,
   );
   check(
     "undo cannot resurrect discarded content, and older undo points survive",
-    discard.undone.resurrected === false && discard.undone.olderPointReached === true,
+    discard.undone.resurrected === false && discard.undone.olderPointReached === true &&
+      isDeepStrictEqual(discard.after.undoSources, ["# Alpha\n\nS7_OLD_UNDO_POINT\n"]) &&
+      discard.after.redoSources.length === 0,
     JSON.stringify(discard.undone),
   );
   const shotDiscard = await captureScreenshot(win, "tabs-exit-edit-discard");
@@ -23913,7 +23988,9 @@ async function run(win) {
   // user's own original complaint (a refresh reverting a file) reappearing
   // through the discard path.
   if (scenario9dSucceeded) {
-    const reloadBefore = await readDefaultSaveDocument();
+    // S9d deliberately has no SECOND input producer between its two Save clicks.
+    // Paint only the already-saved preview after that case has been judged.
+    const reloadBefore = await renderDefaultSaveReloadPreview(saveTabB, fileB, diskTwo);
     const reloadedContent = "# Beta\n\nS9E_RELOADED\n";
     if (!reloadBefore.editMode || reloadBefore.dirty ||
         reloadBefore.editor !== diskTwo || reloadBefore.tab.original !== diskTwo ||
