@@ -72,9 +72,37 @@ jobs:
         # pins and fails if the lockfile and package.json disagree.
         run: npm ci
 
-      # npm test reaches test:features before legacy tabs: About/update state,
-      # shared TOC toolbar, document-owned editors, scroll sync and panel lifecycle.
-      # Keep one invocation so the feature suites are not paid for twice.
+      # Collect both regressions before npm test's fail-fast feature chain can
+      # hide the second failure. Neither command's failure is waived.
+      - name: Check Windows table editing and editor scrolling independently
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-test-results | Out-Null
+          "table-cells=NOT-RUN`neditor-scroll=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
+          npm run test:table-cells 2>&1 | Tee-Object -FilePath ci-test-results\table-cells.log
+          $tableExit = $LASTEXITCODE
+          "table-cells=$tableExit`neditor-scroll=NOT-RUN" | Set-Content ci-test-results\exit-codes.txt
+          npm run test:editor-scroll 2>&1 | Tee-Object -FilePath ci-test-results\editor-scroll.log
+          $scrollExit = $LASTEXITCODE
+          "table-cells=$tableExit`neditor-scroll=$scrollExit" | Set-Content ci-test-results\exit-codes.txt
+          if ($tableExit -ne 0 -or $scrollExit -ne 0) { exit 1 }
+
+      - name: Retain Windows table and scroll evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-regression-tests
+          path: |
+            ci-test-results/
+            screenshots/table-cell-editor/
+            screenshots/sentinel-error-*.png
+            screenshots/editor-scroll-error-*.png
+            tmp/editor-scroll/
+          if-no-files-found: error
+          retention-days: 7
+
+      # Keep the full acceptance suite and existing audit gates after the
+      # independent collection. A failed collection still fails this job.
       - name: Run feature acceptance before the legacy suite
         run: npm test
 

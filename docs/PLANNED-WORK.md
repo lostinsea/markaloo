@@ -380,7 +380,7 @@ section is kept here so the register has a visible edge.
     Screenshots were viewed in tool responses; no persistent image paths
     were returned. The reviewed zoom-only run remains unlaunched.
 
-- `table-column-removal-and-compact-toolbar` - **POINTER QUALIFICATION PASSES; LOCALLY INSTALLED; RELEASE PREPARATION**.
+- `table-column-removal-and-compact-toolbar` - **POINTER QUALIFICATION PASSES; LOCALLY INSTALLED; RELEASE BLOCKED BY WINDOWS CI**.
   - User-approved: Delete column in Create/Insert and whole-table Edit only.
     Selected-row Edit cannot remove columns.
   - Confirm the actual selected column using plain header text when available;
@@ -468,6 +468,42 @@ section is kept here so the register has a visible edge.
     Optional four-copy validation is paused before launch; publication is pending.
     After publication and artifact verification, resume the original supported
     four-area closure. Any needed focused tests or fixes stay separate from 0.12.0.
+  - Source committed as `c0ddcf30` and tagged `v0.12.0`.
+    Release run `41359745526` failed the required Windows table/scroll checks:
+    Shared reports a non-hit-testable control; nested-bottom wheel movement fails.
+    Linux/macOS builds pass. Windows build and strict archive checks are unrun;
+    attestations and publication are skipped. The draft has no assets.
+    Keep the tag/commit fixed during diagnosis; do not bypass or blindly retry.
+    Any tag/version remedy needs a separate user decision.
+  - Astra locates the Shared rejection before native input. The receipt cannot
+    distinguish the Header 2 selection from the following Delete click.
+    Nested-bottom wheel input transfers preview ownership, but neither pane moves.
+    Its receipt lacks the actual hit target, nested edge and current outer travel.
+    No production cause or production correction is established.
+    Sol handed back failure context and an intermediate selection assertion
+    in the existing Shared test, plus wheel setup/edge records in editor-scroll.
+    Working-tree Source/VM checks pass 843/843; editor-scroll syntax passes.
+    Independent Sol/Luna actual-code reviews are clear; no blocking disagreement.
+    Runtime is unrun.
+    The wheel hit test measures the supplied point before input; it does not
+    observe the received native event. Original movement assertions remain.
+  - User requires any introduced app or test defect fixed before release.
+    No test waiver or new focused CI option is authorized. The prior release's
+    gate passed; this alone does not classify the new failures as regressions.
+    Existing full CI stops at editor-scroll before reaching table-cells and
+    does not retain their detailed receipts.
+    User approved independent execution of both actual commands and evidence
+    retention in existing `ci.yml`, without adding an option or workflow.
+    Sol implemented that narrow change. Luna identified the separately named
+    editor-scroll sentinel capture; its exact path is now included.
+    Independent Sol/Luna reviews clear the corrected collection; no blocking
+    disagreement remains.
+    Both exits are recorded; either failure still fails CI. Existing logs,
+    JSON, screenshots and any produced sentinel capture are retained.
+    Setup failures remain failures, not test passes. No CI run is dispatched yet.
+    Reviewed diagnostic tests stay out of the frozen `v0.12.0` tag.
+    Production, release workflow, tag and version are unchanged. The draft
+    stays unpublished and the installed app is untouched.
 
 - `unattended-visible-app-qualification` - **DEFERRED UNTIL AFTER CURRENT 0.12 WORK; NOT IMPLEMENTED**.
   - Visible checks must not need the user to launch the app.

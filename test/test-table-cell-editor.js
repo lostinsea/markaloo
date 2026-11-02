@@ -2834,7 +2834,8 @@ async function sharedNativeSetupSourceTests() {
   class Button {}
   const clicks = [], scrolls = [], commands = [], waits = [], checks = [];
   let visible = true, marked = true, inGrid = true, hit = true, settles = 0;
-  const button = Object.assign(new Button(), { tabIndex: 0, disabled: false,
+  const button = Object.assign(new Button(), { id: "tableCellDeleteColumn", tagName: "BUTTON",
+    className: "table-cell-action", isConnected: true, tabIndex: 0, disabled: false,
     getClientRects: () => visible ? [{}] : [],
     scrollIntoView: options => scrolls.push(options),
     getBoundingClientRect: () => ({ left: 100, top: 200, width: 28, height: 28 }),
@@ -2844,12 +2845,20 @@ async function sharedNativeSetupSourceTests() {
     click() { throw new Error("Programmatic Delete activation is not the native pointer path"); } });
   const column = {}, cell = { input: {}, columnState: column,
     container: { classList: { contains: name => marked && name === "table-cell-selected" } } };
-  const session = { rows: [{ cells: [{}, {}, {}] }, { cells: [{}, cell, {}] }],
+  let headerMarked = true;
+  const header = { input: { id: "header-2", tagName: "DIV", className: "cell-grid-input", isConnected: true,
+    scrollIntoView: options => scrolls.push(options),
+    getBoundingClientRect: () => ({ left: 100, top: 200, width: 28, height: 28 }),
+    contains: node => node === header.input },
+    columnState: column,
+    container: { classList: { contains: name => headerMarked && name === "table-cell-selected" } } };
+  const session = { rows: [{ cells: [{}, header, {}] }, { cells: [{}, cell, {}] }],
     selectedCell: cell, columnOrder: [{}, column, {}], confirmation: null };
-  const signal = {}, grid = { inert: false, contains: input => inGrid && input === cell.input };
+  const signal = {}, grid = { inert: false, contains: input => inGrid && (input === cell.input || input === header.input) };
   const pointer = vm.createContext({ tableCellSession: session, tableCellDeleteColumn: button,
     HTMLButtonElement: Button, tableCellGrid: grid, tableCellUpdate: { disabled: false },
-    document: { elementFromPoint: () => hit ? button : null } });
+    innerWidth: 640, innerHeight: 480, devicePixelRatio: 1.25,
+    document: { elementFromPoint: () => hit === true ? button : hit || null } });
   vm.runInContext("globalThis.window=globalThis;", pointer);
   const guard = () => vm.runInContext(source.slice(guardBody, guardEnd), pointer);
   check("shared pointer Source guard proves a visible enabled focusable deliberately selected original column",
@@ -2914,8 +2923,77 @@ async function sharedNativeSetupSourceTests() {
   hit = false; commands.length = waits.length = 0; settles = 0;
   let refused;
   try { await driver.runPointer(); } catch (error) { refused = error.message; }
+  const hitPrefix = "Shared control is not hit-testable: ";
   check("shared pointer Source existing hit-test refusal sends no native input and has no wait retry or fallback",
-    refused === "Shared control is not hit-testable" && commands.length === 0 && waits.length === 0 && settles === 0);
+    refused?.startsWith(hitPrefix) && commands.length === 0 && waits.length === 0 && settles === 0);
+  const contextFrom = message => message?.startsWith(hitPrefix) ? JSON.parse(message.slice(hitPrefix.length)) : null;
+  const expectedContext = {
+    expression: "tableCellDeleteColumn",
+    target: { tag: "BUTTON", id: "tableCellDeleteColumn", className: "table-cell-action", connected: true },
+    rect: { left: 100, top: 200, width: 28, height: 28 }, point: { x: 112, y: 212 },
+    hit: null, viewport: { width: 640, height: 480, devicePixelRatio: 1.25 },
+  };
+  check("shared pointer Source hit rejection records the exact computed target rect point null hit and viewport",
+    JSON.stringify(contextFrom(refused)) === JSON.stringify(expectedContext), contextFrom(refused));
+  const headerCaptureStart = source.indexOf("      const createDeletionBefore = await page(", sharedStart);
+  const headerMouseStart = source.indexOf('      await mouse("tableCellSession.rows[0].cells[1].input");', headerCaptureStart);
+  const headerCheckStart = source.indexOf('      check("Create native Header 2 click selects the exact current header without changing source history or Save",', headerMouseStart);
+  const headerDelete = '      await mouse("tableCellDeleteColumn");';
+  const headerDeleteStart = source.indexOf(headerDelete, headerCheckStart);
+  const headerSubjects = headerCaptureStart > sharedStart && headerMouseStart > headerCaptureStart &&
+    headerCheckStart > headerMouseStart && headerDeleteStart > headerCheckStart;
+  check("shared pointer Source extracts the actual Header 2 capture click boundary assertion and Delete sequence", headerSubjects);
+  if (!headerSubjects) throw new Error("Missing Create Header 2 source subjects");
+  const documentHistory = { undo: [], redo: [] };
+  pointer.markdownEditor = { value: "# Create deletion\r\n\r\n" };
+  pointer.undoHistory = documentHistory.undo; pointer.historySnapshot = () => documentHistory;
+  driver.createDeletionSource = pointer.markdownEditor.value; driver.saves = []; driver.cancelSaves = 0;
+  session.rows = [{ header: true, editable: true, cells: [{}, header] }];
+  session.columnOrder = [{}, column]; session.columns = 2; session.ready = true;
+  session.selectedCell = null; session.confirmation = null; button.disabled = true;
+  grid.inert = false; pointer.tableCellUpdate.disabled = false;
+  vm.runInContext("globalThis.page=" + helpers[0][1] + ";\n" +
+    "globalThis.captureHeader=async()=>{" + source.slice(headerCaptureStart, headerMouseStart) + "return createDeletionBefore;};\n" +
+    "globalThis.assertHeader=async()=>{" + source.slice(headerCheckStart, headerDeleteStart) + "};\n" +
+    "globalThis.runHeaderThenDelete=async()=>{" +
+    source.slice(headerCaptureStart, headerDeleteStart + headerDelete.length) + "};", driver);
+  hit = { tagName: "DIV", id: "blocking-dialog", className: "modal", isConnected: true };
+  commands.length = waits.length = checks.length = 0; settles = 0; refused = null;
+  try { await driver.runHeaderThenDelete(); } catch (error) { refused = error.message; }
+  check("shared pointer Source Header 2 hit rejection identifies the blocker before selection assertions Delete or native input",
+    JSON.stringify(contextFrom(refused)) === JSON.stringify({ ...expectedContext,
+      expression: "tableCellSession.rows[0].cells[1].input",
+      target: { tag: "DIV", id: "header-2", className: "cell-grid-input", connected: true },
+      hit: { tag: "DIV", id: "blocking-dialog", className: "modal", connected: true } }) &&
+    commands.length === 0 && waits.length === 0 && checks.length === 0 && settles === 0 &&
+    session.selectedCell === null, contextFrom(refused));
+  driver.createDeletionBefore = await driver.captureHeader();
+  session.selectedCell = header; button.disabled = false; checks.length = 0;
+  await driver.assertHeader();
+  check("shared pointer Source actual Header 2 assertion accepts exact current selection column source history and no Save",
+    checks.length === 1 && checks[0].ok === true && driver.createDeletionBefore.source === driver.createDeletionSource &&
+    driver.createDeletionBefore.history === JSON.stringify(documentHistory));
+  const headerRefusals = [
+    ["selected object", () => { session.selectedCell = cell; }, () => { session.selectedCell = header; }],
+    ["current header object", () => { session.rows[0].cells[1] = { ...header }; }, () => { session.rows[0].cells[1] = header; }],
+    ["cell column", () => { header.columnState = {}; }, () => { header.columnState = column; }],
+    ["current column", () => { session.columnOrder[1] = {}; }, () => { session.columnOrder[1] = column; }],
+    ["highlight", () => { headerMarked = false; }, () => { headerMarked = true; }],
+    ["Delete disabled", () => { button.disabled = true; }, () => { button.disabled = false; }],
+    ["confirmation pending", () => { session.confirmation = {}; }, () => { session.confirmation = null; }],
+    ["source", () => { pointer.markdownEditor.value += "changed"; }, () => { pointer.markdownEditor.value = driver.createDeletionSource; }],
+    ["history", () => { documentHistory.redo.push({ changed: true }); }, () => { documentHistory.redo.pop(); }],
+    ["Save", () => { driver.saves.push({}); }, () => { driver.saves.pop(); }],
+  ];
+  const refusedHeaders = [];
+  for (const [name, corrupt, restore] of headerRefusals) {
+    corrupt(); checks.length = 0;
+    await driver.assertHeader();
+    refusedHeaders.push({ name, refused: checks.length === 1 && checks[0].ok === false });
+    restore();
+  }
+  check("shared pointer Source actual Header 2 assertion rejects independent selection column highlight pending source history and Save violations",
+    refusedHeaders.every(result => result.refused), refusedHeaders);
 }
 
 function dialogGuardSourceTests() {
@@ -8342,7 +8420,17 @@ require("./test-userdata-isolation");
         const node=${expression};node.scrollIntoView({block:'nearest',inline:'nearest'});
         const rect=node.getBoundingClientRect(),x=Math.round(rect.left+Math.min(12,rect.width/2)),
           y=Math.round(rect.top+Math.min(12,rect.height/2));
-        if(!node.contains(document.elementFromPoint(x,y)))throw Error('Shared control is not hit-testable');
+        const hit=document.elementFromPoint(x,y);
+        if(!node.contains(hit)){
+          const identity=element=>element?({tag:element.tagName,id:element.id,
+            className:typeof element.className==='string'?element.className:null,
+            connected:element.isConnected}):null;
+          throw Error('Shared control is not hit-testable: '+JSON.stringify({
+            expression:${JSON.stringify(expression)},target:identity(node),
+            rect:{left:rect.left,top:rect.top,width:rect.width,height:rect.height},point:{x,y},
+            hit:identity(hit),viewport:{width:window.innerWidth,height:window.innerHeight,
+              devicePixelRatio:window.devicePixelRatio}}));
+        }
         return {x,y};
       })()`);
       for (const type of ["mousePressed", "mouseReleased"]) {
@@ -8680,7 +8768,26 @@ require("./test-userdata-isolation");
         await exec(`tableCellSession.mode===FoliaTableCells.Mode.INSERT&&tableCellSession.rows.length===1&&
           tableCellSession.rows[0].header&&tableCellSession.rows[0].editable&&
           tableCellSession.columns===2&&tableCellDeleteColumn.disabled&&tableCellSession.selectedCell===null`));
-      await mouse("tableCellSession.rows[0].cells[1].input"); await mouse("tableCellDeleteColumn");
+      const createDeletionBefore = await page(() => {
+        window.__createDeletionSession=tableCellSession;
+        window.__createDeletionHeader2=tableCellSession.rows[0].cells[1];
+        window.__createDeletionColumn2=tableCellSession.columnOrder[1];
+        return { source:markdownEditor.value,history:JSON.stringify(historySnapshot()) };
+      });
+      await mouse("tableCellSession.rows[0].cells[1].input");
+      check("Create native Header 2 click selects the exact current header without changing source history or Save",
+        await exec(`tableCellSession===__createDeletionSession&&
+          tableCellSession.rows[0].cells[1]===__createDeletionHeader2&&
+          tableCellSession.selectedCell===__createDeletionHeader2&&
+          __createDeletionHeader2.columnState===__createDeletionColumn2&&
+          tableCellSession.columnOrder[1]===__createDeletionColumn2&&
+          __createDeletionHeader2.container.classList.contains('table-cell-selected')&&
+          tableCellGrid.contains(__createDeletionHeader2.input)&&!tableCellDeleteColumn.disabled&&
+          !tableCellSession.confirmation&&markdownEditor.value===${JSON.stringify(createDeletionSource)}&&
+          markdownEditor.value===${JSON.stringify(createDeletionBefore.source)}&&
+          JSON.stringify(historySnapshot())===${JSON.stringify(createDeletionBefore.history)}&&
+          undoHistory.length===0`) && saves.length===cancelSaves);
+      await mouse("tableCellDeleteColumn");
       check("Create Delete uses the actual header and explains that only Insert adopts the draft",
         await exec(`!!tableCellSession.confirmation&&__columnConfirmation.message===
           'Delete Column 2: Header 2? The document changes only when you choose Insert into the document.'&&
