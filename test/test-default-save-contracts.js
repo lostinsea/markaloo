@@ -3699,6 +3699,227 @@ async function terminalAggregateDiagnosticContracts() {
   "Existing renderer-evidence refusal still omits only its suffix and retains nested failure details and accounting");
 }
 
+async function generationFinalizerContracts() {
+  const scenario = between(source, "async function runShutdownGenerationScenarios(",
+    "\nfunction createInstalledUpdaterFixture(");
+  const finalizer = scenario.slice(scenario.lastIndexOf("\n  } catch (error) {") + 1,
+    scenario.lastIndexOf("\n}"));
+  assert.ok(finalizer.startsWith("  } catch (error) {"), "The actual generation body catch and finalizer are extracted");
+  const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
+  const capture = between(main, "function captureFileOpenDelivery(", "\nfunction fileOpenSnapshotIsCurrent(");
+  const chooser = between(main, "function openFileDialog() {",
+    "\n// ============================================\n// IPC HANDLERS - File Operations");
+  const release = between(main, "function releaseShutdownFreeze(options = {}) {",
+    "\nipcMain.on(QUIT_APPROVAL_COMMITTED,");
+  const revoke = between(main, "function revokeShutdownAuthorization() {", "\nfunction grantShutdownAuthorization(");
+  const reset = between(main, "          reset: () => {", "\n          },\n        },");
+  const resetEffects = between(reset, "            releaseShutdownFreeze({ force: true });",
+    "\n            lastUpdaterInstallAttemptState") + "\n" +
+    between(reset, "            ownerDocumentBaselines.clear();", "\n            quarantinedDocumentOwners.clear();");
+  assert.ok(!reset.includes("knownDocumentOwners.clear()"), "Actual reset keeps the authenticated owner registry");
+  const commitFence = between(main, "    shutdownCommitIngressBlocked = true;",
+    "\n  } catch (error) {\n    // The renderer cannot be reached to commit.");
+  const nullCommit = between(main,
+    "function finishShutdownCommit(attempt, committed, why, options = {}) {",
+    "\n  attempt.settled = true;") + "\n  throw new Error('Only the null settled-commit path is modeled');\n}";
+  const rigSource = between(source, "function shutdownRig(win) {", "\nfunction portableInstallEvent(");
+  const replaceSource = between(source, "function replaceMethod(", "\n// A stand-in for the cancellable event");
+  const run = async (options = {}) => {
+    const trace = [], assertions = [], deliveries = [], chooserTails = [], chooserErrors = [];
+    const trackingEvents = {}, trackingDescriptor = { value() {} };
+    const owners = new Map(), baselines = new Map(), persisted = new Map();
+    const bodyFailure = new Error("GENERATION_BODY_FAILURE");
+    const trackingFailure = new Error("GENERATION_TRACKING_RESTORE_FAILURE");
+    const rigFailure = new Error("GENERATION_RIG_RESTORE_FAILURE");
+    const finalizerFailure = new Error("GENERATION_CHOOSER_FAILURE");
+    let active = null, pageSession = "generation-page-3", resetCalls = 0, admissions = 0;
+    const frame = { isDestroyed: () => false, parent: null, frameTreeNodeId: 7 };
+    const wc = { mainFrame: frame, isDestroyed: () => false,
+      send: channel => trace.push(channel === "COMMIT" ? "commit" : "thaw") };
+    const indexFile = "C:\\fixture\\src\\index.html";
+    const owner = { webContents: wc, isDestroyed: () => false,
+      close() { throw new Error("Unstubbed window close must not be used by Source controls"); } };
+    const installOwner = (filePath, content, descriptor) => {
+      const identity = { pageSession, rendererGeneration: mainContext.approvalRendererGeneration,
+        tabId: 1, documentGeneration: admissions, documentRef: descriptor.ref, pathKey: filePath };
+      active = { id: 1, filePath, content, originalContent: content, identity, descriptor };
+      owners.set(identity.documentRef, identity);
+      baselines.set(identity.documentRef, { filePath, content });
+      persisted.set(filePath, { filePath, content });
+    };
+    const mainContext = vm.createContext({
+      mainWindow: owner, BrowserWindow: { fromWebContents: target => target === wc ? owner : null },
+      approvalRendererGeneration: 3, approvalRendererPageSession: pageSession,
+      approvalRendererState: "ready", fileOpenDeliveryEpoch: 0, shutdownCommitIngressBlocked: false,
+      shutdownAuthorized: true, shutdownAuthorizationOwnerId: 1,
+      shutdownAuthorizationGeneration: 3, shutdownAuthorizationCapacityLatched: false,
+      ownerDocumentBaselines: baselines, activeDialogExtraBatch: null, documentAdmissions: new Map(),
+      shutdownOwnerWindow: () => owner, ownerRendererAvailable: target => target === wc,
+      foliaUpdaterAttemptRetainsFreeze: () => false, QUIT_APPROVAL_THAW: "THAW",
+      QUIT_APPROVAL_COMMIT: "COMMIT", wc, record: { id: 76, revision: 1 },
+      attempt: { generation: 3 }, cancelDocumentReplacementConsents() {},
+      SUPPORTED_EXTENSIONS: { markdown: [".md"], mermaid: [".mmd"] },
+      dialog: { showOpenDialog: () => {
+        trace.push("chooser");
+        const promise = Promise.resolve({ canceled: false, filePaths: [mainContext.chosenPath] });
+        const then = promise.then.bind(promise);
+        promise.then = (...args) => { const tail = then(...args); chooserTails.push(tail); return tail; };
+        return promise;
+      } },
+      markdownSnapshotPromise: async filePath => ({ content: mainContext.chosenText,
+        modifiedTime: 1, diskVersion: { mtimeMs: 1, size: 2 }, physical: { readTarget: filePath } }),
+      confirmLargeDocument: () => true, rememberDocumentModifiedTime() {},
+      issueDocumentAdmission: (_target, filePath) => {
+        assert.equal(mainContext.shutdownCommitIngressBlocked, false);
+        return { ref: "admission-" + ++admissions, logicalPath: filePath };
+      },
+      safeSendFileOpen: (target, channel, packet, generation) => {
+        assert.equal(target, wc); assert.equal(channel, "file-opened");
+        assert.equal(generation, mainContext.approvalRendererGeneration);
+        deliveries.push(packet); trace.push("admission");
+        installOwner(packet.path, packet.content, packet.document); return true;
+      },
+      console: { error: (...args) => chooserErrors.push(args) },
+    });
+    vm.runInContext(capture + "\n" + chooser + "\n" + release + "\n" + revoke + "\n" + nullCommit, mainContext);
+    const rigContext = vm.createContext({ win: owner, dialog: mainContext.dialog, app: { quit() {} } });
+    vm.runInContext(replaceSource + "\n" + rigSource + "\nglobalThis.actualRig = shutdownRig(win);", rigContext);
+    vm.runInContext(commitFence, mainContext);
+    owner.close();
+    vm.runInContext("revokeShutdownAuthorization(); finishShutdownCommit(null, false, 'navigated');", mainContext);
+    const initial = { live: !owner.isDestroyed(), closes: rigContext.actualRig.closes,
+      blocked: mainContext.shutdownCommitIngressBlocked,
+      authorized: mainContext.shutdownAuthorized };
+    const open = async (_exec, filePath, content) => {
+      trace.push("admission-attempt");
+      if (options.admissionFailure) throw finalizerFailure;
+      mainContext.chosenPath = filePath; mainContext.chosenText = content;
+      const before = deliveries.length, tailStart = chooserTails.length;
+      mainContext.openFileDialog();
+      await Promise.all(chooserTails.slice(tailStart));
+      if (deliveries.length !== before + 1) throw new Error("NATIVE_FILE_NOT_DELIVERED");
+      return { filePath, tabId: active.id, owner: active.identity, descriptor: active.descriptor };
+    };
+    const page = { window: {
+      getReloadRequestSession: () => pageSession,
+      CustomTabs: { getActiveTab: () => active, getTabs: () => active ? [active] : [],
+        getDocumentIdentityForTab: () => active.identity },
+      queryDocumentDeletionState: (_filePath, identity) => ({
+        known: owners.get(identity.documentRef) === identity && baselines.has(identity.documentRef),
+        unresolved: false,
+      }),
+    } };
+    const renderer = vm.createContext(page);
+    const exec = async script => vm.runInContext(script, renderer);
+    const host = { ...owner, loadFile: async target => {
+      assert.equal(target, indexFile); trace.push("reload");
+      mainContext.approvalRendererGeneration++;
+      pageSession = "generation-page-" + mainContext.approvalRendererGeneration;
+      mainContext.approvalRendererPageSession = pageSession;
+      owners.clear();
+      if (!options.noReadmission) {
+        const descriptor = { ...active.descriptor, ref: "restored-" + ++admissions };
+        installOwner(active.filePath, active.content, descriptor);
+      }
+    } };
+    let bodyObserved = null, error = null;
+    let actualFinalizer = finalizer;
+    if (options.noPreparation) actualFinalizer = actualFinalizer.replace(
+      '      __shutdown.reset();\n      const resetAdmission =', '      const resetAdmission =');
+    if (options.noMeasuredReset) actualFinalizer = actualFinalizer.replace(
+      '      __shutdown.reset();\n      const resetBoundaryAfter =', '      const resetBoundaryAfter =');
+    if (options.oldMasking) actualFinalizer = actualFinalizer.replace(
+      "    bodyFailed = true;\n    bodyError = error;", "    throw error;");
+    const context = vm.createContext({
+      AggregateError, bodyFailed: false, bodyError: null, win: host, exec, indexFile, path, dir: "C:\\fixture", write() {},
+      Object: { defineProperty: (target, key, descriptor) => {
+        assert.equal(target, trackingEvents); assert.equal(key, "select-file-tracking");
+        assert.equal(descriptor, trackingDescriptor);
+        trace.push("restore-tracking"); if (options.trackingFailure) throw trackingFailure;
+      } }, ipcMain: { _events: trackingEvents }, trackingDescriptor,
+      rig: { restore: () => {
+        trace.push("restore-rig"); rigContext.actualRig.restore();
+        if (options.rigFailure) throw rigFailure;
+      } },
+      __shutdown: {
+        reset: () => { trace.push("reset-" + ++resetCalls); vm.runInContext(resetEffects, mainContext); },
+        state: () => ({ renderer: "ready", rendererGeneration: mainContext.approvalRendererGeneration,
+          knownDocumentOwnerCount: owners.size }),
+        documentSessionState: () => ({ entries: Array.from(persisted.values()) }),
+      },
+      openShutdownLifecycleFixture: open,
+      waitUntil: async predicate => predicate(),
+      check: (name, success, detail) => assertions.push({ name, success, detail }),
+      work: async () => {
+        try {
+          if (options.bodyChooser) await open(exec, "C:\\fixture\\navigation-edit.md", "BODY");
+          else if (options.bodyFailure) throw bodyFailure;
+          else if (Object.hasOwn(options, "bodyValue")) throw options.bodyValue;
+        } catch (failure) { bodyObserved = failure; throw failure; }
+      },
+    });
+    try { await vm.runInContext("(async () => {\ntry { await work();\n" + actualFinalizer + "\n})()", context); }
+    catch (failure) { error = failure; }
+    return { trace, assertions, error, bodyObserved, bodyFailure, trackingFailure, rigFailure,
+      finalizerFailure, initial, resetCalls, deliveries, chooserErrors, owners, baselines, persisted };
+  };
+  const good = await run();
+  check(good.initial.live && good.initial.closes === 1 && good.initial.blocked &&
+    !good.initial.authorized && !good.error && good.chooserErrors.length === 0,
+  "Actual commit fence survives a stubbed close and authorization revocation in a live window until finalizer reset");
+  check(good.resetCalls === 2 && good.trace.indexOf("reset-1") < good.trace.indexOf("chooser") &&
+    good.trace.indexOf("admission") < good.trace.indexOf("reset-2") &&
+    good.trace.indexOf("reset-2") < good.trace.indexOf("reload") &&
+    good.assertions.length === 3 && good.assertions.every(assertion => assertion.success),
+  "Actual finalizer prep reset precedes the genuine chooser source; measured reset still erases only baseline before reload re-admission");
+  const noPreparation = await run({ noPreparation: true, bodyFailure: true });
+  check(noPreparation.error?.errors?.[0] === noPreparation.bodyFailure &&
+    noPreparation.error.errors[1]?.message === "NATIVE_FILE_NOT_DELIVERED" &&
+    noPreparation.error.errors[1] !== noPreparation.bodyFailure &&
+    noPreparation.resetCalls === 0 && noPreparation.deliveries.length === 0 &&
+    noPreparation.trace.includes("chooser") && !noPreparation.trace.includes("admission"),
+  "Omitted preparatory reset genuinely lets the unchanged Main chooser refuse the live committed fence while retaining body and finalizer errors");
+  const bodyChooser = await run({ bodyChooser: true });
+  check(bodyChooser.error?.errors?.length === 1 && bodyChooser.error.errors[0] === bodyChooser.bodyObserved &&
+    bodyChooser.bodyObserved.message === "NATIVE_FILE_NOT_DELIVERED" &&
+    bodyChooser.assertions.every(assertion => assertion.success) &&
+    bodyChooser.deliveries.length === 1 && bodyChooser.trace.indexOf("chooser") < bodyChooser.trace.indexOf("reset-1"),
+  "Earlier authorization-revocation body admission remains unrepaired and visible even when finalizer recovery succeeds");
+  const failures = await run({ bodyFailure: true, trackingFailure: true, rigFailure: true, admissionFailure: true });
+  check(failures.error instanceof AggregateError && failures.error.errors.length === 4 &&
+    failures.error.errors[0] === failures.bodyFailure && failures.error.errors[1] === failures.trackingFailure &&
+    failures.error.errors[2] === failures.rigFailure && failures.error.errors[3] === failures.finalizerFailure &&
+    failures.trace.indexOf("restore-tracking") < failures.trace.indexOf("restore-rig") &&
+    failures.trace.indexOf("restore-rig") < failures.trace.indexOf("reset-1") &&
+    failures.trace.indexOf("reset-1") < failures.trace.indexOf("admission-attempt"),
+  "Actual generation finalization preserves body and independent tracking rig and chooser failure identity/order while attempting each");
+  const cleanBody = await run({ admissionFailure: true });
+  check(cleanBody.error?.errors?.length === 1 && cleanBody.error.errors[0] === cleanBody.finalizerFailure,
+  "A finalizer-only failure stays a genuine failure without inventing a body error");
+  const noMeasured = await run({ noMeasuredReset: true });
+  check(noMeasured.assertions.find(assertion => assertion.name.includes("drops the restored tab baseline"))?.success === false,
+  "Preparatory reset cannot substitute for or move the measured reset after authenticated baseline capture");
+  const noReadmission = await run({ noReadmission: true });
+  check(noReadmission.error?.errors?.[0]?.message.includes("Reset recovery did not restore") &&
+    noReadmission.assertions.at(-1)?.success === false,
+  "Unchanged finalizer predicates refuse a newer generation without authenticated owner and baseline re-registration");
+  const legacy = await run({ oldMasking: true, bodyFailure: true,
+    trackingFailure: true, rigFailure: true, admissionFailure: true });
+  check(legacy.error?.errors?.length === 3 && !legacy.error.errors.includes(legacy.bodyFailure) &&
+    legacy.error.errors[0] === legacy.trackingFailure &&
+    legacy.error.errors[1] === legacy.rigFailure &&
+    legacy.error.errors[2] === legacy.finalizerFailure &&
+    failures.error.errors.includes(failures.bodyFailure),
+  "Old finally-masking counterfactual loses the body Error unlike the executed actual generation finalizer");
+  for (const bodyValue of [0, false, null, undefined]) {
+    const primitive = await run({ bodyValue });
+    check(primitive.error instanceof AggregateError && primitive.error.errors.length === 1 &&
+      primitive.error.errors[0] === bodyValue &&
+      primitive.assertions.length === 3 && primitive.assertions.every(assertion => assertion.success),
+    "Generation finalization retains a thrown falsy " + typeof bodyValue + " body value rather than treating it as success");
+  }
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -3709,7 +3930,7 @@ async function terminalAggregateDiagnosticContracts() {
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
     popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
-    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts]) {
+    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, generationFinalizerContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

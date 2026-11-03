@@ -38025,6 +38025,8 @@ async function runShutdownGenerationScenarios(win, exec) {
     mainSelections: trackingSelections.slice(start),
     };
   };
+  let bodyFailed = false;
+  let bodyError = null;
   try {
     // The preceding shutdown matrix intentionally exercises renderer-hang and
     // loss states. Begin this independent generation matrix from a real ready
@@ -38989,110 +38991,124 @@ async function runShutdownGenerationScenarios(win, exec) {
       if (oldProbeWork) await oldProbeWork;
       if (oldProbeDelivery) await oldProbeDelivery;
     }
+  } catch (error) {
+    bodyFailed = true;
+    bodyError = error;
   } finally {
-    Object.defineProperty(
-      ipcMain._events,
-      "select-file-tracking",
-      trackingDescriptor,
-    );
-    rig.restore();
-    const captureRestoredDeletionState = async (expectedFilePath = null) =>
-      JSON.parse(await exec(`
-        (() => {
-          const expectedFilePath = ${JSON.stringify(expectedFilePath)};
-          const activeTab = window.CustomTabs.getActiveTab();
-          const tab = expectedFilePath === null
-            ? activeTab
-            : window.CustomTabs.getTabs().find(
-              candidate => candidate.filePath === expectedFilePath,
-            ) || null;
-          const pageSession = window.getReloadRequestSession();
-          const identity = tab
-            ? window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession)
-            : null;
-          return JSON.stringify({
-            tabId: tab?.id ?? null,
-            filePath: tab?.filePath ?? null,
-            pageSession,
-            active: tab?.id === activeTab?.id,
-            identity,
-            deletion: identity && typeof window.queryDocumentDeletionState === 'function'
-              ? window.queryDocumentDeletionState(tab.filePath, identity)
-              : null,
-          });
-        })()
-      `));
-    const resetNativePath = path.join(dir, "generation-restored-native.md");
-    const resetText = "Generation reset native\n\nGENERATION_RESET_NATIVE\n";
-    write(resetNativePath, resetText);
-    const resetAdmission = await openShutdownLifecycleFixture(
-      exec, resetNativePath, resetText, "GENERATION_RESET_NATIVE",
-    );
-    check("generation reset recovery starts with a genuinely admitted persisted owner",
-      resetAdmission.filePath === resetNativePath &&
-        __shutdown.documentSessionState().entries.some(entry =>
-          entry.filePath === resetNativePath));
-    const resetBoundaryBefore = {
-      main: __shutdown.state(),
-      renderer: await captureRestoredDeletionState(),
-    };
-    __shutdown.reset();
-    const resetBoundaryAfter = {
-      main: __shutdown.state(),
-      renderer: await captureRestoredDeletionState(),
-    };
-    const resetErasesOnlyRestoredOwnerBaseline =
-      resetBoundaryBefore.renderer.tabId !== null &&
-      resetBoundaryBefore.renderer.filePath !== null &&
-      JSON.stringify(resetBoundaryAfter.renderer.identity) ===
-        JSON.stringify(resetBoundaryBefore.renderer.identity) &&
-      resetBoundaryBefore.renderer.deletion?.known === true &&
-      resetBoundaryAfter.renderer.deletion?.known === false &&
-      resetBoundaryBefore.main.knownDocumentOwnerCount > 0 &&
-      resetBoundaryAfter.main.knownDocumentOwnerCount ===
-        resetBoundaryBefore.main.knownDocumentOwnerCount;
-    check(
-      "the test-only shutdown reset drops the restored tab baseline while retaining its owner",
-      resetErasesOnlyRestoredOwnerBaseline,
-      JSON.stringify({ resetBoundaryBefore, resetBoundaryAfter }),
-    );
-    const restoredFilePath = resetBoundaryBefore.renderer.filePath;
-    const resetRecoveryGeneration = __shutdown.state().rendererGeneration;
-    await win.loadFile(indexFile);
-    const resetRecoveryGenerationReady = await waitUntil(
-      () => {
-        const state = __shutdown.state();
-        return state.renderer === "ready" &&
-          state.rendererGeneration > resetRecoveryGeneration;
-      },
-      20000,
-    );
-    let resetRecoveryOwner = null;
-    const resetRecoveryOwnerReady = resetRecoveryGenerationReady &&
-      await waitUntil(async () => {
-        resetRecoveryOwner = await captureRestoredDeletionState(restoredFilePath);
-        const { identity, deletion } = resetRecoveryOwner;
-        return resetRecoveryOwner.filePath === restoredFilePath &&
-          resetRecoveryOwner.active === true &&
-          identity?.pageSession === resetRecoveryOwner.pageSession &&
-          identity?.tabId === resetRecoveryOwner.tabId &&
-          deletion?.known === true &&
-          deletion?.unresolved === false;
-      }, 20000);
-    const resetRecoveryState = __shutdown.state();
-    check(
-      "an index reload restores an authenticated owner with no unresolved deletion after the test-only reset",
-      resetRecoveryOwnerReady,
-      JSON.stringify({
-        restoredFilePath,
-        resetRecoveryGeneration,
-        resetRecoveryGenerationReady,
-        resetRecoveryState,
-        resetRecoveryOwner,
-      }),
-    );
-    if (!resetRecoveryOwnerReady) {
-      throw new Error("Reset recovery did not restore the physical tab's owner without unresolved deletion");
+    const finalizationErrors = [];
+    try {
+      Object.defineProperty(
+        ipcMain._events,
+        "select-file-tracking",
+        trackingDescriptor,
+      );
+    } catch (error) { finalizationErrors.push(error); }
+    try { rig.restore(); } catch (error) { finalizationErrors.push(error); }
+    try {
+      const captureRestoredDeletionState = async (expectedFilePath = null) =>
+        JSON.parse(await exec(`
+          (() => {
+            const expectedFilePath = ${JSON.stringify(expectedFilePath)};
+            const activeTab = window.CustomTabs.getActiveTab();
+            const tab = expectedFilePath === null
+              ? activeTab
+              : window.CustomTabs.getTabs().find(
+                candidate => candidate.filePath === expectedFilePath,
+              ) || null;
+            const pageSession = window.getReloadRequestSession();
+            const identity = tab
+              ? window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, pageSession)
+              : null;
+            return JSON.stringify({
+              tabId: tab?.id ?? null,
+              filePath: tab?.filePath ?? null,
+              pageSession,
+              active: tab?.id === activeTab?.id,
+              identity,
+              deletion: identity && typeof window.queryDocumentDeletionState === 'function'
+                ? window.queryDocumentDeletionState(tab.filePath, identity)
+                : null,
+            });
+          })()
+        `));
+      const resetNativePath = path.join(dir, "generation-restored-native.md");
+      const resetText = "Generation reset native\n\nGENERATION_RESET_NATIVE\n";
+      write(resetNativePath, resetText);
+      // A stubbed committed close can leave an ingress fence in this live window.
+      __shutdown.reset();
+      const resetAdmission = await openShutdownLifecycleFixture(
+        exec, resetNativePath, resetText, "GENERATION_RESET_NATIVE",
+      );
+      check("generation reset recovery starts with a genuinely admitted persisted owner",
+        resetAdmission.filePath === resetNativePath &&
+          __shutdown.documentSessionState().entries.some(entry =>
+            entry.filePath === resetNativePath));
+      const resetBoundaryBefore = {
+        main: __shutdown.state(),
+        renderer: await captureRestoredDeletionState(),
+      };
+      __shutdown.reset();
+      const resetBoundaryAfter = {
+        main: __shutdown.state(),
+        renderer: await captureRestoredDeletionState(),
+      };
+      const resetErasesOnlyRestoredOwnerBaseline =
+        resetBoundaryBefore.renderer.tabId !== null &&
+        resetBoundaryBefore.renderer.filePath !== null &&
+        JSON.stringify(resetBoundaryAfter.renderer.identity) ===
+          JSON.stringify(resetBoundaryBefore.renderer.identity) &&
+        resetBoundaryBefore.renderer.deletion?.known === true &&
+        resetBoundaryAfter.renderer.deletion?.known === false &&
+        resetBoundaryBefore.main.knownDocumentOwnerCount > 0 &&
+        resetBoundaryAfter.main.knownDocumentOwnerCount ===
+          resetBoundaryBefore.main.knownDocumentOwnerCount;
+      check(
+        "the test-only shutdown reset drops the restored tab baseline while retaining its owner",
+        resetErasesOnlyRestoredOwnerBaseline,
+        JSON.stringify({ resetBoundaryBefore, resetBoundaryAfter }),
+      );
+      const restoredFilePath = resetBoundaryBefore.renderer.filePath;
+      const resetRecoveryGeneration = __shutdown.state().rendererGeneration;
+      await win.loadFile(indexFile);
+      const resetRecoveryGenerationReady = await waitUntil(
+        () => {
+          const state = __shutdown.state();
+          return state.renderer === "ready" &&
+            state.rendererGeneration > resetRecoveryGeneration;
+        },
+        20000,
+      );
+      let resetRecoveryOwner = null;
+      const resetRecoveryOwnerReady = resetRecoveryGenerationReady &&
+        await waitUntil(async () => {
+          resetRecoveryOwner = await captureRestoredDeletionState(restoredFilePath);
+          const { identity, deletion } = resetRecoveryOwner;
+          return resetRecoveryOwner.filePath === restoredFilePath &&
+            resetRecoveryOwner.active === true &&
+            identity?.pageSession === resetRecoveryOwner.pageSession &&
+            identity?.tabId === resetRecoveryOwner.tabId &&
+            deletion?.known === true &&
+            deletion?.unresolved === false;
+        }, 20000);
+      const resetRecoveryState = __shutdown.state();
+      check(
+        "an index reload restores an authenticated owner with no unresolved deletion after the test-only reset",
+        resetRecoveryOwnerReady,
+        JSON.stringify({
+          restoredFilePath,
+          resetRecoveryGeneration,
+          resetRecoveryGenerationReady,
+          resetRecoveryState,
+          resetRecoveryOwner,
+        }),
+      );
+      if (!resetRecoveryOwnerReady) {
+        throw new Error("Reset recovery did not restore the physical tab's owner without unresolved deletion");
+      }
+    } catch (error) { finalizationErrors.push(error); }
+    if (bodyFailed || finalizationErrors.length) {
+      throw new AggregateError(bodyFailed ? [bodyError, ...finalizationErrors] : finalizationErrors,
+        "Shutdown generation scenario or independent finalization failed");
     }
   }
 }
