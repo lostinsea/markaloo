@@ -38219,6 +38219,22 @@ async function runShutdownGenerationScenarios(win, exec) {
     // revoke that authority before the replacement can discard an edit.
     __shutdown.reset();
     rig.reset();
+    // The replacement must restore this session entry, not ask the fenced chooser.
+    const navigationPreadmission = await openShutdownLifecycleFixture(
+      exec, navigationEditFile, navigationSeed, "Navigation edit fixture",
+    );
+    const navigationSession = __shutdown.documentSessionState();
+    const navigationEntry = navigationSession.entries.find(entry =>
+      entry.id === navigationPreadmission.descriptor.entryId &&
+        entry.filePath === navigationEditFile);
+    if (!navigationEntry ||
+        navigationSession.activeEntryId !== navigationEntry.id ||
+        navigationPreadmission.owner.pathKey !==
+          nativePathKey(fs.realpathSync.native(navigationEditFile)) ||
+        nativePathKey(navigationPreadmission.descriptor.readTarget) !==
+          nativePathKey(fs.realpathSync.native(navigationEditFile))) {
+      throw new Error("Navigation approval fixture is not its persisted selected physical entry");
+    }
     const approvedClose = guardEvent();
     win.emit("close", approvedClose);
     const cleanApproved = await waitUntil(
@@ -38239,14 +38255,18 @@ async function runShutdownGenerationScenarios(win, exec) {
       );
     }
     const afterRevocation = __shutdown.state();
-    const navigationAdmission = await openShutdownLifecycleFixture(
+    const navigationAdmission = await settleShutdownLifecycleRestore(
       exec, navigationEditFile, navigationSeed, "Navigation edit fixture",
     );
     const navigationEditSetup = await exec(`
       (() => {
         const tab = window.CustomTabs.getActiveTab();
-        if (tab?.id !== ${JSON.stringify(navigationAdmission.tabId)}) {
-          throw new Error('Navigation fixture is not the admitted active tab');
+        const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, window.getReloadRequestSession());
+        if (tab?.id !== ${JSON.stringify(navigationAdmission.tabId)} ||
+            owner?.documentRef !== ${JSON.stringify(navigationAdmission.owner.documentRef)} ||
+            owner?.pageSession !== ${JSON.stringify(navigationAdmission.owner.pageSession)}) {
+          throw new Error('Navigation fixture is not the restored active owner');
         }
         const cached = tab.content;
         const live = cached + 'after navigation exact edit';

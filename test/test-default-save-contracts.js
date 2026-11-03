@@ -3920,6 +3920,255 @@ async function generationFinalizerContracts() {
   }
 }
 
+async function generationNavigationSetupContracts() {
+  const scenario = between(source, "    // An approval is scoped to exactly the document which supplied it.",
+    "    // A main-process discard dialog is an approval of one renderer document,");
+  const open = between(source, "async function openShutdownLifecycleFixture(",
+    "\nasync function clearShutdownLifecycleDocuments(");
+  const restore = between(source, "async function settleShutdownLifecycleRestore(",
+    "\nasync function runShutdownGenerationScenarios(");
+  const replace = between(source, "function replaceMethod(", "\n// A stand-in for the cancellable event");
+  const bounded = between(source, "async function boundedDialogWork(", "\nfunction inspectCleanRefreshSource(");
+  const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
+  const capture = between(main, "function captureFileOpenDelivery(", "\nfunction fileOpenSnapshotIsCurrent(");
+  const chooser = between(main, "function openFileDialog() {",
+    "\n// ============================================\n// IPC HANDLERS - File Operations");
+  const restoreRoute = between(main, 'ipcMain.handle("restore-document-session",',
+    '\nipcMain.handle("save-document-session-layout",');
+  const dirty = between(customTabs, "  function dirtyTabNames(", "\n  window.addEventListener(PENDING_SAVE_STATUS_EVENT,");
+  const run = async (options = {}) => {
+    // Main's chooser/restore routes and both actual native helpers execute.
+    // Registration, processor/paint/layout, close/ACK and disk are simulated ports.
+    const file = "C:\\fixture\\f22-navigation-edit.md", seed = "Navigation edit fixture\n\nbefore\n";
+    const version = { dev: 1, ino: 2, size: seed.length, mtimeMs: 3, ctimeMs: 4 };
+    const trace = [], assertions = [], trackingSelections = [], handlers = new Map(), owners = new Map();
+    let active = null, nextRef = 0, pageSession = "navigation-page-5", clock = 0, closeRequests = 0;
+    let layoutCalls = 0, reloadWork = null, beforeOwner = null, restoredOwner = null;
+    const frame = { isDestroyed: () => false, parent: null, frameTreeNodeId: 31 };
+    const wc = { mainFrame: frame, isDestroyed: () => false };
+    const nativeOwner = { webContents: wc, isDestroyed: () => false };
+    const dialog = { showOpenDialog() { throw new Error("Unowned Source chooser"); } };
+    const state = { renderer: "ready", rendererGeneration: 5, authorized: false, pendingId: 0 };
+    const page = { window: {}, document: { getElementById: () => ({ textContent:
+      options.noPaint && restoredOwner ? "" : active?.content || "" }) },
+      Date: { now: () => clock += 1000 }, setTimeout: resolve => { resolve(); return 0; } };
+    const rendererContext = vm.createContext(page);
+    const mainContext = vm.createContext({
+      mainWindow: nativeOwner, BrowserWindow: { fromWebContents: target => target === wc ? nativeOwner : null },
+      approvalRendererGeneration: 5, approvalRendererPageSession: pageSession, approvalRendererState: "ready",
+      fileOpenDeliveryEpoch: 0, shutdownCommitIngressBlocked: false, activeDialogExtraBatch: null,
+      documentAdmissions: new Map(), documentSessionFailure: null,
+      documentSessionManifest: { entries: [], activeEntryId: null }, protectedSessionEntries: new Set(),
+      unavailableSessionEntries: new Set(), pinnedAdoptionAdmissionReferences: () => new Set(),
+      isApprovalSender: event => event.sender === wc && event.senderFrame === frame,
+      ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      SUPPORTED_EXTENSIONS: { markdown: [".md"], mermaid: [".mmd"] }, dialog,
+      markdownSnapshotPromise: async filePath => {
+        assert.equal(filePath, file); trace.push("snapshot");
+        return { content: seed, modifiedTime: 3, diskVersion: { ...version },
+          physical: { readTarget: file, pathKey: file } };
+      },
+      confirmLargeDocument: () => true, rememberDocumentModifiedTime() {},
+      issueDocumentAdmission: (target, filePath, diskVersion, physical, provenance, entryId = "navigation-entry") => {
+        assert.equal(target, wc); assert.equal(filePath, file);
+        assert.equal(physical.readTarget, file);
+        const descriptor = { ref: "navigation-ref-" + ++nextRef, entryId, logicalPath: file,
+          readTarget: options.wrongPhysical ? "C:\\foreign.md" : file, diskVersion };
+        mainContext.documentAdmissions.set(descriptor.ref, { sender: wc, tabId: null });
+        trace.push("admission-" + mainContext.approvalRendererGeneration);
+        return descriptor;
+      },
+      safeSendFileOpen: (target, channel, packet, generation) => {
+        assert.equal(target, wc); assert.equal(channel, "file-opened");
+        assert.equal(generation, state.rendererGeneration);
+        const observation = page.window.__dialogBatchNative;
+        const processor = { eventUndefined: true, settled: false, error: null, packet };
+        observation.processors.push(processor);
+        processor.promise = Promise.resolve().then(() => {
+          install(packet, false); processor.settled = true;
+          observation.renders.push({ settled: true, error: null, promise: Promise.resolve() });
+        });
+        return true;
+      },
+      console: { error: (...args) => trace.push("main-error:" + args.join(" ")) },
+    });
+    vm.runInContext(capture + "\n" + chooser + "\n" + restoreRoute, mainContext);
+    const install = (packet, restored) => {
+      const identity = { tabId: restored ? 92 : 41, pageSession,
+        rendererGeneration: state.rendererGeneration, documentGeneration: nextRef,
+        documentRef: packet.document.ref, pathKey: file };
+      active = { id: identity.tabId, filename: path.basename(file), filePath: file,
+        content: packet.content, originalContent: packet.content, hasUnsavedChanges: false,
+        descriptor: packet.document, diskVersion: packet.diskVersion, owner: identity };
+      owners.set(identity.documentRef, identity);
+      page.window.originalMarkdown = packet.content; page.window.currentFilePath = file;
+      if (restored) restoredOwner = identity;
+      else beforeOwner = identity;
+      const selection = { filePath: file, adoptBaseline: true, diskVersion: { ...packet.diskVersion }, owner: identity };
+      const decision = { accepted: true, trackingActive: true };
+      if (restored && options.badVersion) selection.diskVersion.mtimeMs++;
+      if (restored && options.refusedSelection) decision.accepted = false;
+      if (restored && options.foreignSelection) selection.owner = { ...identity, pageSession: "foreign-page" };
+      trackingSelections.push({ selection, decision });
+    };
+    Object.assign(page.window, {
+      folia: { openFileDialog: () => { trace.push("chooser"); mainContext.openFileDialog(); } },
+      getReloadRequestSession: () => pageSession,
+      queryDocumentDeletionState: (_filePath, identity) => ({
+        known: owners.get(identity.documentRef) === identity, unresolved: false,
+      }),
+      CustomTabs: {
+        getActiveTab: () => active,
+        getDocumentIdentityForTab: () => active?.owner,
+        getDocumentDescriptor: () => active?.descriptor,
+        settleSessionLayout: async () => {
+          trace.push("layout-" + ++layoutCalls);
+          if (!options.noPersistence && active) {
+            mainContext.documentSessionManifest = {
+              entries: [{ id: active.descriptor.entryId, filePath: file, provenance: "native-dialog" }],
+              activeEntryId: options.notSelected ? null : active.descriptor.entryId,
+            };
+          }
+        },
+      },
+    });
+    Object.assign(rendererContext, {
+      inEditMode: () => false, frozenDocumentOperationsDropped: false,
+      pendingSaveStatusForShutdown: () => ({ pending: false }),
+      snapshotActiveTab: () => {
+        trace.push("dirty-fold");
+        active.content = page.window.originalMarkdown;
+        active.hasUnsavedChanges = active.content !== active.originalContent;
+      },
+      isDirty: tab => tab.hasUnsavedChanges,
+    });
+    // The dirty-list function is actual; its maintained-state fold is a port.
+    Object.defineProperty(rendererContext, "tabs", { get: () => active ? [active] : [] });
+    vm.runInContext(dirty + "\nwindow.CustomTabs.__dirtyTabNames = dirtyTabNames;", rendererContext);
+    const exec = async script => vm.runInContext(script, rendererContext);
+    const rig = { closes: 0, dialogs: [], answer: 0, reset: () => {
+      trace.push("rig-reset"); rig.closes = 0; rig.dialogs = [];
+    } };
+    const waitUntil = async predicate => {
+      for (let count = 0; count < 10; count++) { if (await predicate()) return true; await turn(); }
+      return false;
+    };
+    wc.reload = () => {
+      trace.push("reload");
+      mainContext.approvalRendererGeneration = ++state.rendererGeneration;
+      mainContext.approvalRendererPageSession = pageSession = "navigation-page-" + state.rendererGeneration;
+      state.authorized = false; active = null;
+      reloadWork = handlers.get("restore-document-session")({ sender: wc, senderFrame: frame }).then(batch => {
+        for (const entry of batch.entries) install(entry, true);
+      });
+    };
+    const context = vm.createContext({
+      exec, wc, rig, dialog, navigationEditFile: file, navigationSeed: seed, trackingSelections,
+      replacementTracking: null, path, nativePathKey: value => value,
+      fs: { realpathSync: { native: value => value } }, setTimeout, clearTimeout, require,
+      __shutdown: {
+        reset: () => {
+          trace.push("reset"); mainContext.shutdownCommitIngressBlocked = false; state.authorized = false;
+        },
+        state: () => ({ ...state }),
+        documentSessionState: () => mainContext.documentSessionManifest,
+      },
+      guardEvent: () => ({ prevented: false }),
+      win: { emit: (name, event) => {
+        assert.equal(name, "close"); event.prevented = true;
+        closeRequests++; trace.push("close-" + closeRequests);
+        if (closeRequests === 1) {
+          assert.equal(active.content, seed); assert.equal(active.hasUnsavedChanges, false);
+          assert.ok(beforeOwner && mainContext.documentSessionManifest.activeEntryId);
+          rig.closes++; state.authorized = true;
+          state.authorizationGeneration = state.rendererGeneration;
+          mainContext.shutdownCommitIngressBlocked = true;
+        } else {
+          assert.ok(active.hasUnsavedChanges);
+          if (!options.noQuestion) rig.dialogs.push({ options: { message: path.basename(file) } });
+          trace.push("answer-" + rig.answer);
+          if (options.nonCancel || rig.answer !== 1) rig.closes++;
+          if (options.extraClose) rig.closes++;
+        }
+      } },
+      waitUntil, navigationTrackingWitness: async () => ({ pageSession }),
+      waitForCondition: async (runExec, predicate) => waitUntil(() => runExec(predicate)),
+      installDialogBatchPageObservation: async installer => installer(
+        "(() => { window.__dialogBatchNative = { processors: [], renders: [] }; return true; })()"),
+      restoreDialogBatchPageObservation: async () => { delete page.window.__dialogBatchNative; },
+      check: (name, success, detail) => assertions.push({ name, success: !!success, detail }),
+      console: { log() {} },
+    });
+    vm.runInContext(replace + "\n" + bounded + "\n" + open + "\n" + restore, context);
+    if (options.staleOwner) {
+      const settle = context.settleShutdownLifecycleRestore;
+      context.settleShutdownLifecycleRestore = async (...args) => {
+        const value = await settle(...args);
+        return { ...value, tabId: options.reusedTabId ? value.tabId : beforeOwner.tabId, owner: beforeOwner };
+      };
+    }
+    let actual = scenario;
+    if (options.oldChooser) actual = actual.replace(
+      "const navigationAdmission = await settleShutdownLifecycleRestore(",
+      "const navigationAdmission = await openShutdownLifecycleFixture(");
+    if (options.noPreadmission) actual = actual.replace(
+      "const navigationPreadmission = await openShutdownLifecycleFixture(\n" +
+      '      exec, navigationEditFile, navigationSeed, "Navigation edit fixture",\n    );',
+      'const navigationPreadmission = { descriptor: { entryId: "absent" } };');
+    let error = null;
+    try { await vm.runInContext("(async () => {\n" + actual + "\n})()", context); }
+    catch (failure) { error = failure; }
+    if (reloadWork) await reloadWork;
+    return { trace, assertions, error, rig, beforeOwner, restoredOwner, closeRequests,
+      blocked: mainContext.shutdownCommitIngressBlocked,
+      persisted: mainContext.documentSessionManifest, observation: page.window.__dialogBatchNative };
+  };
+  const good = await run();
+  assert.equal(good.error, null, require("node:util").inspect(good.error, { depth: null }));
+  check(!good.error && good.assertions.length === 2 && good.assertions.every(assertion => assertion.success) &&
+    good.beforeOwner.tabId !== good.restoredOwner.tabId &&
+    good.beforeOwner.documentRef !== good.restoredOwner.documentRef &&
+    good.beforeOwner.pageSession !== good.restoredOwner.pageSession,
+  "Actual generation actor admits and persists before approval then uses the actual restore helper's fresh replacement owner");
+  check(good.trace.filter(value => value === "chooser").length === 1 &&
+    good.trace.indexOf("chooser") < good.trace.indexOf("close-1") &&
+    good.trace.indexOf("layout-1") < good.trace.indexOf("close-1") &&
+    good.trace.indexOf("close-1") < good.trace.indexOf("reload") &&
+    good.trace.filter(value => value === "reset").length === 1 && good.blocked,
+  "Actual chooser source runs only before committed close; actual Main restore route admits the newer page without clearing the ingress fence");
+  check(good.closeRequests === 2 && good.rig.closes === 1 && good.rig.dialogs.length === 1 &&
+    good.rig.answer === 1 && good.trace.includes("dirty-fold") &&
+    good.persisted.entries[0].filePath.endsWith("f22-navigation-edit.md") && !good.observation,
+  "Original live-only dirty scan and named replacement question require Cancel and exactly one nonterminal close with chooser observation restored");
+  for (const option of ["noPreadmission", "noPersistence", "notSelected", "wrongPhysical"]) {
+    const bad = await run({ [option]: true });
+    check(bad.error?.message === "Navigation approval fixture is not its persisted selected physical entry" &&
+      bad.closeRequests === 0 && !bad.trace.includes("reload") && !bad.observation,
+    "Actual preapproval guard refuses missing or foreign persisted selected physical fixture: " + option);
+  }
+  for (const reusedTabId of [false, true]) {
+    const stale = await run({ staleOwner: true, reusedTabId });
+    check(stale.error?.message === "Navigation fixture is not the restored active owner" &&
+      stale.closeRequests === 1 && stale.beforeOwner.pageSession !== stale.restoredOwner.pageSession,
+    "An old admitted owner cannot stand in for the restored page even with " +
+      (reusedTabId ? "a matching replacement tab ID" : "its previous tab ID"));
+  }
+  for (const option of ["badVersion", "refusedSelection", "foreignSelection", "noQuestion", "nonCancel", "extraClose"]) {
+    const bad = await run({ [option]: true });
+    check(!bad.error && bad.assertions[0].success && bad.assertions[1].success === false,
+    "Original revocation oracle rejects physical selection/version or dirty-close failure: " + option);
+  }
+  const old = await run({ oldChooser: true });
+  check(old.error?.errors?.some(error => error.message === "Shutdown lifecycle native file was not delivered") &&
+    old.trace.filter(value => value === "chooser").length === 2 &&
+    old.closeRequests === 1 && old.blocked && !old.observation,
+  "Actual old postclose chooser counterfactual is refused by the unchanged Main ingress predicate despite a successful session restore");
+  const unpainted = await run({ noPaint: true });
+  check(unpainted.error?.message === "Shutdown lifecycle restore did not reach its painted authenticated owner" &&
+    unpainted.closeRequests === 1,
+  "Actual replacement restore helper still refuses an unpainted page rather than treating newer READY as content completion");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -3930,7 +4179,8 @@ async function generationFinalizerContracts() {
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
     popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
-    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, generationFinalizerContracts]) {
+    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, generationFinalizerContracts,
+    generationNavigationSetupContracts]) {
     try { await run(); }
     catch (error) {
       failures++;
