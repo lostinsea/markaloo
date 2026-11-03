@@ -452,6 +452,11 @@ tag it ran from. Substitute the tag and filename being checked.
 
 The workflow accepts `v*` tag pushes and manual dispatches.
 
+- The macOS job uses the standard hosted `macos-26-intel` runner.
+  `npm run build-mac -- --arm64` keeps the existing Apple Silicon DMG target
+  independent of the build host.
+- Completeness checks inspect the app executable and Electron framework with
+  `lipo -archs`. This checks the payload architecture, not ARM64 app execution.
 - After pushing, check for a queued or running release workflow with the exact
   tag and commit. A successful push alone does not prove a workflow started.
 - Do not dispatch a duplicate if the push already started the workflow.

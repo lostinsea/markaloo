@@ -4124,7 +4124,7 @@ async function main() {
         extra: ["Windows update manifest", "Windows blockmap"],
       },
       mac: {
-        os: "macos-latest",
+        os: "macos-26-intel",
         verify: "Verify macOS release artifact completeness",
         upload: "Upload macOS artifacts",
         extra: ["macOS update manifest"],
@@ -4151,6 +4151,34 @@ async function main() {
     const releaseSteps = release.join("\n").split(/^ {6}- name: /m);
     const releaseStep = (name) =>
       releaseSteps.find((step) => step.startsWith(`${name}\n`) || step === name) || "";
+    const matrixOS = ((release.join("\n").match(/^ {8}os:\s*\[([^\]]+)\]\s*$/m) || [])[1] || "")
+      .split(",")
+      .map((os) => os.trim());
+    const macRunners = matrixOS.filter((os) => os.startsWith("macos-"));
+    check(
+      "the macOS release selects the standard Intel runner pool",
+      directValue(release, "runs-on") === "${{ matrix.os }}" &&
+        macRunners.length === 1 &&
+        macRunners[0] === completenessByPlatform.mac.os,
+      JSON.stringify({ runsOn: directValue(release, "runs-on"), macRunners }),
+    );
+    const macBuildStep = releaseStep("Build macOS packages");
+    check(
+      "the Intel-hosted macOS build explicitly preserves the arm64 package",
+      macBuildStep.includes(`if: matrix.os == '${completenessByPlatform.mac.os}'`) &&
+        /^ {8}run: npm run build-mac -- --arm64\s*$/m.test(macBuildStep),
+      macBuildStep,
+    );
+    const macCompletenessStep = releaseStep(completenessByPlatform.mac.verify);
+    check(
+      "macOS completeness rejects non-arm64 packaged executable and framework",
+      macCompletenessStep.includes("dist/mac-arm64/Markaloo.app/Contents/MacOS/Markaloo") &&
+        macCompletenessStep.includes("dist/mac-arm64/Markaloo.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework") &&
+        macCompletenessStep.includes('arch="$(lipo -archs "$binary")"') &&
+        macCompletenessStep.includes('if [ "$arch" != arm64 ]; then') &&
+        macCompletenessStep.includes("exit 1"),
+      macCompletenessStep,
+    );
     const updaterUploadPaths = {
       win: ["dist/latest.yml", "dist/*.blockmap"],
       mac: ["dist/latest-mac.yml"],

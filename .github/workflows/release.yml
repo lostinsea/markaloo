@@ -20,7 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Intel hosts avoid the arm64 capacity pool; the Mac package stays arm64.
+        os: [ubuntu-latest, windows-latest, macos-26-intel]
 
     steps:
       # Every third-party and first-party action below is pinned to a full
@@ -117,8 +118,8 @@ jobs:
           PACKAGING_STRICT: '1'
 
       - name: Build macOS packages
-        if: matrix.os == 'macos-latest'
-        run: npm run build-mac
+        if: matrix.os == 'macos-26-intel'
+        run: npm run build-mac -- --arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -155,12 +156,22 @@ jobs:
           if-no-files-found: error
 
       - name: Verify macOS release artifact completeness
-        if: matrix.os == 'macos-latest'
-        run: >-
+        if: matrix.os == 'macos-26-intel'
+        run: |
           node -e "const fs = require('fs'); const files = fs.readdirSync('dist'); const required = [['macOS disk image', f => /\.dmg$/i.test(f)], ['macOS update manifest', f => f === 'latest-mac.yml']]; const missing = required.filter(([, matches]) => !files.some(matches)).map(([name]) => name); if (missing.length) throw new Error('Missing release artifacts: ' + missing.join(', '));"
+          for binary in \
+            "dist/mac-arm64/Markaloo.app/Contents/MacOS/Markaloo" \
+            "dist/mac-arm64/Markaloo.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"; do
+            arch="$(lipo -archs "$binary")"
+            printf '%s: %s\n' "$binary" "$arch"
+            if [ "$arch" != arm64 ]; then
+              echo "Expected arm64 Mac release payload" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload macOS artifacts
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-26-intel'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mac-builds
