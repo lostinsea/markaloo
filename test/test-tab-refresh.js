@@ -37843,7 +37843,69 @@ async function openShutdownLifecycleFixture(exec, filePath, text, paintMarker) {
           owner?.tabId !== tab.id || owner?.pageSession !== pageSession ||
           deletion?.known !== true || deletion.unresolved !== false ||
           !document.getElementById('viewer').textContent.includes(paintMarker)) {
-        throw new Error('Shutdown lifecycle admission, owner or original paint did not settle');
+        const assertionError = new Error('Shutdown lifecycle admission, owner or original paint did not settle');
+        try {
+          const scalar = value => {
+            if (value === undefined) return String(value);
+            if (value === null || typeof value === 'string' || typeof value === 'boolean' ||
+                typeof value === 'number' && Number.isFinite(value)) return value;
+            throw new Error('Admission diagnostic value is not serializable scalar evidence');
+          };
+          const projectError = value => {
+            const text = String(value);
+            return text.length > 2048 ? text.slice(0, 2048) +
+              '... [truncated; original length ' + text.length + ']' : text;
+          };
+          const predicates = [
+            ['processor.eventUndefined', !processor.eventUndefined],
+            ['processor.settled', !processor.settled],
+            ['processor.error', !!processor.error],
+            ['processor.packet.path', processor.packet.path !== filePath],
+            ['renders.count', state.renders.length !== 1],
+            ['renders.settledOrError', state.renders.some(record => !record.settled || record.error)],
+            ['activeTab', !tab],
+            ['activeTab.filePath', tab?.filePath !== filePath],
+            ['activeTab.content', tab?.content !== text],
+            ['activeTab.originalContent', tab?.originalContent !== text],
+            ['originalMarkdown', window.originalMarkdown !== text],
+            ['currentFilePath', window.currentFilePath !== filePath],
+            ['descriptor.logicalPath', descriptor?.logicalPath !== filePath],
+            ['owner.tabId', owner?.tabId !== tab?.id],
+            ['owner.pageSession', owner?.pageSession !== pageSession],
+            ['deletion.known', deletion?.known !== true],
+            ['deletion.unresolved', deletion?.unresolved !== false],
+            ['paintMarker', !document.getElementById('viewer').textContent.includes(paintMarker)],
+          ];
+          const packet = {
+            failedPredicates: predicates.filter(([, failed]) => failed).map(([name]) => name),
+            processor: { path: String(processor.packet.path), eventUndefined: scalar(processor.eventUndefined),
+              settled: scalar(processor.settled), error: projectError(processor.error) },
+            renders: { count: state.renders.length, records: state.renders.map(record => ({
+              phase: String(record.phase), prefix: String(record.prefix),
+              settled: scalar(record.settled), error: projectError(record.error),
+            })) },
+            document: { activeTabId: String(tab?.id), activePath: String(tab?.filePath),
+              currentPath: String(window.currentFilePath), descriptorPath: String(descriptor?.logicalPath),
+              contentEqualsExpected: tab?.content === text,
+              originalContentEqualsExpected: tab?.originalContent === text,
+              originalMarkdownEqualsExpected: window.originalMarkdown === text },
+            owner: { tabId: String(owner?.tabId), pageSession: String(owner?.pageSession),
+              activeTabId: String(tab?.id), currentPageSession: String(pageSession) },
+            deletion: deletion == null ? scalar(deletion) : {
+              known: scalar(deletion.known), unresolved: scalar(deletion.unresolved),
+              ...Object.fromEntries(Object.entries(deletion)
+                .filter(([name]) => name !== 'known' && name !== 'unresolved')
+                .map(([name, value]) => [name, scalar(value)])),
+            },
+            paintMarkerPresent: !predicates[predicates.length - 1][1],
+          };
+          const serialized = JSON.stringify(packet);
+          if (typeof serialized !== 'string') throw new Error('Admission diagnostic serialization did not return text');
+          assertionError.message += ': ' + serialized;
+        } catch {
+          assertionError.message = 'Shutdown lifecycle admission, owner or original paint did not settle: admission diagnostic unavailable';
+        }
+        throw assertionError;
       }
       return { tabId: tab.id, filePath, owner, descriptor, diskVersion: tab.diskVersion };
     })()`), "shutdown lifecycle original processor and paint", 8000);

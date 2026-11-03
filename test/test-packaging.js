@@ -1501,7 +1501,7 @@ async function main() {
     };
   }
   const defaultFixtureSourceSummary =
-    "608 source/VM controls passed; 0 groups failed; native execution NOT RUN";
+    "653 source/VM controls passed; 0 groups failed; native execution NOT RUN";
   const defaultFixtureSourcePassed = (output, error) =>
     !error && output.trim() === defaultFixtureSourceSummary;
   check("default fixture source controls preserve SPLIT admission and original failure evidence",
@@ -1509,8 +1509,8 @@ async function main() {
     JSON.stringify(defaultFixtureSourceError || { stdout: defaultFixtureSourceOutput }));
   check("default fixture source gate rejects zero partial duplicate and failed control results",
     defaultFixtureSourcePassed(defaultFixtureSourceSummary, null) &&
-      [defaultFixtureSourceSummary.replace("608 ", "0 "),
-        defaultFixtureSourceSummary.replace("608 ", "607 "),
+      [defaultFixtureSourceSummary.replace("653 ", "0 "),
+        defaultFixtureSourceSummary.replace("653 ", "652 "),
         defaultFixtureSourceSummary + "\n" + defaultFixtureSourceSummary,
         defaultFixtureSourceSummary.replace("0 groups failed", "1 groups failed")]
         .every(output => !defaultFixtureSourcePassed(output, null)) &&

@@ -3699,6 +3699,339 @@ async function terminalAggregateDiagnosticContracts() {
   "Existing renderer-evidence refusal still omits only its suffix and retains nested failure details and accounting");
 }
 
+async function shutdownAdmissionDiagnosticContracts() {
+  const lifecycle = between(source, "async function openShutdownLifecycleFixture(",
+    "\nasync function clearShutdownLifecycleDocuments(");
+  const prefix = "Shutdown lifecycle admission, owner or original paint did not settle";
+  const diagnosticStart = lifecycle.indexOf("        const assertionError = new Error(");
+  const diagnosticEnd = lifecycle.indexOf("\n      }\n      return { tabId:", diagnosticStart);
+  const condition = "      if (!processor.eventUndefined || !processor.settled || processor.error ||\n" +
+    "          processor.packet.path !== filePath || state.renders.length !== 1 ||\n" +
+    "          state.renders.some(record => !record.settled || record.error) ||\n" +
+    "          !tab || tab.filePath !== filePath || tab.content !== text ||\n" +
+    "          tab.originalContent !== text || window.originalMarkdown !== text ||\n" +
+    "          window.currentFilePath !== filePath || descriptor?.logicalPath !== filePath ||\n" +
+    "          owner?.tabId !== tab.id || owner?.pageSession !== pageSession ||\n" +
+    "          deletion?.known !== true || deletion.unresolved !== false ||\n" +
+    "          !document.getElementById('viewer').textContent.includes(paintMarker)) {";
+  check(lifecycle.includes(condition),
+  "Admission diagnostics retain the exact original compound criteria including exactly one render and original paint");
+  const run = async (options = {}) => {
+    const fixture = pageFixture(), { page, control, context } = fixture;
+    const text = "# Alpha\n\nADMISSION_PACKET\n", filePath = control.tab.filePath;
+    Object.assign(control.tab, { content: text, originalContent: text, hasUnsavedChanges: false });
+    page.originalMarkdown = page.viewer.textContent = text;
+    const processor = deferred(), render = deferred(), layout = deferred();
+    const trace = [], scripts = [], errors = [], assertionErrors = [];
+    const observation = { phase: "setup", processors: [], renders: [] };
+    const cleanupFailure = new Error(options.cleanupErrorMessage ?? "ADMISSION_OBSERVATION_CLEANUP");
+    const joinFailure = new Error(options.joinErrorMessage ?? "ADMISSION_ORIGINAL_" + options.reject);
+    const diagnosticFailure = new Error("ADMISSION_DIAGNOSTIC_FAULT");
+    let delivered = false, snapshotReads = 0, deletionReads = 0, settled = false, packetSerializations = 0;
+    let diagnosticFaultReads = 0, viewerReads = 0, projectedPacket;
+    const originalChooser = () => { throw new Error("Unowned admission chooser"); };
+    const dialog = { showOpenDialog: originalChooser }, win = {};
+    const record = { packet: { path: filePath }, eventUndefined: true, phase: "setup", settled: false };
+    const painted = { phase: "setup", prefix: text.slice(0, 24), settled: false };
+    painted.promise = render.promise.then(() => { painted.settled = true; });
+    painted.promise.catch(() => {});
+    record.promise = processor.promise.then(() => {
+      record.settled = true;
+      observation.renders.push(painted);
+    });
+    record.promise.catch(() => {});
+    page.folia.openFileDialog = async () => {
+      const choice = await dialog.showOpenDialog(win, { properties: ["multiSelections"] });
+      assert.deepEqual(Array.from(choice.filePaths), [filePath]);
+      observation.processors.push(record); delivered = true;
+    };
+    page.CustomTabs.settleSessionLayout = () => {
+      trace.push("layout-start");
+      return layout.promise.then(() => {
+        trace.push("layout-joined");
+        if (options.countMismatch) observation.renders.push({ ...painted });
+        const fault = () => {
+          diagnosticFaultReads++;
+          assert.equal(assertionErrors.length, 1,
+            "The actual assertion Error exists before any diagnostic fault");
+          throw diagnosticFailure;
+        };
+        if (options.fault === "missing-viewer") delete page.viewer;
+        if (options.fault === "render-getter") Object.defineProperty(painted, "error", { get: fault });
+        if (options.fault === "owner-getter") Object.defineProperty(control.owner, "pageSession", { get: fault });
+        if (options.fault === "deletion-getter") Object.defineProperty(control.query, "why", {
+          enumerable: true, get: fault,
+        });
+        if (options.fault === "error-coercion") record.error = { toString: fault };
+        if (options.fault === "raw-deletion") control.query.extra = Promise.resolve("RAW_PROMISE");
+        options.mutate?.({ page, control, observation, record, painted });
+      });
+    };
+    const activeTab = page.CustomTabs.getActiveTab;
+    page.CustomTabs.getActiveTab = () => {
+      snapshotReads++; trace.push("snapshot");
+      return options.absentTab === "undefined" ? undefined : options.absentTab ? null : activeTab();
+    };
+    page.queryDocumentDeletionState = () => { deletionReads++; return control.query; };
+    const getElement = page.document.getElementById;
+    page.document.getElementById = id => {
+      if (id !== "viewer") return getElement(id);
+      viewerReads++; return page.viewer;
+    };
+    context.admissionObservation = observation;
+    context.Error = class extends Error {
+      constructor(message) {
+        super(message);
+        if (message === prefix) { assertionErrors.push(this); trace.push("assertion-created"); }
+      }
+    };
+    context.JSON = { stringify: (value, ...args) => {
+      if (value && Object.hasOwn(value, "failedPredicates")) {
+        packetSerializations++; projectedPacket = value;
+        if (options.serializationFault === "throw") { diagnosticFaultReads++; throw diagnosticFailure; }
+        if (options.serializationFault === "undefined") { diagnosticFaultReads++; return undefined; }
+      }
+      return JSON.stringify(value, ...args);
+    } };
+    let actual = lifecycle;
+    if (options.oldMessage && diagnosticStart >= 0 && diagnosticEnd > diagnosticStart) {
+      actual = actual.slice(0, diagnosticStart) + "        throw new Error('" + prefix + "');" +
+        actual.slice(diagnosticEnd);
+    }
+    if (options.unguarded) {
+      actual = actual.replace("        try {\n          const scalar = value => {",
+        "          const scalar = value => {");
+      actual = actual.replace("\n        } catch {\n          assertionError.message = '" +
+        prefix + ": admission diagnostic unavailable';\n        }\n        throw assertionError;",
+        "\n        throw assertionError;");
+    }
+    const exec = async script => {
+      scripts.push(script);
+      try { return await vm.runInContext(script, context); }
+      catch (error) { errors.push(error); throw error; }
+    };
+    const api = vm.runInNewContext(actual + "\nopenShutdownLifecycleFixture;", {
+      require, AggregateError, dialog, win, exec,
+      installDialogBatchPageObservation: installer => installer(
+        "(() => { window.__dialogBatchNative = admissionObservation; return true; })()"),
+      restoreDialogBatchPageObservation: async () => {
+        trace.push("restore-observation");
+        assert.equal(page.__dialogBatchNative, observation);
+        delete page.__dialogBatchNative;
+        if (options.cleanupFailure) throw cleanupFailure;
+      },
+      replaceMethod: (target, key, replacement) => {
+        target[key] = replacement;
+        return () => { trace.push("restore-chooser"); target[key] = originalChooser; };
+      },
+      waitForCondition: async (_exec, predicate, budget) => {
+        assert.equal(budget, 8000); await turn();
+        assert.equal(await exec(predicate), true); return true;
+      },
+      boundedDialogWork: (work, label, budget) => {
+        assert.equal(label, "shutdown lifecycle original processor and paint");
+        assert.equal(budget, 8000); trace.push("original-join"); return work;
+      },
+    });
+    const outcome = api(exec, filePath, text, "ADMISSION_PACKET").then(
+      value => { settled = true; return { value }; }, error => { settled = true; return { error }; });
+    await turn();
+    const processorHeld = delivered && !settled && snapshotReads === 0 && !trace.includes("layout-start");
+    if (options.reject === "processor") processor.reject(joinFailure);
+    else processor.resolve();
+    await turn();
+    const renderHeld = options.reject !== "processor" && !settled && snapshotReads === 0 &&
+      record.settled && observation.renders.length === 1 && !painted.settled;
+    if (options.reject === "render") render.reject(joinFailure);
+    else render.resolve();
+    await turn();
+    const layoutHeld = !options.reject && !settled && snapshotReads === 0 &&
+      trace.includes("layout-start") && !trace.includes("snapshot");
+    if (options.reject === "layout") layout.reject(joinFailure);
+    else layout.resolve();
+    const result = await outcome, leaf = result.error?.errors?.[0];
+    const packet = leaf?.message.startsWith(prefix + ": {") ?
+      JSON.parse(leaf.message.slice(prefix.length + 2)) : null;
+    return { ...result, leaf, packet, errors, trace, scripts, snapshotReads, deletionReads,
+      processorHeld, renderHeld, layoutHeld, cleanupFailure, joinFailure, observation, record, painted,
+      assertionErrors, diagnosticFailure, diagnosticFaultReads, viewerReads, projectedPacket, query: control.query,
+      packetSerializations, restored: dialog.showOpenDialog === originalChooser &&
+        !Object.hasOwn(page, "__dialogBatchNative") &&
+        trace.filter(step => step === "restore-chooser").length === 1 &&
+        trace.filter(step => step === "restore-observation").length === 1 };
+  };
+  const clean = await run();
+  check(!clean.error && clean.processorHeld && clean.renderHeld && clean.layoutHeld &&
+    clean.snapshotReads === 1 && clean.deletionReads === 1 && clean.restored &&
+    clean.trace.indexOf("layout-joined") < clean.trace.indexOf("snapshot") &&
+    clean.packetSerializations === 0 && clean.assertionErrors.length === 0 && clean.scripts.length === 5,
+  "Actual successful admission joins original processor render and layout before one owner read and exact cleanup");
+  const changes = [
+    ["processor.eventUndefined", ({ record }) => { record.eventUndefined = false; }],
+    ["processor.settled", ({ record }) => { record.settled = false; }],
+    ["processor.error", ({ record }) => { record.error = "PROCESSOR_OBSERVATION_ERROR"; }],
+    ["processor.packet.path", ({ record }) => { record.packet.path = "C:\\fixture\\wrong.md"; }],
+    ["renders.count", ({ observation, painted }) => { observation.renders.push({ ...painted }); }],
+    ["renders.settledOrError", ({ painted }) => { painted.settled = false; }],
+    ["activeTab.filePath", ({ control }) => { control.tab.filePath = "C:\\fixture\\wrong.md"; }],
+    ["activeTab.content", ({ control }) => { control.tab.content = "WRONG_CURRENT"; }],
+    ["activeTab.originalContent", ({ control }) => { control.tab.originalContent = "WRONG_ORIGINAL"; }],
+    ["originalMarkdown", ({ page }) => { page.originalMarkdown = "WRONG_MARKDOWN"; }],
+    ["currentFilePath", ({ page }) => { page.currentFilePath = "C:\\fixture\\wrong.md"; }],
+    ["descriptor.logicalPath", ({ control }) => { control.descriptor.logicalPath = "C:\\fixture\\wrong.md"; }],
+    ["owner.tabId", ({ control }) => { control.owner.tabId++; }],
+    ["owner.pageSession", ({ control }) => { control.owner.pageSession = "WRONG_PAGE"; }],
+    ["deletion.known", ({ control }) => { control.query.known = false; }],
+    ["deletion.unresolved", ({ control }) => { control.query.unresolved = true; }],
+    ["paintMarker", ({ page }) => { page.viewer.textContent = "UNPAINTED"; }],
+  ];
+  for (const [name, mutate] of changes) {
+    const failed = await run({ mutate });
+    check(failed.leaf === failed.errors[0] && failed.leaf === failed.assertionErrors[0] &&
+      failed.packet?.failedPredicates.join("|") === name &&
+      failed.processorHeld && failed.renderHeld && failed.layoutHeld && failed.restored &&
+      failed.snapshotReads === 1 && failed.deletionReads === 1 && failed.packetSerializations === 1 &&
+      failed.scripts.length === clean.scripts.length,
+    "Actual admission packet identifies only the unchanged failed predicate: " + name);
+  }
+  const compound = await run({ mutate: ({ record, painted, page, control }) => {
+    record.error = "PROCESSOR_EVIDENCE"; painted.error = "RENDER_EVIDENCE";
+    control.tab.content = "WRONG_CURRENT"; control.tab.originalContent = "WRONG_ORIGINAL";
+    page.originalMarkdown = "WRONG_MARKDOWN"; control.owner.pageSession = "WRONG_PAGE";
+    control.query = { known: false, unresolved: true, why: "ACTUAL_DELETION_RESULT" };
+    page.viewer.textContent = "UNPAINTED";
+  }, cleanupFailure: true });
+  check(JSON.stringify(compound.packet) === JSON.stringify({
+    failedPredicates: ["processor.error", "renders.settledOrError", "activeTab.content",
+      "activeTab.originalContent", "originalMarkdown", "owner.pageSession",
+      "deletion.known", "deletion.unresolved", "paintMarker"],
+    processor: { path: "C:\\fixture\\alpha.md", eventUndefined: true, settled: true, error: "PROCESSOR_EVIDENCE" },
+    renders: { count: 1, records: [{ phase: "setup", prefix: "# Alpha\n\nADMISSION_PACKE",
+      settled: true, error: "RENDER_EVIDENCE" }] },
+    document: { activeTabId: "21", activePath: "C:\\fixture\\alpha.md",
+      currentPath: "C:\\fixture\\alpha.md", descriptorPath: "C:\\fixture\\alpha.md",
+      contentEqualsExpected: false, originalContentEqualsExpected: false, originalMarkdownEqualsExpected: false },
+    owner: { tabId: "21", pageSession: "WRONG_PAGE", activeTabId: "21", currentPageSession: "page" },
+    deletion: { known: false, unresolved: true, why: "ACTUAL_DELETION_RESULT" }, paintMarkerPresent: false,
+  }),
+  "Actual admission packet retains complete serializable observer document owner deletion and paint evidence");
+  check(compound.error.errors.length === 2 && compound.error.errors[0] === compound.errors[0] &&
+    compound.error.errors[1] === compound.cleanupFailure && compound.restored &&
+    compound.packet.processor.error === compound.record.error &&
+    compound.packet.renders.records[0].error === compound.painted.error &&
+    compound.projectedPacket.deletion !== compound.query,
+  "Admission packet survives observation deletion and retains the original Error ahead of independent cleanup failure");
+  const absent = await run({ absentTab: true });
+  check(absent.packet?.failedPredicates.join("|") ===
+    "activeTab|activeTab.filePath|activeTab.content|activeTab.originalContent|descriptor.logicalPath|" +
+    "owner.pageSession|deletion.known|deletion.unresolved" &&
+    absent.packet.document.activeTabId === "undefined" && absent.packet.owner.tabId === "undefined" &&
+    absent.packet.deletion === null && absent.packet.paintMarkerPresent === true &&
+    absent.deletionReads === 0 && absent.restored,
+  "Missing active owner remains a failed original admission with explicit absent identities rather than a diagnostic TypeError");
+  const undefinedTab = await run({ absentTab: "undefined" });
+  check(undefinedTab.packet?.deletion === "undefined" && undefinedTab.packet.document.activeTabId === "undefined" &&
+    undefinedTab.packet.owner.tabId === "undefined" && undefinedTab.deletionReads === 0 && undefinedTab.restored,
+  "Undefined original owner and deletion evidence serialize explicitly without invented successful deletion defaults");
+  const noPaint = await run({ mutate: changes.at(-1)[1] });
+  check(noPaint.packet.processor.error === "undefined" &&
+    noPaint.packet.renders.records[0].error === "undefined" &&
+    noPaint.packet.processor.settled === true && noPaint.packet.renders.records[0].settled === true &&
+    noPaint.packet.renders.count === 1 && noPaint.packet.paintMarkerPresent === false,
+  "Absent observer errors stay explicitly undefined evidence while a settled single render can still fail original paint");
+  for (const reject of ["processor", "render", "layout"]) {
+    const rejected = await run({ reject });
+    check(rejected.error.errors[0] === rejected.joinFailure && rejected.packet === null &&
+      rejected.snapshotReads === 0 && rejected.deletionReads === 0 && rejected.restored &&
+      rejected.assertionErrors.length === 0 && rejected.packetSerializations === 0 &&
+      rejected.viewerReads === 0,
+    "Original admission " + reject + " rejection remains the same failure without a post-join diagnostic");
+  }
+  const old = await run({ oldMessage: true, mutate: changes.at(-1)[1] });
+  check(old.leaf?.message === prefix && old.packet === null &&
+    old.processorHeld && old.renderHeld && old.layoutHeld && old.restored,
+  "Executed original admission error counterfactual joins and cleans up but loses the exact failed predicate");
+  const shortCount = await run({ countMismatch: true });
+  check(shortCount.packet?.failedPredicates.join("|") === "renders.count" &&
+    shortCount.packet.renders.count === 2 && shortCount.packet.renders.records.length === 2 &&
+    shortCount.viewerReads === 1 && shortCount.leaf === shortCount.assertionErrors[0] &&
+    shortCount.processorHeld && shortCount.renderHeld && shortCount.layoutHeld && shortCount.restored,
+  "Actual false single-render count short-circuits the original viewer criterion before the guarded diagnostic reads it");
+  const unavailable = prefix + ": admission diagnostic unavailable";
+  for (const fault of ["missing-viewer", "render-getter", "owner-getter",
+    "deletion-getter", "error-coercion", "raw-deletion"]) {
+    const refused = await run({ countMismatch: true, fault });
+    check(refused.leaf === refused.assertionErrors[0] && refused.leaf === refused.errors[0] &&
+      refused.leaf.message === unavailable && refused.leaf.stack.includes(unavailable) &&
+      refused.error.errors.length === 1 && refused.packet === null &&
+      refused.packetSerializations === 0 && refused.observation.renders.length === 2 &&
+      (["missing-viewer", "raw-deletion"].includes(fault) || refused.diagnosticFaultReads === 1) &&
+      (fault !== "missing-viewer" || refused.viewerReads === 1) && refused.restored &&
+      refused.trace.slice(-2).join("|") === "restore-chooser|restore-observation",
+    "Guarded admission diagnostic preserves the established assertion and cleanup on " + fault);
+  }
+  for (const serializationFault of ["throw", "undefined"]) {
+    const refused = await run({ countMismatch: true, serializationFault });
+    check(refused.leaf === refused.assertionErrors[0] && refused.leaf.message === unavailable &&
+      refused.leaf.stack.includes(unavailable) &&
+      refused.packet === null && refused.packetSerializations === 1 &&
+      refused.diagnosticFaultReads === 1 && refused.leaf !== refused.diagnosticFailure && refused.restored,
+    "Actual admission JSON " + serializationFault + " fault cannot replace the established original assertion");
+  }
+  for (const options of [{ fault: "missing-viewer" }, { fault: "render-getter" },
+    { serializationFault: "throw" }]) {
+    const unsafe = await run({ ...options, countMismatch: true, unguarded: true });
+    check(unsafe.assertionErrors.length === 1 && unsafe.leaf !== unsafe.assertionErrors[0] &&
+      !unsafe.leaf.message.startsWith(prefix) && unsafe.packet === null && unsafe.restored &&
+      (options.fault !== "missing-viewer" || unsafe.viewerReads === 1),
+    "Executed unguarded diagnostic counterfactual loses the original assertion on " +
+      (options.fault || "JSON serialization"));
+  }
+  const longProcessor = "P".repeat(4096) + "PROCESSOR_TAIL", longRender = "R".repeat(8192) + "RENDER_TAIL";
+  const longPhase = "PHASE".repeat(600), longPrefix = "PREFIX".repeat(600);
+  const bounded = await run({ mutate: ({ record, painted }) => {
+    record.error = longProcessor; painted.error = longRender;
+    painted.phase = longPhase; painted.prefix = longPrefix;
+  } });
+  check(bounded.packet.processor.error === "P".repeat(2048) +
+      "... [truncated; original length " + longProcessor.length + "]" &&
+    bounded.packet.renders.records[0].error === "R".repeat(2048) +
+      "... [truncated; original length " + longRender.length + "]" &&
+    bounded.packet.processor.error.length < 2100 && bounded.packet.renders.records[0].error.length < 2100 &&
+    bounded.record.error === longProcessor && bounded.painted.error === longRender &&
+    bounded.packet.renders.records[0].phase === longPhase &&
+    bounded.packet.renders.records[0].prefix === longPrefix && bounded.restored,
+  "Only projected processor and render error text is bounded with explicit truncation while original records and other evidence stay exact");
+  const boundary = "B".repeat(2048);
+  const exactBound = await run({ mutate: ({ record, painted }) => {
+    record.error = boundary; painted.error = boundary;
+  } });
+  check(exactBound.packet.processor.error === boundary && exactBound.packet.renders.records[0].error === boundary &&
+    !exactBound.packet.processor.error.includes("truncated"),
+  "Projected errors exactly at the diagnostic text bound remain unchanged without a false truncation marker");
+  const longOriginal = "ORIGINAL_EXCEPTION_" + "X".repeat(10000) + "_ORIGINAL_TAIL";
+  const longCleanup = "INDEPENDENT_CLEANUP_" + "C".repeat(10000) + "_CLEANUP_TAIL";
+  const rejectedLong = await run({ reject: "processor", joinErrorMessage: longOriginal,
+    cleanupFailure: true, cleanupErrorMessage: longCleanup });
+  check(rejectedLong.error.errors[0] === rejectedLong.joinFailure &&
+    rejectedLong.joinFailure.message === longOriginal &&
+    rejectedLong.error.errors[1] === rejectedLong.cleanupFailure &&
+    rejectedLong.cleanupFailure.message === longCleanup && rejectedLong.packet === null &&
+    rejectedLong.assertionErrors.length === 0 && rejectedLong.packetSerializations === 0 &&
+    rejectedLong.viewerReads === 0 && rejectedLong.restored,
+  "Original producer exceptions and independent cleanup errors are never truncated or routed through diagnostics");
+  const guardCleanup = await run({ countMismatch: true, fault: "render-getter", cleanupFailure: true });
+  check(guardCleanup.error.errors[0] === guardCleanup.assertionErrors[0] &&
+    guardCleanup.leaf.message === unavailable && guardCleanup.error.errors[1] === guardCleanup.cleanupFailure &&
+    guardCleanup.restored && guardCleanup.trace.slice(-2).join("|") === "restore-chooser|restore-observation",
+  "A diagnostic getter failure keeps the original assertion first and independently restores chooser then observation despite cleanup failure");
+  const validWithBrokenSerializer = await run({ serializationFault: "throw" });
+  check(!validWithBrokenSerializer.error && validWithBrokenSerializer.assertionErrors.length === 0 &&
+    validWithBrokenSerializer.packetSerializations === 0 && validWithBrokenSerializer.diagnosticFaultReads === 0 &&
+    validWithBrokenSerializer.viewerReads === 1 && validWithBrokenSerializer.restored,
+  "Valid original admission never constructs an assertion or executes diagnostics even when the diagnostic serializer is broken");
+}
+
 async function generationFinalizerContracts() {
   const scenario = between(source, "async function runShutdownGenerationScenarios(",
     "\nfunction createInstalledUpdaterFixture(");
@@ -5100,7 +5433,8 @@ async function generationOwnedQuestionContracts() {
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
     popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
-    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, generationFinalizerContracts,
+    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, shutdownAdmissionDiagnosticContracts,
+    generationFinalizerContracts,
     generationNavigationSetupContracts, generationOwnedQuestionContracts]) {
     try { await run(); }
     catch (error) {
