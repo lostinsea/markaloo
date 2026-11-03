@@ -908,6 +908,87 @@ const REVERTS = [
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
+    id: "R1243",
+    what: "discard the original return-to-Beta switch promise and capture ownership while its disk refresh is still held",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: '  const returnSwitch = await exec(`window.CustomTabs.switchToTab(${before.id});`);\n' +
+      '  if (returnSwitch !== true) throw new Error("Document close return switch did not succeed: " + String(returnSwitch));',
+    to: '  await exec(`window.CustomTabs.switchToTab(${before.id}); null;`);',
+    suite: "test:packaging",
+    expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
+    mustPass: [
+      /^all actor contracts run as standalone Node commands rather than unawaited imports$/,
+      /^Node contracts gate the preserved ordinary suite and direct actor entrypoints$/,
+      /^teardown routing rejects missing changed and implicit input bindings$/,
+      /^direct focused and companion tabs launches cannot omit the actual-code contract preflight$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1244",
+    what: "lose same-window unmatched reload requests despite forwarding them to the unchanged Main handler",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: "          observedRequests.push(observation);\n",
+    to: "",
+    suite: "test:packaging",
+    expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
+    mustPass: [
+      /^all actor contracts run as standalone Node commands rather than unawaited imports$/,
+      /^Node contracts gate the preserved ordinary suite and direct actor entrypoints$/,
+      /^teardown routing rejects missing changed and implicit input bindings$/,
+      /^direct focused and companion tabs launches cannot omit the actual-code contract preflight$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1245",
+    what: "lose same-target reload replies whenever the request did not match the pre-dispatch witness",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: '      if (this === target && args[0] === "file-reload-result") observedReplies.push(args[1]);\n',
+    to: "",
+    suite: "test:packaging",
+    expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
+    mustPass: [
+      /^all actor contracts run as standalone Node commands rather than unawaited imports$/,
+      /^Node contracts gate the preserved ordinary suite and direct actor entrypoints$/,
+      /^teardown routing rejects missing changed and implicit input bindings$/,
+      /^direct focused and companion tabs launches cannot omit the actual-code contract preflight$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1246",
+    what: "reuse the pre-dispatch reload witness as terminal evidence instead of retaining the freshly read owner and prompt",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: "          fresh = await boundedDialogWork(exec(`(() => {",
+    to: "          fresh = witness; await boundedDialogWork(exec(`(() => {",
+    suite: "test:packaging",
+    expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
+    mustPass: [
+      /^all actor contracts run as standalone Node commands rather than unawaited imports$/,
+      /^Node contracts gate the preserved ordinary suite and direct actor entrypoints$/,
+      /^teardown routing rejects missing changed and implicit input bindings$/,
+      /^direct focused and companion tabs launches cannot omit the actual-code contract preflight$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "R1247",
+    what: "let a pending terminal diagnostic block the original reload error and independent observer restoration",
+    file: path.join(ROOT, "test", "test-tab-refresh.js"),
+    from: "          fresh = await boundedDialogWork(exec(",
+    to: "          fresh = await ((work) => work)(exec(",
+    suite: "test:packaging",
+    expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
+    mustPass: [
+      /^all actor contracts run as standalone Node commands rather than unawaited imports$/,
+      /^Node contracts gate the preserved ordinary suite and direct actor entrypoints$/,
+      /^teardown routing rejects missing changed and implicit input bindings$/,
+      /^direct focused and companion tabs launches cannot omit the actual-code contract preflight$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
     id: "R1222",
     what: "accept a mixed stale FIRST and saved SECOND preview before open-editor Reload",
     file: path.join(ROOT, "test", "test-tab-refresh.js"),
@@ -19387,7 +19468,7 @@ const REVERTS = [
       file: path.join(ROOT, "test", "teardown-question-current-bindings.json"),
       from:
         '{\n' +
-        '  "suite": "2edc50809669abc6084051d58cdc3fe286c86b7aaec92c3551b48c4c77dee404",\n' +
+        '  "suite": "642a79c773e14303847e8dcf74460e699b9c09df40fcfd3a1416782712ba4f91",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
@@ -19398,7 +19479,7 @@ const REVERTS = [
         '}\n',
       to:
         '{\n' +
-        '  "suite": "ea0995555b09fccd105a672e7280bddc495dad0f392f4b3ae34e0b6d13f7e55e",\n' +
+        '  "suite": "5363caa6ec56a335246057ffb9af8c629775f6f55e2ec545514ea31185cf155f",\n' +
         '  "main": "04e78c403777c0837f622b868ae86dded40e159df9f24795251d263ec55f8814",\n' +
         '  "helper": "8740fadd458158529e2f0188bc36fcddd047edebc229e0ecb4a0cc64deb19278",\n' +
         '  "caller": "dd45d0d76c93f23605bf24fe9dfd821467ec6ff2a738aefbb9ad5b3dbfdc1664",\n' +
@@ -27807,7 +27888,7 @@ function proveCompanionTranscriptRoles() {
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
       .join(",") ===
-        "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +
+        "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1243,R1244,R1245,R1246,R1247,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +
         "R1136,R1137,R1138,R1139,R1140,R1141,R1116,R1117,R1118,R1119,R1120,R1121,R1122,R1123,R1124,R1125,R1115,R1111,R1112,R1113," +
         "R68,R72,R449,R451,R452,R454,R455,R456,R457,R458,R459,R460,R467,R504,R450,R185," +
         "R319,R320,R434,R445,R530,R659,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R831,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";

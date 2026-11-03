@@ -2836,6 +2836,368 @@ async function popupCaptureDiagnosticContracts() {
   "Popup diagnostic formatting refusal cannot replace the original capture refusal or close a rejected window");
 }
 
+async function reloadJourneyBoundaryContracts() {
+  const journey = between(source, "async function runDocumentControlCloseJourney(",
+    "\nasync function installDialogBatchPageObservation(");
+  const priorAssertion = journey.indexOf('"SEC-08 actual close warns, acknowledges and retires only the deleted fixture owner"');
+  const tailStart = journey.indexOf("\n  );\n", priorAssertion) + "\n  );\n".length;
+  assert.ok(priorAssertion > 0 && tailStart > priorAssertion);
+  const tail = journey.slice(tailStart, journey.lastIndexOf("\n}"));
+  const legacyTail = '  await exec(`window.CustomTabs.switchToTab(${before.id}); null;`);\n' +
+    tail.slice(tail.indexOf("  const restored ="));
+  const switchCase = (options = {}) => {
+    const gate = deferred(), control = { calls: 0, waits: 0, captures: [], checks: [],
+      settled: false, finished: false, ownerVersion: 5 };
+    const page = { window: { CustomTabs: { getActiveTabId: () => 7,
+      switchToTab(id) {
+        assert.equal(id, 7); control.calls++;
+        control.work = (async () => {
+          await gate.promise;
+          if (options.error) throw options.error;
+          control.settled = true; control.ownerVersion++;
+          return Object.hasOwn(options, "result") ? options.result : true;
+        })();
+        control.work.catch(() => {});
+        return control.work;
+      } } }, document: { getElementById: () => ({ querySelector: () => ({ textContent: "Beta" }) }) } };
+    const context = vm.createContext(page);
+    const exec = async code => vm.runInContext(code, context);
+    control.promise = vm.compileFunction("return (async () => {\n" +
+      (options.legacy ? legacyTail : tail) + "\ncapture();})();",
+    ["exec", "before", "waitForCondition", "check", "capture"])(
+      exec, { id: 7, heading: "Beta" },
+      async (run, predicate) => { control.waits++; return run(predicate); },
+      (name, success) => control.checks.push({ name, success }),
+      () => control.captures.push({ pending: !control.settled, ownerVersion: control.ownerVersion }));
+    control.promise.then(() => { control.finished = true; }, error => { control.error = error; });
+    return { control, release: () => gate.resolve(), exec };
+  };
+  const joined = switchCase();
+  await turn();
+  const waited = joined.control.calls === 1 && !joined.control.finished && !joined.control.settled &&
+    joined.control.waits === 0 && joined.control.captures.length === 0 &&
+    await joined.exec("window.CustomTabs.getActiveTabId() === 7 && document.getElementById('viewer').querySelector('h1').textContent === 'Beta'");
+  joined.release(); await joined.control.promise;
+  check(waited,
+  "Actual return-to-Beta actor joins its one held switch even when the old ID/heading predicate is already true");
+  check(joined.control.work instanceof Promise && joined.control.settled &&
+    joined.control.captures.length === 1 && !joined.control.captures[0].pending &&
+    joined.control.captures[0].ownerVersion === 6 && joined.control.waits === 1 &&
+    joined.control.checks[0].name === "SEC-08 actual deletion close restores the previous rendered document" &&
+    joined.control.checks[0].success === true,
+  "Joined true switch completion precedes capture and retains the separate original rendered-document assertion");
+  const dropped = switchCase({ legacy: true });
+  await dropped.control.promise;
+  check(dropped.control.calls === 1 && !dropped.control.settled &&
+    dropped.control.captures[0].pending && dropped.control.captures[0].ownerVersion === 5 &&
+    dropped.control.checks[0].success === true,
+  "Actual former null-returning actor captures stale ownership while its same real asynchronous switch is still held");
+  dropped.release(); await dropped.control.work;
+  for (const result of [undefined, false, 0, 1, {}]) {
+    const refused = switchCase({ result }); refused.release();
+    await assert.rejects(refused.control.promise, /return switch did not succeed/);
+    check(refused.control.calls === 1 && refused.control.waits === 0 &&
+      refused.control.captures.length === 0 && refused.control.checks.length === 0,
+    "Return-to-Beta requires exact successful true, not " + String(result));
+  }
+  const switchError = new Error("CONTROLLED_SWITCH_REJECTION");
+  const rejected = switchCase({ error: switchError }); rejected.release();
+  await assert.rejects(rejected.control.promise, error => error === switchError);
+  check(rejected.control.calls === 1 && rejected.control.captures.length === 0 && rejected.control.waits === 0,
+  "Original asynchronous return-switch rejection propagates without another switch or stale capture");
+
+  const native = between(source, "async function runReloadTransportFailure(",
+    "\nasync function runDocumentControlCloseJourney(");
+  const formatter = between(source, "function uncaughtExceptionDetail(error) {", "\nfunction writeFatal(");
+  const bounded = between(source, "async function boundedDialogWork(", "\nfunction inspectCleanRefreshSource(");
+  const { EventEmitter } = require("node:events"), util = require("node:util");
+  const observerCase = async (options = {}) => {
+    const control = { sequence: 4, accepted: 4, selection: 9, calls: [], sends: [], assertions: [], timers: [],
+      drains: 0, logs: [], packet: null, owner: { tabId: 7, pathKey: "beta-key",
+        pageSession: "reload-session", documentGeneration: 3, documentRef: "a".repeat(64),
+        rendererGeneration: 2 } };
+    const ipcMain = new EventEmitter(), frame = { frameTreeNodeId: 31, processId: 11,
+      routingId: 21, url: "file:///fixture/index.html", parent: null, detached: false,
+      isDestroyed: () => false };
+    const target = { id: 101, mainFrame: frame };
+    const win = { webContents: target, isDestroyed: () => false };
+    const nodes = { fileUpdateToast: { shown: false }, notificationMessage: { textContent: "" },
+      appMessageDialog: { open: false }, appMessageTitle: { textContent: "CURRENT_TITLE" },
+      appMessageText: { textContent: "CURRENT_TEXT" } };
+    nodes.fileUpdateToast.classList = { contains: () => nodes.fileUpdateToast.shown };
+    const tab = { id: 7, content: "# Beta\r\nBODY\r\n" };
+    const page = { currentFilePath: "C:\\fixture\\beta.md", originalMarkdown: tab.content,
+      fileUpdateNotificationShown: false, document: { getElementById: id => nodes[id] },
+      currentReloadSnapshot: () => tab.content, i18n: key => key,
+      showFileUpdateNotification() { page.fileUpdateNotificationShown = true; nodes.fileUpdateToast.shown = true; },
+      showNotification(text) { nodes.notificationMessage.textContent = text; },
+      window: { getReloadRequestSession: () => control.owner.pageSession,
+        getReloadRequestDiagnostics: () => ({ sequence: control.sequence }),
+        getActiveFileSelectionGeneration: () => control.selection,
+        getLatestReloadRequestSequence: () => control.sequence,
+        CustomTabs: { getActiveTab: () => tab, getActiveTabId: () => tab.id,
+          getActiveDocumentIdentity: () => ({ ...control.owner }),
+          __reloadState: () => ({ acceptedSequence: control.accepted }) } } };
+    const context = vm.createContext(page), receiver = {}, extra = {};
+    const sendResult = {}, completion = Promise.resolve("ORIGINAL_COMPLETION");
+    const originalSend = function (...args) {
+      control.sends.push({ receiver: this, args });
+      if (!options.mismatchField && !options.foreignFrame && !options.foreignSender &&
+          !options.ownerChanged && !options.selectionChanged && args[1]?.success) {
+        control.accepted = args[1].reloadRequest.sequence;
+        nodes.notificationMessage.textContent = "notif.fileReloaded";
+        nodes.fileUpdateToast.shown = false; page.fileUpdateNotificationShown = false;
+      }
+      return sendResult;
+    };
+    target.send = originalSend;
+    const descriptor = Object.getOwnPropertyDescriptor(target, "send");
+    const originalError = new Error("ORIGINAL_MAIN_FAILURE");
+    const original = function (...args) {
+      control.calls.push({ receiver: this, args });
+      if (options.mainThrows) throw originalError;
+      if (options.mainRejects) {
+        control.rejection = Promise.reject(originalError);
+        return control.rejection;
+      }
+      const request = args[1];
+      const reply = { path: request.filePath, content: tab.content, success: true,
+        extra: undefined, notFinite: NaN,
+        reloadSession: { pageSession: request.reloadRequestSession,
+          rendererGeneration: request.reloadRequestRendererGeneration },
+        reloadRequest: { sequence: request.reloadRequestSequence, path: request.reloadRequestPath,
+          snapshot: request.reloadRequestSnapshot, session: request.reloadRequestSession,
+          tabId: request.reloadRequestTabId, documentGeneration: request.reloadRequestDocumentGeneration,
+          pathKey: request.reloadRequestDocumentPathKey, documentRef: request.reloadRequestDocumentRef,
+          rendererGeneration: request.reloadRequestRendererGeneration,
+          selectionGeneration: request.reloadRequestSelectionGeneration } };
+      control.sendReturn = target.send.call(options.foreignReply ? {} : target, "file-reload-result", reply, extra);
+      return completion;
+    };
+    ipcMain.on("reload-file", original);
+    page.window.reloadCurrentFile = function () {
+      if (options.refuse) {
+        page.fileUpdateNotificationShown = false; nodes.fileUpdateToast.shown = false;
+        nodes.notificationMessage.textContent = "CONTROLLED_PRODUCTION_REFUSAL"; return false;
+      }
+      if (options.ownerChanged) control.owner.documentGeneration++;
+      if (options.selectionChanged) control.selection++;
+      const owner = control.owner;
+      const request = { filePath: page.currentFilePath, reloadRequestPath: owner.pathKey,
+        reloadRequestSequence: ++control.sequence, reloadRequestSnapshot: tab.content,
+        reloadRequestSession: owner.pageSession, reloadRequestTabId: owner.tabId,
+        reloadRequestDocumentGeneration: owner.documentGeneration,
+        reloadRequestDocumentPathKey: owner.pathKey, reloadRequestDocumentRef: owner.documentRef,
+        reloadRequestRendererGeneration: owner.rendererGeneration,
+        reloadRequestSelectionGeneration: control.selection, extra: undefined, notFinite: NaN };
+      if (options.mismatchField) request[options.mismatchField] =
+        typeof request[options.mismatchField] === "number" ? request[options.mismatchField] + 1 :
+          request[options.mismatchField] + "-changed";
+      if (options.diagnosticGetter) {
+        request.filePath += "-changed";
+        control.getterError = new Error("CONTROLLED_DIAGNOSTIC_GETTER");
+        Object.defineProperty(request, "reloadRequestSequence", {
+          get() { throw control.getterError; }, enumerable: true });
+      }
+      const event = { sender: options.foreignSender ? {} : target,
+        senderFrame: options.foreignFrame ? { ...frame } : frame };
+      control.request = request; control.event = event;
+      for (let index = 0; index < (options.duplicate ? 2 : 1); index++) {
+        control.forwardReturn = ipcMain.listeners("reload-file")[0].call(receiver, event, request, extra);
+      }
+      return true;
+    };
+    let body = native;
+    if (options.legacyObserver) body = body
+      .replace("if (args[0]?.sender === target) {", "if (false) {")
+      .replace('      if (this === target && args[0] === "file-reload-result") observedReplies.push(args[1]);', "");
+    if (options.unboundedFresh) body = body.replace(
+      "fresh = await boundedDialogWork(exec(", "fresh = await ((work) => work)(exec(");
+    const heldRead = deferred();
+    const exec = async code => {
+      if (options.freshFailure && code.includes("acceptedSequence:")) throw new Error("FRESH_READ_REFUSED");
+      if (options.holdFresh && code.includes("acceptedSequence:")) {
+        control.freshRequested = true;
+        control.finishFresh = () => {
+          control.freshReleased = true;
+          if (options.lateReject) heldRead.reject(new Error("LATE_DIAGNOSTIC_REJECTION"));
+          else heldRead.resolve(vm.runInContext(code, context));
+        };
+        return heldRead.promise;
+      }
+      return vm.runInContext(code, context);
+    };
+    let error = null;
+    try {
+      const work = vm.compileFunction(formatter + "\n" + bounded + "\n" + body +
+        "\nreturn runReloadTransportFailure(win, exec, sentinel);",
+      ["win", "exec", "sentinel", "ipcMain", "waitForCondition", "check", "require", "console",
+        "setTimeout", "clearTimeout"])(
+        win, exec, { drain: async () => { control.drains++; } }, ipcMain,
+        async (run, expression, bound) => { assert.equal(bound, 8000); await turn(); return run(expression); },
+        (name, success, detail) => control.assertions.push({ name, success, detail }),
+        name => {
+          assert.equal(name, "util");
+          return { inspect: (packet, settings) => {
+            control.packet = packet;
+            if (options.formatFailure) throw new Error("TERMINAL_FORMAT_REFUSED");
+            return util.inspect(packet, settings);
+          } };
+        }, { error: (...args) => control.logs.push(args.join(" ")) },
+        (callback, delay) => {
+          if (!options.holdFresh) return setTimeout(callback, delay);
+          const timer = { callback, delay, cleared: false };
+          control.timers.push(timer);
+          return timer;
+        },
+        timer => {
+          if (options.holdFresh) timer.cleared = true;
+          else clearTimeout(timer);
+        });
+      work.then(() => { control.actorSettled = true; }, failure => {
+        control.actorSettled = true; control.actorError = failure;
+      });
+      if (options.holdFresh) {
+        await turn();
+        control.beforeTimeout = { freshRequested: control.freshRequested,
+          actorSettled: !!control.actorSettled, freshReleased: !!control.freshReleased,
+          listenerOwned: ipcMain.listeners("reload-file")[0] !== original,
+          sendOwned: target.send !== originalSend };
+        for (const timer of control.timers) timer.callback();
+        await turn();
+        control.beforeLate = { actorSettled: !!control.actorSettled, error: control.actorError,
+          freshReleased: !!control.freshReleased, packet: control.packet,
+          fresh: control.packet?.fresh, logCount: control.logs.length,
+          listenerRestored: ipcMain.listeners("reload-file")[0] === original,
+          descriptorRestored: Object.getOwnPropertyDescriptor(target, "send").value === descriptor.value };
+        control.finishFresh();
+        await turn();
+        control.afterLate = { error: control.actorError, fresh: control.packet?.fresh,
+          logCount: control.logs.length, listenerRestored: ipcMain.listeners("reload-file")[0] === original,
+          descriptorRestored: Object.getOwnPropertyDescriptor(target, "send").value === descriptor.value };
+      }
+      await work;
+    } catch (failure) { error = failure; }
+    assert.deepEqual(ipcMain.listeners("reload-file"), [original]);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(target, "send"), descriptor);
+    return { control, error, originalError, target, frame, receiver, extra, sendResult, completion };
+  };
+  const healthy = await observerCase();
+  check(!healthy.error && healthy.control.calls.length === 2 && healthy.control.drains === 2 &&
+    healthy.control.assertions.length === 5 && healthy.control.assertions.every(result => result.success) &&
+    healthy.control.logs.length === 0 && healthy.control.forwardReturn === healthy.completion &&
+    healthy.control.sendReturn === healthy.sendResult &&
+    healthy.control.calls.every(call => call.receiver === healthy.receiver && call.args[2] === healthy.extra),
+  "Actual reload observer retains its synchronous entrypoint, both original exact-match successes, retry, forwarding receivers/results and restoration");
+  for (const field of ["filePath", "reloadRequestPath", "reloadRequestSequence", "reloadRequestSnapshot",
+    "reloadRequestSession", "reloadRequestTabId", "reloadRequestDocumentGeneration",
+    "reloadRequestDocumentPathKey", "reloadRequestDocumentRef", "reloadRequestRendererGeneration",
+    "reloadRequestSelectionGeneration"]) {
+    const bad = await observerCase({ mismatchField: field }), packet = bad.control.packet;
+    check(bad.error?.message === "Genuine reload did not settle with its exact owner" &&
+      bad.control.calls.length === 1 && bad.control.forwardReturn === bad.completion &&
+      packet.requests.length === 0 && packet.replies.length === 0 &&
+      packet.observedRequests.length === 1 && packet.observedReplies.length === 1 &&
+      packet.observedRequests[0].request === bad.control.request &&
+      !packet.observedRequests[0].accepted && packet.observedRequests[0].exactMainFrame &&
+      packet.observedRequests[0].failedWitnessComparisons.length === 1 &&
+      packet.observedRequests[0].failedWitnessComparisons[0].field === field &&
+      packet.observedRequests[0].failedWitnessComparisons[0].actual === bad.control.request[field] &&
+      Object.hasOwn(packet.observedRequests[0].request, "extra") &&
+      Number.isNaN(packet.observedReplies[0].notFinite) &&
+      bad.control.logs[0].includes("extra: undefined") && bad.control.logs[0].includes("notFinite: NaN"),
+    "Actual unmatched same-window request and independent reply retain full lossless fields and failed comparison without admission: " + field);
+  }
+  const wrapped = await observerCase({ foreignFrame: true });
+  check(wrapped.error && wrapped.control.packet.requests.length === 0 &&
+    wrapped.control.packet.observedRequests[0].senderFrame === wrapped.control.event.senderFrame &&
+    wrapped.control.packet.observedRequests[0].mainFrame === wrapped.frame &&
+    !wrapped.control.packet.observedRequests[0].exactMainFrame &&
+    wrapped.control.packet.observedRequests[0].senderFrameFacts.routingId === wrapped.frame.routingId &&
+    wrapped.control.packet.observedRequests[0].failedWitnessComparisons.length === 0 &&
+    wrapped.control.calls.length === 1,
+  "Actual distinct sender-frame wrapper is diagnosed with full frame facts but never loosens the original exact-reference matcher");
+  const ownerChanged = await observerCase({ ownerChanged: true });
+  const selectionChanged = await observerCase({ selectionChanged: true });
+  check(ownerChanged.control.packet.fresh.owner.documentGeneration >
+      ownerChanged.control.packet.witness.owner.documentGeneration &&
+    selectionChanged.control.packet.fresh.selection > selectionChanged.control.packet.witness.selection &&
+    selectionChanged.control.packet.fresh.acceptedSequence === 4 &&
+    selectionChanged.control.packet.fresh.sequence === 5 &&
+    selectionChanged.control.packet.fresh.prompt.shown === true &&
+    selectionChanged.control.packet.fresh.prompt.dialogOpen === false,
+  "Failure records genuinely fresh owner, selection, dispatched/accepted sequences and prompt state rather than relabeling the pre-dispatch witness");
+  const refused = await observerCase({ refuse: true });
+  check(refused.error && refused.control.calls.length === 0 &&
+    refused.control.packet.observedRequests.length === 0 && refused.control.packet.observedReplies.length === 0 &&
+    refused.control.packet.fresh.sequence === 4 && refused.control.packet.fresh.acceptedSequence === 4 &&
+    refused.control.packet.fresh.prompt.shown === false &&
+    refused.control.packet.fresh.prompt.notification === "CONTROLLED_PRODUCTION_REFUSAL",
+  "A genuine synchronous production refusal remains distinct from an observed unmatched dispatch and supplies current prompt state");
+  const lossy = await observerCase({ mismatchField: "reloadRequestSelectionGeneration", legacyObserver: true });
+  check(lossy.error && lossy.control.calls.length === 1 && lossy.control.sends.length === 1 &&
+    lossy.control.packet.requests.length === 0 && lossy.control.packet.observedRequests.length === 0 &&
+    lossy.control.packet.observedReplies.length === 0,
+  "Former lossy exact-only observation reports zero while the same unmatched dispatch and target reply both ran");
+  for (const options of [{ duplicate: true }, { foreignSender: true }, { foreignReply: true }]) {
+    const bad = await observerCase(options);
+    check(bad.error && bad.control.assertions.some(result => !result.success) &&
+      (options.duplicate ? bad.control.packet.observedRequests.length === 2 :
+        options.foreignSender ? bad.control.packet.observedRequests.length === 0 :
+          bad.control.packet.observedReplies.length === 0),
+    "Diagnostics do not admit or broaden duplicate/foreign routing: " + JSON.stringify(options));
+  }
+  const thrown = await observerCase({ mainThrows: true });
+  check(thrown.error === thrown.originalError && thrown.control.calls.length === 1 &&
+    thrown.control.packet.observedRequests.length === 1 && thrown.control.packet.fresh.owner.tabId === 7,
+  "Original Main synchronous exception preserves identity and forwarding count while independent fresh diagnostics and restoration still run");
+  const asyncFailure = await observerCase({ mainRejects: true });
+  check(asyncFailure.error === asyncFailure.originalError &&
+    asyncFailure.control.forwardReturn === asyncFailure.control.rejection &&
+    asyncFailure.control.calls.length === 1 && asyncFailure.control.packet.requests[0].completed &&
+    asyncFailure.control.packet.requests[0].error === asyncFailure.originalError,
+  "Original matched Main promise rejection retains its exact completion, error identity and unchanged awaited failure path");
+  const getterFailure = await observerCase({ diagnosticGetter: true });
+  check(getterFailure.error === getterFailure.control.getterError &&
+    getterFailure.control.calls.length === 1 &&
+    getterFailure.control.packet.observationErrors[0] === getterFailure.control.getterError &&
+    getterFailure.control.packet.observedRequests[0].request === getterFailure.control.request &&
+    !getterFailure.control.packet.observedRequests[0].accepted,
+  "A diagnostic field getter failure is recorded independently without masking or replacing the original forwarded Main exception");
+  const freshFailure = await observerCase({ refuse: true, freshFailure: true });
+  const formatFailure = await observerCase({ refuse: true, formatFailure: true });
+  check(freshFailure.error?.message === refused.error.message &&
+    freshFailure.control.packet.fresh.error.includes("FRESH_READ_REFUSED") &&
+    formatFailure.error?.message === refused.error.message &&
+    formatFailure.control.logs[0].includes("TERMINAL_FORMAT_REFUSED"),
+  "Fresh-read and formatter failures cannot replace the original reload refusal or prevent observer restoration");
+  for (const lateReject of [false, true]) {
+    const held = await observerCase({ mainThrows: true, holdFresh: true, lateReject });
+    const before = held.control.beforeTimeout, timed = held.control.beforeLate;
+    check(before.freshRequested && !before.actorSettled && !before.freshReleased &&
+      before.listenerOwned && before.sendOwned && held.control.timers.length === 1 &&
+      held.control.timers[0].delay === 12000 && held.control.timers[0].cleared &&
+      timed.actorSettled && !timed.freshReleased && timed.error === held.originalError &&
+      held.error === held.originalError && timed.listenerRestored && timed.descriptorRestored &&
+      timed.fresh.error.includes("Timed out: reload terminal fresh state"),
+    "Actual held terminal diagnostic times out through the unchanged bounded helper, then preserves original error and restores observers before late " +
+      (lateReject ? "rejection" : "completion"));
+    check(held.control.afterLate.error === held.originalError &&
+      held.control.afterLate.fresh === timed.fresh && held.control.afterLate.logCount === timed.logCount &&
+      held.control.afterLate.listenerRestored && held.control.afterLate.descriptorRestored &&
+      held.control.calls.length === 1 && held.control.assertions.length === 1,
+    "Late diagnostic " + (lateReject ? "rejection" : "completion") +
+      " cannot replace terminal evidence, rethrow another error or reinstall the restored observers");
+  }
+  const unbounded = await observerCase({ mainThrows: true, holdFresh: true, unboundedFresh: true });
+  check(unbounded.control.beforeTimeout.freshRequested && unbounded.control.timers.length === 0 &&
+    !unbounded.control.beforeLate.actorSettled && !unbounded.control.beforeLate.freshReleased &&
+    !unbounded.control.beforeLate.listenerRestored && !unbounded.control.beforeLate.descriptorRestored &&
+    unbounded.control.beforeLate.packet === null && unbounded.error === unbounded.originalError &&
+    unbounded.control.afterLate.listenerRestored && unbounded.control.afterLate.descriptorRestored,
+  "Actual former unbounded diagnostic blocks the original throw and restoration until its held read is explicitly released");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -2845,7 +3207,7 @@ async function popupCaptureDiagnosticContracts() {
     defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
-    popupCaptureDiagnosticContracts]) {
+    popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

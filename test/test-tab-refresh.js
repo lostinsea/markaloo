@@ -15845,10 +15845,41 @@ async function runReloadTransportFailure(win, exec, sentinel) {
     if (listeners.length !== 1) throw new Error("Reload observation requires the unique original Main listener");
     const original = listeners[0], target = win.webContents, originalSend = target.send;
     const descriptor = Object.getOwnPropertyDescriptor(target, "send");
-    const requests = [], replies = [];
+    const requests = [], replies = [], observedRequests = [], observedReplies = [], observationErrors = [];
+    const frameFacts = frame => {
+      try {
+        return frame ? { frameTreeNodeId: frame.frameTreeNodeId, processId: frame.processId,
+          routingId: frame.routingId, url: frame.url, detached: frame.detached,
+          parentFrameTreeNodeId: frame.parent?.frameTreeNodeId ?? null,
+          destroyed: frame.isDestroyed() } : null;
+      } catch (error) { return { error: uncaughtExceptionDetail(error) }; }
+    };
+    const requestWitness = {
+      filePath: witness.path, reloadRequestPath: owner.pathKey,
+      reloadRequestSequence: witness.sequence + 1, reloadRequestSnapshot: witness.snapshot,
+      reloadRequestSession: witness.session, reloadRequestTabId: owner.tabId,
+      reloadRequestDocumentGeneration: owner.documentGeneration,
+      reloadRequestDocumentPathKey: owner.pathKey, reloadRequestDocumentRef: owner.documentRef,
+      reloadRequestRendererGeneration: owner.rendererGeneration,
+      reloadRequestSelectionGeneration: witness.selection,
+    };
     const forward = function (...args) {
+      let observation = null;
+      if (args[0]?.sender === target) {
+        try {
+          observation = { request: args[1], senderId: args[0].sender.id, accepted: false,
+            senderFrame: args[0].senderFrame, mainFrame: target.mainFrame,
+            senderFrameFacts: frameFacts(args[0].senderFrame), mainFrameFacts: frameFacts(target.mainFrame),
+            exactMainFrame: args[0].senderFrame === target.mainFrame, failedWitnessComparisons: null };
+          observedRequests.push(observation);
+          observation.failedWitnessComparisons = Object.entries(requestWitness)
+            .map(([field, expected]) => ({ field, expected, actual: args[1]?.[field] }))
+            .filter(({ expected, actual }) => actual !== expected);
+        } catch (error) { observationErrors.push(error); }
+      }
       if (!win.isDestroyed() && args[0].sender === target &&
           args[0].senderFrame === target.mainFrame && matchesRequest(args[1])) {
+        if (observation) observation.accepted = true;
         const record = { request: args[1], completed: false, error: null };
         requests.push(record);
         const completion = Reflect.apply(original, this, args);
@@ -15861,6 +15892,7 @@ async function runReloadTransportFailure(win, exec, sentinel) {
       return Reflect.apply(original, this, args);
     };
     const observeSend = function (...args) {
+      if (this === target && args[0] === "file-reload-result") observedReplies.push(args[1]);
       if (this === target && args[0] === "file-reload-result" &&
           requests.some(record => matchesResult(args[1], record.request))) {
         replies.push(args[1]);
@@ -15905,6 +15937,35 @@ async function runReloadTransportFailure(win, exec, sentinel) {
         valid, JSON.stringify({ sequence, witness, requests: requests.length, replies }));
       if (!valid) throw new Error("Genuine reload did not settle with its exact owner");
       await sentinel.drain();
+    } catch (error) {
+      try {
+        let fresh;
+        try {
+          fresh = await boundedDialogWork(exec(`(() => {
+            const session=window.getReloadRequestSession(),tab=window.CustomTabs.getActiveTab();
+            return {path:currentFilePath,tabId:tab?.id,session,
+              owner:window.CustomTabs.getActiveDocumentIdentity(currentFilePath,session),
+              selection:window.getActiveFileSelectionGeneration(),
+              sequence:window.getReloadRequestDiagnostics().sequence,
+              acceptedSequence:window.CustomTabs.__reloadState().acceptedSequence,
+              snapshot:currentReloadSnapshot(),
+              prompt:{shown:fileUpdateNotificationShown,
+                toast:document.getElementById('fileUpdateToast')?.classList.contains('show')===true,
+                dialogOpen:document.getElementById('appMessageDialog')?.open===true,
+                title:document.getElementById('appMessageTitle')?.textContent,
+                text:document.getElementById('appMessageText')?.textContent,
+                notification:document.getElementById('notificationMessage')?.textContent}};
+          })()`), "reload terminal fresh state");
+        } catch (failure) { fresh = { error: uncaughtExceptionDetail(failure) }; }
+        console.error("Reload terminal observation:\n" + require("util").inspect({
+          sequence, witness, requests, replies, observedRequests, observedReplies, observationErrors, fresh,
+        }, { depth: null, maxArrayLength: null, maxStringLength: null,
+          colors: false, customInspect: false, getters: false }));
+      } catch (failure) {
+        try { console.error("Reload terminal diagnostics unavailable: " + uncaughtExceptionDetail(failure)); }
+        catch {}
+      }
+      throw error;
     } finally {
       const failures = [];
       const current = ipcMain.listeners(channel);
@@ -16117,7 +16178,9 @@ async function runDocumentControlCloseJourney(win, exec) {
       closed.retirements[0].result.unresolved === false,
     JSON.stringify(closed),
   );
-  await exec(`window.CustomTabs.switchToTab(${before.id}); null;`);
+  // Fence the owner transition; the original rendered-document check remains separate.
+  const returnSwitch = await exec(`window.CustomTabs.switchToTab(${before.id});`);
+  if (returnSwitch !== true) throw new Error("Document close return switch did not succeed: " + String(returnSwitch));
   const restored = await waitForCondition(exec, `
     window.CustomTabs.getActiveTabId() === ${before.id} &&
     document.getElementById('viewer').querySelector('h1')?.textContent === ${JSON.stringify(before.heading)}
