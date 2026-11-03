@@ -42632,6 +42632,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
   const countPublicUpdateCommit = () => {
     publicUpdateCommitSignals += 1;
   };
+  let cleanFixtureAdmissions = null;
   const openCleanFixtures = async () => {
     const alpha = await openShutdownLifecycleFixture(
       exec, fileQ1, cleanCloseFixtureInputs.alpha.content, "Q_ALPHA");
@@ -42639,6 +42640,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     const beta = await openShutdownLifecycleFixture(
       exec, fileQ2, cleanCloseFixtureInputs.beta.content, "Q_BETA");
     const betaWitness = await observeOrdinaryShutdownFixtures(exec);
+    cleanFixtureAdmissions = [alpha, beta];
     return { alpha, alphaWitness, beta, betaWitness };
   };
   // This is disposable fixture retirement, not evidence that Save or shutdown
@@ -42651,14 +42653,51 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       throw new Error("Ordinary fixture transition started before its consuming attempt settled");
     }
     const freeze = await exec("window.CustomTabs.__shutdownFreeze()");
-    if (freeze.frozen) {
-      if (!state.authorized) {
+    // Cancel thaws an unusable page; its surviving references are not current admissions.
+    const recoverRetained = !freeze.frozen && state.renderer !== "ready";
+    if (recoverRetained) {
+      const retained = await observeOrdinaryShutdownFixtures(code => exec(`(() => {
+        const witness = (${code});
+        return { ...witness, pendingSaves: window.getPendingSaveStatus() };
+      })()`));
+      const inputs = Object.values(cleanCloseFixtureInputs);
+      const ownerFields = ["pageSession", "rendererGeneration", "tabId",
+        "documentGeneration", "pathKey", "documentRef"];
+      const selected = retained.tabs.find(tab => tab.id === retained.activeId);
+      const selectedInput = inputs.find(input => input.path === selected?.filePath);
+      if (!cleanFixtureAdmissions || cleanFixtureAdmissions.length !== inputs.length ||
+          retained.tabs.length !== inputs.length ||
+          new Set(retained.tabs.map(tab => tab.id)).size !== inputs.length ||
+          retained.dirty.length !== 0 || retained.pendingSaves?.count !== 0 ||
+          retained.pendingSaves.pending !== false || !selectedInput ||
+          retained.currentFilePath !== selectedInput.path ||
+          retained.originalMarkdown !== selectedInput.content ||
+          retained.editing && retained.editorText !== selectedInput.content ||
+          retained.tabs.some(tab => {
+            const input = inputs.find(entry => entry.path === tab.filePath);
+            const admitted = cleanFixtureAdmissions.find(entry => entry.tabId === tab.id);
+            return !input || !admitted?.owner || !tab.owner ||
+              admitted.filePath !== input.path || tab.dirty !== false ||
+              tab.content !== input.content || tab.original !== input.content ||
+              tab.descriptor?.logicalPath !== input.path ||
+              tab.descriptor.ref !== admitted.descriptor?.ref ||
+              tab.owner.documentRef !== tab.descriptor.ref ||
+              tab.owner.pageSession !== retained.pageSession ||
+              tab.owner.rendererGeneration !== state.rendererGeneration ||
+              ownerFields.some(field => tab.owner[field] !== admitted.owner[field]);
+          })) {
+        throw new Error("Ordinary nonready recovery cannot discard unproven or dirty fixtures: " +
+          JSON.stringify(retained));
+      }
+    }
+    if (freeze.frozen || recoverRetained) {
+      if (freeze.frozen && !state.authorized) {
         throw new Error("Ordinary fixture transition found an unauthorised retained freeze");
       }
       const selectedPath = await exec("window.CustomTabs.getActiveTab()?.filePath");
       const fixture = Object.values(cleanCloseFixtureInputs).find(
         entry => entry.path === selectedPath);
-      if (!fixture) throw new Error("Ordinary frozen transition does not own its selected fixture");
+      if (!fixture) throw new Error("Ordinary retained transition does not own its selected fixture");
       __shutdown.reset();
       if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 5000)) {
         throw new Error("Ordinary fixture transition did not receive the Main thaw");
@@ -42674,7 +42713,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     }
     await retireOrdinaryShutdownFixtures(exec, "ordinary shutdown case transition");
     __shutdown.reset();
-    if (!freeze.frozen && (state.renderer !== "ready" || freeze.deferredOperationsDropped)) {
+    if (!freeze.frozen && !recoverRetained && freeze.deferredOperationsDropped) {
       const generation = __shutdown.state().rendererGeneration;
       wc.reload();
       if (!await waitUntil(() => __shutdown.state().renderer === "ready" &&

@@ -3198,6 +3198,241 @@ async function reloadJourneyBoundaryContracts() {
   "Actual former unbounded diagnostic blocks the original throw and restoration until its held read is explicitly released");
 }
 
+async function shutdownRestoreOrderingContracts() {
+  const helpers = between(source, "  let cleanFixtureAdmissions = null;",
+    "  const ownApprovalHold = () => {");
+  const observe = between(source, "async function observeOrdinaryShutdownFixtures(",
+    "\nasync function runShutdownScenarios(");
+  const restore = between(source, "async function settleShutdownLifecycleRestore(",
+    "\nasync function runShutdownGenerationScenarios(");
+  const bounded = between(source, "async function boundedDialogWork(", "\nfunction inspectCleanRefreshSource(");
+  const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
+  const scope = between(main, "function admissionScopeIsCurrent(", "\nfunction pruneAdmissionScopeFences(");
+  const referenceStart = main.indexOf("function admittedDocumentReference(");
+  const referenceEnd = main.indexOf("\n}\n", referenceStart);
+  assert.ok(referenceStart > 0 && referenceEnd > referenceStart);
+  const reference = main.slice(referenceStart, referenceEnd + 3);
+  const closeStart = source.indexOf("async function closeOwnedFixtureTabs(");
+  const guardStart = source.indexOf("  for (const target of plan.targets) {", closeStart);
+  const guardEnd = source.indexOf("    const cleanupKey = require(", guardStart);
+  assert.ok(closeStart > 0 && guardStart > closeStart && guardEnd > guardStart);
+  const guard = vm.compileFunction(source.slice(guardStart, guardEnd) + "\n}\nreturn true;",
+    ["plan", "__shutdown", "phase"]);
+  const fixture = async (options = {}) => {
+    const fileQ1 = "C:\\fixture\\quit-alpha.md", fileQ2 = "C:\\fixture\\quit-beta.md";
+    const inputs = { alpha: { path: fileQ1, pathKey: "alpha-key", content: "# Quit Alpha\n\nQ_ALPHA\n" },
+      beta: { path: fileQ2, pathKey: "beta-key", content: "# Quit Beta\n\nQ_BETA\n" } };
+    const control = { trace: [], reloads: 0, resets: 0, chooserCalls: 0, records: new Map(),
+      pendingSaves: { pending: false, count: 0 }, frozen: false, authorized: false,
+      pendingId: 0, commitPendingId: 0, continuations: 0, dropped: false, clock: 0 };
+    const wc = { isDestroyed: () => false,
+      mainFrame: { frameTreeNodeId: 31, isDestroyed: () => false } };
+    const mainContext = vm.createContext({ mainWindow: { webContents: wc },
+      approvalRendererState: "ready", approvalRendererGeneration: 3,
+      approvalRendererPageSession: "ordinary-page-3", documentAdmissions: control.records,
+      admittedOwnerTabs: new Map(), committedDiskAdoptions: new Map() });
+    const admission = vm.runInContext(scope + "\n" + reference +
+      "\n(ref => !!admittedDocumentReference(ref))", mainContext);
+    let tabs = [], selected = null, nextId = 0, nextRef = 0, pendingRestore = false;
+    const page = { window: {}, document: { getElementById: () => ({ textContent:
+      options.omitPaint && control.reloads ? "UNPAINTED" : tabs.find(tab => tab.id === selected)?.content || "",
+      querySelectorAll: () => [{ textContent: tabs.find(tab => tab.id === selected)?.content || "" }] }) },
+      Date: { now: () => control.clock },
+      setTimeout: (callback, delay) => {
+        assert.equal(delay, 25); control.clock += 1000;
+        if (pendingRestore) finishRestore();
+        queueMicrotask(callback);
+      } };
+    const ownerOf = tab => tab ? { ...tab.owner } : null;
+    const descriptorOf = tab => tab ? { ...tab.descriptor } : null;
+    const admit = tab => control.records.set(tab.descriptor.ref, {
+      sender: wc, frameTreeNodeId: wc.mainFrame.frameTreeNodeId,
+      rendererGeneration: mainContext.approvalRendererGeneration,
+      pageSession: mainContext.approvalRendererPageSession, retired: false,
+      tabId: tab.id, documentGeneration: tab.owner.documentGeneration, descriptor: tab.descriptor });
+    const makeTab = input => {
+      const id = ++nextId, ref = (++nextRef).toString(16).padStart(64, "0");
+      return { id, filePath: input.path, content: input.content, originalContent: input.content,
+        hasUnsavedChanges: false, descriptor: { ref, logicalPath: input.path },
+        owner: { tabId: id, documentRef: ref, pathKey: input.pathKey, documentGeneration: 1,
+          rendererGeneration: mainContext.approvalRendererGeneration,
+          pageSession: mainContext.approvalRendererPageSession } };
+    };
+    const syncSelected = () => {
+      const tab = tabs.find(tab => tab.id === selected);
+      page.window.currentFilePath = tab?.filePath;
+      page.window.originalMarkdown = tab?.content;
+      page.window.markdownEditor = { value: tab?.content };
+    };
+    const finishRestore = () => {
+      pendingRestore = false; control.trace.push("restore-admissions");
+      if (!options.omitReadmission) for (const tab of tabs) admit(tab);
+    };
+    page.window.getReloadRequestSession = () => mainContext.approvalRendererPageSession;
+    page.window.getActiveFileSelectionGeneration = () => 1;
+    page.window.getPendingSaveStatus = () => ({ ...control.pendingSaves });
+    page.window.queryDocumentDeletionState = (_path, owner) => ({
+      known: !!owner && admission(owner.documentRef), unresolved: false });
+    page.window.CustomTabs = {
+      getTabs: () => tabs, getActiveTab: () => tabs.find(tab => tab.id === selected),
+      getActiveTabId: () => selected,
+      getDocumentIdentityForTab: id => ownerOf(tabs.find(tab => tab.id === id)),
+      getDocumentDescriptor: id => descriptorOf(tabs.find(tab => tab.id === id)),
+      __dirtyTabNames: () => tabs.filter(tab => tab.hasUnsavedChanges).map(tab => tab.filePath),
+      __inEditMode: () => !!control.editing,
+      __shutdownFreeze: () => ({ frozen: control.frozen, deferredOperationsDropped: control.dropped }),
+      isDocumentFrozen: () => control.frozen,
+      settleSessionLayout: async () => {
+        control.trace.push("layout");
+        if (pendingRestore || tabs.some(tab => !admission(tab.descriptor.ref))) {
+          throw new Error("The open tabs are still awaiting document restore");
+        }
+      },
+    };
+    page.document.querySelectorAll = () => [{ dataset: { tabId: String(selected) } }];
+    const pageContext = vm.createContext(page);
+    const exec = async code => vm.runInContext(code, pageContext);
+    const shutdown = {
+      state: () => ({ renderer: mainContext.approvalRendererState,
+        rendererGeneration: mainContext.approvalRendererGeneration,
+        pendingId: control.pendingId, commitPendingId: control.commitPendingId,
+        shutdownPendingContinuationCount: control.continuations, authorized: control.authorized }),
+      documentAdmissionIsCurrent: admission,
+      reset() {
+        control.trace.push("reset"); control.resets++; control.frozen = false;
+        control.records.clear();
+      },
+    };
+    wc.reload = () => {
+      control.trace.push("reload"); control.reloads++;
+      if (!options.sameGeneration) mainContext.approvalRendererGeneration++;
+      mainContext.approvalRendererPageSession = "ordinary-page-" + mainContext.approvalRendererGeneration;
+      mainContext.approvalRendererState = "ready";
+      wc.mainFrame.frameTreeNodeId++;
+      const selectedPath = tabs.find(tab => tab.id === selected)?.filePath;
+      tabs = tabs.map(tab => makeTab(Object.values(inputs).find(input => input.path === tab.filePath)));
+      selected = tabs.find(tab => tab.filePath === selectedPath)?.id;
+      syncSelected(); pendingRestore = true;
+    };
+    let body = helpers;
+    if (options.oldOrdering) body = body.replace(
+      "if (freeze.frozen || recoverRetained) {", "if (freeze.frozen) {");
+    if (options.omitReload) body = body.replace("      wc.reload();", "      null;");
+    if (options.omitSettle) body = body.replace(
+      '      await settleShutdownLifecycleRestore(exec, fixture.path, fixture.content,\n' +
+      '        fixture.path === fileQ1 ? "Q_ALPHA" : "Q_BETA");', "");
+    if (options.noCapturedAdmissions) body = body.replace("    cleanFixtureAdmissions = [alpha, beta];", "");
+    const compiled = vm.compileFunction(observe + "\n" + bounded + "\n" + restore + "\n" + body +
+      "\nreturn { openCleanFixtures, restoreCleanDocuments };",
+    ["exec", "__shutdown", "wc", "fileQ1", "fileQ2", "cleanCloseFixtureInputs", "joinDialogs",
+      "openShutdownLifecycleFixture", "retireOrdinaryShutdownFixtures", "waitForCondition",
+      "waitUntil", "setTimeout", "clearTimeout"])(
+      exec, shutdown, wc, fileQ1, fileQ2, inputs,
+      async () => { control.trace.push("join"); },
+      async (_exec, filePath, text, marker) => {
+        control.trace.push("chooser"); control.chooserCalls++;
+        const input = Object.values(inputs).find(entry => entry.path === filePath);
+        assert.equal(text, input.content); assert(input.content.includes(marker));
+        const tab = makeTab(input); tabs.push(tab); selected = tab.id; admit(tab); syncSelected();
+        assert(admission(tab.descriptor.ref));
+        return { tabId: tab.id, filePath, owner: ownerOf(tab), descriptor: descriptorOf(tab) };
+      },
+      async (_exec, phase) => {
+        control.trace.push("retire");
+        const targets = tabs.map(tab => ({ tabId: tab.id, path: tab.filePath, expectedTarget: null,
+          owner: ownerOf(tab), descriptor: descriptorOf(tab) }));
+        guard({ targets }, shutdown, phase);
+        tabs = []; selected = null; syncSelected();
+      },
+      async (run, predicate, timeout) => { assert.equal(timeout, 5000); return run(predicate); },
+      async (predicate, timeout) => { assert.equal(timeout, 20000); return predicate(); },
+      setTimeout, clearTimeout);
+    await compiled.openCleanFixtures();
+    control.trace = []; control.chooserCalls = 0;
+    mainContext.approvalRendererState = options.ready ? "ready" : "unusable";
+    control.frozen = !!options.frozen; control.authorized = !!options.authorized;
+    control.dropped = !!options.dropped;
+    control.pendingId = options.pendingId || 0; control.commitPendingId = options.commitPendingId || 0;
+    control.continuations = options.continuations || 0;
+    const initialRefs = tabs.map(tab => tab.descriptor.ref);
+    const initialRecordsSurvive = initialRefs.every(ref => control.records.has(ref));
+    const initialAdmissions = initialRefs.map(admission);
+    if (options.dirty) tabs[0].hasUnsavedChanges = true;
+    if (options.wrongContent) tabs[0].content += "UNSAVED";
+    if (options.wrongBaseline) tabs[0].originalContent += "WRONG";
+    if (options.foreign) tabs[0].filePath = "C:\\foreign\\other.md";
+    if (options.foreignRef) tabs[0].descriptor.ref = "f".repeat(64);
+    if (options.foreignOwner) tabs[0].owner.documentGeneration++;
+    if (options.wrongSelectedSource) page.window.originalMarkdown += "UNSAVED";
+    if (options.editorDirty) { control.editing = true; page.window.markdownEditor.value += "UNSAVED"; }
+    if (options.pendingSave) control.pendingSaves = { pending: true, count: 1 };
+    const before = JSON.stringify(tabs);
+    let error = null, result;
+    try { result = await compiled.restoreCleanDocuments(); } catch (failure) { error = failure; }
+    return { control, error, result, initialRefs, initialRecordsSurvive, initialAdmissions, before,
+      after: JSON.stringify(tabs), records: control.records, tabs, generation: mainContext.approvalRendererGeneration };
+  };
+  const recovered = await fixture();
+  check(recovered.initialRefs.length === 2 && recovered.initialRecordsSurvive &&
+    recovered.initialRefs.every(ref => typeof ref === "string") &&
+    recovered.initialAdmissions.every(value => value === false) &&
+    !recovered.error && recovered.result.tabs === 2 && recovered.control.reloads === 1 &&
+    recovered.control.resets === 2 && recovered.control.chooserCalls === 2 && recovered.generation > 3 &&
+    recovered.control.trace.indexOf("reload") < recovered.control.trace.indexOf("restore-admissions") &&
+    recovered.control.trace.indexOf("restore-admissions") < recovered.control.trace.indexOf("retire"),
+  "Actual nonready/unfrozen helper restores a newer authenticated page before strict retirement despite surviving refused old descriptors");
+  const old = await fixture({ oldOrdering: true });
+  check(old.error?.message.includes("no current Main admission") && old.control.trace.join("|") === "join|retire" &&
+    old.records.size === 2 && old.initialAdmissions.every(value => !value) &&
+    old.control.resets === 0 && old.control.reloads === 0 && old.control.chooserCalls === 0,
+  "Actual old retire-before-recovery ordering is refused by the real Main predicate before any baseline-clearing reset");
+  const noReload = await fixture({ omitReload: true });
+  check(noReload.error?.message.includes("did not reach a replacement page") &&
+    noReload.control.resets === 1 && noReload.control.reloads === 0 &&
+    !noReload.control.trace.includes("retire") && noReload.control.chooserCalls === 0,
+  "Bare reset cannot replace the genuine reload and newer READY generation before retirement");
+  const sameGeneration = await fixture({ sameGeneration: true });
+  check(sameGeneration.error?.message.includes("did not reach a replacement page") &&
+    sameGeneration.control.reloads === 1 && sameGeneration.generation === 3 &&
+    !sameGeneration.control.trace.includes("retire") && sameGeneration.control.chooserCalls === 0,
+  "A ready signal without a strictly newer generation cannot qualify retained recovery");
+  for (const options of [{ omitSettle: true }, { omitReadmission: true }, { omitPaint: true }]) {
+    const bad = await fixture(options);
+    check(bad.error && bad.control.reloads === 1 && bad.control.chooserCalls === 0 &&
+      (options.omitSettle ? bad.error.message.includes("no current Main admission") :
+        !bad.control.trace.includes("retire")),
+    "Actual authenticated restore cannot be omitted or replaced by READY alone: " + JSON.stringify(options));
+  }
+  for (const options of [{ dirty: true }, { wrongContent: true }, { wrongBaseline: true },
+    { foreign: true }, { foreignRef: true }, { foreignOwner: true }, { wrongSelectedSource: true },
+    { editorDirty: true }, { pendingSave: true }, { noCapturedAdmissions: true }]) {
+    const bad = await fixture(options);
+    check(bad.error?.message.includes("cannot discard unproven or dirty fixtures") &&
+      bad.before === bad.after && bad.control.resets === 0 && bad.control.reloads === 0 &&
+      bad.control.chooserCalls === 0 && !bad.control.trace.includes("retire"),
+    "Unfrozen nonready recovery refuses without discarding or rewriting retained data: " + JSON.stringify(options));
+  }
+  for (const options of [{ pendingId: 7 }, { commitPendingId: 8 }, { continuations: 1 }]) {
+    const bad = await fixture(options);
+    check(bad.error?.message.includes("before its consuming attempt settled") &&
+      bad.control.trace.join("|") === "join" && bad.control.resets === 0,
+    "Original joined-dialog and no-pending-continuation prerequisites remain required: " + JSON.stringify(options));
+  }
+  const unauthorized = await fixture({ frozen: true });
+  const authorized = await fixture({ frozen: true, authorized: true });
+  check(unauthorized.error?.message.includes("unauthorised retained freeze") &&
+    unauthorized.control.resets === 0 && unauthorized.control.reloads === 0 &&
+    !authorized.error && authorized.control.reloads === 1 && authorized.control.resets === 2,
+  "Only the frozen branch requires authorization; its original authenticated recovery remains intact");
+  const ready = await fixture({ ready: true });
+  const dropped = await fixture({ ready: true, dropped: true });
+  check(!ready.error && ready.control.reloads === 0 && ready.control.resets === 1 &&
+    ready.control.trace.indexOf("retire") < ready.control.trace.indexOf("reset") &&
+    !dropped.error && dropped.control.reloads === 1 &&
+    dropped.control.trace.indexOf("retire") < dropped.control.trace.indexOf("reload"),
+  "Ready retirement and the existing post-retirement empty-page recovery keep their original ordering");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -3207,7 +3442,7 @@ async function reloadJourneyBoundaryContracts() {
     defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
-    popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts]) {
+    popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts]) {
     try { await run(); }
     catch (error) {
       failures++;
