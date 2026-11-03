@@ -218,12 +218,12 @@ async function run() {
 
   const fs = require("fs"), path = require("path"), vm = require("vm");
   const controller = path.join(__dirname, "test-about-updates.js");
-  function controllerPhases(platform) {
+  function controllerPhases(platform, args = []) {
     const phases = [], exited = {};
     let exitCode;
     const context = vm.createContext({
       __dirname, __filename: controller, console: { log() {}, error() {} },
-      process: { platform, argv: ["node", controller], env: {},
+      process: { platform, argv: ["node", controller, ...args], env: {},
         stdout: { write() {} }, stderr: { write() {} }, exit(code) { exitCode = code; throw exited; } },
       require(name) {
         if (name === "./test-userdata-isolation") return {};
@@ -231,8 +231,11 @@ async function run() {
         if (name === "electron") return "controlled-electron";
         if (name === "child_process") return { spawnSync(_exe, args) {
           phases.push(args[1]);
-          const names = args[1] === "combined"
-            ? vm.runInContext("combinedRequired", context) : ["control one", "control two", "control three"];
+          const inventory = { combined: "combinedRequired", daily: "dailyRequired",
+            "download-failure": "downloadFailureRequired" }[args[1]];
+          const names = inventory
+            ? vm.runInContext(inventory, context)
+            : ["control one", "control two", "control three"];
           return { status: 0, stdout: names.map(name => "PASS " + name).join("\n") +
             `\n=== updates ${args[1]}: ${names.length}/${names.length} passed ===\n` };
         } };
@@ -250,9 +253,18 @@ async function run() {
   check("update controller excludes Windows portable fixtures on Linux and macOS",
     ["linux", "darwin"].every(platform => {
       const phases = controllerPhases(platform);
-      return phases.length === 7 && phases.includes("combined") && phases.includes("discover") &&
+      return phases.length === (platform === "darwin" ? 8 : 9) &&
+        phases.includes("download-failure") === (platform !== "darwin") &&
+        phases.includes("combined") && phases.includes("discover") && phases.includes("daily") &&
         !phases.some(phase => phase.startsWith("portable-"));
     }));
+  let macDownloadRefused = false;
+  try { controllerPhases("darwin", ["--download-failure"]); }
+  catch (error) { macDownloadRefused = error.message === "Native download fixtures are unavailable on macOS"; }
+  check("update controller selects explicit transfer failure only on native-download platforms",
+    ["win32", "linux"].every(platform =>
+      JSON.stringify(controllerPhases(platform, ["--download-failure"])) === '["download-failure"]') &&
+    macDownloadRefused);
 }
 run().then(() => {
   const passed = results.filter(Boolean).length;

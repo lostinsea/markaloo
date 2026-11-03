@@ -224,6 +224,9 @@ function createUpdateState(options) {
 
   return Object.freeze({
     snapshot, attach, observeAvailable, check, download, fail, publish,
+    // Download metadata preflight also owns checking; it is not an ordinary
+    // check that may consume a parked background intent.
+    canJoinCheck: () => !!checking && !downloading && !options.isInstalling(),
     beginInstall() {
       error = "";
       phase = "ready";

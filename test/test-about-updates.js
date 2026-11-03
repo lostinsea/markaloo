@@ -3,7 +3,7 @@ require("./test-userdata-isolation");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { randomUUID } = require("crypto");
+const { randomUUID, createHash } = require("crypto");
 const electron = require("electron");
 const root = path.resolve(__dirname, "..");
 const batch = path.resolve(process.env.MARKALOO_UPDATE_BATCH ||
@@ -29,21 +29,50 @@ const combinedRequired = [
   ...["clarity", "abyss"].flatMap(theme => ["normal", "narrow web zoom"].map(size =>
     `combined themed About ${theme} ${size} keeps actions and document context visible`)),
 ];
+const dailyRequired = [
+  "daily cached offer reserves once before the ordinary reader toast",
+  "daily dismissal persists through production preload renderer reload and stale dismissal",
+  "daily real Main claims before joining the held manual provider check",
+  "daily manual overlap completes with one explicit presentation and no automatic duplicate",
+  "daily application dialog defers reminder permission while About remains current",
+  "daily dialog closure grants a fresh same-version presentation without focus stealing",
+  "daily same-day provider errors do not reopen the dismissed presentation",
+  "daily canceled quit retains scheduler ownership and grants deferred reminder",
+  "daily popup-only lifetime parks the single ordinary-reader schedule",
+  "daily actual teardown removes timer and resume listener ownership",
+  "daily fixture never downloads installs launches or opens an external application",
+  "daily scenarios introduce no unexpected renderer errors or stalls",
+  "daily missing-frame dismissal cannot spend the current presentation",
+];
+const downloadFailureRequired = [
+  "download failure setup proves a dismissed automatic notice without provider traffic",
+  "accepted Main download failure creates fresh visible manual feedback after dismissal",
+  "controlled transfer failure preserves document disk and never installs or opens externally",
+  "download failure scenarios introduce no unexpected renderer errors or stalls",
+  "download failure setup proves pre-existing controlled artifact bytes",
+];
 
 if (typeof electron === "string") {
   const { spawnSync } = require("child_process");
-  const perf = process.argv.includes("--perf");
+  const perfUi = process.argv.includes("--perf-ui");
+  const perf = process.argv.includes("--perf") || perfUi;
   const portablePhases = process.platform === "win32" ? ["portable-failure", "portable-throw",
     "portable-cancel", "portable-ambiguous"] : [];
+  const nativeDownloadPhases = process.platform === "darwin" ? [] : ["download-failure"];
   if (process.argv.includes("--portable") && portablePhases.length === 0) {
     throw new Error("Portable updater fixtures require Windows");
   }
-  const phases = perf ? Array.from({ length: 5 }, (_, i) => "perf-" + i)
+  if (process.argv.includes("--download-failure") && nativeDownloadPhases.length === 0) {
+    throw new Error("Native download fixtures are unavailable on macOS");
+  }
+  const phases = perf ? Array.from({ length: 5 }, (_, i) => (perfUi ? "perf-ui-" : "perf-") + i)
     : process.argv.includes("--ui") ? ["discover"]
     : process.argv.includes("--portable") ? portablePhases
     : process.argv.includes("--combined") ? ["combined"]
+    : process.argv.includes("--daily") ? ["daily"]
+    : process.argv.includes("--download-failure") ? ["download-failure"]
     : ["combined", "discover", "offline", "equal", "newer", "malformed", "current",
-      ...portablePhases];
+      "daily", ...nativeDownloadPhases, ...portablePhases];
   console.log("About update evidence: " + batch);
   let passed = 0, total = 0;
   for (const phase of phases) {
@@ -70,7 +99,9 @@ if (typeof electron === "string") {
     const assertionNames = assertions.map(line => line.slice(5).split("  ->")[0]);
     const failures = assertions.filter(line => line.startsWith("FAIL ")).length;
     const good = Number(footer?.[2]), count = Number(footer?.[3]);
-    const complete = phase !== "combined" || combinedRequired.every(name =>
+    const required = phase === "combined" ? combinedRequired : phase === "daily" ? dailyRequired
+      : phase === "download-failure" ? downloadFailureRequired : [];
+    const complete = required.every(name =>
       assertionNames.filter(actual => actual === name).length === 1);
     if (result.error || footers.length !== 1 || footer[1] !== phase || count < 3 ||
         assertions.length !== count || failures !== count - good || !complete ||
@@ -86,30 +117,41 @@ if (typeof electron === "string") {
     const measurements = phases.map(phase => JSON.parse(fs.readFileSync(path.join(batch, phase + ".json"), "utf8")).measurement);
     const quantile = (values, p) => [...values].sort((a, b) => a - b)[Math.ceil(values.length * p) - 1];
     const summary = {};
-    for (const name of ["startup", "open"]) {
+    for (const name of ["startup", "open", ...(perfUi ? ["cachedNoticeReady", "aboutOpen"] : [])]) {
       const values = measurements.map(row => row[name]);
       summary[name] = { samples: values, p50: quantile(values, 0.5), p95: quantile(values, 0.95) };
     }
+    const sourceRoot = path.resolve(process.env.MARKALOO_UPDATE_SOURCE_ROOT || root);
+    const sourceHashes = Object.fromEntries(["main.js", "main-preload.js", "app-updates.js", "update-state.js",
+      "update-schedule.js", "index.html", "styles.css", "custom-styles.css"].map(name => {
+      const file = path.join(sourceRoot, "src", name);
+      return [name, fs.existsSync(file) ? createHash("sha256").update(fs.readFileSync(file)).digest("hex") : null];
+    }));
     fs.writeFileSync(path.join(batch, "performance.json"), JSON.stringify({
       runtime: { node: process.version, electron: require("electron/package.json").version,
         cpu: os.cpus()[0]?.model, platform: process.platform },
-      source: process.env.MARKALOO_UPDATE_SOURCE_ROOT || root, summary,
+      source: sourceRoot, sourceHashes,
+      driverSha256: createHash("sha256").update(fs.readFileSync(__filename)).digest("hex"),
+      workload: perfUi ? "packaged-policy cached notice, 64 KiB prose, first About open" : "development-policy startup and 64 KiB prose",
+      summary,
     }, null, 2));
     console.log("UPDATE_PERF " + JSON.stringify(summary));
   }
   process.exit(passed === total ? 0 : 1);
 } else {
-  const { app, BrowserWindow, dialog, ipcMain, shell } = electron;
+  const { app, BrowserWindow, dialog, ipcMain, shell, powerMonitor } = electron;
   const { EventEmitter } = require("events");
   const Module = require("module");
   const phase = process.argv[2];
-  if (!["combined", "discover", "offline", "equal", "newer", "malformed", "current",
+  if (!["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "download-failure",
     "portable-failure", "portable-throw", "portable-cancel", "portable-ambiguous",
-    ...Array.from({ length: 5 }, (_, i) => "perf-" + i)].includes(phase)) {
+    ...Array.from({ length: 5 }, (_, i) => "perf-" + i),
+    ...Array.from({ length: 5 }, (_, i) => "perf-ui-" + i)].includes(phase)) {
     console.error("Unsupported update fixture phase: " + phase);
     app.exit(2);
   }
   const perf = phase.startsWith("perf-");
+  const perfUi = phase.startsWith("perf-ui-");
   const portable = phase.startsWith("portable-");
   if (portable) {
     process.env.PORTABLE_EXECUTABLE_DIR = path.join(batch, "portable-fixture");
@@ -140,6 +182,13 @@ if (typeof electron === "string") {
   app.setPath("crashDumps", path.join(batch, "crash-dumps"));
   app.setAppLogsPath(path.join(batch, "logs"));
   const settingsFile = path.join(profile, "window-state.json");
+  let dailyClock = new Date(2026, 10, 3, 10).getTime(), dailyElapsed = 0;
+  let dailyOwner = null, dailyState = null, dailyTimerId = 0;
+  const dailyTimers = new Map();
+  if (phase === "daily" || phase === "download-failure" || perfUi) {
+    fs.writeFileSync(settingsFile, JSON.stringify({ width: 1100, height: 780,
+      updateAvailability: { schema: 1, version: "0.10.0" } }));
+  }
   const runtimeVersion = phase === "equal" ? app.getVersion() : phase === "newer" ? "0.11.0" : "0.9.0";
   if (["equal", "newer", "malformed"].includes(phase)) {
     fs.writeFileSync(settingsFile, JSON.stringify({ width: 1100, height: 780,
@@ -169,6 +218,7 @@ if (typeof electron === "string") {
   provider.downloadUpdate = async () => {
     counts.downloads++;
     provider.emit("download-progress", { percent: 42 });
+    if (phase === "download-failure") throw new Error("Fixture transfer refused");
     if (downloadGate) await downloadGate;
     fs.writeFileSync(artifact, "Not an executable. Controlled update fixture only.");
     provider.downloadedUpdateHelper = { file: artifact, versionInfo: { version: "0.10.0" },
@@ -185,6 +235,30 @@ if (typeof electron === "string") {
   const originalLoad = Module._load;
   Module._load = function (request, parent, isMain) {
     if (request === "electron-updater") return { autoUpdater: provider };
+    if (phase === "daily" && request === "./update-state" &&
+        path.basename(parent.filename) === "main.js") {
+      const actual = originalLoad.call(this, request, parent, isMain);
+      return { ...actual, createUpdateState(options) {
+        dailyState = actual.createUpdateState(options);
+        return dailyState;
+      } };
+    }
+    if (phase === "daily" && request === "./update-schedule" &&
+        path.basename(parent.filename) === "main.js") {
+      const actual = originalLoad.call(this, request, parent, isMain);
+      return { ...actual, createUpdateSchedule(options) {
+        dailyOwner = actual.createUpdateSchedule({
+          ...options, now: () => dailyClock, monotonicNow: () => dailyElapsed, random: () => 0.5,
+          setTimer(callback, delay) {
+            const id = ++dailyTimerId;
+            dailyTimers.set(id, { callback, due: dailyClock + delay });
+            return id;
+          },
+          clearTimer: id => dailyTimers.delete(id),
+        });
+        return dailyOwner;
+      } };
+    }
     if (perf) {
       const start = performance.now();
       try { return originalLoad.call(this, request, parent, isMain); }
@@ -240,7 +314,7 @@ if (typeof electron === "string") {
   if (perf) measurement.stages.beforeMainRequire = performance.now() - started;
   const main = require(path.join(process.env.MARKALOO_UPDATE_SOURCE_ROOT || root, "src", "main.js"));
   if (perf) measurement.stages.afterMainRequire = performance.now() - started;
-  if (!perf) Object.defineProperty(app, "isPackaged", { get: () => true });
+  if (!perf || perfUi) Object.defineProperty(app, "isPackaged", { get: () => true });
   const { startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
   const results = [];
   let win, sentinel;
@@ -341,6 +415,119 @@ if (typeof electron === "string") {
   async function choose(target, choice) {
     await target.webContents.executeJavaScript(
       `document.querySelector('[data-dialog-choice="${choice}"]').click();true`);
+  }
+  async function daily() {
+    const settings = () => JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+    const today = () => require("../src/update-schedule").localCalendar(dailyClock).day;
+    const advance = async day => {
+      const next = new Date(2026, 10, day, 10).getTime();
+      dailyElapsed += Math.max(0, next - dailyClock);
+      dailyClock = next;
+      powerMonitor.emit("resume");
+      await sleep(60);
+    };
+    await closeAbout();
+    await pageWait("daily cached toast", "window.folia.getUpdateState().then(s=>s.canShowUpdate)");
+    const first = await snapshot();
+    check(dailyRequired[0], counts.checks === 0 && first.presentationOrigin === "automatic" &&
+      settings().updateReminder.lastReservedLocalDay === today() &&
+      JSON.stringify(settings().updateAvailability) === '{"schema":1,"version":"0.10.0"}' &&
+      await exec("document.getElementById('appUpdateToast').classList.contains('show')"));
+    ipcMain.emit("dismiss-update-notice", { sender: win.webContents, senderFrame: null }, first.presentationId);
+    check(dailyRequired[12], !(await snapshot()).presentationDismissed && (await snapshot()).canShowUpdate);
+    await click("laterUpdateBtn");
+    await pageWait("Main dismissal retained", "window.folia.getUpdateState().then(s=>s.presentationDismissed)");
+    const reloaded = new Promise(resolve => win.webContents.once("did-finish-load", resolve));
+    win.webContents.reload();
+    await reloaded;
+    await pageWait("daily reloaded production bridge", "!!window.MarkalooUpdates&&typeof window.CustomTabs?.getTabs==='function'");
+    const afterReload = await snapshot();
+    await exec("window.folia.dismissUpdateNotice('stale-presentation');true");
+    check(dailyRequired[1], afterReload.presentationId === first.presentationId &&
+      afterReload.presentationDismissed && !afterReload.canShowUpdate &&
+      await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));
+    await openAbout();
+    let releaseCheck;
+    checkGate = new Promise(resolve => { releaseCheck = resolve; });
+    await click("aboutCheckUpdates");
+    await wait("daily held manual provider", () => counts.checks === 1);
+    await advance(4);
+    check(dailyRequired[2], settings().updateSchedule.localDay === today() &&
+      settings().updateSchedule.state === "claimed" && counts.checks === 1 &&
+      settings().updateReminder.lastReservedLocalDay < today());
+    releaseCheck(); checkGate = null;
+    await pageWait("daily manual overlap completed", "window.folia.getUpdateState().then(s=>s.canCheck)");
+    const manual = await snapshot();
+    await closeAbout();
+    await click("laterUpdateBtn");
+    await sleep(80);
+    const dismissedManual = await snapshot();
+    check(dailyRequired[3], counts.checks === 1 && manual.presentationOrigin === "manual" &&
+      manual.presentationId !== first.presentationId &&
+      dismissedManual.presentationId === manual.presentationId && dismissedManual.presentationDismissed &&
+      settings().updateReminder.lastReservedLocalDay < today());
+    await openAbout();
+    await advance(5);
+    await pageWait("daily automatic check settled behind About", "window.folia.getUpdateState().then(s=>s.canCheck)");
+    check(dailyRequired[4], counts.checks === 2 && settings().updateReminder.lastReservedLocalDay < today() &&
+      !(await snapshot()).canShowUpdate &&
+      await exec("document.getElementById('aboutUpdateStatus').textContent.includes('0.10.0')"));
+    const wasFocused = win.isFocused();
+    await closeAbout();
+    await pageWait("daily next-day same-version toast", "window.folia.getUpdateState().then(s=>s.canShowUpdate&&s.presentationOrigin==='automatic')");
+    const laterDay = await snapshot();
+    check(dailyRequired[5], laterDay.presentationId !== manual.presentationId &&
+      laterDay.presentationVersion === first.presentationVersion &&
+      settings().updateReminder.lastReservedLocalDay === today() && win.isFocused() === wasFocused);
+    await click("laterUpdateBtn");
+    // The real Main/provider error channel and snapshots revise the status;
+    // they do not get to manufacture a second presentation.
+    checkMode = "error";
+    await dailyState.check();
+    await sleep(60);
+    check(dailyRequired[6], (await snapshot()).presentationId === laterDay.presentationId &&
+      (await snapshot()).presentationDismissed && !(await snapshot()).canShowUpdate &&
+      (await snapshot()).status === "error" && (await snapshot()).error.includes("Fixture is offline"));
+    checkMode = "available";
+    await click("openFile");
+    await pageWait("daily real document painted", "viewer.querySelector('h1')?.textContent==='Protected update fixture'");
+    await click("toggleEdit");
+    await exec("markdownEditor.value='# Daily protected draft\\n\\nKeep this unsaved text.\\n';markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true");
+    await pageWait("daily genuine unsaved document", "hasUnsavedChanges===true");
+    let quitHeld = false;
+    app.emit("before-quit", { preventDefault() { quitHeld = true; } });
+    const pending = await question();
+    await advance(6);
+    const beforeCancel = settings().updateReminder.lastReservedLocalDay;
+    await choose(pending, "1");
+    await pageWait("daily cancellation leaves scheduler live", "window.folia.getUpdateState().then(s=>s.canShowUpdate&&s.presentationOrigin==='automatic')");
+    check(dailyRequired[7], quitHeld && beforeCancel < today() &&
+      settings().updateReminder.lastReservedLocalDay === today() && dailyTimers.size === 1 &&
+      !main.__shutdown.state().authorized &&
+      await exec("hasUnsavedChanges&&currentReloadSnapshot().includes('Keep this unsaved text.')") &&
+      fs.readFileSync(fixture, "utf8") === originalBody);
+    const observation = await sentinel.stop();
+    check(dailyRequired[11], observation.hits.length === 0 && observation.stalls.length === 0, observation);
+    const closedHandlers = app.listeners("window-all-closed");
+    closedHandlers.forEach(listener => app.off("window-all-closed", listener));
+    win.destroy();
+    closedHandlers.forEach(listener => app.on("window-all-closed", listener));
+    const popup = new BrowserWindow({ show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
+    const beforePark = counts.checks;
+    await advance(7);
+    check(dailyRequired[8], BrowserWindow.getAllWindows().length === 1 &&
+      dailyTimers.size === 0 && counts.checks === beforePark &&
+      settings().updateReminder.lastReservedLocalDay < today());
+    const listeners = powerMonitor.listenerCount("resume");
+    app.emit("will-quit", { preventDefault() {} });
+    await advance(8);
+    check(dailyRequired[9], dailyTimers.size === 0 &&
+      powerMonitor.listenerCount("resume") === listeners - 1 && counts.checks === beforePark);
+    check(dailyRequired[10], counts.downloads === 0 && installAttempts() === 0 && counts.external.length === 0);
+    closedHandlers.forEach(listener => app.off("window-all-closed", listener));
+    popup.destroy();
+    closedHandlers.forEach(listener => app.on("window-all-closed", listener));
   }
   async function combined() {
     await closeAbout();
@@ -583,6 +770,16 @@ if (typeof electron === "string") {
       return !!win;
     });
     if (perf) {
+      const paintedSurface = id => exec(`(async()=>{
+        const element=document.getElementById(${JSON.stringify(id)});
+        await Promise.all(element.getAnimations({subtree:true})
+          .filter(animation=>animation.effect.getTiming().iterations!==Infinity)
+          .map(animation=>animation.finished));
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        const rect=element.getBoundingClientRect();
+        return {opacity:getComputedStyle(element).opacity,width:rect.width,height:rect.height,
+          inside:rect.left>=0&&rect.top>=0&&rect.right<=innerWidth+1&&rect.bottom<=innerHeight+1};
+      })()`);
       await pageWait("painted reader", "!!document.getElementById('viewer')&&typeof window.CustomTabs?.getTabs==='function'");
       measurement.stages.readerObserved = performance.now() - started;
       measurement.frames = await exec(`new Promise(resolve=>{
@@ -598,6 +795,19 @@ if (typeof electron === "string") {
       measurement.startup = performance.now() - started;
       measurement.window = { visible: win.isVisible(), focused: win.isFocused(),
         backgroundThrottling: win.webContents.getBackgroundThrottling() };
+      if (perfUi) {
+        await pageWait("cached update notice visible",
+          "document.getElementById('appUpdateToast').classList.contains('show')&&" +
+          "document.getElementById('updateMessage').textContent.includes('0.10.0')");
+        measurement.noticePaint = await paintedSurface("appUpdateToast");
+        measurement.cachedNoticeReady = performance.now() - started;
+        check("popup performance proves an offered cached version in the painted ordinary notice",
+          measurement.noticePaint.opacity === "1" && measurement.noticePaint.height > 0 &&
+          measurement.noticePaint.inside &&
+          (await snapshot()).availableVersion === "0.10.0");
+        fs.writeFileSync(path.join(batch, phase + "-notice.png"), (await win.webContents.capturePage()).toPNG());
+        await click("laterUpdateBtn");
+      }
       const { generate } = require("../bench/corpus");
       const body = "# Update performance fixture\n\n" + generate("prose", 64 * 1024);
       fs.writeFileSync(fixture, body);
@@ -606,6 +816,18 @@ if (typeof electron === "string") {
       await pageWait("representative prose painted", "viewer.querySelector('h1')?.textContent==='Update performance fixture'&&!loadingScreen.classList.contains('active')");
       await exec("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
       measurement.open = performance.now() - openStarted;
+      if (perfUi) {
+        const aboutStarted = performance.now();
+        await openAbout();
+        measurement.aboutPaint = await paintedSurface("aboutDialog");
+        measurement.aboutOpen = performance.now() - aboutStarted;
+        check("popup performance measures the first genuinely open About above the representative document",
+          measurement.aboutPaint.opacity === "1" && measurement.aboutPaint.height > 0 &&
+          measurement.aboutPaint.inside &&
+          await exec("document.getElementById('aboutDialog').open&&" +
+            "viewer.querySelector('h1')?.textContent==='Update performance fixture'"));
+        fs.writeFileSync(path.join(batch, phase + "-about.png"), (await win.webContents.capturePage()).toPNG());
+      }
       check("performance sample uses a real representative prose document", await exec("originalMarkdown.length>65536&&viewer.querySelectorAll('p').length>150"));
       check("performance sample runs without updater network calls", counts.checks === 0 && counts.downloads === 0);
       check("performance sample records startup and painted document", measurement.startup > 0 && measurement.open > 0);
@@ -636,7 +858,46 @@ if (typeof electron === "string") {
           !!(check.compareDocumentPosition(document.getElementById(id))&Node.DOCUMENT_POSITION_FOLLOWING));
       })()`));
     check("opening About performs no provider check or download", counts.checks === 0 && counts.downloads === 0);
-    if (phase === "combined") {
+    if (phase === "daily") {
+      await daily();
+    } else if (phase === "download-failure") {
+      await closeAbout();
+      await pageWait("download failure cached notice",
+        "window.folia.getUpdateState().then(s=>s.canShowUpdate)");
+      const prior = await snapshot();
+      await click("laterUpdateBtn");
+      await pageWait("download failure prior notice dismissed",
+        "window.folia.getUpdateState().then(s=>s.presentationDismissed)");
+      check(downloadFailureRequired[0],
+        prior.presentationOrigin === "automatic" && counts.checks === 0 && counts.downloads === 0 &&
+        !(await snapshot()).canShowUpdate);
+      await openAbout();
+      if (!fs.existsSync(artifact)) fs.writeFileSync(artifact, "Protected controlled prior artifact.");
+      const artifactBefore = fs.existsSync(artifact)
+        ? createHash("sha256").update(fs.readFileSync(artifact)).digest("hex") : null;
+      check(downloadFailureRequired[4], artifactBefore !== null && counts.downloads === 0);
+      await click("aboutDownloadUpdate");
+      await pageWait("actual Main download transfer failed",
+        "window.folia.getUpdateState().then(s=>s.status==='error'&&s.canDownload)");
+      await closeAbout();
+      const failed = await snapshot();
+      check(downloadFailureRequired[1],
+        counts.checks === 1 && counts.downloads === 1 && failed.presentationId !== prior.presentationId &&
+        failed.presentationOrigin === "manual" && failed.canShowUpdate &&
+        failed.error === "Fixture transfer refused" &&
+        await exec("document.getElementById('appUpdateToast').classList.contains('show')&&" +
+          "document.getElementById('updateMessage').textContent.includes('Fixture transfer refused')"));
+      const artifactAfter = fs.existsSync(artifact)
+        ? createHash("sha256").update(fs.readFileSync(artifact)).digest("hex") : null;
+      counts.transferArtifact = { before: artifactBefore, after: artifactAfter };
+      check(downloadFailureRequired[2],
+        installAttempts() === 0 && counts.external.length === 0 &&
+        artifactAfter === artifactBefore && fs.readFileSync(fixture, "utf8") === originalBody,
+        counts.transferArtifact);
+      const observation = await sentinel.stop();
+      check(downloadFailureRequired[3],
+        observation.hits.length === 0 && observation.stalls.length === 0, observation);
+    } else if (phase === "combined") {
       await combined();
     } else if (portable) {
       await click("aboutCheckUpdates");
@@ -651,6 +912,16 @@ if (typeof electron === "string") {
         await click("toggleEdit");
         await exec("markdownEditor.value='# Portable fixture\\n\\nKeep these unsaved edits.\\n';markdownEditor.dispatchEvent(new Event('input',{bubbles:true}));true");
         await pageWait("portable dirty", "hasUnsavedChanges===true");
+        await openAbout();
+      }
+      if (phase === "portable-failure" || phase === "portable-throw") {
+        await closeAbout();
+        await click("laterUpdateBtn");
+        await pageWait("portable prior presentation dismissed",
+          "window.folia.getUpdateState().then(s=>s.presentationDismissed&&!s.canShowUpdate)");
+        check("portable explicit-install setup proves the prior presentation is dismissed",
+          (await snapshot()).presentationDismissed &&
+          await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));
         await openAbout();
       }
       await click("aboutInstallUpdate");
@@ -679,6 +950,11 @@ if (typeof electron === "string") {
           await pageWait("portable failure safe retry", "window.folia.getUpdateState().then(s=>s.canInstall)");
           check(`portable ${phase === "portable-throw" ? "synchronous " : ""}launch failure is visible and safely retryable`,
             state.status === "error" && state.error?.includes("could not be started") && state.canInstall);
+          await exec("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
+          check("portable explicit install failure remains visible after dismissing the previous notice",
+            (await snapshot()).canShowUpdate && (await snapshot()).presentationOrigin === "manual" &&
+            await exec("document.getElementById('appUpdateToast').classList.contains('show')&&" +
+              "document.getElementById('updateMessage').textContent.includes('could not be started')"));
         } else {
           check("portable ambiguous handoff requires restart and forbids retry",
             state.status === "error" && state.error?.includes("Restart Markaloo") && !state.canInstall && !state.canCheck);
@@ -844,9 +1120,11 @@ if (typeof electron === "string") {
       check("About interaction produces no unexpected renderer errors",
         observation.hits.length === 0 && observation.stalls.length === 0, observation);
     } else if (phase === "offline") {
-      check("full restart restores availability and startup notice before any check",
+      await pageWait("cached notice defers behind actual About modal",
+        "window.folia.getUpdateState().then(s=>!s.canShowUpdate&&!document.getElementById('appUpdateToast').classList.contains('show'))");
+      check("full restart restores availability before any check and defers the automatic toast behind About",
         (await snapshot()).availableVersion === "0.10.0" && counts.checks === 0 &&
-        await exec("document.getElementById('appUpdateToast').classList.contains('show')"));
+        await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));
       check("restart cache is never trusted as a downloaded installer",
         !(await snapshot()).canInstall && (await snapshot()).readyVersion === null && counts.downloads === 0);
       await closeAbout();
@@ -889,8 +1167,8 @@ if (typeof electron === "string") {
       }
       check(`${phase} profile cannot restore obsolete or malformed availability`,
         !(await snapshot()).availableVersion && !(await snapshot()).canInstall);
-      check(`${phase} profile hides the startup availability notice`,
-        await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));
+      check(`${phase} profile ${phase === "current" ? "shows explicit manual success" : "hides the startup availability notice"}`,
+        await exec(`document.getElementById('appUpdateToast').classList.contains('show')===${phase === "current"}`));
     }
     await finish();
   }).catch(finish);

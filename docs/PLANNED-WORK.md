@@ -38,6 +38,132 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `v013-reading-history` - **APPROVED; BASELINE GATE HELD**.
+  - Keep ten total reading locations per open tab for explicit heading/link/
+    search jumps. Coalesce typed previews, including the first return point.
+    Preserve file-history arrows, editing state and platform shortcut ownership.
+  - Add Back/Forward before Reload. Use standard native mouse commands only
+    where the small route can be qualified; no hooks or new dependencies.
+- `v013-mode-position` - **APPROVED; BASELINE GATE HELD**.
+  - Preserve visible content when entering/leaving Split; do not record a
+    navigation step. Preserve actual exit position and existing Discard rules.
+  - Qualify content-relative anchors, pending-render/user-intent ownership,
+    search recovery and source/caret/Undo invariants separately.
+- `v013-daily-updates` - **LOCALLY QUALIFIED ON WINDOWS; INDEPENDENT REVIEWS CLEAR**.
+  - Keep startup/manual checks; add one Main daily scheduler and a persisted
+    automatic-reminder local-day high-water mark. Manual feedback stays usable.
+  - Sol/high implemented the bounded scheduler, durable claim-before-join,
+    monotonic reminder reservation and authenticated stable presentation/
+    dismissal. Actual Main/preload/toast fixtures and sensitive proof records
+    are written. No release-notes, navigation or mode feature was changed.
+  - Pure Node:     `node test\test-update-schedule.js` 123/123 and
+    `node test\test-update-state.js` 43/43. The first includes production
+    Main/preload/toast bodies, a native-controller entry-scope control and
+    download-metadata ownership, without launching Electron. Coupled pure
+    `node test\test-default-save-contracts.js`: 899 controls, no failed groups;
+    `node test\test-main-question-consumer.js`: 27 passed, no failures.
+    Owned JavaScript syntax, CRLF/LF audit, `git diff --check` and read-only
+    `node scripts\prove-table-fixes.js --anchors` pass. Native
+    controller execution now passes 177/177 through `npm run test:updates`.
+    Selected reverts ran individually with exact failures and independent
+    passing controls; guarded source hashes were restored. Owned native test
+    processes are gone. Built artifacts remain unqualified; no install claim.
+  - First independent implementation round: Sol found hidden failure feedback
+    after an explicit Install, overdue-slot startup timing and invalidation on
+    denied navigation. Parent validated and corrected all three, adding focused
+    regressions and sensitive proof records. Luna found the stale About-open
+    metric label; corrected. Its objection to the other workset entries is not
+    adopted: those are the integration owner's approved register and baseline
+    hold, not added implementation scope.
+  - Second independent round: both found strict object equality rejecting valid
+    Main-frame wrappers. Sol also found hidden macOS release-download errors;
+    Luna found a manual download hidden when preflight confirmed a newer
+    version. All are corrected with exact regressions/proof records. Manual
+    target updates preserve presentation identity and dismissal.
+  - Third independent round: Sol reproduced a forward wall-clock correction
+    bypassing the minimum startup delay. It now uses a separate monotonic
+    elapsed clock; the regression varies the two clocks independently.
+    Luna found a live automatic notice hidden by a newer offer, and missing
+    actual-Main Download-failure coverage. Presentations now follow the live
+    target without changing identity/dismissal; a controlled transfer-failure
+    native phase exercises the real About/preload/Main action. New native
+    coverage now passes through the actual Main handler.
+  - Both latest reviewers report no production blocker. Sol found the new
+    controller mock missing required names and a Darwin-incompatible transfer
+    phase; corrected without changing macOS's manual-download policy. Both
+    accepted the artifact-control correction below. Both independent Sol/Luna
+    fixture/evidence rechecks are clear; daily unit locally qualified on
+    Windows. Built-asar and native macOS/Linux remain unclaimed; remaining
+    0.13 features and approved baseline repairs are pending.
+  - The first native candidate was 175/176. Its new Download-failure control
+    wrongly assumed a batch-shared fake artifact was absent. The corrected
+    setup proves prior bytes exist, then requires identical SHA256 after the
+    controlled failure: no artifact creation or net byte change, not proof
+    that no filesystem write occurred. Original negative receipts are retained.
+    Final real controller is 177/177; the setup and platform-route corrections
+    also have individually sensitive proofs. No assertion was dropped.
+  - Source packaging: 487 pass; two built-asar checks skipped, not qualified.
+    Its extracted chooser needed the actual new dialog-tracking helper; the
+    missing dependency was corrected without weakening the assertion.
+    Coupled installed/portable source/VM contracts pass 38/73 controls;
+    neither runs an installer. Final source packaging repeats 487/0 with the
+    same two asar skips.
+  - Main additions require passive launcher diagnostic coordinates to move.
+    Only those coordinates and the existing chooser VM's new dialog-tracking
+    dependency were rebound; the unsupported install-pair follow-up stays open.
+  - Retained `--perf` JSON's `open` is painted 64 KiB prose admission, not
+    About-open. `docs/PERF-AUDIT.md` records the raw unchanged samples, actual
+    method and predeclared quantile budgets. Keep those original observations
+    separate from the corrected retrospective comparison below.
+  - The approved common `--perf-ui` driver measures visible cached notice and
+    first About presentation separately, including finite animations and two
+    frames. The reference product is archived directly from released `8fe`;
+    the extended driver is a common external overlay, not original release
+    source. Both five-sample runs pass the unchanged
+    `max(reference * 20%, 50 ms)` p50/p95 increase budget. Notice p50/p95:
+    1591.22/1905.41 -> 1527.68/1689.01 ms; first About:
+    62.034/63.040 -> 62.663/63.001 ms. Startup/prose also fit their matching
+    seeded workload budgets. Samples/spreads/source and common-driver hashes
+    are in the permanent audit and session receipts; no speedup is claimed.
+    Actual reference/candidate notice/About and selected light/dark, narrow,
+    enlarged-text and dirty-Split captures were viewed.
+- `v013-release-notes` - **APPROVED; WAITING FOR SCHEDULER UNIT**.
+  - Initially collapsed offered-version notes; extra request only on expansion.
+    Keep existing Atom discovery, isolated safe rendering and popup actions.
+- 0.13 handoff: Astra design and fresh independent Sol/Luna plan reviews pass.
+  Sol owns this isolated branch and its register; implementation reviews remain.
+  Base is released `8fe8239d`. The first baseline command lacked Electron;
+  pinned dependencies were then restored. Unchanged-product native baselines:
+  TOC 43/43, Search 106/106, toolbar 47/47 and document-editor 60/60 pass.
+  Editor-scroll is 293/297: nested native-wheel bottom chaining and three
+  post-edge checks fail. Patch is 340/341: its sentinel sees an uncaught active-
+  editor requirement during a notes scenario. Keep both failures explicit;
+  no navigation repair or blanket green is claimed. Bounded classification
+  preceded the user's explicit approval to diagnose and fix these five cases.
+  One authorized input-only scroll rerun is 28/32 with the same four failures;
+  one patch rerun remains 340/341. Actual official Windows receipts match the
+  suite and recorded product hashes but have different edge/raster geometry.
+  The local nested-wheel cause stays unresolved; no DPI cause is proved.
+  Patch source points to a boolean-only editor fixture versus actual Split
+  authority; no full exception stack was captured. Do not weaken the sentinel.
+  Navigation gate stays closed until the approved narrow repairs restore the
+  relevant green baseline. Finish the current updater unit, then prioritize
+  the bounded wheel-cause probe and actual-editor fixture repair. Preserve
+  original assertions, failed receipts and sentinel sensitivity; no unrelated
+  debt, tolerance changes or non-green exception is selected.
+  Independent updater-state 42/42 and native updater 143/143 baselines pass.
+  Existing five-sample updater performance passes: startup p50/p95
+  1350.36/1679.98 ms; prose admission 212.74/214.65 ms. About-open
+  performance is now measured separately under the approved retrospective
+  common-driver fixture. Both independent final fixture/evidence reviews are
+  clear; navigation remains held. No release or installer scope
+  changes follow from this handoff.
+  Native execution is serial and session-owned; never reuse the installed app.
+  Before/after performance uses existing scroll/corpus fixtures, repeated
+  samples and predeclared budgets. Record results here and in the permanent
+  audit; regressions need explicit measured acceptance. Existing unrelated
+  release/installer follow-ups remain separate, not silently selected scope.
+
 - `shared-table-popup` - **IMPLEMENTED; QUALIFICATION INCOMPLETE; NOT INSTALLED**.
   - User requests one popup for new-table insertion and existing-table editing.
     Installation of the qualified history/row-control baseline is closed out.

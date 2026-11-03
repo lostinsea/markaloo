@@ -10,6 +10,7 @@ const {
   session,
   Menu,
   autoUpdater: electronAutoUpdater,
+  powerMonitor,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -19,6 +20,18 @@ const { pathToFileURL, fileURLToPath } = require("url");
 const { OwnedDialogs, SCHEMES: DIALOG_SCHEMES, ownerRendererAvailable } = require("./owned-dialogs");
 const { popupTheme } = require("./popup-theme");
 let ownedDialogs = null;
+let updateSchedule = null;
+let updateMainDialogDepth = 0;
+function trackUpdateDialog(promise) {
+  updateMainDialogDepth += 1;
+  updateSchedule?.changed();
+  const release = () => {
+    updateMainDialogDepth -= 1;
+    updateSchedule?.changed();
+  };
+  void promise.then(release, release);
+  return promise;
+}
 function mainDialogs() {
   if (!ownedDialogs) ownedDialogs = new OwnedDialogs();
   return ownedDialogs;
@@ -3461,6 +3474,7 @@ function createWindow() {
   // it removes the default menu once, for every window, so a window added
   // later that forgets this call cannot inherit the accelerator either.
   mainWindow.setMenu(null);
+  bindUpdateWindow(mainWindow);
 
   // Show window only when content is ready (prevents flicker)
   mainWindow.once("ready-to-show", () => {
@@ -4795,7 +4809,7 @@ function openFileDialog() {
     mainWindow && mainWindow.webContents ? mainWindow.webContents : null;
   const rendererGeneration = approvalRendererGeneration;
   const pickerDelivery = captureFileOpenDelivery(target, fileOpenDeliveryEpoch);
-  dialog
+  trackUpdateDialog(dialog
     .showOpenDialog(mainWindow, {
       properties: ["openFile", "multiSelections"],
       filters: [
@@ -4806,7 +4820,7 @@ function openFileDialog() {
         { name: "Mermaid Files", extensions: SUPPORTED_EXTENSIONS.mermaid.map(ext => ext.slice(1)) },
         { name: "All Files", extensions: ["*"] },
       ],
-    })
+    }))
     .then(async (result) => {
       if (!pickerDelivery.current() || rendererGeneration !== approvalRendererGeneration) return;
       if (!result.canceled && result.filePaths.length > 0) {
@@ -4873,7 +4887,7 @@ ipcMain.on("open-file-dialog", () => {
 
 // Handle image insert dialog
 ipcMain.on("open-image-dialog", async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await trackUpdateDialog(dialog.showOpenDialog(mainWindow, {
     title: "Select Image",
     filters: [
       {
@@ -4882,7 +4896,7 @@ ipcMain.on("open-image-dialog", async () => {
       },
     ],
     properties: ["openFile"],
-  });
+  }));
 
   if (result.canceled || result.filePaths.length === 0) return;
 
@@ -5071,14 +5085,14 @@ ipcMain.on("export-pdf", async (event, data) => {
     }
 
     // Show save dialog
-    const result = await dialog.showSaveDialog(mainWindow, {
+    const result = await trackUpdateDialog(dialog.showSaveDialog(mainWindow, {
       title: "Export to PDF",
       defaultPath: defaultFilename,
       filters: [
         { name: "PDF Files", extensions: ["pdf"] },
         { name: "All Files", extensions: ["*"] },
       ],
-    });
+    }));
 
     if (result.canceled || !result.filePath) {
       return;
@@ -9813,11 +9827,11 @@ ipcMain.on("open-mermaid-popup", (event, data) => {
 
       const pdfData = await popupWindow.webContents.printToPDF(printOptions);
 
-      const result = await dialog.showSaveDialog(popupWindow, {
+      const result = await trackUpdateDialog(dialog.showSaveDialog(popupWindow, {
         title: "Save Mermaid Diagram as PDF",
         defaultPath: path.join(os.homedir(), "mermaid-diagram.pdf"),
         filters: [{ name: "PDF Files", extensions: ["pdf"] }],
-      });
+      }));
 
       if (!result.canceled && result.filePath) {
         // BEFORE THE WRITE. printToPDF and the dialog are both awaits, so the
@@ -10097,10 +10111,10 @@ ipcMain.on("image-popup-save", async (event, { dataUrl, format }) => {
   }
 
   try {
-    const result = await dialog.showSaveDialog(win, {
+    const result = await trackUpdateDialog(dialog.showSaveDialog(win, {
       defaultPath: `image.${ext}`,
       filters: [{ name: filterName, extensions: [ext] }],
-    });
+    }));
 
     if (result.canceled) {
       event.reply("image-popup-save-result", { canceled: true });
@@ -13523,6 +13537,8 @@ let downloadedUpdatePath = null; // path to downloaded installer, set in update-
 let updaterDownloadInFlight = false;
 let updateInstallApprovalPending = false;
 const { createUpdateState } = require("./update-state");
+const { createUpdateSchedule } = require("./update-schedule");
+let updateSurface = null;
 const updateState = createUpdateState({
   installedVersion: app.getVersion(),
   platform: process.platform,
@@ -13546,13 +13562,62 @@ const updateState = createUpdateState({
   },
   onDownloadReady: file => { downloadedUpdatePath = file; },
   onDownloadEnd: () => { updaterDownloadInFlight = false; },
-  publish: state => {
-    if (mainWindow && !mainWindow.isDestroyed() &&
-        !mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send("update-status", state);
+  publish: () => updateSchedule?.changed(),
+});
+
+function updateReaderWindow() {
+  return mainWindow && !mainWindow.isDestroyed() &&
+    !mainWindow.webContents.isDestroyed() ? mainWindow : null;
+}
+
+updateSchedule = createUpdateSchedule({
+  getState: () => updateState.snapshot(),
+  check: () => updateState.check(),
+  canJoinCheck: () => updateState.canJoinCheck(),
+  startup: () => updateState.startup(),
+  read: () => {
+    try { return JSON.parse(fs.readFileSync(WINDOW_STATE_FILE, "utf8")); }
+    catch (error) {
+      if (error.code === "ENOENT") return {};
+      throw error;
     }
   },
+  write: writeWindowStatePatch,
+  log,
+  hasWindow: () => !!updateReaderWindow(),
+  canPresent: origin => {
+    const win = updateReaderWindow();
+    return !!win && win.isVisible() && !win.isMinimized() &&
+      isUpdaterSender({ sender: win.webContents, senderFrame: updateSurface?.frame }) &&
+      !updateSurface.mainDialog && !ownedDialogs?.owners.size &&
+      !updateMainDialogDepth && !pendingShutdown && !pendingShutdownCommit &&
+      (origin === "manual" || !updateSurface.modal);
+  },
+  publish: state => {
+    const win = updateReaderWindow();
+    if (win) win.webContents.send("update-status", state);
+  },
 });
+
+function bindUpdateWindow(win) {
+  const changed = () => updateSchedule?.changed();
+  const focus = () => updateSchedule?.reconcile("focus");
+  const navigated = () => {
+    updateSurface = null;
+    changed();
+  };
+  for (const event of ["show", "hide", "restore", "minimize"]) win.on(event, changed);
+  win.on("focus", focus);
+  win.webContents.on("did-navigate", navigated);
+  win.webContents.on("render-process-gone", navigated);
+  win.once("closed", () => {
+    updateSurface = null;
+    win.removeListener("focus", focus);
+    for (const event of ["show", "hide", "restore", "minimize"]) win.removeListener(event, changed);
+    changed();
+  });
+  changed();
+}
 
 function isUpdaterSender(event) {
   return !!event && isApprovalSender(event) &&
@@ -13561,7 +13626,21 @@ function isUpdaterSender(event) {
 
 ipcMain.handle("get-update-state", event => {
   if (!isUpdaterSender(event)) throw new Error("Invalid update request");
-  return updateState.snapshot();
+  return updateSchedule.snapshot();
+});
+
+// Private preload observation, not renderer-selected dates, targets or URLs.
+ipcMain.on("update-surface-state", (event, value) => {
+  if (!isUpdaterSender(event) || !value || typeof value !== "object" ||
+      Array.isArray(value) || Object.keys(value).sort().join(",") !== "mainDialog,modal" ||
+      typeof value.modal !== "boolean" || typeof value.mainDialog !== "boolean") return;
+  updateSurface = { frame: event.senderFrame, modal: value.modal, mainDialog: value.mainDialog };
+  updateSchedule.changed();
+});
+ipcMain.on("dismiss-update-notice", (event, id) => {
+  if (!isUpdaterSender(event) || typeof id !== "string" ||
+      !/^[a-zA-Z0-9-]{1,80}$/.test(id)) return;
+  updateSchedule.dismiss(id);
 });
 
 // Called once by getAutoUpdater() on first use. These handlers used to be
@@ -13676,16 +13755,19 @@ ipcMain.handle("get-readme-path", getReadmePath);
 // IPC handlers for update actions
 ipcMain.on("check-for-updates", event => {
   if (!isUpdaterSender(event)) return;
-  void updateState.check();
+  void updateSchedule.checkManual().catch(error => updateState.fail(error));
 });
 
 ipcMain.on("download-update", event => {
   if (!isUpdaterSender(event)) return;
+  if (!updateState.snapshot().canDownload) return;
+  updateSchedule.beginManualAction();
   void updateState.download();
 });
 
 ipcMain.on("open-update-release", event => {
   if (!isUpdaterSender(event)) return;
+  updateSchedule.beginManualAction();
   // No renderer URL: this is the canonical manual fallback for unsigned macOS.
   shell.openExternal("https://github.com/lostinsea/markaloo/releases/latest")
     .catch(error => updateState.fail(error));
@@ -13728,6 +13810,7 @@ ipcMain.on("install-update", (event) => {
     log("Install update requested while an install attempt is already active");
     return;
   }
+  updateSchedule.beginManualAction();
   updateInstallApprovalPending = true;
   updateState.beginInstall();
   const releaseApproval = () => {
@@ -14726,12 +14809,28 @@ function performUpdateInstall(updater) {
 // Check for updates after app is ready (only in production)
 function checkForUpdatesOnStartup() {
   if (!app.isPackaged) return;
-  setTimeout(() => { void updateState.startup(); }, 5000);
+  updateStartupTimer = setTimeout(() => {
+    updateStartupTimer = null;
+    void updateSchedule.checkStartup().catch(error => updateState.fail(error));
+  }, 5000);
 }
 
 // Call update check after window is ready
+let updateStartupTimer = null;
+const resumeUpdateSchedule = () => updateSchedule.reconcile("resume");
 app.on("ready", () => {
+  if (app.isPackaged) {
+    updateSchedule.start();
+    powerMonitor.on("resume", resumeUpdateSchedule);
+  }
   checkForUpdatesOnStartup();
+});
+// before-quit is cancellable. Only final shutdown retires this lifetime owner.
+app.on("will-quit", () => {
+  if (updateStartupTimer !== null) clearTimeout(updateStartupTimer);
+  updateStartupTimer = null;
+  powerMonitor.removeListener("resume", resumeUpdateSchedule);
+  updateSchedule.stop();
 });
 
 // SEC-30 download policy, split out from the will-download listener above so

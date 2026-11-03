@@ -451,8 +451,9 @@ flowchart LR
   version. Status and actions stay below Check for updates.
 - Opening or reopening About reads local state, not the network.
 - Main owns one state for About and the bottom-right startup notice.
-  Explicit checks and downloads coalesce; there is no periodic polling.
-- `window-state.json` keeps only `updateAvailability: { schema: 1, version }`.
+  Explicit checks and downloads coalesce.
+- `window-state.json` keeps availability exactly as
+  `updateAvailability: { schema: 1, version }` or null.
   Main validates it and uses semantic version ordering. Running the same or
   a newer version removes the notice, including after a manual installation.
 - Startup loads only the semantic version validator and comparison functions,
@@ -469,6 +470,63 @@ flowchart LR
   download or installation. Platform signature warnings remain unchanged.
 - `npm run test:updates` uses controlled providers and disposable profiles.
   No real update, installer, browser, personal document or profile is used.
+
+#### Daily checks and reminder permission
+
+- One Main scheduler chooses a future random slot for the current local day.
+  It keeps a bounded sibling `updateSchedule` record: schema, opaque identity,
+  local day, named timezone, absolute deadline and pending/claimed state.
+  It uses the existing atomic settings patch, not a second settings file.
+- Claim the slot before dispatching or joining the normal shared check.
+  An offline result spends the attempt. Startup keeps its five-second elapsed
+  delay and one-shot rule. The minimum uses a monotonic clock, so a forward
+  wall-clock correction cannot skip it. Manual checks retain explicit feedback.
+  Overlapping manual/automatic requests share one completion presentation.
+- Focus, renderer reload and same-day restart do not reroll a slot. A normal
+  DST transition preserves its absolute deadline, even on a 23/25-hour day.
+  Clock rollback or a named timezone change can replace a pending deadline,
+  but not a same-day claimed slot. A one-minute minimum future window avoids
+  a last-second loop near midnight; the next boundary is calendar midnight.
+- A live multi-day resume makes one current-day catch-up, not a missed-day
+  replay. A fresh process recovers today's slot or chooses a future one.
+  Checks park without an ordinary reader or while download/finalization/install
+  approval is busy. A download's metadata preflight is also busy; only an
+  ordinary shared check can be joined. Popup windows never create another scheduler.
+- Automatic popup permission is a separate sibling
+  `updateReminder: { schema: 1, lastReservedLocalDay }`. Main validates real
+  Gregorian dates and persists today's local components before granting display.
+  Its high-water day never decreases: A → B → A → B cannot remind again;
+  C can, including for the same version. Another version cannot bypass the cap.
+  A mistakenly reserved future day suppresses only automatic notices.
+- A failed reminder write refuses automatic display, not checks or manual
+  feedback. Invalid reminder metadata also fails closed with a diagnostic.
+  Failed schedule writes stop scheduled dispatch for that process; startup
+  and manual checks remain available. Restart can retry repaired storage.
+  A crash after reservation but before paint may lose that day's notice.
+- Presentation identity, target and dismissal belong to Main. Later/close
+  cannot reopen on progress, errors or renderer reload. A later-day grant can
+  create a new presentation. The isolated preload reports only application/
+  Main-dialog visibility and accepts only an opaque dismissal identity.
+  Automatic notices wait behind dialogs and hidden/minimized windows, without
+  focusing the reader. About retains status and actions even without a toast.
+  A newer offer updates the existing presentation's target without changing
+  its identity or dismissal. A live notice remains visible; a dismissed notice
+  stays dismissed. Explicit Download/Install actions grant fresh manual feedback.
+- Actual shutdown cancels the timer and resume listener; canceled quit does
+  not stop them. Native file dialogs retain their original promises and results.
+  Existing download/install approval, artifact checks, portable/macOS policy,
+  fixed release URL and disabled auto-download/install-on-quit are unchanged.
+- `npm run test:update-schedule` is pure Node, with real update-state/provider
+  integration and actual Main/preload/toast boundary bodies. The focused
+  `npm run test:updates-daily` fixture uses real Main and production preload
+  with an injected clock/timer/provider, never a test-only production IPC.
+  It is also selected by the normal update controller. Windows local gates
+  pass: state 43/43, scheduler 123/123, real controller 177/177, individual
+  sensitive proofs and the matching popup performance comparison. Selected
+  captures were viewed. Both independent Sol/Luna fixture/evidence rechecks
+  are clear; the daily unit is locally qualified on Windows. Built-asar and
+  native macOS/Linux qualification are not claimed. Expandable
+  release notes and navigation/mode work are not implemented by this unit.
 
 ### Reading zoom
 

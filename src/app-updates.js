@@ -3,7 +3,7 @@
 
   let state = null;
   let about = null;
-  let dismissed = "";
+  let dismissed = null;
   const toast = document.getElementById("appUpdateToast");
   const title = document.getElementById("updateTitle");
   const message = document.getElementById("updateMessage");
@@ -15,8 +15,6 @@
   const later = document.getElementById("laterUpdateBtn");
   const close = document.getElementById("closeUpdateToast");
   const menu = document.getElementById("aboutMenuItem");
-  const actionable = value => value.availableVersion || value.status === "error";
-  const key = value => `${value.availableVersion || ""}:${value.status}:${value.error}`;
 
   function description(value) {
     const lines = [];
@@ -40,6 +38,7 @@
     }
     if (value.manualOnly) lines.push("Automatic installation is unavailable on macOS. Download the release and install it manually.");
     if (value.storageError) lines.push(value.storageError);
+    if (value.scheduleError) lines.push(value.scheduleError);
     return lines.join("\n");
   }
 
@@ -71,7 +70,7 @@
       about.install.hidden = !state.canInstall;
     }
     title.textContent = state.status === "error" ? "Update request failed"
-      : state.readyVersion ? "Update ready" : "Update available";
+      : state.readyVersion ? "Update ready" : state.availableVersion ? "Update available" : "Update status";
     message.textContent = text;
     progress.hidden = !inProgress;
     progress.style.display = inProgress ? "flex" : "none";
@@ -84,7 +83,8 @@
     install.hidden = !state.canInstall;
     install.style.display = "";
     later.textContent = "Later";
-    toast.classList.toggle("show", !!actionable(state) && dismissed !== key(state));
+    toast.classList.toggle("show", !!state.canShowUpdate &&
+      !!state.presentationId && !state.presentationDismissed && dismissed !== state.presentationId);
   }
 
   function apply(value) {
@@ -118,7 +118,10 @@
   download.addEventListener("click", downloadAction);
   install.addEventListener("click", installAction);
   function dismiss() {
-    if (state) dismissed = key(state);
+    if (state?.presentationId) {
+      dismissed = state.presentationId;
+      window.folia.dismissUpdateNotice(state.presentationId);
+    }
     toast.classList.remove("show");
   }
   later.addEventListener("click", dismiss);

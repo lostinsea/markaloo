@@ -410,6 +410,110 @@
   sample arrays, logs and `measure-panel-open.cjs`. No product source remained
   mutated after sampling.
 
+## Daily updater scheduling — local comparison, 2026-11-03
+
+- Source baseline: released `8fe8239d2b2351414e2f5ae56e1be3950221fa0c`,
+  before this unit's product/test edits. Existing command:
+  `node test\test-about-updates.js --perf`, five fresh-profile samples on the
+  same Windows x64 machine, AMD EPYC 7763 64-Core Processor, Node launcher
+  v24.18.1 and Electron 43.4.1. The unchanged functional update baseline was
+  pure state 42/42 and the real controller 143/143.
+- Method: startup is measured from before requiring Main through the empty
+  reader's two animation frames. `open` is real file admission of the existing
+  generated 64 KiB prose fixture through painted DOM and two frames, polled at
+  30 ms. **This runner does not measure About-open latency.** The handoff's
+  “open About” metric label does not match the retained runner or JSON; do not
+  reinterpret document-open samples as an About measurement.
+- Startup samples (ms): 1293.0667, 1546.1368, 1679.9831, 1339.6203, 1350.3599.
+  Prose-open samples: 211.7970, 214.0622, 214.6537, 212.7360, 211.0833.
+  Quantiles use nearest rank; with five samples p95 is the maximum.
+
+| Original workload | Baseline p50 / p95 (ms) | Declared increase p50 / p95 (ms) | Use |
+|---|---:|---:|---|
+| Empty reader from Main load | 1350.3599 / 1679.9831 | 270.0720 / 335.9966 | Retained original observation |
+| Admitted prose through painted DOM | 212.7360 / 214.6537 | 50.0000 / 50.0000 | Retained original observation |
+
+- Acceptance was declared before edits: for each quantile, allow at most
+  `max(20% of baseline, 50 ms)` increase. Keep the same runner, machine,
+  runtime and profile method for candidate comparison. An actual About-open
+  measurement would need its own baseline; none is claimed here.
+- Approved measurement correction: the common `--perf-ui` driver separately
+  times the initial visible cached offer and the first actual About opening.
+  Both wait for finite animations and two frames, then verify opacity and
+  viewport bounds. Both sources use identical driver bytes, pinned runtime,
+  cached offer, packaged policy, prose workload and separate owned profiles.
+  Five samples per source use the same predeclared quantile budget above.
+- The reference product was archived directly from Git object `8fe`, with
+  canonical Git source identities and exact lockfile identity verified.
+  This is a retrospective reference after implementation. The extended driver
+  is an external common overlay, not code claimed to exist in the release.
+  Do not compare this seeded packaged-policy run with the older unseeded
+  development-policy startup/prose samples.
+- Retained receipts: session `94a712c9-29eb-4489-8a13-748ebdce9daf`,
+  `files/v013-baseline/updates-perf-receipts/performance.json` and per-launch
+  JSON/stdout/stderr, plus `files/v013-baseline-contract.json`. That contract
+  retains its original label rather than being rewritten after measurement.
+- The candidate adds a bounded Main calendar timer, sibling settings records,
+  stable presentation snapshots and private modal observation.
+
+### Retrospective common-driver popup comparison
+
+- Command: `node test\test-about-updates.js --perf-ui`, reference then candidate,
+  five fresh owned profiles per source. Same machine/runtime as above.
+  Reference product uses `MARKALOO_UPDATE_SOURCE_ROOT`; both use the same
+  current-worktree external driver bytes. Each source passes 25/25 workload
+  controls. This desktop is shared; no exclusive-CPU or speedup claim is made.
+- Common driver SHA256:
+  `4ac77c1737d6ab6c975288cdd39cac79f69ccf1cad90815086eab0efcb1e6edb`.
+  The measured driver is retained separately. Later platform/mock/artifact-
+  control corrections change only non-performance fixture paths; measured
+  production source bytes remain the final candidate's bytes.
+- Startup: Main load through painted empty reader. Notice: same start through
+  visible offered-version toast. Prose: real 64 KiB admission through paint.
+  About: first actual menu action through visible dialog above that document.
+  These measure different journeys; none substitutes for another.
+
+| Metric | Reference p50 / p95 (ms) | Candidate p50 / p95 (ms) | Allowed increase p50 / p95 (ms) |
+|---|---:|---:|---:|
+| Startup | 1310.0233 / 1624.3947 | 1215.0972 / 1376.0974 | 262.0047 / 324.8789 |
+| Painted prose admission | 177.5443 / 178.3837 | 174.5280 / 177.3100 | 50 / 50 |
+| Initial cached notice | 1591.2220 / 1905.4078 | 1527.6757 / 1689.0097 | 318.2444 / 381.0816 |
+| First About presentation | 62.0340 / 63.0399 | 62.6633 / 63.0014 | 50 / 50 |
+
+- Every quantile fits the predeclared increase budget. About p50 increases
+  0.6293 ms; lower values elsewhere are not treated as an improvement claim.
+- Reference samples, in launch order (ms):
+  startup `[1310.0233,1203.1799,1624.3947,1200.2402,1434.9013]`;
+  prose `[178.3837,177.5443,177.6561,173.9973,175.4014]`;
+  notice `[1591.2220,1515.3701,1905.4078,1512.6346,1748.0914]`;
+  About `[62.2061,61.2339,61.8681,63.0399,62.0340]`.
+- Candidate samples:
+  startup `[1376.0974,1215.0972,1160.4320,1238.8636,1213.6354]`;
+  prose `[174.5280,175.4561,171.5333,173.3143,177.3100]`;
+  notice `[1689.0097,1527.6757,1472.8240,1550.7914,1495.1932]`;
+  About `[62.8212,62.6633,62.1336,62.5736,63.0014]`.
+- Min/max spreads, reference -> candidate (ms): startup
+  `1200.2402..1624.3947 -> 1160.4320..1376.0974`; prose
+  `173.9973..178.3837 -> 171.5333..177.3100`; notice
+  `1512.6346..1905.4078 -> 1472.8240..1689.0097`; About
+  `61.2339..63.0399 -> 62.1336..63.0014`. No separate spread budget was declared.
+- Raw samples/stages/runtime/source hashes and captures: the same session's
+  `files/daily-r4-reference/`, `files/daily-r4-candidate/`,
+  `files/daily-common-perf-driver-r4.js`,
+  `files/daily-popup-performance-comparison-r4.json` and
+  `files/v013-updater-reference-identity.json`.
+- Viewed reference/candidate `perf-ui-0-notice.png` and `perf-ui-0-about.png`,
+  plus the native fixture's light/dark narrow 150% About and normal/narrow 125%
+  dirty-Split captures. Actions and text remain visible within the popup.
+- Ordinary final updater acceptance passes state 43/43, scheduler 123/123 and
+  real Windows controller 177/177. Keep the original 175/176 negative receipt:
+  a fixture mistook pre-existing unchanged fake artifact bytes for a download
+  failure; corrected with before/after SHA256 and sensitive proof.
+  No installer ran. Source packaging passes with two built-asar skips.
+  Both independent Sol/Luna fixture/evidence rechecks are clear; the daily unit
+  is locally qualified on Windows. No built-asar, install or native macOS/Linux
+  acceptance is claimed.
+
 ## About and updater state - bounded check, 2026-10-20
 
 - Command: `node test\test-about-updates.js --perf`, five fresh-profile launches

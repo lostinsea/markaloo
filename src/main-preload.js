@@ -56,6 +56,29 @@ if (process.isMainFrame && bootstrapArgument) {
     console.error("Private document session bootstrap failed:", error);
   }
   const nonce = bootstrapArgument.slice("--folia-session-bootstrap=".length);
+  const observeUpdateSurface = () => {
+    let previous = null;
+    const report = () => {
+      const modal = !!document.querySelector("dialog[open]");
+      const current = `${modal}:${mainDialogVisible}`;
+      if (current === previous) return;
+      previous = current;
+      ipcRenderer.send("update-surface-state", { modal, mainDialog: mainDialogVisible });
+    };
+    const observer = new MutationObserver(report);
+    observer.observe(document.documentElement, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ["open"],
+    });
+    mainDialogVisibilityCallbacks.add(report);
+    report();
+    window.addEventListener("pagehide", () => {
+      observer.disconnect();
+      mainDialogVisibilityCallbacks.delete(report);
+    }, { once: true });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", observeUpdateSurface, { once: true });
+  } else observeUpdateSurface();
   document.addEventListener("click", event => {
     if (!event.isTrusted || !selectedDocumentRef) return;
     const link = event.target?.closest?.("#viewer a, #viewer area");
@@ -351,7 +374,8 @@ const DOCUMENT_EVENT_FIELDS = {
   "update-status": ["status", "version", "transferred", "total", "percent",
     "error", "message", "revision", "installedVersion", "availableVersion",
     "readyVersion", "storageError", "manualOnly", "lastCheck",
-    "canCheck", "canDownload", "canInstall"],
+    "canCheck", "canDownload", "canInstall", "presentationId", "presentationVersion",
+    "presentationOrigin", "presentationDismissed", "canShowUpdate", "scheduleError"],
 };
 const DOCUMENT_EVENT_RECORD_FIELDS = {
   diskVersion: ["dev", "ino", "size", "mtimeMs", "ctimeMs"],
@@ -844,6 +868,12 @@ const api = Object.freeze({
   },
   checkForUpdates() {
     ipcRenderer.send("check-for-updates");
+  },
+  dismissUpdateNotice(id) {
+    if (typeof id !== "string" || !/^[a-zA-Z0-9-]{1,80}$/.test(id)) {
+      throw new TypeError("Invalid update presentation");
+    }
+    ipcRenderer.send("dismiss-update-notice", id);
   },
   openUpdateRelease() {
     ipcRenderer.send("open-update-release");
