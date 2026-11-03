@@ -68,9 +68,9 @@ function sourceContracts() {
     actors.includes("owner: s8bDirtyA.owner"),
   "Exactly the retained Alpha edit has a named future-close permission");
   check(actors.includes("const bgVersionFields = [\"dev\", \"ino\", \"size\", \"mtimeMs\", \"ctimeMs\"]") &&
-    actors.includes("bgVersion.tabVersion?.[field] === bgVersion.before[field]") &&
+    actors.includes("const bgVersionIdentityFields = [\"dev\", \"ino\", \"size\", \"mtimeMs\"]") &&
     actors.includes("bgPreSaveDocument.tab.diskVersion?.[field] === bgPreSaveBefore[field]"),
-  "Both physical disk-version checks retain all exact original fields");
+  "S9c separates adopted identity from physical stability and retains the original pre-Save guard");
   check(/const scenario9dSucceeded =[\s\S]+?two\.editMode === true[\s\S]+?two\.dirty === false;/
     .test(actors) && actors.includes("if (scenario9dSucceeded) {") &&
     actors.includes("const reloadCompletion = await reloadSelectedAndWait("),
@@ -87,6 +87,138 @@ function sourceContracts() {
     "}, 6500);", "const exitDeadline = exitStartedAt + 6000;",
     "completionTimer = setTimeout(() => resolve(false), 8000);",
   ]) check(actors.includes(expression), "Retained queue/deadline contract: " + expression);
+}
+
+function backgroundSaveVersionContracts() {
+  const predicate = between(source,
+    '  const bgVersionFields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];',
+    '  check(\n    "the background-save fixture\'s adopted disk version matches the physical file",');
+  const compile = text => vm.compileFunction(text + "\nreturn bgVersionClean;",
+    ["bgVersion", "fileB", "diskBgBaseline"]);
+  const evaluate = compile(predicate);
+  const fileB = "C:\\fixture\\beta.md", bytes = "# Beta\n\nS9B_SENT\n";
+  const fields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];
+  const identity = fields.slice(0, -1), slots = ["tabVersion", "before", "after"];
+  const version = { dev: 17, ino: 23, size: Buffer.byteLength(bytes),
+    mtimeMs: 132.5, ctimeMs: 148.75 };
+  const fixture = () => ({ path: fileB, content: bytes,
+    tabVersion: { ...version }, before: { ...version }, after: { ...version } });
+  const run = (value, fn = evaluate) => fn(value, fileB, bytes);
+  const setup = fixture();
+  check(slots.every(slot => fields.every(field => Number.isFinite(setup[slot][field]))) &&
+    setup.tabVersion !== setup.before && setup.before !== setup.after &&
+    setup.tabVersion !== setup.after && setup.content === bytes,
+  "S9c version setup has exact bytes and three independently mutable finite five-field versions");
+  check(run(setup) === true, "S9c actual baseline predicate accepts an unchanged physical version");
+  for (const ctime of [version.ctimeMs - 0.125, version.ctimeMs + 0.125, 0, -1, Number.MAX_VALUE]) {
+    const drift = fixture();
+    drift.tabVersion.ctimeMs = ctime;
+    check(drift.tabVersion.ctimeMs !== drift.before.ctimeMs &&
+      identity.every(field => drift.tabVersion[field] === drift.before[field]) &&
+      fields.every(field => drift.before[field] === drift.after[field]) &&
+      run(drift) === true,
+    "S9c accepts only finite adopted ctime drift with stable physical metadata: " + ctime);
+  }
+  for (const field of identity) {
+    const mismatch = fixture();
+    mismatch.tabVersion[field] += 0.125;
+    check(mismatch.tabVersion[field] !== mismatch.before[field] &&
+      mismatch.before[field] === mismatch.after[field] && run(mismatch) === false,
+    "S9c rejects adopted/baseline " + field + " mismatch despite stable physical metadata");
+  }
+  for (const field of fields) {
+    const mismatch = fixture();
+    mismatch.after[field] += 0.125;
+    check(mismatch.before[field] !== mismatch.after[field] &&
+      mismatch.tabVersion[field] === mismatch.before[field] && run(mismatch) === false,
+    "S9c rejects physical before/after " + field + " instability");
+  }
+  for (const slot of slots) {
+    for (const field of fields) {
+      for (const [label, invalid] of [
+        ["NaN", NaN], ["Infinity", Infinity], ["-Infinity", -Infinity],
+        ["missing", undefined], ["null", null], ["numeric string", String(version[field])],
+      ]) {
+        const malformed = fixture();
+        malformed[slot][field] = invalid;
+        check(!Number.isFinite(malformed[slot][field]) && run(malformed) === false,
+          "S9c rejects nonfinite " + slot + "." + field + ": " + label);
+      }
+    }
+    for (const malformed of [undefined, null, {}, [], "version", 1]) {
+      const missing = fixture();
+      missing[slot] = malformed;
+      check(run(missing) === false, "S9c rejects malformed " + slot + ": " + String(malformed));
+    }
+  }
+  for (const field of fields) {
+    for (const invalid of [undefined, null, false, "148.75", NaN, Infinity, -Infinity]) {
+      const equalInvalid = fixture();
+      for (const slot of slots) equalInvalid[slot][field] = invalid;
+      check(run(equalInvalid) === false,
+        "S9c equal malformed " + field + " in all three versions cannot pass equality: " + String(invalid));
+    }
+  }
+  for (const content of [bytes.replace("S9B_SENT", "S9B_DENT"), bytes + " ",
+    bytes.replace(/\n/g, "\r\n"), "", null, undefined, Buffer.from(bytes)]) {
+    const changed = fixture();
+    changed.content = content;
+    check(changed.content !== bytes && run(changed) === false,
+      "S9c preserves exact baseline bytes, including same-size edits and line endings: " + String(content));
+  }
+  const changedPath = fixture();
+  changedPath.path += ".other";
+  check(run(changedPath) === false, "S9c preserves the exact physical baseline path guard");
+
+  const strictAdoption = predicate.replace(
+    'const bgVersionIdentityFields = ["dev", "ino", "size", "mtimeMs"];',
+    'const bgVersionIdentityFields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];');
+  assert.notEqual(strictAdoption, predicate);
+  const adoptedDrift = fixture();
+  adoptedDrift.tabVersion.ctimeMs += 0.125;
+  check(run(adoptedDrift) === true && run(adoptedDrift, compile(strictAdoption)) === false,
+    "Restoring adopted ctime equality fails the finite adopted-only drift acceptance control");
+  const physicalStart = "    bgVersionFields.every(\n      (field) =>\n";
+  const weakPhysical = predicate.replace(physicalStart,
+    "    bgVersionIdentityFields.every(\n      (field) =>\n");
+  assert.notEqual(weakPhysical, predicate);
+  const physicalDrift = fixture();
+  physicalDrift.after.ctimeMs += 0.125;
+  check(run(physicalDrift) === false && run(physicalDrift, compile(weakPhysical)) === true,
+    "Removing only physical ctime stability fails the separate physical-read rejection control");
+  for (const field of identity) {
+    const declaration = 'const bgVersionIdentityFields = ["dev", "ino", "size", "mtimeMs"];';
+    const missingIdentity = predicate.replace(declaration,
+      "const bgVersionIdentityFields = " + JSON.stringify(identity.filter(key => key !== field)) + ";");
+    assert.notEqual(missingIdentity, predicate);
+    const mismatch = fixture();
+    mismatch.tabVersion[field] += 0.125;
+    check(run(mismatch) === false && run(mismatch, compile(missingIdentity)) === true,
+      "Removing adopted " + field + " equality is independently detected by its mismatch control");
+  }
+  const finiteStart = "    bgVersionFields.every(field =>\n";
+  const finiteEnd = "    bgVersionIdentityFields.every(field =>\n";
+  const finiteGuard = between(predicate, finiteStart, finiteEnd);
+  const missingFinite = predicate.replace(finiteGuard, "");
+  const equalInvalid = fixture();
+  for (const slot of slots) equalInvalid[slot].ctimeMs = undefined;
+  check(run(equalInvalid) === false && run(equalInvalid, compile(missingFinite)) === true,
+    "Removing finite validation admits equal missing ctime and fails the malformed-version control");
+  for (const field of fields) {
+    const weakFinite = predicate.replace(finiteStart,
+      '    bgVersionFields.filter(field => field !== "' + field + '").every(field =>\n');
+    assert.notEqual(weakFinite, predicate);
+    const equalInvalidField = fixture();
+    for (const slot of slots) equalInvalidField[slot][field] = "148.75";
+    check(run(equalInvalidField) === false && run(equalInvalidField, compile(weakFinite)) === true,
+      "Removing finite validation for only " + field + " admits an equal invalid triple");
+  }
+  const missingBytes = predicate.replace("    bgVersion.content === diskBgBaseline &&\n", "");
+  assert.notEqual(missingBytes, predicate);
+  const changedBytes = fixture();
+  changedBytes.content = bytes.replace("S9B_SENT", "S9B_DENT");
+  check(run(changedBytes) === false && run(changedBytes, compile(missingBytes)) === true,
+    "Removing byte equality admits a same-size edit and fails the unchanged original byte safeguard");
 }
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -5592,7 +5724,7 @@ async function generationOwnedQuestionContracts() {
 
 (async () => {
   let failures = 0;
-  for (const run of [sourceContracts, consentContracts, requestContracts,
+  for (const run of [sourceContracts, backgroundSaveVersionContracts, consentContracts, requestContracts,
     subscriptionContracts, sameTaskContracts, deliveryContracts,
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,

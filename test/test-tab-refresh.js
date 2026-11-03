@@ -23526,12 +23526,20 @@ async function run(win) {
   };
   const bgVersionOut = JSON.stringify(bgVersion);
   const bgVersionFields = ["dev", "ino", "size", "mtimeMs", "ctimeMs"];
+  const bgVersionIdentityFields = ["dev", "ino", "size", "mtimeMs"];
+  // Adoption follows the existing four-field policy; the physical read still
+  // needs an unchanged five-field snapshot, including finite ctime throughout.
   const bgVersionClean =
     bgVersion.path === fileB &&
     bgVersion.content === diskBgBaseline &&
+    bgVersionFields.every(field =>
+      Number.isFinite(bgVersion.tabVersion?.[field]) &&
+      Number.isFinite(bgVersion.before?.[field]) &&
+      Number.isFinite(bgVersion.after?.[field])) &&
+    bgVersionIdentityFields.every(field =>
+      bgVersion.tabVersion[field] === bgVersion.before[field]) &&
     bgVersionFields.every(
       (field) =>
-        bgVersion.tabVersion?.[field] === bgVersion.before[field] &&
         bgVersion.before[field] === bgVersion.after[field],
     );
   check(
