@@ -3577,6 +3577,128 @@ async function ackContinuationDiagnosticContracts() {
   "ACK failures without a replacement retain only the original request evidence and explicit null replacement");
 }
 
+async function terminalAggregateDiagnosticContracts() {
+  const formatter = between(source, "function uncaughtExceptionDetail(error) {", "\nfunction writeFatal(");
+  const legacyFormatter = 'function uncaughtExceptionDetail(error) {\n  try {\n' +
+    '    return error && error.stack ? String(error.stack) : String(error);\n' +
+    '  } catch {\n    return "<exception could not be formatted>";\n  }\n}\n';
+  const terminal = between(source, '  } catch (error) {\n    let rendererErrors = "";',
+    "\n\n  let restoreBatchQuit = null;");
+  const lifecycle = between(source, "async function openShutdownLifecycleFixture(",
+    "\nasync function clearShutdownLifecycleDocuments(");
+  const aggregation = between(lifecycle, "    if (failure || failures.length) {",
+    "\n  }\n  return result;");
+  const util = require("node:util");
+  const leaf = new Error("PRIMARY_DEEP_LEAF", { cause: new Error("PRIMARY_DEEP_CAUSE") });
+  leaf.stack += "\n    at ORIGINAL_PRIMARY_FRAME\n" +
+    "X".repeat(12000) + "UNTRUNCATED_LIFECYCLE_STACK_TAIL";
+  const primary = new AggregateError([new AggregateError([leaf], "PRIMARY_NESTED")],
+    "PRIMARY_FAILURE", { cause: new Error("PRIMARY_AGGREGATE_CAUSE") });
+  const chooserCleanup = new Error("INDEPENDENT_CHOOSER_CLEANUP", {
+    cause: new Error("CHOOSER_CLEANUP_CAUSE"),
+  });
+  const observationCleanup = new AggregateError([new Error("INDEPENDENT_OBSERVATION_CLEANUP")],
+    "OBSERVATION_CLEANUP_FAILURE", { cause: new Error("OBSERVATION_CLEANUP_CAUSE") });
+  let aggregate = null, hooks = 0;
+  try {
+    vm.compileFunction(aggregation, ["failure", "failures", "AggregateError"])(
+      primary, [chooserCleanup, observationCleanup], AggregateError);
+  } catch (error) { aggregate = error; }
+  check(aggregate instanceof AggregateError && aggregate.errors[0] === primary &&
+    aggregate.errors[1] === chooserCleanup && aggregate.errors[2] === observationCleanup,
+  "Actual lifecycle aggregate already retains the primary failure and both independent cleanup errors in order");
+  Object.defineProperty(aggregate, util.inspect.custom, {
+    get() { hooks++; throw new Error("Aggregate inspection must not invoke application hooks"); },
+  });
+  Object.defineProperty(aggregate, "unobserved", { enumerable: true,
+    get() { hooks++; throw new Error("Aggregate inspection must not evaluate application getters"); } });
+  const rendererEvidence = '[{"message":"RENDERER_PORT_EVIDENCE"}]';
+  const run = async (input, options = {}) => {
+    const lines = [], results = [], reads = [];
+    let inspections = 0;
+    const activeFormatter = options.oldFormatter ? legacyFormatter : formatter;
+    const activeTerminal = options.oldReporter ? terminal.replace("uncaughtExceptionDetail(error)",
+      "(error && error.stack ? error.stack : error)") : terminal;
+    await vm.runInNewContext(activeFormatter + "\n(async () => {\n  try { throw input;\n" +
+      activeTerminal + "\n})()", {
+      input, AggregateError, results,
+      console: { log: line => lines.push(line) },
+      win: { webContents: { executeJavaScript: async (script, gesture) => {
+        reads.push({ script, gesture });
+        if (options.rendererFailure) throw new Error("SIMULATED_RENDERER_EVIDENCE_REFUSAL");
+        return rendererEvidence;
+      } } },
+      require: name => {
+        assert.equal(name, "util");
+        return { inspect: (value, settings) => {
+          inspections++;
+          assert.equal(value, aggregate);
+          if (options.formatFailure) throw new Error("SIMULATED_AGGREGATE_FORMATTER_REFUSAL");
+          return util.inspect(value, settings);
+        } };
+      },
+    });
+    return { lines, results, reads, inspections };
+  };
+  const current = await run(aggregate);
+  const required = ["PRIMARY_DEEP_LEAF", "PRIMARY_DEEP_CAUSE", "PRIMARY_AGGREGATE_CAUSE",
+    "ORIGINAL_PRIMARY_FRAME", "UNTRUNCATED_LIFECYCLE_STACK_TAIL", "INDEPENDENT_CHOOSER_CLEANUP",
+    "CHOOSER_CLEANUP_CAUSE", "INDEPENDENT_OBSERVATION_CLEANUP", "OBSERVATION_CLEANUP_CAUSE"];
+  check(required.every(marker => current.lines[0].includes(marker)) && current.inspections === 1 &&
+    hooks === 0 && !/\u001b\[/.test(current.lines[0]),
+  "Actual formatter and terminal retain nested primary and independent cleanup stacks and causes without hooks or colors");
+  check(current.lines.length === 1 && current.lines[0].startsWith("FAIL  harness threw  -> ") &&
+    (current.lines[0].match(/^FAIL  harness threw  -> /gm) || []).length === 1 &&
+    current.lines[0].endsWith("\nrenderer errors: " + rendererEvidence) &&
+    current.results.length === 1 && current.results[0].name === "harness" &&
+    current.results[0].ok === false && current.reads.length === 1 &&
+    current.reads[0].script === "JSON.stringify(window.__e2eErrors || [])" &&
+    current.reads[0].gesture === true,
+  "Actual terminal preserves its single failure header renderer suffix original renderer read and one failed accounting entry");
+  for (const option of ["oldFormatter", "oldReporter"]) {
+    const incomplete = await run(aggregate, { [option]: true });
+    check(incomplete.lines.length === 1 &&
+      incomplete.lines[0].includes("Shutdown lifecycle admission or observation cleanup failed") &&
+      required.every(marker => !incomplete.lines[0].includes(marker)) &&
+      incomplete.inspections === 0 && incomplete.results.length === 1 &&
+      incomplete.results[0].ok === false,
+    "Executed " + option + " counterfactual loses actual nested evidence even when the other edit is present");
+  }
+  const normal = new Error("UNCHANGED_NORMAL_ERROR", { cause: new Error("UNCHANGED_NORMAL_CAUSE") });
+  const ordinary = await run(normal);
+  check(ordinary.lines[0] === "FAIL  harness threw  -> " + normal.stack +
+    "\nrenderer errors: " + rendererEvidence && ordinary.inspections === 0,
+  "Normal Error stack formatting remains byte-exact and does not enter aggregate inspection");
+  for (const input of ["primitive evidence", 0, false, 13n, Symbol("evidence"), null, undefined]) {
+    const primitive = await run(input);
+    check(primitive.lines[0] === "FAIL  harness threw  -> " + String(input) +
+      "\nrenderer errors: " + rendererEvidence && primitive.inspections === 0 &&
+      primitive.results.length === 1 && primitive.results[0].ok === false,
+    "Existing primitive formatter branch and terminal accounting remain stable for " + typeof input + ":" + String(input));
+  }
+  const unreadableStack = Object.defineProperty({}, "stack", {
+    get() { throw new Error("Unreadable original stack"); },
+  });
+  const unreadableValue = { toString() { throw new Error("Unreadable original value"); } };
+  for (const input of [unreadableStack, unreadableValue]) {
+    const refused = await run(input);
+    check(refused.lines[0] === "FAIL  harness threw  -> <exception could not be formatted>" +
+      "\nrenderer errors: " + rendererEvidence && refused.results.length === 1 &&
+      refused.results[0].ok === false,
+    "Existing defensive formatter fallback remains exact when original diagnostic access throws");
+  }
+  const refusedFormat = await run(aggregate, { formatFailure: true });
+  check(refusedFormat.lines[0] === "FAIL  harness threw  -> <exception could not be formatted>" +
+    "\nrenderer errors: " + rendererEvidence && refusedFormat.results.length === 1 &&
+    refusedFormat.results[0].ok === false && refusedFormat.inspections === 1,
+  "Built-in aggregate inspection refusal uses the unchanged defensive fallback without hiding terminal accounting");
+  const refusedRenderer = await run(aggregate, { rendererFailure: true });
+  check(refusedRenderer.lines.length === 1 && required.every(marker => refusedRenderer.lines[0].includes(marker)) &&
+    !refusedRenderer.lines[0].includes("\nrenderer errors:") &&
+    refusedRenderer.results.length === 1 && refusedRenderer.results[0].ok === false,
+  "Existing renderer-evidence refusal still omits only its suffix and retains nested failure details and accounting");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -3587,7 +3709,7 @@ async function ackContinuationDiagnosticContracts() {
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
     popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
-    ackContinuationDiagnosticContracts]) {
+    ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

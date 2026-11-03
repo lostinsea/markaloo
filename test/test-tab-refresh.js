@@ -1459,6 +1459,10 @@ async function captureChecks(body) {
 let terminatingFromUncaughtException = false;
 function uncaughtExceptionDetail(error) {
   try {
+    if (error instanceof AggregateError) {
+      return require("util").inspect(error, { depth: null, maxArrayLength: null,
+        maxStringLength: null, colors: false, customInspect: false, getters: false });
+    }
     return error && error.stack ? String(error.stack) : String(error);
   } catch {
     return "<exception could not be formatted>";
@@ -47396,7 +47400,7 @@ app.whenReady().then(async () => {
     } catch {}
     console.log(
       "FAIL  harness threw  -> " +
-        (error && error.stack ? error.stack : error) +
+        uncaughtExceptionDetail(error) +
         (rendererErrors ? "\nrenderer errors: " + rendererErrors : ""),
     );
     results.push({ name: "harness", ok: false });
