@@ -3433,6 +3433,150 @@ async function shutdownRestoreOrderingContracts() {
   "Ready retirement and the existing post-retirement empty-page recovery keep their original ordering");
 }
 
+async function ackContinuationDiagnosticContracts() {
+  const loop = between(source, "    const committedReplyCases = [",
+    "\n    const reloadWithRestoredPhysicalSelection = async");
+  const start = "        if (!await waitUntil(() => rig.closes === 1, 10000)) {";
+  const boundary = between(loop, start, '\n        if (outcome === "committed") {');
+  const legacy = start + '\n' +
+    '          throw new Error("Ordinary ACK fixture did not join its real released continuation");\n        }';
+  const cleanup = between(source, "async function withOrdinaryShutdownCleanup(",
+    "\nfunction holdOrdinaryShutdownApproval(");
+  const formatter = between(source, "function uncaughtExceptionDetail(error) {", "\nfunction writeFatal(");
+  const util = require("node:util");
+  const run = async (options = {}) => {
+    const trace = [], created = [], inspected = [];
+    const commit = { id: 11, gen: 3, revision: 5 };
+    const ack = { ...commit, committed: true, unobserved: undefined };
+    let hooks = 0;
+    Object.defineProperty(ack, "extra", { enumerable: true,
+      get() { hooks++; throw new Error("Packet inspection invoked a getter"); } });
+    Object.defineProperty(ack, util.inspect.custom, {
+      get() { hooks++; throw new Error("Packet inspection invoked a custom hook"); },
+    });
+    const replacementRequest = { id: 12, gen: 3, reason: "window-close" };
+    const replacementResponse = { id: 12, gen: 3, revision: 5, dirtyFiles: [], status: "ok" };
+    const oldSnapshot = { packet: commit, captured: 1, released: false,
+      retired: null, restored: false, restorationAttempted: false };
+    const replacementSnapshot = { request: replacementRequest, captured: true, released: true,
+      retired: null, restored: false, restorationAttempted: false };
+    const state = { renderer: "ready", rendererGeneration: 3, pendingId: 0,
+      commitPendingId: 12, shutdownPendingContinuationCount: 0, authorized: false };
+    const records = [{ id: 11, reason: "window-close", continuationInvokedAt: undefined },
+      { id: 12, reason: "window-close", continuationInvokedAt: 27 },
+      { id: 99, reason: "FOREIGN_REQUEST_MUST_NOT_BE_REPORTED", continuationInvokedAt: 31 }];
+    const questions = [0, 1].map(response => ({ pendingReason: "window-close", response,
+      options: { type: "warning", title: "ACTUAL_QUESTION_" + response,
+        message: "Observed question", detail: "X".repeat(12000) + "ACK_QUESTION_DETAIL_TAIL",
+        buttons: ["Close anyway", "Cancel"], defaultId: 1, cancelId: 1 } }));
+    const rig = { closes: options.closes ?? 0, quits: 0, dialogs: questions, answer: 1 };
+    const diagnosticFault = options.unformattable ? Object.defineProperty({}, "stack", {
+      get() { throw new Error("Unreadable diagnostic exception"); },
+    }) : new Error("ACK_DIAGNOSTIC_REFUSED");
+    const read = (label, value) => {
+      trace.push(label);
+      if (options.fault === label) throw diagnosticFault;
+      return value;
+    };
+    const hold = { get answer() { return read("held-answer", ack); },
+      snapshot: () => read("original-snapshot", { ...oldSnapshot }) };
+    const reissued = options.noReplacement ? null : {
+      get request() { return read("replacement-request", replacementRequest); },
+      get response() { return read("replacement-response", replacementResponse); },
+      snapshot: () => read("replacement-snapshot", { ...replacementSnapshot }),
+    };
+    const context = vm.createContext({
+      Error: function (message) { const error = new Error(message); created.push(error); return error; },
+      AggregateError, replyCase: { name: "fractional revision" }, commit, hold, reissued, rig,
+      __shutdown: { state: () => read("state", state),
+        timing: { state: () => read("timing", { enabled: true, requests: records }) } },
+      waitUntil: async (predicate, timeout) => {
+        trace.push("wait"); assert.equal(timeout, 10000); return predicate();
+      },
+      require: name => {
+        assert.equal(name, "util");
+        return { inspect: (packet, settings) => {
+          inspected.push(packet); read("inspect", null);
+          return util.inspect(packet, settings);
+        } };
+      },
+      restoreReplacement: () => {
+        if (reissued) { trace.push("restore-replacement"); replacementSnapshot.restored = true; }
+      },
+      restoreOriginal: () => { trace.push("restore-original"); oldSnapshot.restored = true; },
+    });
+    let error = null, result;
+    try {
+      result = await vm.runInContext(formatter + "\n" + cleanup +
+        "\nwithOrdinaryShutdownCleanup(async () => {\n" + (options.legacy ? legacy : boundary) +
+        '\nreturn "UNCHANGED_SUCCESS";\n}, [restoreReplacement, restoreOriginal]);', context);
+    } catch (failure) { error = failure; }
+    return { trace, created, inspected, error, result, commit, ack, replacementRequest,
+      replacementResponse, state, records, rig, oldSnapshot, replacementSnapshot, hooks };
+  };
+  const current = await run(), packet = current.inspected[0], failure = current.created[0];
+  check(current.error instanceof AggregateError && current.error.errors[0] === failure &&
+    failure.message.startsWith("Ordinary ACK fixture did not join its real released continuation\n") &&
+    failure.stack.includes("ACK continuation observation:") &&
+    current.trace[0] === "wait" && current.trace.filter(label => label === "wait").length === 1,
+  "Actual ACK timeout appends evidence to the same original Error after its unchanged exact-one-close wait");
+  check(packet.replyCase === "fractional revision" && packet.commit === current.commit &&
+    packet.heldACK === current.ack && packet.replacementRequest === current.replacementRequest &&
+    packet.replacementResponse === current.replacementResponse &&
+    packet.originalHold.packet === current.commit && packet.originalHold.released === false &&
+    packet.originalHold.restored === false && packet.replacementHold.request === current.replacementRequest &&
+    packet.replacementHold.released === true && packet.replacementHold.restored === false &&
+    packet.state === current.state && packet.closes === 0 && packet.quits === 0,
+  "Actual ACK packet retains both existing holds and the replacement response absent from its hold snapshot");
+  check(packet.timing.enabled && packet.timing.requests.length === 2 &&
+    packet.timing.requests[0] === current.records[0] && packet.timing.requests[1] === current.records[1] &&
+    failure.stack.includes("continuationInvokedAt: 27") &&
+    !failure.stack.includes("FOREIGN_REQUEST_MUST_NOT_BE_REPORTED") &&
+    failure.stack.includes("unobserved: undefined"),
+  "Actual ACK packet retains old/new timing including continuation entry without inventing absent evidence");
+  check(packet.questions.length === 2 && packet.questions[0].response === 0 &&
+    packet.questions[1].response === 1 && packet.questions[1].options.defaultId === 1 &&
+    packet.questions[1].options.cancelId === 1 && current.rig.answer === 1 &&
+    failure.stack.includes("ACK_QUESTION_DETAIL_TAIL") && current.hooks === 0,
+  "Actual question answers and safe defaults survive untruncated inspection without invoking application hooks");
+  check(current.trace.slice(-2).join("|") === "restore-replacement|restore-original" &&
+    current.oldSnapshot.released === false && current.replacementSnapshot.released === true &&
+    current.oldSnapshot.restored && current.replacementSnapshot.restored &&
+    current.error.message.includes("ACK continuation observation:"),
+  "Existing independent cleanup follows packet capture without releasing the original held ACK or changing answers");
+  for (const fault of ["held-answer", "replacement-request", "replacement-response",
+    "original-snapshot", "replacement-snapshot", "timing", "state", "inspect"]) {
+    const refused = await run({ fault, unformattable: fault === "inspect" });
+    check(refused.error?.errors[0] === refused.created[0] &&
+      refused.created[0].message.startsWith("Ordinary ACK fixture did not join its real released continuation\n") &&
+      refused.created[0].stack.includes("ACK continuation diagnostics unavailable:") &&
+      refused.created[0].stack.includes(fault === "inspect" ?
+        "<exception could not be formatted>" : "ACK_DIAGNOSTIC_REFUSED") &&
+      refused.trace.slice(-2).join("|") === "restore-replacement|restore-original",
+    "Observational " + fault + " failure preserves the original ACK Error and both independent restorations");
+  }
+  const legacyRun = await run({ legacy: true });
+  check(legacyRun.error?.errors[0] === legacyRun.created[0] &&
+    !legacyRun.created[0].stack.includes("ACK continuation observation:") &&
+    legacyRun.inspected.length === 0 &&
+    legacyRun.trace.join("|") === "wait|restore-replacement|restore-original",
+  "Executed old ACK timeout counterfactual throws and cleans up but genuinely loses all post-release evidence");
+  const duplicate = await run({ closes: 2 });
+  check(duplicate.error?.errors[0] === duplicate.created[0] && duplicate.inspected[0].closes === 2,
+  "Two closes still fail the original exactly-one condition rather than being accepted as completion");
+  const success = await run({ closes: 1 });
+  check(!success.error && success.result === "UNCHANGED_SUCCESS" && success.created.length === 0 &&
+    success.inspected.length === 0 && success.trace.join("|") === "wait|restore-replacement|restore-original",
+  "Successful original ACK continuation performs no diagnostic reads and keeps its cleanup and result");
+  const noReplacement = await run({ noReplacement: true });
+  check(noReplacement.error?.errors[0] === noReplacement.created[0] &&
+    noReplacement.inspected[0].replacementRequest === null &&
+    noReplacement.inspected[0].replacementResponse === null &&
+    noReplacement.inspected[0].replacementHold === null &&
+    noReplacement.inspected[0].timing.requests.length === 1,
+  "ACK failures without a replacement retain only the original request evidence and explicit null replacement");
+}
+
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, consentContracts, requestContracts,
@@ -3442,7 +3586,8 @@ async function shutdownRestoreOrderingContracts() {
     defaultFixtureDiagnosticsContracts, discardHistoryContracts, reloadPreviewContracts,
     lazyNativeBoundaryContracts, ordinarySuffixBoundaryContracts, replacementNativeBoundaryContracts,
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
-    popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts]) {
+    popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
+    ackContinuationDiagnosticContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

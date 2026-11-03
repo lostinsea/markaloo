@@ -44528,7 +44528,31 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
           hold.release();
         }
         if (!await waitUntil(() => rig.closes === 1, 10000)) {
-          throw new Error("Ordinary ACK fixture did not join its real released continuation");
+          const failure = new Error("Ordinary ACK fixture did not join its real released continuation");
+          try {
+            const replacementRequest = reissued?.request || null;
+            const timing = __shutdown.timing.state();
+            failure.message += "\nACK continuation observation: " + require("util").inspect({
+              replyCase: replyCase.name, commit, heldACK: hold.answer,
+              originalHold: hold.snapshot(), replacementRequest,
+              replacementResponse: reissued?.response || null,
+              replacementHold: reissued?.snapshot() || null,
+              state: __shutdown.state(), closes: rig.closes, quits: rig.quits,
+              questions: rig.dialogs.map(({ options, pendingReason, response }) => ({
+                pendingReason, response, options: {
+                  type: options.type, title: options.title, message: options.message,
+                  detail: options.detail, buttons: options.buttons,
+                  defaultId: options.defaultId, cancelId: options.cancelId,
+                },
+              })),
+              timing: { enabled: timing.enabled, requests: timing.requests.filter(record =>
+                record.id === commit.id || record.id === replacementRequest?.id) },
+            }, { depth: null, maxArrayLength: null, maxStringLength: null,
+              colors: false, customInspect: false, getters: false });
+          } catch (error) {
+            failure.message += "\nACK continuation diagnostics unavailable: " + uncaughtExceptionDetail(error);
+          }
+          throw failure;
         }
         if (outcome === "committed") {
           const after = __shutdown.state();
