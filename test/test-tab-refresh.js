@@ -39867,26 +39867,45 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     "documentGeneration", "pathKey", "documentRef"];
   const expectedDiscards = new Map();
   const readInstalledDocument = () => exec(`(() => {
-    const tab = window.CustomTabs.getActiveTab();
-    return {
-      path: window.currentFilePath,
-      original: window.originalMarkdown,
-      editor: markdownEditor.value,
-      editMode: isEditMode,
-      dirty: hasUnsavedChanges,
-      tab: tab && { id: tab.id, path: tab.filePath, content: tab.content,
-        original: tab.originalContent, dirty: tab.hasUnsavedChanges,
-        diskVersion: tab.diskVersion },
-      state: tab && window.CustomTabs.__documentState(tab),
-      owner: tab && window.CustomTabs.getDocumentIdentityForTab(
-        tab.id, tab.filePath, window.getReloadRequestSession()),
-      descriptor: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
-      pending: window.getPendingSaveStatus(),
-      selection: window.getActiveFileSelectionGeneration(),
-      frozen: window.CustomTabs.isDocumentFrozen(),
-      question: document.getElementById('appMessageDialog').open,
-      viewer: viewer.textContent,
-    };
+    const bridge = window.folia;
+    if (typeof bridge?.onMainDialogVisibility !== 'function')
+      throw new Error('Installed snapshot Main dialog visibility capability is missing');
+    let mainVisible, mainVisibilitySeen = false, unsubscribe;
+    try {
+      unsubscribe = bridge.onMainDialogVisibility(value => {
+        // A later delivery cannot repair malformed initial cached evidence.
+        if (!mainVisibilitySeen) {
+          mainVisible = value;
+          mainVisibilitySeen = true;
+        }
+      });
+      if (typeof unsubscribe !== 'function')
+        throw new Error('Installed snapshot Main dialog visibility subscription did not return cleanup');
+      if (!mainVisibilitySeen || typeof mainVisible !== 'boolean')
+        throw new Error('Installed snapshot Main dialog visibility did not synchronously report a Boolean');
+      const tab = window.CustomTabs.getActiveTab();
+      return {
+        path: window.currentFilePath,
+        original: window.originalMarkdown,
+        editor: markdownEditor.value,
+        editMode: isEditMode,
+        dirty: hasUnsavedChanges,
+        tab: tab && { id: tab.id, path: tab.filePath, content: tab.content,
+          original: tab.originalContent, dirty: tab.hasUnsavedChanges,
+          diskVersion: tab.diskVersion },
+        state: tab && window.CustomTabs.__documentState(tab),
+        owner: tab && window.CustomTabs.getDocumentIdentityForTab(
+          tab.id, tab.filePath, window.getReloadRequestSession()),
+        descriptor: tab && window.CustomTabs.getDocumentDescriptor(tab.id),
+        pending: window.getPendingSaveStatus(),
+        selection: window.getActiveFileSelectionGeneration(),
+        frozen: window.CustomTabs.isDocumentFrozen(),
+        question: document.getElementById('appMessageDialog')?.open === true || mainVisible,
+        viewer: viewer.textContent,
+      };
+    } finally {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    }
   })()`);
   const installedMainOwns = async (snapshot) => {
     if (!snapshot.owner || !snapshot.descriptor ||

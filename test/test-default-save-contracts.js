@@ -4032,6 +4032,173 @@ async function shutdownAdmissionDiagnosticContracts() {
   "Valid original admission never constructs an assertion or executes diagnostics even when the diagnostic serializer is broken");
 }
 
+async function installedQuestionSnapshotContracts() {
+  const definition = between(source, "  const readInstalledDocument = () => exec(`",
+    "\n  const installedMainOwns = ");
+  const program = vm.runInNewContext(definition + "\nreadInstalledDocument();", { exec: code => code });
+  const edit = between(source, "  const editInstalledFixture = async (content, reason) => {",
+    "\n    await exec(`(() => {\n      const before = ");
+  const admissionGuard = edit.slice(edit.indexOf("    if (before.path !== commitFile"));
+  const guard = vm.compileFunction("return (async () => {\n" + admissionGuard + "\nreturn true;\n})();",
+    ["before", "commitFile", "installedMainOwns"]);
+  const fixture = (options = {}) => {
+    const { page, control, context } = pageFixture(), listeners = new Set(), trace = [], deliveries = [];
+    const fieldError = new Error("INSTALLED_SNAPSHOT_FIELD_FAILURE");
+    const cleanupError = new Error("INSTALLED_SNAPSHOT_CLEANUP_FAILURE");
+    let subscriptions = 0, unsubscriptions = 0, returnedHandles = 0, fieldReads = 0, callbackError, callback;
+    const readTab = page.CustomTabs.getActiveTab;
+    page.CustomTabs.getActiveTab = () => {
+      fieldReads++; trace.push("read-tab");
+      if (options.fieldFailure === "tab") throw fieldError;
+      return readTab();
+    };
+    if (options.fieldFailure === "viewer") Object.defineProperty(page.viewer, "textContent", {
+      get() { throw fieldError; },
+    });
+    const getElement = page.document.getElementById;
+    page.document.getElementById = id => id === "appMessageDialog" ?
+      options.local === undefined ? null : { open: options.local } : getElement(id);
+    page.folia.onMainDialogVisibility = function(listener) {
+      assert.equal(this, page.folia);
+      subscriptions++; listeners.add(listener); callback = listener; trace.push("subscribe");
+      if (!["missing", "late"].includes(options.signal)) {
+        for (const value of options.deliveries ?? [options.main ?? false]) {
+          deliveries.push(value);
+          try { listener(value); trace.push("callback-returned"); }
+          catch (error) { callbackError = error; throw error; }
+        }
+      }
+      returnedHandles++; trace.push("return-handle");
+      if (Object.hasOwn(options, "handle")) return options.handle;
+      return () => {
+        unsubscriptions++; trace.push("unsubscribe"); listeners.delete(listener);
+        if (options.cleanupFailure) throw cleanupError;
+      };
+    };
+    if (Object.hasOwn(options, "capability")) page.folia.onMainDialogVisibility = options.capability;
+    let actual = program;
+    if (options.unsafeLocal) actual = actual.replace(
+      "document.getElementById('appMessageDialog')?.open === true || mainVisible",
+      "document.getElementById('appMessageDialog').open === true || mainVisible");
+    if (options.localOnly) actual = actual.replace(
+      "document.getElementById('appMessageDialog')?.open === true || mainVisible",
+      "document.getElementById('appMessageDialog')?.open === true");
+    let snapshot, error;
+    try { snapshot = vm.runInContext(actual, context); } catch (failure) { error = failure; }
+    return { snapshot, error, trace, deliveries, fieldError, cleanupError, control,
+      counts: () => ({ subscriptions, unsubscriptions, returnedHandles, fieldReads,
+        listeners: listeners.size, callbackError }),
+      deliverLate: value => { deliveries.push(value); callback(value); },
+      repeat: () => vm.runInContext(actual, context) };
+  };
+  const idle = fixture({ main: false });
+  check(JSON.stringify(idle.snapshot) === JSON.stringify({
+    path: "C:\\fixture\\alpha.md", original: "# Alpha\n\nSAVED\n", editor: "# Alpha\n\nTYPED\n",
+    editMode: true, dirty: true,
+    tab: { id: 21, path: "C:\\fixture\\alpha.md", content: "# Alpha\n\nTYPED\n",
+      original: "# Alpha\n\nSAVED\n", dirty: true, diskVersion: {} },
+    state: { maintained: true, dirty: true, reloadConflict: false,
+      deletionTombstone: false, mutationRevision: 10 },
+    owner: { pageSession: "page", rendererGeneration: 3, tabId: 21, documentGeneration: 7,
+      pathKey: "c:\\fixture\\alpha.md", documentRef: "ref" },
+    descriptor: { ref: "ref", pathKey: "c:\\fixture\\alpha.md",
+      logicalPath: "C:\\fixture\\alpha.md", readTarget: "C:\\fixture\\alpha.md" },
+    pending: { count: 0, revision: 12 }, selection: 9, frozen: false, question: false, viewer: "TYPED",
+  }) && !idle.error && idle.deliveries[0] === false &&
+    idle.counts().subscriptions === 1 && idle.counts().unsubscriptions === 1 && idle.counts().listeners === 0,
+  "Actual installed snapshot accepts lazy absent local surface only with genuine immediate Main false and preserves every other field");
+  for (const options of [{ main: true }, { main: false, local: true }, { main: true, local: false }]) {
+    const busy = fixture(options);
+    let ownershipCalls = 0;
+    await assert.rejects(guard(busy.snapshot, busy.snapshot.path, async () => {
+      ownershipCalls++; throw new Error("Busy snapshots must not reach ownership qualification");
+    }), /Installed edit has no current owned editor/);
+    check(busy.snapshot.question === true && ownershipCalls === 0 &&
+      busy.counts().subscriptions === 1 && busy.counts().unsubscriptions === 1 &&
+      busy.counts().listeners === 0,
+    "Actual installed busy-only question refuses edit before ownership: " + JSON.stringify(options));
+  }
+  for (const value of [undefined, null, 0, 1, "false", {}, Promise.resolve(false)]) {
+    const malformed = fixture({ deliveries: [value], local: true });
+    check(!malformed.snapshot && /did not synchronously report a Boolean/.test(malformed.error?.message) &&
+      malformed.counts().returnedHandles === 1 && malformed.counts().unsubscriptions === 1 &&
+      malformed.counts().listeners === 0 && malformed.counts().fieldReads === 0 &&
+      malformed.counts().callbackError === undefined &&
+      malformed.trace.join("|") === "subscribe|callback-returned|return-handle|unsubscribe",
+    "Malformed immediate Main visibility is rejected after obtaining and disposing the handle even when local is open: " + String(value));
+  }
+  for (const capability of [undefined, null, 0, {}]) {
+    const missing = fixture({ capability, local: true });
+    check(!missing.snapshot && /capability is missing/.test(missing.error?.message) &&
+      missing.counts().subscriptions === 0 && missing.counts().fieldReads === 0,
+    "Missing or noncallable Main visibility capability never becomes local-only success: " + String(capability));
+  }
+  for (const signal of ["missing", "late"]) {
+    const missing = fixture({ signal, local: true });
+    check(!missing.snapshot && /did not synchronously report a Boolean/.test(missing.error?.message) &&
+      missing.counts().returnedHandles === 1 && missing.counts().unsubscriptions === 1 &&
+      missing.counts().listeners === 0 && missing.counts().fieldReads === 0,
+    "Main visibility " + signal + " first delivery fails closed and disposes the real callable handle");
+    if (signal === "late") {
+      const originalError = missing.error;
+      missing.deliverLate(false);
+      check(missing.deliveries[0] === false && missing.error === originalError && !missing.snapshot &&
+        missing.counts().listeners === 0 && missing.counts().unsubscriptions === 1,
+      "A genuine late Boolean cannot resurrect an already-refused installed snapshot");
+    }
+  }
+  for (const handle of [undefined, null, 0, {}]) {
+    const malformed = fixture({ handle, main: false });
+    check(!malformed.snapshot && /did not return cleanup/.test(malformed.error?.message) &&
+      malformed.counts().returnedHandles === 1 && malformed.counts().fieldReads === 0 &&
+      malformed.counts().callbackError === undefined,
+    "Noncallable Main visibility cleanup handle rejects an otherwise idle snapshot: " + String(handle));
+  }
+  for (const fieldFailure of ["tab", "viewer"]) {
+    const failed = fixture({ main: false, fieldFailure });
+    check(failed.error === failed.fieldError && !failed.snapshot &&
+      failed.counts().subscriptions === 1 && failed.counts().unsubscriptions === 1 &&
+      failed.counts().listeners === 0 && failed.trace.at(-1) === "unsubscribe",
+    "Actual installed snapshot " + fieldFailure + " read failure still unsubscribes exactly once and preserves the field error");
+  }
+  const cleanup = fixture({ main: false, cleanupFailure: true });
+  check(cleanup.error === cleanup.cleanupError && !cleanup.snapshot &&
+    cleanup.counts().unsubscriptions === 1 && cleanup.counts().listeners === 0,
+  "A failing callable visibility disposer remains a failed installed snapshot rather than a returned ready result");
+  const malformedFirst = fixture({ deliveries: [undefined, false], local: true });
+  check(!malformedFirst.snapshot && /did not synchronously report a Boolean/.test(malformedFirst.error?.message) &&
+    malformedFirst.deliveries.length === 2 && malformedFirst.counts().unsubscriptions === 1 &&
+    malformedFirst.counts().listeners === 0,
+  "A later Boolean cannot repair malformed initial cached Main visibility evidence");
+  for (let index = 0; index < 12; index++) idle.repeat();
+  check(idle.counts().subscriptions === 13 && idle.counts().unsubscriptions === 13 &&
+    idle.counts().listeners === 0 && idle.counts().returnedHandles === 13,
+  "Repeated actual installed snapshots leave no Main visibility callbacks and dispose every returned handle once");
+  const changingOptions = { main: false }, changing = fixture(changingOptions);
+  changingOptions.main = true;
+  const busyAgain = changing.repeat();
+  changingOptions.main = false;
+  const idleAgain = changing.repeat();
+  check(changing.snapshot.question === false && busyAgain.question === true && idleAgain.question === false &&
+    changing.counts().subscriptions === 3 && changing.counts().unsubscriptions === 3 &&
+    changing.counts().listeners === 0,
+  "Each actual installed snapshot samples its own current immediate Main visibility instead of reusing an earlier idle value");
+  let ownershipCalls = 0;
+  await assert.rejects(guard(idle.snapshot, idle.snapshot.path, async () => {
+    ownershipCalls++; return false;
+  }), /Installed edit has no current owned editor/);
+  check(ownershipCalls === 1 && idle.snapshot.question === false,
+  "Idle visibility does not bypass the unchanged installed current-owner admission gate");
+  const unsafe = fixture({ main: false, unsafeLocal: true });
+  check(!unsafe.snapshot && /Cannot read properties of null.*open/.test(unsafe.error?.message) &&
+    unsafe.deliveries[0] === false && unsafe.counts().unsubscriptions === 1 && unsafe.counts().listeners === 0,
+  "Executed actual snapshot null-dereference counterfactual fails on the genuinely absent lazy local dialog");
+  const localOnly = fixture({ main: true, localOnly: true });
+  check(!localOnly.error && localOnly.snapshot.question === false && localOnly.deliveries[0] === true &&
+    localOnly.counts().unsubscriptions === 1,
+  "Executed optional-chain-only counterfactual incorrectly loses genuine Main queue busy evidence without proving presentation");
+}
+
 async function generationFinalizerContracts() {
   const scenario = between(source, "async function runShutdownGenerationScenarios(",
     "\nfunction createInstalledUpdaterFixture(");
@@ -5434,7 +5601,7 @@ async function generationOwnedQuestionContracts() {
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
     popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
     ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, shutdownAdmissionDiagnosticContracts,
-    generationFinalizerContracts,
+    installedQuestionSnapshotContracts, generationFinalizerContracts,
     generationNavigationSetupContracts, generationOwnedQuestionContracts]) {
     try { await run(); }
     catch (error) {

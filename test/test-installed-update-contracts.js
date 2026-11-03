@@ -128,7 +128,8 @@ function documents() {
   const viewer = { textContent: "Installed commit fixture" };
   const question = { open: false };
   const options = { ownerCurrent: true, mainCurrent: true, pending: 0,
-    eagerCache: false, mutate: true, paint: true, retarget: false };
+    eagerCache: false, mutate: true, paint: true, retarget: false, mainDialogVisible: false };
+  const visibility = { subscriptions: 0, unsubscriptions: 0, callbacks: new Set() };
   const window = {
     currentFilePath: "fixture.md", originalMarkdown: body,
     getReloadRequestSession: () => "PAGE",
@@ -149,6 +150,17 @@ function documents() {
       queryDocumentDeletionState: () => ({
         known: options.ownerCurrent, unresolved: false, revision: 1,
       }),
+      onMainDialogVisibility(callback) {
+        assert.equal(typeof callback, "function");
+        assert.equal(typeof options.mainDialogVisible, "boolean");
+        visibility.subscriptions++;
+        visibility.callbacks.add(callback);
+        callback(options.mainDialogVisible);
+        return () => {
+          visibility.unsubscriptions++;
+          visibility.callbacks.delete(callback);
+        };
+      },
     },
   };
   const calls = [];
@@ -188,7 +200,7 @@ function documents() {
     "\nglobalThis.actor = { readInstalledDocument, installedMainOwns, " +
     "describeInstalledTabs, clearDocuments, editInstalledFixture, expectedDiscards };", context);
   return { actor: context.actor, context, exec, owner, descriptor, tab, state,
-    tabs, options, calls, closeCalls,
+    tabs, options, calls, closeCalls, visibility,
     setClose: implementation => { closeImplementation = implementation; } };
 }
 
@@ -477,6 +489,34 @@ async function main() {
     assert.equal(permission.content, content);
     assert.equal(permission.owner.documentRef, h.owner.documentRef);
     assert.equal(permission.filePath, "fixture.md");
+  });
+  await check("Main queue busy without a local dialog refuses ordinary actor input and retires its snapshot callbacks", async () => {
+    const h = documents(), original = h.context.markdownEditor.value;
+    h.options.mainDialogVisible = true;
+    assert.equal(h.context.document.getElementById("appMessageDialog").open, false);
+    const busy = await h.actor.readInstalledDocument();
+    assert.equal(busy.question, true);
+    assert.equal(h.visibility.subscriptions, 1);
+    assert.equal(h.visibility.unsubscriptions, 1);
+    assert.equal(h.visibility.callbacks.size, 0);
+    await assert.rejects(h.actor.editInstalledFixture("QUEUE_BUSY_INPUT", "ordinary discard"),
+      /Installed edit has no current owned editor/);
+    assert.equal(h.context.markdownEditor.value, original);
+    assert.equal(h.tab.content, original);
+    assert.equal(h.context.hasUnsavedChanges, false);
+    assert.equal(h.calls.includes("input"), false);
+    assert.equal(h.actor.expectedDiscards.size, 0);
+    assert.equal(h.visibility.subscriptions, 2);
+    assert.equal(h.visibility.unsubscriptions, 2);
+    h.options.mainDialogVisible = false;
+    const content = "# Installed commit fixture\nQUEUE_IDLE_INPUT\n";
+    await h.actor.editInstalledFixture(content, "discard the deliberate idle fixture edit");
+    assert.equal(h.context.markdownEditor.value, content);
+    assert.equal(h.tab.content, original);
+    assert.equal(h.actor.expectedDiscards.get(h.tab.id).content, content);
+    assert.equal(h.visibility.subscriptions, 4);
+    assert.equal(h.visibility.unsubscriptions, 4);
+    assert.equal(h.visibility.callbacks.size, 0);
   });
   for (const [name, change] of [
     ["unknown document owner", h => { h.options.ownerCurrent = false; }],
