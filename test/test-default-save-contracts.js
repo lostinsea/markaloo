@@ -3921,47 +3921,95 @@ async function generationFinalizerContracts() {
 }
 
 async function generationNavigationSetupContracts() {
-  const scenario = between(source, "    // An approval is scoped to exactly the document which supplied it.",
-    "    // A main-process discard dialog is an approval of one renderer document,");
+  const generationQuestions = between(source, "function installGenerationShutdownQuestions(",
+    "\nasync function runShutdownGenerationScenarios(");
+  const scenario = between(source, "    // This nonterminal close stub can test authority revocation, not a live",
+    "    // An unanswered host's real abort");
+  const discardBoundary = between(source, "    if (retainDiscardChoice) {\n      const discardBoundaryBefore",
+    "\n    if (!await waitUntil(() => __shutdown.state().pendingId === 0)) {");
   const open = between(source, "async function openShutdownLifecycleFixture(",
     "\nasync function clearShutdownLifecycleDocuments(");
   const restore = between(source, "async function settleShutdownLifecycleRestore(",
-    "\nasync function runShutdownGenerationScenarios(");
+    "\nfunction installGenerationShutdownQuestions(");
   const replace = between(source, "function replaceMethod(", "\n// A stand-in for the cancellable event");
   const bounded = between(source, "async function boundedDialogWork(", "\nfunction inspectCleanRefreshSource(");
+  const ownedCleanup = between(source, "async function withOrdinaryShutdownCleanup(",
+    "\nfunction holdOrdinaryShutdownApproval(");
   const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
   const capture = between(main, "function captureFileOpenDelivery(", "\nfunction fileOpenSnapshotIsCurrent(");
   const chooser = between(main, "function openFileDialog() {",
     "\n// ============================================\n// IPC HANDLERS - File Operations");
   const restoreRoute = between(main, 'ipcMain.handle("restore-document-session",',
     '\nipcMain.handle("save-document-session-layout",');
+  const prepareRoute = between(main, 'ipcMain.handle("prepare-document-disk-adoption",',
+    "\nfunction diskAdoptionAuthorityIsCurrent(");
+  const authority = between(main, "function diskAdoptionAuthorityIsCurrent(",
+    "\nipcMain.on(\"check-committed-disk-adoption\",");
+  const committedCheck = between(main, 'ipcMain.on("check-committed-disk-adoption",',
+    "\nfunction cancelDocumentReplacementConsents(");
+  const commit = between(main, "function commitDocumentDiskAdoption(",
+    '\nipcMain.on("commit-document-disk-adoption",');
+  const identity = between(main, "function normaliseDocumentIdentity(", "\nfunction normaliseDocumentOwner(");
+  const versionNormalizer = between(main, "function normaliseDiskVersion(", "\nfunction rememberDocumentVersion(");
+  const closingOwner = between(main, "function closingDocumentOwnerFromEnvelope(",
+    "\n// Owner-scoped, and authoritative");
+  const keyStart = main.indexOf("function documentOwnerKey(");
+  const ownerKey = main.slice(keyStart, main.indexOf("\n}\n", keyStart) + 3);
+  const activation = between(customTabs, "  async function switchToTab(", "\n  // Mirrors main's safeFileLabel.");
+  const verification = between(customTabs, "  async function verifyDiskAdoption(", "\n  // Pull newer content off disk");
+  const approvalMatch = between(customTabs, "  function matchesDiskAdoptionApproval(", "\n  function snapshotTabAdoption(");
+  const loadSaved = between(customTabs, "  async function loadSavedTabs(", "\n  const tabPathAliases =");
+  const navigate = between(main, '  wc.on("did-navigate", () => {',
+    "\n\n  // The page finished loading");
+  const revoke = between(main, "function revokeShutdownAuthorization() {", "\nfunction grantShutdownAuthorization(");
   const dirty = between(customTabs, "  function dirtyTabNames(", "\n  window.addEventListener(PENDING_SAVE_STATUS_EVENT,");
   const run = async (options = {}) => {
-    // Main's chooser/restore routes and both actual native helpers execute.
-    // Registration, processor/paint/layout, close/ACK and disk are simulated ports.
-    const file = "C:\\fixture\\f22-navigation-edit.md", seed = "Navigation edit fixture\n\nbefore\n";
+    // Both Main adoption gates and renderer restore/activation/verification execute.
+    // Filesystem, registration, renderer lifecycle/paint/layout and close/ACK are ports.
+    const file = "C:\\fixture\\f22-navigation-edit.md";
+    const seed = "Navigation edit fixture\n\n" +
+      (options.discardBoundary ? "Generation discard fixture\n\n" : "") + "before\n";
     const version = { dev: 1, ino: 2, size: seed.length, mtimeMs: 3, ctimeMs: 4 };
     const trace = [], assertions = [], trackingSelections = [], handlers = new Map(), owners = new Map();
+    const baselines = new Map(), knownOwners = new Map(), adoptionCalls = [], preparations = [];
+    const documentState = new Map();
+    const crypto = require("node:crypto");
+    const aReadStarted = deferred(), aReadRelease = deferred(), pageWorks = [];
+    let aReadHeld = false, aReadReleased = false;
     let active = null, nextRef = 0, pageSession = "navigation-page-5", clock = 0, closeRequests = 0;
-    let layoutCalls = 0, reloadWork = null, beforeOwner = null, restoredOwner = null;
+    let layoutCalls = 0, reloadWork = null, beforeOwner = null, restoredOwner = null, painted = "";
+    let phaseA = null;
     const frame = { isDestroyed: () => false, parent: null, frameTreeNodeId: 31 };
-    const wc = { mainFrame: frame, isDestroyed: () => false };
+    const wc = Object.assign(new (require("node:events").EventEmitter)(), {
+      mainFrame: frame, isDestroyed: () => false,
+    });
     const nativeOwner = { webContents: wc, isDestroyed: () => false };
     const dialog = { showOpenDialog() { throw new Error("Unowned Source chooser"); } };
-    const state = { renderer: "ready", rendererGeneration: 5, authorized: false, pendingId: 0 };
-    const page = { window: {}, document: { getElementById: () => ({ textContent:
-      options.noPaint && restoredOwner ? "" : active?.content || "" }) },
+    const state = { renderer: "ready", rendererGeneration: 5, authorized: false,
+      pendingId: 0, commitPendingId: 0, lastRequestId: 100 };
+    let questionCallback = null, questionRecord = null, questionConsumer = null;
+    const questionRecords = [];
+    let questionConsumerResolve = null, questionCallbackWork = null, questionDriverRestored = false;
+    const page = { window: {}, document: { getElementById: () => ({ textContent: painted }) },
       Date: { now: () => clock += 1000 }, setTimeout: resolve => { resolve(); return 0; } };
     const rendererContext = vm.createContext(page);
     const mainContext = vm.createContext({
       mainWindow: nativeOwner, BrowserWindow: { fromWebContents: target => target === wc ? nativeOwner : null },
+      wc, pendingShutdown: null, pendingShutdownCommit: null, shutdownAuthorized: false,
+      shutdownAuthorizationOwnerId: 0, shutdownAuthorizationGeneration: 0, shutdownAuthorizationCapacityLatched: false,
+      latestAcceptedSaveSequenceByDocument: new Map(), latestWatcherSelectionGeneration: 0,
+      overlayProbeOwner: null, releaseDeletionDeliveriesForPage() {},
+      quitAfterFrozenUpdaterDocumentLoss: () => false,
+      finishShutdownCommit: attempt => { assert.equal(attempt, null); },
+      restartPendingShutdownAfterNavigation: attempt => { assert.equal(attempt, null); },
       approvalRendererGeneration: 5, approvalRendererPageSession: pageSession, approvalRendererState: "ready",
       fileOpenDeliveryEpoch: 0, shutdownCommitIngressBlocked: false, activeDialogExtraBatch: null,
       documentAdmissions: new Map(), documentSessionFailure: null,
       documentSessionManifest: { entries: [], activeEntryId: null }, protectedSessionEntries: new Set(),
       unavailableSessionEntries: new Set(), pinnedAdoptionAdmissionReferences: () => new Set(),
       isApprovalSender: event => event.sender === wc && event.senderFrame === frame,
-      ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      ipcMain: { handle: (name, handler) => handlers.set(name, handler),
+        on: (name, handler) => handlers.set(name, handler) },
       SUPPORTED_EXTENSIONS: { markdown: [".md"], mermaid: [".mmd"] }, dialog,
       markdownSnapshotPromise: async filePath => {
         assert.equal(filePath, file); trace.push("snapshot");
@@ -3972,9 +4020,11 @@ async function generationNavigationSetupContracts() {
       issueDocumentAdmission: (target, filePath, diskVersion, physical, provenance, entryId = "navigation-entry") => {
         assert.equal(target, wc); assert.equal(filePath, file);
         assert.equal(physical.readTarget, file);
-        const descriptor = { ref: "navigation-ref-" + ++nextRef, entryId, logicalPath: file,
+        const descriptor = { ref: crypto.createHash("sha256").update(String(++nextRef)).digest("hex"),
+          entryId, logicalPath: file, pathKey: file,
           readTarget: options.wrongPhysical ? "C:\\foreign.md" : file, diskVersion };
-        mainContext.documentAdmissions.set(descriptor.ref, { sender: wc, tabId: null });
+        mainContext.documentAdmissions.set(descriptor.ref, { sender: wc, frame,
+          generation: state.rendererGeneration, pageSession, descriptor, tabId: null });
         trace.push("admission-" + mainContext.approvalRendererGeneration);
         return descriptor;
       },
@@ -3985,37 +4035,151 @@ async function generationNavigationSetupContracts() {
         const processor = { eventUndefined: true, settled: false, error: null, packet };
         observation.processors.push(processor);
         processor.promise = Promise.resolve().then(() => {
-          install(packet, false); processor.settled = true;
+          installInitial(packet); processor.settled = true;
           observation.renders.push({ settled: true, error: null, promise: Promise.resolve() });
+        });
+        for (const [field, variable] of Object.entries({
+          renderer: "approvalRendererState", rendererGeneration: "approvalRendererGeneration",
+          rendererPageSession: "approvalRendererPageSession", authorized: "shutdownAuthorized",
+          authorizationGeneration: "shutdownAuthorizationGeneration",
+        })) Object.defineProperty(state, field, {
+          enumerable: true, configurable: true,
+          get: () => mainContext[variable], set: value => { mainContext[variable] = value; },
         });
         return true;
       },
       console: { error: (...args) => trace.push("main-error:" + args.join(" ")) },
     });
-    vm.runInContext(capture + "\n" + chooser + "\n" + restoreRoute, mainContext);
-    const install = (packet, restored) => {
-      const identity = { tabId: restored ? 92 : 41, pageSession,
+    const currentAdmission = (ref, owner, filePath) => {
+      const record = mainContext.documentAdmissions.get(ref);
+      return record && record.sender === wc && record.frame === frame &&
+        record.generation === state.rendererGeneration && record.pageSession === pageSession &&
+        record.descriptor.logicalPath === filePath &&
+        (!owner || owner.documentRef === ref && owner.pageSession === pageSession &&
+          owner.rendererGeneration === state.rendererGeneration &&
+          (!record.tabId || record.tabId === owner.tabId)) ? record : null;
+    };
+    const stats = () => ({ ...version, isFile: () => true });
+    const sameVersion = (left, right) => !!left && !!right &&
+      Object.keys(version).every(key => left[key] === right[key]);
+    Object.assign(mainContext, {
+      crypto, Buffer, pendingDiskAdoptions: new Map(), committedDiskAdoptions: new Map(),
+      pendingDocumentReplacementConsents: new Map(), documentDeletionTombstones: new Map(),
+      pathOnlyDeletionEvidence: new Map(), deletionOverflowEvidence: new Map(),
+      filePathAliases: new Map(), supersededDocumentOwners: new Set(),
+      knownDocumentOwners: knownOwners, ownerDocumentBaselines: baselines,
+      deletionEvidenceRevision: 1, DISK_ADOPTION_CAPABILITY_MS: 60000, MAX_PENDING_DISK_ADOPTIONS: 128,
+      admittedDocumentReference: currentAdmission,
+      approvedBrowserDocumentPermission: (event, filePath) => {
+        assert.equal(event.sender, wc); assert.equal(event.senderFrame, frame); assert.equal(filePath, file);
+        const record = Array.from(mainContext.documentAdmissions.values()).find(candidate =>
+          currentAdmission(candidate.descriptor.ref, null, filePath));
+        if (!record) throw new Error("Unadmitted source");
+        return { filePath, ref: record.descriptor.ref, generation: state.rendererGeneration, pageSession };
+      },
+      approvedBrowserPermissionIsCurrent: permission =>
+        permission.generation === state.rendererGeneration && permission.pageSession === pageSession &&
+        !(options.revokedAuthority && state.rendererGeneration === 7) &&
+        !!currentAdmission(permission.ref, null, permission.filePath),
+      sameDocumentOwner: (left, right) => !!left && !!right &&
+        identityFields.every(field => left[field] === right[field]),
+      resolveCanonicalFileKey: filePath => filePath === file ? file : null,
+      canonicalFileKey: filePath => filePath === file ? file : null,
+      resolveCanonicalFilePath: filePath => filePath === file ? file : null,
+      filePathSpellingKey: filePath => filePath,
+      diskVersionChanged: (left, right) => !sameVersion(left, right),
+      diskVersionFromStats: value => Object.fromEntries(Object.keys(version).map(key => [key, value[key]])),
+      readDocumentStats: filePath => filePath === file ? stats() : null,
+      fs: { promises: {
+        open: async filePath => {
+          assert.equal(filePath, file);
+          const readingGeneration = state.rendererGeneration;
+          return { stat: async () => stats(),
+            readFile: async () => {
+              if (options.holdAPreparation && readingGeneration === 6) {
+                aReadHeld = true; trace.push("A-read-held"); aReadStarted.resolve();
+                await aReadRelease.promise; trace.push("A-read-completed");
+              }
+              return options.changedDiskBytes && readingGeneration === 7 ? seed + "CHANGED" : seed;
+            },
+            close: async () => {} };
+        },
+        stat: async filePath => { assert.equal(filePath, file); return stats(); },
+      } },
+      wrapMermaidContent: text => text, removeBOM: text => text.replace(/^\uFEFF/, ""),
+      prunePendingDiskAdoptions() {}, adoptionOverflowKeys: () => [],
+      adoptionEvidencePathKeys: () => new Set(), unreachablePhysicalDeletionSpellings: () => [],
+      sharedDeletionEvidenceNeedsSiblingCheck: () => false, orphanedDeletionForSpelling: () => false,
+      pathOnlyDeletionForSpelling: () => false, log: (...args) => trace.push(args.join(" ")),
+    });
+    vm.runInContext(capture + "\n" + chooser + "\n" + restoreRoute + "\n" +
+      prepareRoute + "\n" + authority + "\n" + committedCheck + "\n" + commit + "\n" +
+      identity + "\n" + ownerKey + "\n" + versionNormalizer + "\n" + closingOwner + "\n" +
+      revoke + "\n" + navigate, mainContext);
+    const register = (tab, descriptor) => {
+      const identity = { tabId: tab.id, pageSession,
         rendererGeneration: state.rendererGeneration, documentGeneration: nextRef,
-        documentRef: packet.document.ref, pathKey: file };
-      active = { id: identity.tabId, filename: path.basename(file), filePath: file,
-        content: packet.content, originalContent: packet.content, hasUnsavedChanges: false,
-        descriptor: packet.document, diskVersion: packet.diskVersion, owner: identity };
+        documentRef: descriptor.ref, pathKey: file, spelling: file };
+      assert.ok(currentAdmission(descriptor.ref, identity, file));
+      mainContext.documentAdmissions.get(descriptor.ref).tabId = tab.id;
+      tab.owner = identity;
       owners.set(identity.documentRef, identity);
-      page.window.originalMarkdown = packet.content; page.window.currentFilePath = file;
-      if (restored) restoredOwner = identity;
-      else beforeOwner = identity;
-      const selection = { filePath: file, adoptBaseline: true, diskVersion: { ...packet.diskVersion }, owner: identity };
+      const key = mainContext.documentOwnerKey(identity);
+      knownOwners.set(key, identity); baselines.set(key, { owner: identity, content: tab.content });
+      return identity;
+    };
+    const recordSelection = (tab, restored) => {
+      const selection = { filePath: file, adoptBaseline: true, diskVersion: { ...tab.diskVersion }, owner: tab.owner };
       const decision = { accepted: true, trackingActive: true };
       if (restored && options.badVersion) selection.diskVersion.mtimeMs++;
       if (restored && options.refusedSelection) decision.accepted = false;
-      if (restored && options.foreignSelection) selection.owner = { ...identity, pageSession: "foreign-page" };
+      if (restored && options.foreignSelection) selection.owner = { ...tab.owner, pageSession: "foreign-page" };
       trackingSelections.push({ selection, decision });
+      return decision.accepted;
+    };
+    const create = (filePath, content, settings) => {
+      const tab = { id: ++rendererContext.tabIdCounter, filename: path.basename(filePath), filePath,
+        content, originalContent: content, hasUnsavedChanges: false,
+        descriptor: settings.documentAdmission, diskVersion: settings.diskVersion, mtimeMs: settings.modifiedTime };
+      register(tab, settings.documentAdmission);
+      documentState.set(tab, { admission: settings.documentAdmission, pathKey: file,
+        generation: tab.owner.documentGeneration, mutationRevision: 0 });
+      rendererContext.tabs.push(tab);
+      return tab;
+    };
+    const installInitial = packet => {
+      active = create(packet.path, packet.content, { documentAdmission: packet.document,
+        diskVersion: packet.diskVersion, modifiedTime: packet.modifiedTime });
+      rendererContext.activeTabId = active.id;
+      page.window.originalMarkdown = packet.content; page.window.currentFilePath = file; painted = packet.content;
+      beforeOwner = active.owner;
+      recordSelection(active, false);
     };
     Object.assign(page.window, {
-      folia: { openFileDialog: () => { trace.push("chooser"); mainContext.openFileDialog(); } },
+      folia: {
+        openFileDialog: () => { trace.push("chooser"); mainContext.openFileDialog(); },
+        restoreSession: () => handlers.get("restore-document-session")({ sender: wc, senderFrame: frame }),
+        checkCommittedDiskAdoption: data => {
+          const event = { sender: wc, senderFrame: frame };
+          handlers.get("check-committed-disk-adoption")(event, data);
+          return event.returnValue;
+        },
+      },
+      crypto: crypto.webcrypto,
+      prepareDocumentDiskAdoption: async data => {
+        const result = await handlers.get("prepare-document-disk-adoption")({ sender: wc, senderFrame: frame }, data);
+        preparations.push({ data, result }); return result;
+      },
+      commitDocumentDiskAdoption: data => {
+        const result = mainContext.commitDocumentDiskAdoption({ sender: wc, senderFrame: frame }, data);
+        adoptionCalls.push({ data, result, blocked: mainContext.shutdownCommitIngressBlocked });
+        trace.push("commit-" + state.rendererGeneration + ":" + (result.accepted ? "accepted" : result.why));
+        return result;
+      },
       getReloadRequestSession: () => pageSession,
       queryDocumentDeletionState: (_filePath, identity) => ({
-        known: owners.get(identity.documentRef) === identity, unresolved: false,
+        known: owners.get(identity.documentRef) === identity &&
+          baselines.has(mainContext.documentOwnerKey(identity)), unresolved: false,
       }),
       CustomTabs: {
         getActiveTab: () => active,
@@ -4033,48 +4197,155 @@ async function generationNavigationSetupContracts() {
       },
     });
     Object.assign(rendererContext, {
+      tabs: [], activeTabId: null, tabIdCounter: 40, nextDocumentGeneration: 0,
+      approvalRendererGeneration: 5, latestTabSwitchIntent: 0, latestFileOpenIntent: 0,
+      pendingConfirmedReload: null, pendingActivationTabs: new Set(), pendingHandshakeTrackingAssertion: null,
+      sessionRestoreInProgress: false, sessionRestoreStarted: false, sessionRestoreToken: 0,
+      sessionOwnerReady: Promise.resolve(true), renderGeneration: 0, documentState,
+      appliedDiskAdoptionApprovals: new Set(), handedOffDiskAdoptionApprovals: new Set(),
+      TextEncoder, Uint8Array,
+      createTab: create, findTabForAdmission: () => null, safeDocumentLabel: value => value,
+      documentIdentity: (tab, session) => tab?.owner?.pageSession === session ? tab.owner : null,
+      liveDocument: () => page.window.originalMarkdown,
+      normaliseDiskVersion: mainContext.normaliseDiskVersion, sameDiskVersion: sameVersion,
+      normaliseTabPath: value => ({ spelling: value }), tabSpellingKey: tab => tab.filePath,
+      isDocumentFrozen: () => false, mayMutateDocument: () => true,
+      hasUnsavedMutation: tab => tab.hasUnsavedChanges, confirmLargeTab: () => true,
+      refreshTabFromDisk: () => false,
+      abandonDiskAdoption: capability => {
+        mainContext.pendingDiskAdoptions.delete(capability);
+        mainContext.committedDiskAdoptions.delete(capability);
+      },
+      notify: message => trace.push("notification:" + message),
+      console: { log() {}, warn: (...args) => trace.push("renderer-warning:" + args[0]),
+        error: (...args) => trace.push("renderer-error:" + args[0]) },
+      queuePreHandshakeTrackingAssertion() {}, dismissUpdatePrompt() {}, renderTabs() {},
+      bumpDocumentRevision() {},
+      positionOf: () => ({}), restorePosition() {},
+      approvedReloadSnapshotMatches: approval => {
+        const grant = mainContext.committedDiskAdoptions.get(approval.capability);
+        return !!grant && grant.rendererGeneration === state.rendererGeneration && sameVersion(grant.version, version);
+      },
+      saveTabs: () => { if (active) return page.window.CustomTabs.settleSessionLayout(); },
       inEditMode: () => false, frozenDocumentOperationsDropped: false,
       pendingSaveStatusForShutdown: () => ({ pending: false }),
       snapshotActiveTab: () => {
+        if (!active) return;
         trace.push("dirty-fold");
         active.content = page.window.originalMarkdown;
         active.hasUnsavedChanges = active.content !== active.originalContent;
       },
       isDirty: tab => tab.hasUnsavedChanges,
     });
-    // The dirty-list function is actual; its maintained-state fold is a port.
-    Object.defineProperty(rendererContext, "tabs", { get: () => active ? [active] : [] });
-    vm.runInContext(dirty + "\nwindow.CustomTabs.__dirtyTabNames = dirtyTabNames;", rendererContext);
+    page.window.beginFileOpen = (data, settings) => {
+      const tab = rendererContext.tabs.find(candidate => candidate.id === settings.ownerTabId);
+      const grant = mainContext.committedDiskAdoptions.get(settings.deletionAdoptionApproval?.capability);
+      assert.ok(tab && grant && grant.proposedOwner.documentRef === tab.owner.documentRef);
+      assert.equal(grant.rendererGeneration, state.rendererGeneration);
+      if (!recordSelection(tab, true)) return null;
+      active = tab; restoredOwner = tab.owner;
+      page.window.currentFilePath = data.path; page.window.originalMarkdown = data.content;
+      settings.onTrackingCommitted();
+      trace.push("selection-" + state.rendererGeneration);
+      return { approvedOwner: tab.owner };
+    };
+    page.window.completeFileOpen = (_context, restorePosition) => { restorePosition(); return true; };
+    page.window.renderMarkdown = async content => {
+      if (!options.noPaint) painted = content;
+      trace.push("paint-" + state.rendererGeneration);
+    };
+    vm.runInContext(dirty + "\n" + verification + "\n" + approvalMatch + "\n" + activation + "\n" +
+      loadSaved + "\nwindow.CustomTabs.__dirtyTabNames = dirtyTabNames;", rendererContext);
     const exec = async script => vm.runInContext(script, rendererContext);
-    const rig = { closes: 0, dialogs: [], answer: 0, reset: () => {
-      trace.push("rig-reset"); rig.closes = 0; rig.dialogs = [];
+    const rig = { closes: 0, quits: 0, dialogs: [], answer: 1, reset: () => {
+      trace.push("rig-reset"); rig.closes = 0; rig.quits = 0; rig.dialogs = []; rig.answer = 1;
     } };
     const waitUntil = async predicate => {
+      // These ports choose two schedules without changing the actor's READY test:
+      // ordinary A drains; held A exposes READY while the actual file read remains pending.
+      if (state.rendererGeneration === 6 && reloadWork) {
+        if (options.holdAPreparation) await aReadStarted.promise;
+        else await reloadWork;
+      }
       for (let count = 0; count < 10; count++) { if (await predicate()) return true; await turn(); }
       return false;
     };
     wc.reload = () => {
       trace.push("reload");
-      mainContext.approvalRendererGeneration = ++state.rendererGeneration;
+      active = null; painted = "";
+      wc.emit("did-navigate");
+      trace.push("navigation-invalidated-" + state.rendererGeneration);
       mainContext.approvalRendererPageSession = pageSession = "navigation-page-" + state.rendererGeneration;
-      state.authorized = false; active = null;
-      reloadWork = handlers.get("restore-document-session")({ sender: wc, senderFrame: frame }).then(batch => {
-        for (const entry of batch.entries) install(entry, true);
-      });
+      state.renderer = "ready";
+      if (options.holdAPreparation && state.rendererGeneration === 7) {
+        aReadReleased = true; trace.push("A-read-release"); aReadRelease.resolve();
+      }
+      page.window.currentFilePath = null; page.window.originalMarkdown = "";
+      Object.assign(rendererContext, { tabs: [], activeTabId: null,
+        sessionRestoreInProgress: false, sessionRestoreStarted: false,
+        approvalRendererGeneration: state.rendererGeneration });
+      documentState.clear();
+      reloadWork = rendererContext.loadSavedTabs();
+      pageWorks.push(reloadWork);
     };
     const context = vm.createContext({
       exec, wc, rig, dialog, navigationEditFile: file, navigationSeed: seed, trackingSelections,
-      replacementTracking: null, path, nativePathKey: value => value,
+      replacementTracking: null, indexFile: "C:\\fixture\\src\\index.html", path, nativePathKey: value => value,
       fs: { realpathSync: { native: value => value } }, setTimeout, clearTimeout, require,
       __shutdown: {
         reset: () => {
           trace.push("reset"); mainContext.shutdownCommitIngressBlocked = false; state.authorized = false;
+          if (aReadHeld && !aReadReleased) trace.push("reset-held-A-generation-" + state.rendererGeneration);
+          baselines.clear();
         },
         state: () => ({ ...state }),
         documentSessionState: () => mainContext.documentSessionManifest,
+        readQuestionConsumer: (requestId, signal) =>
+          requestId === questionRecord?.requestId && signal === questionRecord.options.signal
+            ? questionConsumer : null,
+      },
+      installMainOwnedShutdownQuestions: (target, tails, settings) => {
+        assert.equal(settings.policy, "ordinary-strict");
+        questionCallback = settings.onRecord;
+        return {
+          records: questionRecords,
+          async join(boundary) {
+            if (boundary) await boundary();
+            if (questionCallbackWork) await questionCallbackWork;
+            return { dispatchBoundaryJoined: !!boundary };
+          },
+          restore() { questionDriverRestored = true; questionCallback = null; },
+        };
+      },
+      prepareDiscardTerminalBoundary() {
+        mainContext.shutdownCommitIngressBlocked = true;
+        state.authorized = true;
+        rig.closes = 1;
       },
       guardEvent: () => ({ prevented: false }),
-      win: { emit: (name, event) => {
+      win: { webContents: wc, loadFile: async target => {
+        assert.equal(target, "C:\\fixture\\src\\index.html");
+        const initialNavigation = state.rendererGeneration === 5;
+        if (!initialNavigation && options.loadFailure) throw options.loadFailure;
+        if (!initialNavigation && options.noNavigationInvalidation) {
+          wc.removeListener("did-navigate", wc.listeners("did-navigate")[0]);
+        }
+        trace.push(initialNavigation ? "initial-load" : "separate-reload");
+        wc.reload();
+        if (initialNavigation) {
+          // Native load completion and asynchronous tab restoration are different
+          // producers: the held actual adoption read must still survive into B.
+          if (options.holdAPreparation) await aReadStarted.promise;
+          else await reloadWork;
+          if (options.holdALoadCompletion) {
+            options.onALoadHeld({ state: { ...state }, trace: trace.slice(),
+              assertions: assertions.slice(), listeners: wc.listenerCount("did-navigate") });
+            await options.aLoadRelease;
+          }
+          if (options.aLoadFailure) throw options.aLoadFailure;
+          trace.push("A-load-completed");
+        } else await reloadWork;
+      }, emit: (name, event) => {
         assert.equal(name, "close"); event.prevented = true;
         closeRequests++; trace.push("close-" + closeRequests);
         if (closeRequests === 1) {
@@ -4085,10 +4356,35 @@ async function generationNavigationSetupContracts() {
           mainContext.shutdownCommitIngressBlocked = true;
         } else {
           assert.ok(active.hasUnsavedChanges);
-          if (!options.noQuestion) rig.dialogs.push({ options: { message: path.basename(file) } });
-          trace.push("answer-" + rig.answer);
-          if (options.nonCancel || rig.answer !== 1) rig.closes++;
-          if (options.extraClose) rig.closes++;
+          if (!options.noQuestion) {
+            state.pendingId = ++state.lastRequestId;
+            const signal = new AbortController().signal;
+            questionConsumer = new Promise(resolve => { questionConsumerResolve = resolve; });
+            questionRecord = {
+              owner: context.win, sender: wc, requestId: state.pendingId, pendingReason: "window-close",
+              generation: state.rendererGeneration, pageSession,
+              options: { title: "Unsaved changes", message: path.basename(file),
+                buttons: ["Discard changes", "Cancel"], defaultId: 1, cancelId: 1, signal },
+              response: null, displayed: true, settled: false, retired: false,
+              presentation: { title: "Unsaved changes" },
+              presentationReady: Promise.resolve({ kind: "displayed" }),
+              choose(response) {
+                trace.push("answer-" + response);
+                this.response = options.nonCancel ? 0 : response;
+                this.result = { cause: "choice", response: this.response, displayed: true, failed: false };
+                this.choiceDelivered = true; this.driverSettled = true; this.settled = true; this.retired = true;
+                if (options.nonCancel) rig.closes++;
+                if (options.extraClose) rig.closes++;
+                state.pendingId = options.pendingCancel ? 99 : 0;
+                if (options.pendingCommit) state.commitPendingId = 99;
+                questionConsumerResolve(this.result);
+              },
+            };
+            questionRecords.push(questionRecord);
+            questionCallbackWork = Promise.resolve(questionCallback(questionRecord)).then(() => {
+              questionRecord.observerSettled = true;
+            });
+          }
         }
       } },
       waitUntil, navigationTrackingWitness: async () => ({ pageSession }),
@@ -4096,10 +4392,17 @@ async function generationNavigationSetupContracts() {
       installDialogBatchPageObservation: async installer => installer(
         "(() => { window.__dialogBatchNative = { processors: [], renders: [] }; return true; })()"),
       restoreDialogBatchPageObservation: async () => { delete page.window.__dialogBatchNative; },
-      check: (name, success, detail) => assertions.push({ name, success: !!success, detail }),
+      check: (name, success, detail) => {
+        if (name.startsWith("navigation revokes the granted")) {
+          trace.push("revocation-assertion");
+          phaseA = { ...rig, dialogs: rig.dialogs.slice(), resets: trace.filter(value => value === "reset").length };
+        }
+        assertions.push({ name, success: !!success, detail });
+      },
       console: { log() {} },
     });
-    vm.runInContext(replace + "\n" + bounded + "\n" + open + "\n" + restore, context);
+    vm.runInContext(replace + "\n" + bounded + "\n" + open + "\n" + restore + "\n" + ownedCleanup +
+      "\n" + generationQuestions, context);
     if (options.staleOwner) {
       const settle = context.settleShutdownLifecycleRestore;
       context.settleShutdownLifecycleRestore = async (...args) => {
@@ -4108,38 +4411,122 @@ async function generationNavigationSetupContracts() {
       };
     }
     let actual = scenario;
+    if (options.oldVoidALoad) actual = actual.replace(
+      "    await win.loadFile(indexFile);\n    const successorReady =",
+      "    wc.reload();\n    const successorReady =");
     if (options.oldChooser) actual = actual.replace(
       "const navigationAdmission = await settleShutdownLifecycleRestore(",
       "const navigationAdmission = await openShutdownLifecycleFixture(");
+    if (options.noBoundary) actual = actual.replace(
+      "        __shutdown.reset();\n        rig.reset();\n        navigationLifecycleGeneration",
+      "        rig.reset();\n        navigationLifecycleGeneration");
+    if (options.noRealReload) actual = actual.replace(
+      "    try { await win.loadFile(indexFile); }", "    try { /* reload omitted */ }");
+    if (options.resetBeforeA) actual = actual.replace("    const afterRevocation = __shutdown.state();",
+      "    const afterRevocation = __shutdown.state();\n    __shutdown.reset();");
+    if (options.resetBeforeNavigate) actual = actual.replace(
+      '    wc.once("did-navigate", onNavigationLifecycle);',
+      '    __shutdown.reset();\n    wc.once("did-navigate", onNavigationLifecycle);');
+    if (options.noRevocation) {
+      const reload = wc.reload;
+      wc.reload = () => { reload(); state.authorized = true; };
+    }
     if (options.noPreadmission) actual = actual.replace(
       "const navigationPreadmission = await openShutdownLifecycleFixture(\n" +
       '      exec, navigationEditFile, navigationSeed, "Navigation edit fixture",\n    );',
       'const navigationPreadmission = { descriptor: { entryId: "absent" } };');
+    if (options.discardBoundary) {
+      let actualBoundary = discardBoundary;
+      if (options.noDiscardReset) actualBoundary = actualBoundary.replace(
+        "          __shutdown.reset();\n          rig.reset();", "          rig.reset();");
+      if (options.earlyDiscardReset) actualBoundary = actualBoundary.replace(
+        '      wc.once("did-navigate", onDiscardLifecycle);',
+        '      __shutdown.reset();\n      wc.once("did-navigate", onDiscardLifecycle);');
+      actual += "\nprepareDiscardTerminalBoundary();\nconst retainDiscardChoice = true;\n" +
+        "let restoredCollisionAdmission = null;\nconst discardNavigationFile = navigationEditFile;\n" +
+        "const discardSeed = navigationSeed;\n" + actualBoundary;
+    }
     let error = null;
     try { await vm.runInContext("(async () => {\n" + actual + "\n})()", context); }
     catch (failure) { error = failure; }
-    if (reloadWork) await reloadWork;
-    return { trace, assertions, error, rig, beforeOwner, restoredOwner, closeRequests,
+    await Promise.all(pageWorks);
+    return { trace, assertions, error, rig, beforeOwner, restoredOwner, closeRequests, phaseA,
+      adoptionCalls, preparations, active, painted,
+      aReadHeld, aReadReleased, remainingNavigationListeners: wc.listenerCount("did-navigate"),
+      questionDriverRestored,
       blocked: mainContext.shutdownCommitIngressBlocked,
+      state: { ...state },
       persisted: mainContext.documentSessionManifest, observation: page.window.__dialogBatchNative };
   };
   const good = await run();
-  assert.equal(good.error, null, require("node:util").inspect(good.error, { depth: null }));
-  check(!good.error && good.assertions.length === 2 && good.assertions.every(assertion => assertion.success) &&
+  assert.equal(good.error, null, require("node:util").inspect({
+    error: good.error, trace: good.trace, preparations: good.preparations, adoptionCalls: good.adoptionCalls,
+  }, { depth: null }));
+  check(!good.error && good.assertions.length === 3 && good.assertions.every(assertion => assertion.success) &&
     good.beforeOwner.tabId !== good.restoredOwner.tabId &&
     good.beforeOwner.documentRef !== good.restoredOwner.documentRef &&
     good.beforeOwner.pageSession !== good.restoredOwner.pageSession,
-  "Actual generation actor admits and persists before approval then uses the actual restore helper's fresh replacement owner");
+  "Split generation actor preserves its separate revocation and edit/Cancel checks with a genuinely activated fresh replacement owner");
   check(good.trace.filter(value => value === "chooser").length === 1 &&
     good.trace.indexOf("chooser") < good.trace.indexOf("close-1") &&
     good.trace.indexOf("layout-1") < good.trace.indexOf("close-1") &&
     good.trace.indexOf("close-1") < good.trace.indexOf("reload") &&
-    good.trace.filter(value => value === "reset").length === 1 && good.blocked,
-  "Actual chooser source runs only before committed close; actual Main restore route admits the newer page without clearing the ingress fence");
-  check(good.closeRequests === 2 && good.rig.closes === 1 && good.rig.dialogs.length === 1 &&
+    good.trace.indexOf("revocation-assertion") < good.trace.lastIndexOf("reset") &&
+    good.trace.indexOf("separate-reload") < good.trace.lastIndexOf("reset") &&
+    good.trace.lastIndexOf("reset") < good.trace.indexOf("commit-7:accepted") &&
+    good.phaseA.resets === 1 && good.trace.filter(value => value === "reset").length === 2,
+  "Revocation is asserted before any separate-lifecycle reset and the physical fixture was persisted before the approved close");
+  check(good.adoptionCalls.length === 2 && good.adoptionCalls[0].blocked &&
+    good.adoptionCalls[0].result.accepted === false &&
+    good.adoptionCalls[0].result.why === "stale-adoption-identity" &&
+    !good.adoptionCalls[1].blocked && good.adoptionCalls[1].result.accepted === true &&
+    good.preparations.length === 2 && good.preparations.every(record =>
+      record.result.known === true && record.result.versionMatches === true),
+  "Actual renderer restore activation and verifyDiskAdoption reach actual Main preparation and commit: retained fence refuses, separate initialization accepts");
+  check(good.trace.indexOf("commit-7:accepted") < good.trace.indexOf("selection-7") &&
+    good.trace.indexOf("selection-7") < good.trace.indexOf("paint-7") &&
+    !good.trace.includes("selection-6") && !good.trace.includes("paint-6") &&
+    good.phaseA.closes === 1 && good.phaseA.quits === 0 &&
+    good.closeRequests === 2 && good.rig.closes === 0 && good.rig.quits === 0 &&
+    good.rig.dialogs.length === 1 && good.rig.dialogs[0].response === 1 && good.questionDriverRestored &&
+    good.state.pendingId === 0 && good.state.commitPendingId === 0 &&
     good.rig.answer === 1 && good.trace.includes("dirty-fold") &&
     good.persisted.entries[0].filePath.endsWith("f22-navigation-edit.md") && !good.observation,
-  "Original live-only dirty scan and named replacement question require Cancel and exactly one nonterminal close with chooser observation restored");
+  "Only accepted adoption reaches selection/paint; saved phase-A close evidence stays one while separate live-only edit and joined Cancel leave zero closes/quits");
+  const aLoadRelease = deferred(), aLoadHeld = deferred();
+  let heldLoadActorCompleted = false;
+  const heldLoadWork = run({ holdALoadCompletion: true, aLoadRelease: aLoadRelease.promise,
+    onALoadHeld: snapshot => aLoadHeld.resolve(snapshot) }).then(result => {
+    heldLoadActorCompleted = true;
+    return result;
+  });
+  const firstLoadOutcome = await Promise.race([
+    aLoadHeld.promise.then(snapshot => ({ snapshot })),
+    heldLoadWork.then(result => ({ result })),
+  ]);
+  const heldLoadSnapshot = firstLoadOutcome.snapshot;
+  const bBlockedWhileALoadHeld = !!heldLoadSnapshot &&
+    heldLoadSnapshot.state.renderer === "ready" && heldLoadSnapshot.state.rendererGeneration === 6 &&
+    heldLoadSnapshot.listeners === 1 && heldLoadSnapshot.assertions.length === 0 &&
+    !heldLoadSnapshot.trace.includes("separate-reload") && !heldLoadActorCompleted;
+  aLoadRelease.resolve();
+  const heldLoadJoined = await heldLoadWork;
+  check(bBlockedWhileALoadHeld,
+    "Actual A navigation producer stays joined after READY: B has neither installed its listener nor begun its load while A completion is held");
+  check(!heldLoadJoined.error && heldLoadJoined.assertions.every(assertion => assertion.success) &&
+    heldLoadJoined.trace.indexOf("A-load-completed") < heldLoadJoined.trace.indexOf("revocation-assertion") &&
+    heldLoadJoined.trace.indexOf("revocation-assertion") < heldLoadJoined.trace.indexOf("separate-reload"),
+  "Releasing A's original same-index load completion permits the unchanged revocation assertion and then B's original post-Main boundary");
+  const oldVoidLoad = await run({ oldVoidALoad: true });
+  check(!oldVoidLoad.error && oldVoidLoad.trace.includes("separate-reload") &&
+    !oldVoidLoad.trace.includes("initial-load") && !oldVoidLoad.trace.includes("A-load-completed"),
+  "The former void reload counterfactual can begin B without joining any original A navigation producer");
+  const aLoadFailure = new Error("ORIGINAL_A_LOAD_REJECTED_AFTER_READY");
+  const rejectedALoad = await run({ aLoadFailure });
+  check(rejectedALoad.error === aLoadFailure && rejectedALoad.state.renderer === "ready" &&
+    rejectedALoad.state.rendererGeneration === 6 && rejectedALoad.assertions.length === 0 &&
+    !rejectedALoad.trace.includes("separate-reload") && rejectedALoad.remainingNavigationListeners === 1,
+  "A's rejected original load remains its exact failure even after READY and cannot be swallowed or start B");
   for (const option of ["noPreadmission", "noPersistence", "notSelected", "wrongPhysical"]) {
     const bad = await run({ [option]: true });
     check(bad.error?.message === "Navigation approval fixture is not its persisted selected physical entry" &&
@@ -4153,20 +4540,554 @@ async function generationNavigationSetupContracts() {
     "An old admitted owner cannot stand in for the restored page even with " +
       (reusedTabId ? "a matching replacement tab ID" : "its previous tab ID"));
   }
-  for (const option of ["badVersion", "refusedSelection", "foreignSelection", "noQuestion", "nonCancel", "extraClose"]) {
+  for (const option of ["badVersion", "refusedSelection", "foreignSelection", "noQuestion",
+    "nonCancel", "extraClose", "pendingCancel", "pendingCommit"]) {
     const bad = await run({ [option]: true });
-    check(!bad.error && bad.assertions[0].success && bad.assertions[1].success === false,
-    "Original revocation oracle rejects physical selection/version or dirty-close failure: " + option);
+    check(bad.assertions[0].success && bad.adoptionCalls.at(-1).result.accepted === true &&
+      (option === "refusedSelection"
+        ? bad.error?.message === "Shutdown lifecycle restore did not reach its painted authenticated owner" &&
+          !bad.active && !bad.painted
+        : option === "noQuestion"
+          ? bad.assertions[1].success && bad.error?.errors?.some(error =>
+            error.message === "Generation question has no exact original Main consumer") &&
+            bad.questionDriverRestored
+        : !bad.error && bad.assertions[1].success && bad.assertions[2].success === false),
+    "Separate physical-owner/Cancel oracle rejects refused selection or exact version/question/close/pending failure: " + option);
   }
-  const old = await run({ oldChooser: true });
+  const old = await run({ oldChooser: true, noBoundary: true });
   check(old.error?.errors?.some(error => error.message === "Shutdown lifecycle native file was not delivered") &&
     old.trace.filter(value => value === "chooser").length === 2 &&
     old.closeRequests === 1 && old.blocked && !old.observation,
-  "Actual old postclose chooser counterfactual is refused by the unchanged Main ingress predicate despite a successful session restore");
+  "Old postclose chooser remains refused by unchanged Main ingress authority; issuer receipts cannot bypass the actual activation gate");
   const unpainted = await run({ noPaint: true });
   check(unpainted.error?.message === "Shutdown lifecycle restore did not reach its painted authenticated owner" &&
     unpainted.closeRequests === 1,
   "Actual replacement restore helper still refuses an unpainted page rather than treating newer READY as content completion");
+  const noBoundary = await run({ noBoundary: true });
+  check(noBoundary.error?.message === "Shutdown lifecycle restore did not reach its painted authenticated owner" &&
+    noBoundary.adoptionCalls.length === 2 && noBoundary.adoptionCalls.every(record =>
+      record.blocked && record.result.accepted === false && record.result.why === "stale-adoption-identity") &&
+    !noBoundary.active && !noBoundary.painted && noBoundary.closeRequests === 1 &&
+    noBoundary.assertions.length === 1 && noBoundary.assertions[0].success,
+  "Without the separate-lifecycle reset the actual Main commit rejects both real renderer activations and no active/painted success is fabricated");
+  const noReload = await run({ noRealReload: true });
+  check(noReload.error?.message === "Separate navigation lifecycle did not reach its post-Main navigation boundary" &&
+    noReload.adoptionCalls.length === 1 && !noReload.active && !noReload.painted &&
+    noReload.assertions.length === 1 && noReload.assertions[0].success,
+  "Reset's retained registrations cannot substitute for the separate real reload and fresh authenticated owner/baseline");
+  const earlyReset = await run({ resetBeforeA: true });
+  check(!earlyReset.error && earlyReset.phaseA.resets === 2 &&
+    earlyReset.trace.indexOf("revocation-assertion") > earlyReset.trace.indexOf("reset",
+      earlyReset.trace.indexOf("reset") + 1) && good.phaseA.resets === 1,
+  "Executed early-reset counterfactual is distinguishable by actual order even when its state-only boolean would otherwise look revoked");
+  const notRevoked = await run({ noRevocation: true });
+  check(!notRevoked.error && notRevoked.assertions[0].success === false &&
+    good.assertions[0].success && good.phaseA.closes === 1,
+  "Narrow phase-A assertion independently rejects a navigation that fails to revoke the saved real grant");
+  for (const [option, why] of [["revokedAuthority", "adoption-moved-during-read"],
+    ["changedDiskBytes", "disk-bytes-or-target-moved"]]) {
+    const bad = await run({ [option]: true });
+    check(bad.error?.message === "Shutdown lifecycle restore did not reach its painted authenticated owner" &&
+      bad.preparations.at(-1).result.known === false && bad.preparations.at(-1).result.why === why &&
+      bad.adoptionCalls.length === 1 && !bad.active && !bad.painted,
+    "Actual Main preparation cannot fabricate valid authority or matching physical bytes through dependency ports: " + option);
+  }
+  const heldA = await run({ holdAPreparation: true });
+  check(!heldA.error && heldA.aReadHeld && heldA.aReadReleased &&
+    heldA.phaseA.resets === 1 && heldA.assertions.length === 3 &&
+    heldA.assertions.every(assertion => assertion.success) &&
+    heldA.trace.includes("reset-held-A-generation-7") &&
+    !heldA.trace.includes("reset-held-A-generation-6") &&
+    heldA.trace.indexOf("reset-held-A-generation-7") < heldA.trace.indexOf("A-read-release"),
+  "Actual A file read remains pending across the revocation assertion; Main's navigation listener invalidates its generation before B reset releases the fence");
+  check(heldA.preparations.some(record => record.data.rendererGeneration === 6 &&
+      record.result.known === false && record.result.why === "adoption-moved-during-read") &&
+    heldA.adoptionCalls.length === 1 && heldA.adoptionCalls[0].data.rendererGeneration === 7 &&
+    heldA.adoptionCalls[0].result.accepted === true && heldA.painted &&
+    heldA.remainingNavigationListeners === 1 && good.remainingNavigationListeners === 1 &&
+    noReload.remainingNavigationListeners === 1,
+  "Released stale A preparation is refused by actual Main post-await scope checks while only fresh B commits/selects/paints and the actor's one-shot listener is removed");
+  const earlyBoundary = await run({ holdAPreparation: true, resetBeforeNavigate: true });
+  check(!earlyBoundary.error && earlyBoundary.trace.includes("reset-held-A-generation-6") &&
+    earlyBoundary.trace.filter(value => value === "reset").length === 3 &&
+    !heldA.trace.includes("reset-held-A-generation-6") &&
+    earlyBoundary.trace.indexOf("reset-held-A-generation-6") < earlyBoundary.trace.indexOf("separate-reload"),
+  "Held-read counterfactual exposes an impermissible fence release before navigation invalidation even if another check later refuses the old work");
+  const missingInvalidation = await run({ noNavigationInvalidation: true });
+  check(missingInvalidation.error?.errors?.some(error =>
+      error.message === "Separate navigation lifecycle missed Main's invalidated loading boundary") &&
+    missingInvalidation.trace.filter(value => value === "reset").length === 1,
+  "Actual synchronous boundary callback stores and reports invalid Main navigation state without resetting or throwing uncaught from the event");
+  const loadFailure = new Error("SEPARATE_NATIVE_LOAD_FAILURE");
+  const failedLoad = await run({ loadFailure });
+  check(failedLoad.error?.errors?.length === 1 && failedLoad.error.errors[0] === loadFailure &&
+    failedLoad.remainingNavigationListeners === 1 &&
+    failedLoad.trace.filter(value => value === "reset").length === 1,
+  "Rejected original index-load promise preserves its exact failure and always removes the owned one-shot navigation observer");
+  const discardReady = await run({ discardBoundary: true });
+  check(!discardReady.error && discardReady.adoptionCalls.at(-1).result.accepted === true &&
+    discardReady.state.rendererGeneration === 8 && discardReady.trace.includes("commit-8:accepted") &&
+    discardReady.remainingNavigationListeners === 1 &&
+    discardReady.trace.filter(value => value === "reset").length === 3 &&
+    discardReady.trace.lastIndexOf("separate-reload") < discardReady.trace.lastIndexOf("reset"),
+  "The genuine-Discard case invalidates the postterminal page before reset then genuinely adopts and paints its fresh physical restoration");
+  const discardBlocked = await run({ discardBoundary: true, noDiscardReset: true });
+  check(discardBlocked.error?.message === "Shutdown lifecycle restore did not reach its painted authenticated owner" &&
+    discardBlocked.adoptionCalls.at(-1).blocked &&
+    discardBlocked.adoptionCalls.at(-1).result.why === "stale-adoption-identity" &&
+    !discardBlocked.active && !discardBlocked.painted && discardBlocked.remainingNavigationListeners === 1,
+  "Without the separate genuine-Discard reset its real renderer activation reaches Main's retained fence and cannot fabricate an active physical edit owner");
+  const discardEarly = await run({ discardBoundary: true, earlyDiscardReset: true });
+  check(discardEarly.trace.filter(value => value === "reset").length === 4 &&
+    discardEarly.trace.lastIndexOf("reset") > discardEarly.trace.lastIndexOf("separate-reload") &&
+    discardEarly.trace[discardEarly.trace.lastIndexOf("separate-reload") - 1] === "reset",
+  "The genuine-Discard boundary counterfactual exposes resetting before its real navigation rather than treating a terminal page as editable");
+}
+
+async function generationOwnedQuestionContracts() {
+  const native = between(source, "    const navigationQuestions = installGenerationShutdownQuestions(",
+    "\n    // An unanswered host's real abort");
+  const nativeSend = between(source, "    let releaseSendFallback;",
+    "\n    rig.reset();\n    const sendRecoveryReloadGeneration");
+  const nativeProbe = between(source, "    const realProbeExecuteJavaScript = wc.executeJavaScript;",
+    "\n    rig.reset();\n    await win.loadFile(bareFile);");
+  const overlayProbeSource = vm.compileFunction(between(source, "const OVERLAY_PROBE_SOURCE =",
+    "\nconst sleep =") + "\nreturn OVERLAY_PROBE_SOURCE;")();
+  const extract = name => {
+    const start = source.indexOf(`function ${name}(`);
+    const end = source.indexOf("\n}\n", start);
+    assert.ok(start >= 0 && end > start, "Complete actual " + name);
+    return (source.slice(start - 6, start) === "async " ? "async " : "") + source.slice(start, end + 3);
+  };
+  const driverSource = ["replaceMethod", "withOrdinaryShutdownCleanup",
+    "installMainOwnedShutdownQuestions", "installOrdinaryShutdownQuestions"].map(extract).join("\n");
+  // Reuse the existing actual provider/preload/driver fixture, not its test runner.
+  // Electron, Main consumer dispatch, navigation and physical-selection ports remain simulated.
+  const fixtureText = between(fs.readFileSync(path.join(__dirname, "test-main-shutdown-question-source.js"),
+    "utf8").replace(/\r\n/g, "\n"), "function fixture(settings = {}) {", "\nconst messages = ");
+  const dependencies = {
+    assert, crypto: require("node:crypto"), EventEmitter: require("node:events").EventEmitter,
+    path, vm, require, setTimeout, setInterval, clearTimeout, clearInterval,
+    pathToFileURL: require("node:url").pathToFileURL, driverSource,
+    providerPath: path.join(producerRoot, "owned-dialogs.js"),
+    preloadPath: path.join(producerRoot, "owned-dialog-preload.js"),
+    providerSource: fs.readFileSync(path.join(producerRoot, "owned-dialogs.js"), "utf8"),
+    preloadSource: fs.readFileSync(path.join(producerRoot, "owned-dialog-preload.js"), "utf8"),
+  };
+  const fixture = vm.compileFunction(fixtureText + "\nreturn fixture;",
+    Object.keys(dependencies))(...Object.values(dependencies));
+  const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
+  const showOwned = between(main, "async function showOwnedMessage(",
+    "\n// ============================================");
+  const makeMain = (f, dialog, themed = f.broker) => vm.compileFunction(showOwned + "\nreturn showOwnedMessage;",
+    ["approvalRendererGeneration", "approvalRendererPageSession", "approvalRendererState",
+      "mainDialogs", "ownerRendererAvailable", "dialog", "console", "AbortController",
+      "setInterval", "clearInterval"])(
+      f.state.rendererGeneration, f.state.rendererPageSession, "ready", () => themed,
+      sender => !!sender && !sender.isDestroyed(), dialog, { error() {} },
+      AbortController, setInterval, clearInterval);
+  const run = async (options = {}) => {
+    let observer = null, originalConsumer = null, requestSignal = null;
+    let originalConsumerSettled = false, heldSendObserved = false, ownerProbeFaults = 0;
+    const cannotCheck = options.actor === "send" || options.actor === "probe";
+    const f = fixture({ policy: "ordinary-strict", onRecord: record => observer(record) });
+    f.state.pendingId = 0; f.state.commitPendingId = 0; f.state.lastRequestId = 30;
+    f.state.authorized = false;
+    if (options.actor === "probe") f.state.rendererPageSession = null;
+    const assertions = [], consumerReads = [];
+    const originalNative = async () => { throw new Error("Unclaimed source-native call"); };
+    const dialog = { showMessageBox: originalNative };
+    const show = makeMain(f, dialog, options.themedFailure ? {
+      show() { throw new Error("Controlled original themed host failure"); },
+    } : f.broker);
+    const file = "C:\\fixture\\f22-navigation-edit.md";
+    const setup = { filePath: file, currentFilePath: file, tabId: 7, active: { id: 7 },
+      owner: { tabId: 7, pathKey: file, pageSession: f.state.rendererPageSession },
+      diskVersionValid: true };
+    const target = options.wrongOwner ? Object.create(f.owner) : f.owner;
+    f.rig.closes = 0; f.rig.quits = 0;
+    f.owner.webContents.executeJavaScript = async () => false;
+    f.owner.loadFile = async () => {
+      try { await f.owner.webContents.executeJavaScript(overlayProbeSource); }
+      catch (error) {
+        ownerProbeFaults++;
+        f.state.renderer = "unusable";
+        f.state.probeOwnerToken = 0;
+        f.state.rendererUnusableReason = "page could not be inspected: " + error.message;
+      }
+    };
+    const realDiscardSend = f.owner.webContents.send;
+    f.owner.on("close", event => {
+      event.preventDefault();
+      f.state.pendingId = options.wrongRequest ? 32 : 31; f.state.lastRequestId = f.state.pendingId;
+      f.state.pendingReason = options.wrongReason ? "app-quit" : "window-close";
+      if (options.actor === "send") {
+        try { f.owner.webContents.send("quit-approval-request"); }
+        catch (error) {
+          assert.equal(error.message, "controlled synchronous shutdown send failure");
+          f.state.pendingDispatchedTo = 0; f.state.pendingDispatchToken = 0;
+          f.state.sendFailureCount = 1;
+        }
+      }
+      requestSignal = new AbortController().signal;
+      originalConsumer = show(f.owner, f.options({
+        ...(cannotCheck ? { title: "Unsaved changes cannot be checked", buttons: ["Close anyway", "Cancel"] } : {}),
+        message: options.wrongFile ? '"foreign.md" has unsaved changes.' : '"' + path.basename(file) + '" has unsaved changes.',
+        ...(options.wrongButtons ? { buttons: ["Continue", "Cancel"] } : {}),
+        ...(options.wrongDefault ? { defaultId: 0 } : {}),
+        signal: requestSignal,
+      }), "shutdown").then(result => {
+        f.state.pendingId = 0;
+        if (cannotCheck) f.state.settleWhy = "fallback-unresponsive";
+        originalConsumerSettled = true;
+        return result;
+      });
+    });
+    const context = vm.createContext({
+      path, dialog, win: target, wc: f.owner.webContents, rig: f.rig,
+      realDiscardSend, bareFile: "bare.md", OVERLAY_PROBE_SOURCE: overlayProbeSource,
+      navigationLifecycleGeneration: f.state.rendererGeneration + (options.wrongGeneration ? 1 : 0),
+      navigationLifecycleReady: true, navigationEditFile: file, navigationEditSetup: setup,
+      acceptedNavigationSelection: true, successorTrackingStart: 0, replacementTracking: null,
+      fs: { realpathSync: { native: value => value } }, nativePathKey: value => value,
+      navigationTrackingWitness: async () => null, console: { log() {} },
+      guardEvent: () => ({ prevented: false, preventDefault() { this.prevented = true; } }),
+      __shutdown: {
+        state: () => ({ ...f.state }),
+        readQuestionConsumer(id, signal) {
+          consumerReads.push({ id, signal, consumer: originalConsumer });
+          return !options.noConsumer && id === f.state.lastRequestId && signal === requestSignal ? originalConsumer : null;
+        },
+      },
+      installMainOwnedShutdownQuestions(target, tails, settings) {
+        assert.equal(target, context.win); assert.equal(settings.policy, "ordinary-strict");
+        observer = settings.onRecord;
+        const push = f.tails.push;
+        f.tails.push = function (...work) {
+          tails.push(...work);
+          return Reflect.apply(push, this, work);
+        };
+        return f.actor;
+      },
+      async waitUntil(predicate) {
+        if (!originalConsumer) return predicate();
+        if (options.actor === "send" && !heldSendObserved && f.actor.records[0]) {
+          await f.actor.records[0].presentationReady;
+          await turn();
+          heldSendObserved = f.rig.dialogs[0] === f.actor.records[0] &&
+            !f.actor.records[0].settled && !originalConsumerSettled;
+          return predicate();
+        }
+        await originalConsumer;
+        await Promise.allSettled(f.tails);
+        const record = f.actor.records[0];
+        if (record) {
+          if (options.noPresentation) record.presentation = null;
+          if (options.noResult) record.result = null;
+          if (options.emergency) record.result.emergency = true;
+          if (options.failed) record.result.failed = true;
+          if (options.notDisplayed) record.result.displayed = false;
+          if (options.notChoice) record.result.cause = "cancel";
+          if (options.notDelivered) record.choiceDelivered = false;
+          if (options.actualEmergencyResult) record.result = options.actualEmergencyResult;
+        }
+        return predicate();
+      },
+      check: (name, success) => assertions.push({ name, success }),
+    });
+    vm.runInContext(extract("replaceMethod") + "\n" + extract("withOrdinaryShutdownCleanup") +
+      "\n" + extract("installGenerationShutdownQuestions"), context);
+    let error = null;
+    try { await vm.runInContext("(async () => {\n" +
+      (options.actor === "send" ? nativeSend : options.actor === "probe" ? nativeProbe : native) +
+      "\n})()", context); }
+    catch (failure) { error = failure; }
+    finally {
+      f.owner.destroy();
+      await Promise.allSettled(f.tails);
+      assert.equal(dialog.showMessageBox, originalNative, "Exact native refusal wrapper restored");
+      assert.equal(f.OwnedDialogs.prototype.show, f.guard, "Exact guarded themed show restored");
+      assert.equal(f.timers.size, 0, "Original provider and driver work left no timer");
+    }
+    return { error, assertions, f, consumerReads, originalConsumer, heldSendObserved, ownerProbeFaults };
+  };
+  const good = await run();
+  assert.equal(good.error, null, require("node:util").inspect(good.error, { depth: null }));
+  check(good.assertions.length === 1 && good.assertions[0].success &&
+    good.f.actor.records.length === 1 && good.f.providerCalls.length === 1 &&
+    good.consumerReads.length === 1 && good.consumerReads[0].id === 31 &&
+    good.consumerReads[0].consumer === good.originalConsumer &&
+    good.consumerReads[0].signal === good.f.actor.records[0].options.signal &&
+    good.f.actor.records[0].choiceDelivered && good.f.rig.dialogs[0] === good.f.actor.records[0] &&
+    good.f.refusals() === 0 && good.f.sends.join(",") === "1",
+  "B actor uses actual provider/preload/strict driver presentation and original producer Cancel, then joins its exact Main consumer");
+  for (const option of ["noPresentation", "noResult", "emergency", "failed", "notDisplayed", "notChoice",
+    "notDelivered", "noConsumer", "wrongReason", "wrongGeneration", "wrongFile", "themedFailure",
+    "wrongRequest", "wrongOwner", "wrongButtons", "wrongDefault"]) {
+    const bad = await run({ [option]: true });
+    check(!bad.assertions.some(assertion => assertion.success) &&
+      (bad.error || bad.assertions.length === 1 && !bad.assertions[0].success),
+    "B owned-question oracle rejects missing owned evidence or exact original request failure: " + option);
+  }
+  for (const actor of ["send", "probe"]) {
+    const owned = await run({ actor });
+    assert.equal(owned.error, null, require("node:util").inspect(owned.error, { depth: null }));
+    check(owned.assertions.length === (actor === "send" ? 1 : 2) &&
+      owned.assertions.every(assertion => assertion.success) &&
+      owned.f.actor.records.length === 1 && owned.f.providerCalls.length === 1 &&
+      owned.f.actor.records[0].result.cause === "choice" && owned.f.actor.records[0].result.response === 1 &&
+      owned.f.actor.records[0].choiceDelivered &&
+      owned.consumerReads[0].consumer === owned.originalConsumer &&
+      (actor === "send" ? owned.heldSendObserved
+        : owned.ownerProbeFaults === 1 && owned.f.actor.records[0].pageSession === null),
+    "Actual " + actor + " failure actor presents its owned cannot-check Cancel and joins original work: " +
+      (actor === "send" ? "answer remains held during dispatch-failure witness" : "null page session and owner-only probe fault"));
+    for (const option of ["themedFailure", "emergency", "noConsumer"]) {
+      const bad = await run({ actor, [option]: true });
+      check(bad.error || bad.assertions.length === (actor === "send" ? 1 : 2) &&
+        bad.assertions.at(-1).success === false,
+      "Actual " + actor + " cannot-check actor rejects unowned emergency or missing Main consumer: " + option);
+    }
+  }
+  const emergency = fixture({ policy: "ordinary-strict" });
+  let actualEmergencyResult;
+  const legacy = { dialogs: [], closes: 0, quits: 0, pendingId: 31, commitPendingId: 0 };
+  try {
+    const show = makeMain(emergency, { async showMessageBox(_owner, options) {
+      legacy.dialogs.push({ options, response: 1 });
+      return { response: 1 };
+    } }, { show() { throw new Error("Controlled original themed host failure"); } });
+    actualEmergencyResult = await show(emergency.owner, emergency.options(), "shutdown");
+    legacy.pendingId = 0;
+    check(legacy.dialogs.length === 1 && legacy.dialogs[0].response === 1 &&
+      legacy.pendingId === 0 && legacy.commitPendingId === 0 && legacy.closes === 0 && legacy.quits === 0 &&
+      actualEmergencyResult.cause === "choice" && actualEmergencyResult.response === 1 &&
+      actualEmergencyResult.displayed === true && actualEmergencyResult.emergency === true,
+    "Actual Main themed construction failure reaches Electron-stub Cancel and satisfies the old response/pending/zero-close oracle");
+  } finally { await emergency.close(); }
+  const rejectedEmergency = await run({ actualEmergencyResult });
+  check(!rejectedEmergency.error && rejectedEmergency.assertions.length === 1 &&
+    rejectedEmergency.assertions[0].success === false,
+  "B owned-question oracle rejects the actual Main emergency Cancel result even when the old Cancel oracle would pass");
+
+  const askSource = between(main, "function askShutdownQuestion(", "\nfunction askDiscardApproval(");
+  const staleGuard = "      if (pendingShutdown !== record) {\n" +
+    "        staleShutdownDialogCompletionCount += 1;\n        return;\n      }";
+  assert.equal(askSource.split(staleGuard).length - 1, 2, "Both actual Main result/error identity guards exist");
+  const qualifyChoice = between(source, "      if (retainDiscardChoice) {\n        discardQuestions.record.choose(0);",
+    "\n      const staleDialogBefore = ");
+  const hostBinding = between(source, "      const retainedDiscardHost = discardQuestions.record.request.window;",
+    "\n      const oldDiscardState = ");
+  const collisionOracle = between(source, "      const staleOldDiscardObserved = await waitUntil(",
+    "\n      // The next document is still allowed to complete an ordinary clean close.");
+  const collision = async (retainChoice, options = {}) => {
+    let observer, question, retainedHost;
+    let collisionFixture = fixture;
+    if (options.suppressBrokerDestroy) {
+      assert.equal(retainChoice, false, "Only the unanswered abort counter suppresses destruction");
+      const destroyStatement = "    if (request.window && !request.window.isDestroyed()) request.window.destroy();";
+      assert.equal(dependencies.providerSource.split(destroyStatement).length, 2,
+        "Exactly the actual broker finish destruction statement is suppressed");
+      const counterDependencies = { ...dependencies, providerSource:
+        dependencies.providerSource.replace(destroyStatement, "    // Controlled missing broker destruction.") };
+      collisionFixture = vm.compileFunction(fixtureText + "\nreturn fixture;",
+        Object.keys(counterDependencies))(...Object.values(counterDependencies));
+    }
+    const f = collisionFixture({ policy: retainChoice ? "ordinary-strict" : "cancellable",
+      onRecord: record => observer(record) });
+    f.state.pendingId = 0; f.state.lastRequestId = 30;
+    const nativeOriginal = async () => { throw new Error("Unclaimed collision-native call"); };
+    const dialog = { showMessageBox: nativeOriginal };
+    const settlements = [], transitions = [], assertions = [], consumerReads = [];
+    const old = { id: 31, gen: f.state.rendererGeneration, reason: "window-close", asked: false };
+    const replacement = { id: 32, gen: old.gen + 1, reason: "window-close" };
+    const file = "C:\\fixture\\f22-discard-navigation.md", seed = "CLEAN PHYSICAL SEED";
+    const mainContext = vm.createContext({
+      pendingShutdown: null, staleShutdownDialogCompletionCount: 0,
+      deletionEvidenceCapacityLatched: false, shutdownQuestionConsumers: new Map(),
+      AbortController, setInterval, clearInterval, console: { error() {} },
+      mainDialogs: () => f.broker, shutdownOwnerWindow: () => f.owner, dialog,
+      ownerRendererAvailable: sender => !!sender && !sender.isDestroyed(),
+      settleWithoutWindow() { throw new Error("Controlled owner must stay alive"); },
+      settleShutdown(record, approved) {
+        settlements.push({ record, approved });
+        if (mainContext.pendingShutdown === record) mainContext.pendingShutdown = null;
+      },
+      log() {},
+    });
+    for (const [field, stateField] of Object.entries({
+      approvalRendererGeneration: "rendererGeneration",
+      approvalRendererPageSession: "rendererPageSession",
+    })) Object.defineProperty(mainContext, field, { get: () => f.state[stateField] });
+    mainContext.approvalRendererState = "ready";
+    vm.runInContext(showOwned + "\n" +
+      (options.noStaleGuard ? askSource.replace(staleGuard, "") : askSource), mainContext);
+    const state = () => ({ ...f.state, pendingId: mainContext.pendingShutdown?.id || 0,
+      pendingReason: mainContext.pendingShutdown?.reason || null,
+      staleShutdownDialogCompletionCount: mainContext.staleShutdownDialogCompletionCount });
+    const shutdown = {
+      state,
+      readQuestionConsumer(id, signal) {
+        const found = mainContext.shutdownQuestionConsumers.get(signal);
+        consumerReads.push(found);
+        return found?.requestId === id ? found.consumer : null;
+      },
+      reset() {
+        transitions.push("retire-old-request");
+        mainContext.pendingShutdown = null;
+        old.dialogAbortController?.abort();
+        f.state.pendingId = 0;
+      },
+    };
+    const context = vm.createContext({
+      path, dialog, OwnedDialogs: f.OwnedDialogs, __shutdown: shutdown,
+      installMainOwnedShutdownQuestions(owner, tails, settings) {
+        assert.equal(owner, f.owner);
+        assert.equal(settings.policy, retainChoice ? "ordinary-strict" : "cancellable");
+        observer = settings.onRecord;
+        const push = f.tails.push;
+        f.tails.push = function (...work) {
+          tails.push(...work);
+          return Reflect.apply(push, this, work);
+        };
+        return f.actor;
+      },
+    });
+    vm.runInContext(extract("replaceMethod") + "\n" + extract("installGenerationDiscardQuestion"), context);
+    try {
+      question = context.installGenerationDiscardQuestion(f.owner, f.rig, file, retainChoice);
+      mainContext.pendingShutdown = old; f.state.pendingId = old.id; f.state.lastRequestId = old.id;
+      mainContext.askShutdownQuestion(old, { confirmLabel: "Discard changes", title: "Unsaved changes",
+        message: '"' + path.basename(file) + '" has unsaved changes.', detail: "", why: "dirty" });
+      await question.record.presentationReady;
+      await question.record.observerWork;
+      if (options.destroyBeforeCapture) question.record.request.window.destroy();
+      const oldState = state();
+      const actorContext = vm.createContext({
+        retainDiscardChoice: retainChoice, discardQuestions: question, rig: { closes: 0, quits: 0 },
+        __shutdown: shutdown, oldDiscardState: oldState, console: { log() {} },
+        check: (name, success) => assertions.push({ name, success }),
+      });
+      vm.runInContext(hostBinding, actorContext);
+      retainedHost = vm.runInContext("retainedDiscardHost", actorContext);
+      assert.equal(retainedHost, question.record.request.window, "Native capture retains the actual broker child");
+      assert.equal(retainedHost.isDestroyed(), false, "Actual captured dialog host is live before choice/navigation");
+      if (retainChoice) {
+        if (options.abortedChoice) old.dialogAbortController.abort();
+        await vm.runInContext("(async () => {\n" +
+          (options.abortedChoice ? qualifyChoice.replace("discardQuestions.record.choose(0);",
+            "/* The actual original producer was aborted before any choice. */").replace(
+            "await discardQuestions.joinChoice();",
+            "await discardQuestions.producer; /* Probe the oracle as well as the strict-driver rejection. */") : qualifyChoice) +
+          "\n})()", actorContext);
+        assert.equal(mainContext.pendingShutdown, old);
+        assert.equal(settlements.length, 0, "Held actual delivery cannot settle the original Main request");
+        assert.equal(question.savedResult, question.record.result);
+        assert.equal(question.producer, question.record.producer);
+        assert.throws(() => question.release(), /still-current Main request/);
+        if (options.preNavigationFailure) {
+          await question.cleanup[0]();
+          await question.delivery;
+          await question.originalConsumer;
+          return { preNavigationRetired: transitions.join(",") === "retire-old-request" &&
+            mainContext.pendingShutdown === null && settlements.length === 0, assertions };
+        }
+      }
+      const staleBefore = mainContext.staleShutdownDialogCompletionCount;
+      mainContext.pendingShutdown = replacement;
+      f.state.pendingId = replacement.id;
+      f.state.rendererGeneration = replacement.gen;
+      f.state.rendererPageSession = "replacement-page";
+      old.dialogAbortController?.abort();
+      f.owner.webContents.emit("did-navigate");
+      if (retainChoice) question.release();
+      await question.join();
+      Object.assign(actorContext, {
+        staleDialogBefore: staleBefore,
+        oldDiscardFixture: { cached: seed, live: seed + "\nDIRTY", dirtyFlag: false },
+        discardSeed: seed, oldDiscardAsked: true, dirtyDiscardClose: { prevented: true },
+        oldDiscardRevision: 17, replacementRequestHeld: true,
+        heldReplacementRequest: { id: replacement.id, gen: replacement.gen },
+        replacementDiscardState: state(),
+        replacementCollision: { filePath: file, identity: { tabId: 7 }, tabId: 7, revision: 17, target: 17 },
+        discardNavigationFile: file,
+        freezeAfterNavigation: { frozen: false, editorReadOnly: false, wrapperInert: false },
+        emittedDiscardRequests: [], waitUntil: async predicate => predicate(),
+      });
+      await vm.runInContext("(async () => {\n" + collisionOracle + "\n})()", actorContext);
+      const legacyAssertions = [];
+      if (options.suppressBrokerDestroy) {
+        const originalCheck = actorContext.check;
+        actorContext.check = (name, success) => legacyAssertions.push({ name, success });
+        try {
+          await vm.runInContext("(async () => {\n" + collisionOracle.replace(
+            "              retainedDiscardHost.isDestroyed() &&\n", "") + "\n})()", actorContext);
+        } finally { actorContext.check = originalCheck; }
+      }
+      return { assertions, question, settlements, staleBefore,
+        staleAfter: mainContext.staleShutdownDialogCompletionCount,
+        pending: mainContext.pendingShutdown, replacement, consumerReads, f, retainedHost,
+        hostAliveAtOracle: !retainedHost.isDestroyed(), legacyAssertions };
+    } finally {
+      if (question) {
+        const outcomes = [];
+        for (const cleanup of question.cleanup) {
+          try { await cleanup(); } catch (error) { outcomes.push(error); }
+        }
+        if (options.abortedChoice) {
+          assert.equal(outcomes.length, 1);
+          assert.ok(require("node:util").inspect(outcomes, { depth: null }).includes(
+            "Ordinary owned question did not return its genuine chosen result"));
+        } else assert.equal(outcomes.length, 0, require("node:util").inspect(outcomes, { depth: null }));
+      }
+      if (retainedHost && !retainedHost.isDestroyed()) retainedHost.destroy();
+      f.owner.destroy();
+      await Promise.allSettled(f.tails);
+      assert.equal(dialog.showMessageBox, nativeOriginal);
+      assert.equal(f.OwnedDialogs.prototype.show, f.guard);
+      assert.equal(f.timers.size, 0);
+    }
+  };
+  for (const retained of [false, true]) {
+    const result = await collision(retained);
+    check(result.assertions.every(assertion => assertion.success) &&
+      result.staleAfter === result.staleBefore + 1 && result.pending === result.replacement &&
+      result.settlements.length === 0 && result.f.providerCalls.length === 1 &&
+      result.consumerReads.length === 1 &&
+      result.consumerReads[0].consumer === result.question.originalConsumer &&
+      result.retainedHost === result.question.record.request.window && !result.hostAliveAtOracle &&
+      (retained ? result.question.savedResult.cause === "choice" && result.question.savedResult.response === 0
+        : ["aborted", "stale"].includes(result.question.record.result.cause) &&
+          result.question.record.result.response === 1),
+    "Actual Main stale guard preserves colliding replacement against " +
+      (retained ? "unchanged genuinely chosen Discard result with held original delivery" : "actual unanswered owned-host abort"));
+    const unguarded = await collision(retained, { noStaleGuard: true });
+    check(unguarded.assertions.at(-2).success === true && unguarded.assertions.at(-1).success === false &&
+      unguarded.staleAfter === unguarded.staleBefore,
+    "Removing actual Main result identity guard fails only the stale-count/replacement oracle for " +
+      (retained ? "genuine late success" : "real abort"));
+  }
+  const leakedAbortHost = await collision(false, { suppressBrokerDestroy: true });
+  check(leakedAbortHost.assertions.at(-2).success === true &&
+    leakedAbortHost.assertions.at(-1).success === false && leakedAbortHost.hostAliveAtOracle &&
+    leakedAbortHost.legacyAssertions.length === 2 &&
+    leakedAbortHost.legacyAssertions.every(assertion => assertion.success) &&
+    leakedAbortHost.staleAfter === leakedAbortHost.staleBefore + 1 &&
+    leakedAbortHost.pending === leakedAbortHost.replacement && leakedAbortHost.settlements.length === 0 &&
+    leakedAbortHost.question.record.result.failed === false &&
+    ["aborted", "stale"].includes(leakedAbortHost.question.record.result.cause) &&
+    leakedAbortHost.question.record.retired === true &&
+    leakedAbortHost.retainedHost.isDestroyed() === true,
+  "Suppressing only actual broker destruction preserves abort/producer/consumer/stale/replacement conditions but fails the captured-host oracle before later cleanup destroys it");
+  await assert.rejects(collision(false, { destroyBeforeCapture: true }),
+    /Generation collision did not retain its live original dialog host/);
+  check(true, "The actual pre-navigation host capture refuses an already-destroyed original child instead of crediting a retired record");
+  await assert.rejects(collision(true, { abortedChoice: true }),
+    /Retained Discard setup did not produce its genuine successful choice/);
+  check(true, "Actual broker aborted Cancel cannot qualify as a genuine retained Discard approval");
+  const retiredFailure = await collision(true, { preNavigationFailure: true });
+  check(retiredFailure.preNavigationRetired,
+    "Pre-navigation failure retires the old Main request before releasing unchanged genuine Discard and never delivers approval to it");
 }
 
 (async () => {
@@ -4180,7 +5101,7 @@ async function generationNavigationSetupContracts() {
     reloadRecoveryBoundaryContracts, shutdownAggregateDiagnosticContracts,
     popupCaptureDiagnosticContracts, reloadJourneyBoundaryContracts, shutdownRestoreOrderingContracts,
     ackContinuationDiagnosticContracts, terminalAggregateDiagnosticContracts, generationFinalizerContracts,
-    generationNavigationSetupContracts]) {
+    generationNavigationSetupContracts, generationOwnedQuestionContracts]) {
     try { await run(); }
     catch (error) {
       failures++;

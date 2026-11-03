@@ -37936,6 +37936,256 @@ async function settleShutdownLifecycleRestore(exec, filePath, text, paintMarker)
   })()`), "shutdown lifecycle restored owner and layout", 10000);
 }
 
+function installGenerationShutdownQuestions(win, rig, { cannotCheck = false, filePath = null } = {}) {
+  const initial = __shutdown.state();
+  const expected = {
+    requestId: initial.lastRequestId + 1,
+    generation: initial.rendererGeneration,
+    pageSession: initial.rendererPageSession,
+    title: cannotCheck ? "Unsaved changes cannot be checked" : "Unsaved changes",
+    buttons: cannotCheck ? ["Close anyway", "Cancel"] : ["Discard changes", "Cancel"],
+  };
+  const tails = [], entries = [], nativeFailures = [];
+  let drain = null;
+  const nativeRefusal = (_owner, options) => {
+    const error = new Error("Unexpected native generation question: " + options?.title);
+    nativeFailures.push(error);
+    return Promise.reject(error);
+  };
+  const restoreNative = replaceMethod(dialog, "showMessageBox", nativeRefusal);
+  const consumerBoundary = () => {
+    const consumer = entries[0]?.consumer;
+    if (!consumer || typeof consumer.then !== "function") {
+      throw new Error("Generation question has no exact original Main consumer");
+    }
+    return consumer;
+  };
+  let driver;
+  try {
+    driver = installMainOwnedShutdownQuestions(win, tails, {
+      policy: "ordinary-strict",
+      onRecord(record) {
+        const entry = { record, consumer: null, consumerSettled: false, consumerError: null };
+        entries.push(entry);
+        // Main registers its consumer after the original show call returns.
+        // Capture that Promise, without awaiting it before the actual choice.
+        entry.captureWork = Promise.resolve().then(() => {
+          entry.consumer = __shutdown.readQuestionConsumer(record.requestId, record.options.signal);
+          if (!entry.consumer || typeof entry.consumer.then !== "function") {
+            throw new Error("Generation question has no exact original Main consumer");
+          }
+        });
+        entry.consumerWork = entry.captureWork.then(() => entry.consumer);
+        entry.consumerWork.then(
+          () => { entry.consumerSettled = true; },
+          error => { entry.consumerSettled = true; entry.consumerError = error; },
+        );
+        entry.callbackWork = (async () => {
+          await entry.captureWork;
+          if (entries.length !== 1 || record.owner !== win || record.sender !== win.webContents ||
+              record.requestId !== expected.requestId || record.pendingReason !== "window-close" ||
+              record.generation !== expected.generation || record.pageSession !== expected.pageSession ||
+              record.options.title !== expected.title ||
+              filePath && !String(record.options.message).includes(path.basename(filePath)) ||
+              record.options.defaultId !== 1 || record.options.cancelId !== 1 ||
+              JSON.stringify(record.options.buttons) !== JSON.stringify(expected.buttons)) {
+            throw new Error("Generation question does not own its exact request, page and options");
+          }
+          const presentation = await record.presentationReady;
+          if (presentation.kind !== "displayed" || !record.displayed || record.settled || record.retired) {
+            throw new Error("Generation question did not display its actual owned presentation");
+          }
+          rig.dialogs.push(record);
+          const response = typeof rig.answer === "function" ? await rig.answer(record.options) : rig.answer;
+          if (response !== 1) throw new Error("Generation question needs its deliberate Cancel choice");
+          record.choose(response);
+        })();
+        return entry.callbackWork;
+      },
+    });
+  } catch (error) {
+    try { restoreNative(); }
+    catch (restoreError) { throw new AggregateError([error, restoreError], "Generation question installation failed"); }
+    throw error;
+  }
+  const join = async () => { drain = await driver.join(consumerBoundary); return drain; };
+  return {
+    expected, entries, records: driver.records, nativeFailures, join,
+    isOwnedCancel() {
+      const record = driver.records[0];
+      return driver.records.length === 1 && entries.length === 1 && rig.dialogs.length === 1 &&
+        rig.dialogs[0] === record && drain?.dispatchBoundaryJoined === true &&
+        entries[0].consumerSettled === true && entries[0].consumerError === null &&
+        record.displayed === true && record.presentation?.title === expected.title &&
+        record.result?.cause === "choice" && record.result.response === 1 &&
+        record.result.displayed === true && record.result.failed === false && !record.result.emergency &&
+        record.choiceDelivered === true && record.driverSettled === true && !record.driverError &&
+        record.observerSettled === true && !record.observerError && nativeFailures.length === 0;
+    },
+    cleanup: [
+      join,
+      async () => {
+        const outcomes = await Promise.allSettled([...tails,
+          ...entries.flatMap(entry => [entry.captureWork, entry.callbackWork, entry.consumerWork])]);
+        const errors = outcomes.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
+        if (errors.length) throw new AggregateError(errors, "Generation question original work failed");
+      },
+      () => {
+        if (nativeFailures.length) throw new AggregateError(nativeFailures, "Generation question entered native emergency fallback");
+      },
+      () => driver.restore(),
+      () => {
+        if (dialog.showMessageBox !== nativeRefusal) {
+          throw new Error("Generation native refusal restoration ownership changed");
+        }
+        restoreNative();
+      },
+    ],
+  };
+}
+
+function installGenerationDiscardQuestion(win, rig, filePath, retainChoice) {
+  const expected = __shutdown.state();
+  const requestId = expected.lastRequestId + 1;
+  const tails = [], nativeFailures = [];
+  let entry = null, savedResult = null, producer = null, delivery = null;
+  let releaseGate;
+  let released = !retainChoice, outerRestored = true, undoOuter = null, outer = null;
+  const gate = retainChoice ? new Promise(resolve => { releaseGate = resolve; }) : null;
+  const refusal = (_owner, options) => {
+    const error = new Error("Unexpected native generation-discard question: " + options?.title);
+    nativeFailures.push(error);
+    return Promise.reject(error);
+  };
+  const undoNative = replaceMethod(dialog, "showMessageBox", refusal);
+  let driver;
+  const restoreOuter = () => {
+    if (outerRestored) return;
+    if (OwnedDialogs.prototype.show !== outer) throw new Error("Retained Discard wrapper ownership changed");
+    undoOuter();
+    outerRestored = true;
+  };
+  try {
+    driver = installMainOwnedShutdownQuestions(win, tails, {
+      policy: retainChoice ? "ordinary-strict" : "cancellable",
+      onRecord(record) {
+        if (entry) throw new Error("Generation Discard unexpectedly asked twice");
+        entry = { record, consumer: null };
+        entry.captureWork = Promise.resolve().then(() => {
+          entry.consumer = __shutdown.readQuestionConsumer(record.requestId, record.options.signal);
+          if (!entry.consumer || typeof entry.consumer.then !== "function") {
+            throw new Error("Generation Discard has no exact original Main consumer");
+          }
+        });
+        entry.consumerWork = entry.captureWork.then(() => entry.consumer);
+        entry.consumerWork.catch(() => {});
+        entry.callbackWork = (async () => {
+          await entry.captureWork;
+          if (record.owner !== win || record.sender !== win.webContents ||
+              record.requestId !== requestId || record.pendingReason !== "window-close" ||
+              record.generation !== expected.rendererGeneration ||
+              record.pageSession !== expected.rendererPageSession ||
+              record.options.title !== "Unsaved changes" ||
+              !String(record.options.message).includes(path.basename(filePath)) ||
+              JSON.stringify(record.options.buttons) !== JSON.stringify(["Discard changes", "Cancel"]) ||
+              record.options.defaultId !== 1 || record.options.cancelId !== 1) {
+            throw new Error("Generation Discard does not own its exact named physical request");
+          }
+          const presentation = await record.presentationReady;
+          if (presentation.kind !== "displayed" || !record.displayed || record.settled) {
+            throw new Error("Generation Discard did not display its actual owned host");
+          }
+          rig.dialogs.push(record);
+        })();
+        return entry.callbackWork;
+      },
+    });
+    if (retainChoice) {
+      const originalShow = OwnedDialogs.prototype.show;
+      outer = function (owner, options, ...args) {
+        const original = Reflect.apply(originalShow, this, [owner, options, ...args]);
+        if (owner !== win || options.title !== "Unsaved changes" ||
+            __shutdown.state().pendingId !== requestId) return original;
+        if (!entry || original !== entry.record.producer || producer) {
+          throw new Error("Retained Discard did not capture one exact original producer");
+        }
+        producer = original;
+        delivery = original.then(async result => {
+          savedResult = result;
+          await gate;
+          return result;
+        });
+        delivery.catch(() => {});
+        restoreOuter();
+        return delivery;
+      };
+      undoOuter = replaceMethod(OwnedDialogs.prototype, "show", outer);
+      outerRestored = false;
+    }
+  } catch (error) {
+    const errors = [error];
+    for (const restore of [restoreOuter, () => { if (driver) driver.restore(); }, undoNative]) {
+      try { restore(); } catch (restoreError) { errors.push(restoreError); }
+    }
+    throw new AggregateError(errors, "Generation Discard installation failed");
+  }
+  const release = () => {
+    if (!retainChoice || released) return;
+    if (__shutdown.state().pendingId === requestId) {
+      throw new Error("Cannot release genuine Discard approval into its still-current Main request");
+    }
+    released = true;
+    releaseGate();
+  };
+  return {
+    get record() { return entry?.record; },
+    get originalConsumer() { return entry?.consumer; },
+    get producer() { return producer; },
+    get delivery() { return delivery; },
+    get savedResult() { return savedResult; },
+    async joinChoice() {
+      if (!entry || !producer || !delivery || !outerRestored) {
+        throw new Error("Genuine Discard has no one-shot original delivery capture");
+      }
+      await Promise.all([producer, entry.record.joined, entry.callbackWork, entry.captureWork]);
+    },
+    release,
+    async join() {
+      await driver.join(() => {
+        if (!entry?.consumer) throw new Error("Generation Discard lost its original Main consumer");
+        return entry.consumer;
+      });
+      if (delivery) await delivery;
+      await entry.consumerWork;
+      if (nativeFailures.length) throw new AggregateError(nativeFailures, "Generation Discard entered native fallback");
+    },
+    cleanup: [
+      () => {
+        // A failed pre-navigation test must retire the old request before
+        // releasing a real Discard result; manufacturing Cancel would hide it.
+        if (__shutdown.state().pendingId === requestId) __shutdown.reset();
+        release();
+      },
+      async () => {
+        if (retainChoice && !released) throw new Error("Unsafe genuine Discard delivery remains blocked");
+        const outcomes = await Promise.allSettled([...tails, producer, delivery,
+          entry?.captureWork, entry?.callbackWork, entry?.consumerWork, entry?.record.joined]);
+        const errors = outcomes.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
+        if (errors.length) throw new AggregateError(errors, "Generation Discard original work failed");
+      },
+      restoreOuter,
+      () => driver.restore(),
+      () => {
+        if (dialog.showMessageBox !== refusal) throw new Error("Discard native refusal ownership changed");
+        undoNative();
+      },
+      () => {
+        if (nativeFailures.length) throw new AggregateError(nativeFailures, "Generation Discard entered native fallback");
+      },
+    ],
+  };
+}
+
 async function runShutdownGenerationScenarios(win, exec) {
   const bareFile = path.join(dir, "f22-no-overlay.html");
   const discardNavigationFile = path.join(
@@ -38214,12 +38464,11 @@ async function runShutdownGenerationScenarios(win, exec) {
       restoreSend();
     }
 
-    // An approval is scoped to exactly the document which supplied it. Once a
-    // clean request has authorized a close, committing a navigation must
-    // revoke that authority before the replacement can discard an edit.
+    // This nonterminal close stub can test authority revocation, not a live
+    // post-shutdown editing session. Keep the two lifecycles explicit.
     __shutdown.reset();
     rig.reset();
-    // The replacement must restore this session entry, not ask the fenced chooser.
+    // Persist the physical fixture before the stubbed terminal continuation.
     const navigationPreadmission = await openShutdownLifecycleFixture(
       exec, navigationEditFile, navigationSeed, "Navigation edit fixture",
     );
@@ -38241,9 +38490,15 @@ async function runShutdownGenerationScenarios(win, exec) {
       () => rig.closes === 1 && __shutdown.state().authorized === true,
     );
     const approvalGeneration = __shutdown.state().authorizationGeneration;
+    const grantedNavigationApproval = {
+      authorized: __shutdown.state().authorized,
+      generation: approvalGeneration,
+      closes: rig.closes,
+      quits: rig.quits,
+      prevented: approvedClose.prevented,
+    };
     const successorReadyReloadGeneration = __shutdown.state().rendererGeneration;
-    const successorTrackingStart = trackingSelections.length;
-    wc.reload();
+    await win.loadFile(indexFile);
     const successorReady = await waitUntil(() => {
       const state = __shutdown.state();
       return state.renderer === "ready" &&
@@ -38255,6 +38510,66 @@ async function runShutdownGenerationScenarios(win, exec) {
       );
     }
     const afterRevocation = __shutdown.state();
+    check(
+      "navigation revokes the granted clean approval without another terminal continuation",
+      cleanApproved &&
+        grantedNavigationApproval.authorized === true &&
+        grantedNavigationApproval.generation === successorReadyReloadGeneration &&
+        grantedNavigationApproval.prevented === true &&
+        grantedNavigationApproval.closes === 1 &&
+        grantedNavigationApproval.quits === 0 &&
+        successorReady &&
+        afterRevocation.authorized === false &&
+        rig.closes === 1 &&
+        rig.quits === 0,
+      JSON.stringify({ grantedNavigationApproval, afterRevocation,
+        closes: rig.closes, quits: rig.quits }),
+    );
+
+    // Keep the fence closed until Main invalidates A's generation/session.
+    // The appended listener runs synchronously after Main and before B's READY.
+    const navigationBoundaryBefore = __shutdown.state();
+    let navigationBoundaryWitness = null;
+    const navigationInitializationFailures = [];
+    let navigationLifecycleGeneration = null;
+    let successorTrackingStart = null;
+    const onNavigationLifecycle = () => {
+      try {
+        const boundary = __shutdown.state();
+        if (boundary.rendererGeneration <= navigationBoundaryBefore.rendererGeneration ||
+            boundary.renderer !== "loading" ||
+            boundary.rendererPageSession !== null ||
+            boundary.pendingId !== 0 || boundary.commitPendingId !== 0) {
+          throw new Error("Separate navigation lifecycle missed Main's invalidated loading boundary");
+        }
+        __shutdown.reset();
+        rig.reset();
+        navigationLifecycleGeneration = boundary.rendererGeneration;
+        successorTrackingStart = trackingSelections.length;
+        navigationBoundaryWitness = boundary;
+      } catch (error) { navigationInitializationFailures.push(error); }
+    };
+    wc.once("did-navigate", onNavigationLifecycle);
+    try { await win.loadFile(indexFile); }
+    catch (error) { navigationInitializationFailures.push(error); }
+    finally { wc.removeListener("did-navigate", onNavigationLifecycle); }
+    if (navigationInitializationFailures.length) {
+      throw new AggregateError(navigationInitializationFailures,
+        "Separate navigation lifecycle initialization failed");
+    }
+    if (!navigationBoundaryWitness) {
+      throw new Error("Separate navigation lifecycle did not reach its post-Main navigation boundary");
+    }
+    const navigationLifecycleReady = await waitUntil(() => {
+      const state = __shutdown.state();
+      return state.renderer === "ready" &&
+        state.rendererGeneration === navigationLifecycleGeneration &&
+        state.rendererGeneration > navigationBoundaryBefore.rendererGeneration &&
+        state.rendererPageSession !== navigationBoundaryBefore.rendererPageSession;
+    }, 20000);
+    if (!navigationLifecycleReady) {
+      throw new Error("Separate navigation edit lifecycle did not reach a new renderer generation");
+    }
     const navigationAdmission = await settleShutdownLifecycleRestore(
       exec, navigationEditFile, navigationSeed, "Navigation edit fixture",
     );
@@ -38334,73 +38649,114 @@ async function runShutdownGenerationScenarios(win, exec) {
           .some(matchesPhysicalNavigationSelection),
       5000,
     );
-    rig.answer = 1;
-    const replacementClose = guardEvent();
-    win.emit("close", replacementClose);
-    const replacementAsked = await waitUntil(() => rig.dialogs.length === 1);
-    const successorTracking = await navigationTrackingWitness(
-      "clean-approval-revocation-successor",
-      successorTrackingStart,
-    );
-    console.log(
-      "TABS_NAVIGATION_TRACKING " +
+    const navigationQuestions = installGenerationShutdownQuestions(win, rig, { filePath: navigationEditFile });
+    await withOrdinaryShutdownCleanup(async () => {
+      const replacementClose = guardEvent();
+      win.emit("close", replacementClose);
+      const replacementAsked = await waitUntil(() => rig.dialogs.length === 1 &&
+        rig.dialogs[0].response === 1 &&
+        __shutdown.state().pendingId === 0 &&
+        __shutdown.state().commitPendingId === 0);
+      await navigationQuestions.join();
+      const successorTracking = await navigationTrackingWitness(
+        "separate-navigation-edit-lifecycle",
+        successorTrackingStart,
+      );
+      console.log(
+        "TABS_NAVIGATION_TRACKING " +
+          JSON.stringify({
+            replacementTracking,
+            navigationEditSetup,
+            acceptedNavigationSelection,
+            successorTracking,
+          }),
+      );
+      check(
+        "a separately initialized physical document asks before closing its live-only edit and Cancel leaves it open",
+        navigationLifecycleReady &&
+          replacementAsked &&
+          replacementClose.prevented === true &&
+          navigationQuestions.expected.generation === navigationLifecycleGeneration &&
+          navigationQuestions.expected.pageSession === navigationEditSetup.owner.pageSession &&
+          navigationQuestions.isOwnedCancel() &&
+          rig.closes === 0 &&
+          rig.quits === 0 &&
+          navigationEditSetup &&
+          navigationEditSetup.filePath === navigationEditFile &&
+          navigationEditSetup.currentFilePath === navigationEditFile &&
+          navigationEditSetup.active &&
+          navigationEditSetup.active.id === navigationEditSetup.tabId &&
+          navigationEditSetup.owner &&
+          navigationEditSetup.owner.tabId === navigationEditSetup.tabId &&
+          navigationEditSetup.owner.pathKey ===
+            nativePathKey(fs.realpathSync.native(navigationEditFile)) &&
+          navigationEditSetup.diskVersionValid === true &&
+          acceptedNavigationSelection &&
+          /f22-navigation-edit/.test(String(rig.dialogs[0] && rig.dialogs[0].options.message)),
         JSON.stringify({
-          replacementTracking,
+          navigationLifecycleReady,
+          replacementAsked,
+          closes: rig.closes,
+          quits: rig.quits,
+          dialog: rig.dialogs[0] && rig.dialogs[0].options,
           navigationEditSetup,
           acceptedNavigationSelection,
           successorTracking,
         }),
-    );
-    check(
-      "navigation revokes a clean approval so the replacement document cannot close silently",
-      cleanApproved &&
-        successorReady &&
-        approvedClose.prevented === true &&
-        afterRevocation.authorized === false &&
-        replacementAsked &&
-        replacementClose.prevented === true &&
-        rig.closes === 1 &&
-        navigationEditSetup &&
-        navigationEditSetup.filePath === navigationEditFile &&
-        navigationEditSetup.currentFilePath === navigationEditFile &&
-        navigationEditSetup.active &&
-        navigationEditSetup.active.id === navigationEditSetup.tabId &&
-        navigationEditSetup.owner &&
-        navigationEditSetup.owner.tabId === navigationEditSetup.tabId &&
-        navigationEditSetup.owner.pathKey ===
-          nativePathKey(fs.realpathSync.native(navigationEditFile)) &&
-        navigationEditSetup.diskVersionValid === true &&
-        acceptedNavigationSelection &&
-        /f22-navigation-edit/.test(String(rig.dialogs[0] && rig.dialogs[0].options.message)),
-      JSON.stringify({
-        cleanApproved,
-        approvalGeneration,
-        afterRevocation,
-        replacementAsked,
-        closes: rig.closes,
-        dialog: rig.dialogs[0] && rig.dialogs[0].options,
-        navigationEditSetup,
-        acceptedNavigationSelection,
-        successorTracking,
-      }),
-    );
+      );
+    }, navigationQuestions.cleanup);
 
-    // A main-process discard dialog is an approval of one renderer document,
-    // not a durable approval keyed only by its revision. Keep its real promise
-    // pending across a committed reload, deliberately make the replacement
-    // revision collide, then release the old promise only after the replacement
-    // request is held at its own generation boundary.
+    // An unanswered host's real abort and a genuine Discard result whose
+    // delivery is retained are different protections. Both retain the same
+    // physical replacement/revision collision and fresh clean-close twin.
+    const realDiscardSend = wc.send;
+    for (const retainDiscardChoice of [false, true]) {
+    let restoredCollisionAdmission = null;
+    if (retainDiscardChoice) {
+      const discardBoundaryBefore = __shutdown.state();
+      const discardBoundaryErrors = [];
+      let discardBoundaryWitness = null;
+      const onDiscardLifecycle = () => {
+        try {
+          const boundary = __shutdown.state();
+          if (boundary.rendererGeneration <= discardBoundaryBefore.rendererGeneration ||
+              boundary.renderer !== "loading" || boundary.rendererPageSession !== null ||
+              boundary.pendingId !== 0 || boundary.commitPendingId !== 0) {
+            throw new Error("Discard lifecycle missed Main's invalidated loading boundary");
+          }
+          __shutdown.reset();
+          rig.reset();
+          discardBoundaryWitness = boundary;
+        } catch (error) { discardBoundaryErrors.push(error); }
+      };
+      wc.once("did-navigate", onDiscardLifecycle);
+      try { await win.loadFile(indexFile); }
+      catch (error) { discardBoundaryErrors.push(error); }
+      finally { wc.removeListener("did-navigate", onDiscardLifecycle); }
+      if (discardBoundaryErrors.length) {
+        throw new AggregateError(discardBoundaryErrors, "Separate genuine-Discard lifecycle initialization failed");
+      }
+      if (!discardBoundaryWitness || !await waitUntil(() => {
+        const state = __shutdown.state();
+        return state.rendererGeneration === discardBoundaryWitness.rendererGeneration &&
+          state.renderer === "ready" && typeof state.rendererPageSession === "string" &&
+          state.rendererPageSession !== discardBoundaryBefore.rendererPageSession;
+      }, 20000)) throw new Error("Separate genuine-Discard lifecycle did not reach its fresh READY page");
+      restoredCollisionAdmission = await settleShutdownLifecycleRestore(
+        exec, discardNavigationFile, discardSeed, "Generation discard fixture",
+      );
+    }
     if (!await waitUntil(() => __shutdown.state().pendingId === 0)) {
       throw new Error("Navigation cancel did not settle before discard setup");
     }
-    await clearShutdownLifecycleDocuments(exec);
-    __shutdown.reset();
-    rig.reset();
-    let releaseOldDiscard = null;
+    if (!retainDiscardChoice) {
+      await clearShutdownLifecycleDocuments(exec);
+      __shutdown.reset();
+      rig.reset();
+    }
     let holdReplacementRequest = false;
     let heldReplacementRequest = null;
     const emittedDiscardRequests = [];
-    const realDiscardSend = wc.send;
     const discardSend = function (channel, ...args) {
       if (channel === "quit-approval-request") {
         const state = __shutdown.state();
@@ -38426,7 +38782,7 @@ async function runShutdownGenerationScenarios(win, exec) {
       discardSendRestored = true;
     };
     try {
-      const discardAdmission = await openShutdownLifecycleFixture(
+      const discardAdmission = restoredCollisionAdmission || await openShutdownLifecycleFixture(
         exec, discardNavigationFile, discardSeed, "Generation discard fixture",
       );
       const oldDiscardFixture = await exec(`
@@ -38444,16 +38800,18 @@ async function runShutdownGenerationScenarios(win, exec) {
           };
         })()
       `);
-      rig.answer = () =>
-        new Promise((resolve) => {
-          releaseOldDiscard = resolve;
-        });
+      const discardQuestions = installGenerationDiscardQuestion(
+        win, rig, discardNavigationFile, retainDiscardChoice,
+      );
+      await withOrdinaryShutdownCleanup(async () => {
       const dirtyDiscardClose = guardEvent();
       win.emit("close", dirtyDiscardClose);
       const oldDiscardAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
       const oldDiscardDialog = rig.dialogs[0]?.options;
       check(
-        "the generation collision holds an actual named dirty-discard dialog rather than an unreadable fallback",
+        retainDiscardChoice
+          ? "the retained-success collision presents its actual named Discard host before choosing"
+          : "the generation collision holds an actual named dirty-discard dialog rather than an unreadable fallback",
         oldDiscardAsked && oldDiscardDialog?.title === "Unsaved changes" &&
           [oldDiscardDialog.message, oldDiscardDialog.detail].some(
             value => String(value).includes(path.basename(discardNavigationFile)),
@@ -38463,10 +38821,35 @@ async function runShutdownGenerationScenarios(win, exec) {
       if (oldDiscardDialog?.title !== "Unsaved changes") {
         throw new Error("Generation collision did not reach the dirty-discard branch");
       }
+      const retainedDiscardHost = discardQuestions.record.request.window;
+      if (!retainedDiscardHost || retainedDiscardHost.isDestroyed()) {
+        throw new Error("Generation collision did not retain its live original dialog host");
+      }
       const oldDiscardState = __shutdown.state();
       const oldDiscardRevision = await exec(
         `window.CustomTabs.__shutdownFreeze().revision`,
       );
+      if (retainDiscardChoice) {
+        discardQuestions.record.choose(0);
+        await discardQuestions.joinChoice();
+        const result = discardQuestions.savedResult;
+        check(
+          "the retained pre-navigation result is a genuine displayed Discard choice rather than an abort or synthesized approval",
+          result === discardQuestions.record.result &&
+            result?.cause === "choice" && result.response === 0 &&
+            result.displayed === true && result.failed === false && !result.emergency &&
+            discardQuestions.record.choiceDelivered === true &&
+            discardQuestions.producer === discardQuestions.record.producer &&
+            __shutdown.state().pendingId === oldDiscardState.pendingId &&
+            rig.closes === 0 && rig.quits === 0,
+          JSON.stringify({ result, state: __shutdown.state(), closes: rig.closes }),
+        );
+        if (result?.cause !== "choice" || result.response !== 0 ||
+            result !== discardQuestions.record.result || !discardQuestions.record.choiceDelivered) {
+          throw new Error("Retained Discard setup did not produce its genuine successful choice");
+        }
+      }
+      const staleDialogBefore = __shutdown.state().staleShutdownDialogCompletionCount;
       holdReplacementRequest = true;
       const replacementRequestReloadGeneration =
         __shutdown.state().rendererGeneration;
@@ -38557,8 +38940,8 @@ async function runShutdownGenerationScenarios(win, exec) {
         })()
       `);
       const freezeAfterNavigation = await exec(`window.CustomTabs.__shutdownFreeze()`);
-      const staleDialogBefore = replacementDiscardState.staleShutdownDialogCompletionCount;
-      if (releaseOldDiscard) releaseOldDiscard(0);
+      if (retainDiscardChoice) discardQuestions.release();
+      await discardQuestions.join();
       const staleOldDiscardObserved = await waitUntil(
         () =>
           __shutdown.state().staleShutdownDialogCompletionCount ===
@@ -38567,7 +38950,9 @@ async function runShutdownGenerationScenarios(win, exec) {
       );
       const afterOldDiscardCompletion = __shutdown.state();
       check(
-        "navigation aborts a dirty discard dialog and issues a fresh generation-bound approval despite a colliding revision",
+        retainDiscardChoice
+          ? "navigation invalidates a genuine retained Discard result despite a colliding revision"
+          : "navigation aborts a dirty discard dialog and issues a fresh generation-bound approval despite a colliding revision",
         oldDiscardFixture &&
           oldDiscardFixture.cached === discardSeed &&
           oldDiscardFixture.live !== discardSeed &&
@@ -38602,8 +38987,21 @@ async function runShutdownGenerationScenarios(win, exec) {
         }),
       );
       check(
-        "a stale pre-navigation discard completion is counted and cannot settle the replacement approval",
+        retainDiscardChoice
+          ? "a genuinely chosen pre-navigation Discard cannot settle the colliding replacement approval"
+          : "a stale pre-navigation discard completion is counted and cannot settle the replacement approval",
         staleOldDiscardObserved &&
+          (retainDiscardChoice
+            ? discardQuestions.savedResult?.cause === "choice" &&
+              discardQuestions.savedResult.response === 0 &&
+              discardQuestions.savedResult === discardQuestions.record.result
+            : ["aborted", "stale"].includes(discardQuestions.record.result?.cause) &&
+              discardQuestions.record.result.response === 1 &&
+              discardQuestions.record.result.failed === false &&
+              !discardQuestions.record.result.emergency &&
+              discardQuestions.record.retired === true &&
+              retainedDiscardHost.isDestroyed() &&
+              discardQuestions.record.choiceDelivered === false) &&
           afterOldDiscardCompletion.pendingId === heldReplacementRequest.id &&
           afterOldDiscardCompletion.pendingReason === "window-close" &&
           afterOldDiscardCompletion.rendererGeneration === heldReplacementRequest.gen &&
@@ -38717,7 +39115,9 @@ async function runShutdownGenerationScenarios(win, exec) {
       const cleanReplacementClosed = replacementCleanReady &&
         await waitUntil(() => rig.closes === 1, 10000);
       check(
-        "a clean replacement document still completes its fresh navigation approval normally",
+        retainDiscardChoice
+          ? "a clean replacement still completes its fresh approval after genuinely chosen old Discard delivery"
+          : "a clean replacement document still completes its fresh navigation approval normally",
         replacementCleanSetup.ok === true &&
           cleanReplacementClosed &&
           rig.dialogs.length === 1 &&
@@ -38732,9 +39132,10 @@ async function runShutdownGenerationScenarios(win, exec) {
           state: __shutdown.state(),
         }),
       );
+      }, discardQuestions.cleanup);
     } finally {
       restoreDiscardSendOnce();
-      if (releaseOldDiscard) releaseOldDiscard(1);
+    }
     }
 
     // send() can throw synchronously while a renderer is nominally ready.
@@ -38756,6 +39157,8 @@ async function runShutdownGenerationScenarios(win, exec) {
     });
     let sendFailure;
     try {
+      const sendFailureQuestions = installGenerationShutdownQuestions(win, rig, { cannotCheck: true });
+      await withOrdinaryShutdownCleanup(async () => {
       const sendFailureClose = guardEvent();
       win.emit("close", sendFailureClose);
       const fallbackShown = await waitUntil(
@@ -38767,6 +39170,7 @@ async function runShutdownGenerationScenarios(win, exec) {
       const sendFallbackCancelled = await waitUntil(
         () => __shutdown.state().pendingId === 0,
       );
+      await sendFailureQuestions.join();
       const sendFallbackState = __shutdown.state();
       check(
         "a synchronous shutdown send failure clears dispatch and falls back without authorizing",
@@ -38777,6 +39181,9 @@ async function runShutdownGenerationScenarios(win, exec) {
           sendFailure.pendingDispatchToken === 0 &&
           sendFailure.sendFailureCount === 1 &&
           sendFailure.authorized === false &&
+          sendFailureQuestions.isOwnedCancel() &&
+          rig.closes === 0 && rig.quits === 0 &&
+          sendFallbackState.pendingId === 0 && sendFallbackState.commitPendingId === 0 &&
           sendFallbackState.settleWhy === "fallback-unresponsive" &&
           sendFallbackState.authorized === false &&
           /cannot be checked/i.test(String(rig.dialogs[0] && rig.dialogs[0].options.title)),
@@ -38787,6 +39194,10 @@ async function runShutdownGenerationScenarios(win, exec) {
           dialog: rig.dialogs[0],
         }),
       );
+      }, [
+        () => { rig.answer = 1; if (releaseSendFallback) releaseSendFallback(1); },
+        ...sendFailureQuestions.cleanup,
+      ]);
     } finally {
       restoreThrowingSend();
     }
@@ -38846,6 +39257,8 @@ async function runShutdownGenerationScenarios(win, exec) {
         10000,
       );
       thrownProbe = __shutdown.state();
+      const probeFailureQuestions = installGenerationShutdownQuestions(win, rig, { cannotCheck: true });
+      await withOrdinaryShutdownCleanup(async () => {
       const probeClose = guardEvent();
       win.emit("close", probeClose);
       const postClose = __shutdown.state();
@@ -38877,11 +39290,17 @@ async function runShutdownGenerationScenarios(win, exec) {
         }),
       );
       const probeFallback = await waitUntil(() => rig.dialogs.length === 1);
+      await probeFailureQuestions.join();
+      const probeFallbackState = __shutdown.state();
       check(
         "a synchronous overlay probe throw clears its token and routes the held close to fallback",
         probeFailed &&
           probeFallback &&
           probeClose.prevented === true &&
+          probeFailureQuestions.isOwnedCancel() &&
+          rig.closes === 0 && rig.quits === 0 &&
+          probeFallbackState.pendingId === 0 && probeFallbackState.commitPendingId === 0 &&
+          probeFallbackState.authorized === false &&
           thrownProbe.probeOwnerToken === 0 &&
           /page could not be inspected: controlled synchronous overlay probe failure/.test(
             String(thrownProbe.rendererUnusableReason),
@@ -38907,6 +39326,7 @@ async function runShutdownGenerationScenarios(win, exec) {
           dialog: rig.dialogs[0],
         }),
       );
+      }, probeFailureQuestions.cleanup);
     } finally {
       restoreThrowingProbe();
     }
