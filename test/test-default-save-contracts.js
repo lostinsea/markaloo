@@ -221,6 +221,328 @@ function backgroundSaveVersionContracts() {
     "Removing byte equality admits a same-size edit and fails the unchanged original byte safeguard");
 }
 
+function installedLauncherDiagnosticContracts() {
+  let actor = between(source, "async function runWindowsInstalledLauncherScenarios(",
+    "\nfunction installMainOwnedShutdownQuestions(");
+  const remove = (start, end) => { actor = actor.replace(between(actor, start, end), ""); };
+  remove("  let launcherDiagnostic = null;", "  const restoreFields = () => {");
+  const field = between(actor, "  const setField =", "  const setLatch =");
+  actor = actor.replace(field, field.replace(" => {\n", " =>\n")
+    .replace(/^.*launcherDiagnostic.*\n/gm, "")
+    .replace("    const result = Object.defineProperty", "    Object.defineProperty")
+    .replace("    return result;\n  };\n", ""));
+  actor = actor.replace(between(actor, "    if (!await waitForCondition(exec, `",
+    '      throw new Error("Windows launcher fixture'),
+  '    if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 8000)) {\n');
+  actor = actor.replace("    const prepared = await updaterFixture.prepare();",
+    "    await updaterFixture.prepare();");
+  remove("  const start = () => {", "\n  let launcherFailure = null;");
+  actor = actor.replace("\n  let launcherFailure = null;",
+    "  const start = () => exec(`window.folia.installUpdate(); null;`);\n\n  let launcherFailure = null;");
+  remove("    try {\n      launcherDiagnosticToken =", "    write(installerPath,");
+  actor = actor.replace(/^.*launcherDiagnostic\??\.[^\n]*\n/gm, "").replaceAll("launcherCheck(", "check(");
+  for (const label of ["directory", "package"]) actor = actor.replace(
+    '        launcherPoll("unsupported-' + label + '",\n' +
+      "          __shutdown.state().lastRequestId > " + label + "RequestBefore &&\n" +
+      "          __shutdown.state().updaterInstallAttemptId === 0),",
+    "        __shutdown.state().lastRequestId > " + label + "RequestBefore &&\n" +
+      "        __shutdown.state().updaterInstallAttemptId === 0,");
+  remove("    let rendererDiagnostic =", "    for (const restore of [");
+  remove('    try {\n      console.log("WINDOWS_LAUNCHER_DIAGNOSTIC ', "    if (failures.length) {");
+  check(require("node:crypto").createHash("sha256").update(actor).digest("hex") ===
+    "f8153bf99092ed1e95fd6e32618a2bf75b91dacd447b81f3b454b41097e97b71",
+  "Outside passive diagnostics the complete original Windows actor, predicates, metadata order, deadlines and cleanup are byte-equivalent");
+  const helper = between(source, "  const createLauncherDiagnostic = () => {",
+    "  const observeLauncherRenderer = token => {");
+  const rendererHelper = between(source, "  const observeLauncherRenderer = token => {",
+    "  let launcherDiagnosticToken = null;");
+  const mainLines = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8")
+    .replace(/\r\n/g, "\n").split("\n");
+  check(mainLines[12719].trim() === "releaseShutdownFreeze();" &&
+    mainLines.slice(12712, 12720).join("\n").includes("else if (started === false)") &&
+    mainLines[14008].includes('updateState.fail(new Error("The downloaded update is incomplete.') &&
+    mainLines.slice(14004, 14009).join("\n").includes("catch (err)"),
+  "Launcher diagnostic route coordinates name the actual post-return-false thaw and preflight publication");
+  const make = ({ enabled = false } = {}) => {
+    const ipc = new (require("node:events").EventEmitter)();
+    const state = { lastRequestId: 7, rendererGeneration: 3, rendererPageSession: "owned-page",
+      pendingId: 0, updaterInstallAttemptId: 0 };
+    const model = { ignored: false, stateFault: false, jsonFault: false, originalThrow: null,
+      stack: "at publication (C:\\repo\\src\\main.js:14009:5)", enabled, enables: 0,
+      disables: 0, entries: [], emits: 0, sends: 0, stackAllocations: 0, stackReads: 0 };
+    const wc = { id: 12, mainFrame: {}, send(channel, payload) {
+      model.sends++; model.sendThis = this; model.sendPayload = payload;
+      if (model.originalThrow) throw model.originalThrow;
+      return "original-send-return";
+    } };
+    const originalEmit = ipc.emit, originalSend = wc.send;
+    ipc.on("install-update", () => {
+      model.emits++;
+      if (model.originalThrow) throw model.originalThrow;
+      if (!model.ignored) state.lastRequestId++;
+    });
+    const updater = { installerPath: "C:\\fixture\\setup.exe", installDirectory: "",
+      downloadedUpdateHelper: { file: "C:\\fixture\\setup.exe", versionInfo: { version: "0.12.1" } },
+      quitAndInstallCalled: false };
+    const context = vm.createContext({ updater, ipcMain: ipc, wc, win: { id: 4, webContents: wc },
+      children: [], spawnCalls: [], Buffer, AggregateError,
+      Error: class extends Error { constructor(...args) {
+        super(...args);
+        model.stackAllocations++;
+        Object.defineProperty(this, "stack", { get() { model.stackReads++; return model.stack; } });
+      } },
+      JSON: { stringify: (...args) => {
+        if (model.jsonFault) throw new Error("controlled serialization fault");
+        return JSON.stringify(...args);
+      } },
+      replaceMethod: (target, key, implementation) => {
+        const descriptor = Object.getOwnPropertyDescriptor(target, key);
+        Object.defineProperty(target, key, { value: implementation, configurable: true, writable: true });
+        return () => descriptor ? Object.defineProperty(target, key, descriptor) : delete target[key];
+      },
+      __shutdown: { state: () => {
+        if (model.stateFault) throw new Error("controlled projection fault");
+        return state;
+      }, timing: {
+        state: () => ({ enabled: model.enabled, requests: model.entries }),
+        enable: () => { model.enables++; model.enabled = true; model.entries = []; },
+        disable: () => { model.disables++; model.enabled = false; },
+      } },
+    });
+    const diagnostic = vm.runInContext(helper + "\ncreateLauncherDiagnostic()", context);
+    diagnostic.install();
+    const emit = () => ipc.emit("install-update", { sender: wc, senderFrame: wc.mainFrame });
+    const packet = () => JSON.parse(diagnostic.packet({ records: [] }));
+    return { diagnostic, model, updater, state, ipc, wc, emit, packet, originalEmit, originalSend };
+  };
+  const filtered = make();
+  const ingress = { sender: filtered.wc, senderFrame: filtered.wc.mainFrame };
+  const ingressPayload = { id: 8, gen: 3, revision: 4 };
+  let approvalDelegations = 0;
+  for (const channel of ["quit-approval-response", "quit-approval-committed", "quit-approval-verified"]) {
+    filtered.ipc.on(channel, function (event, data) {
+      assert.equal(this, filtered.ipc);
+      assert.equal(event, ingress);
+      assert.equal(data, ingressPayload);
+      approvalDelegations++;
+    });
+    assert.equal(filtered.ipc.emit(channel, ingress, ingressPayload), true);
+  }
+  assert.equal(filtered.emit(), true);
+  for (const [channel, data] of [
+    ["quit-approval-request", ingressPayload], ["quit-approval-commit", ingressPayload],
+    ["quit-approval-verify", ingressPayload], ["update-status", { status: "available" }],
+    ["update-status", { status: "error", error: "unrelated error" }],
+    ["update-status", { status: "installing",
+      error: "The downloaded update is incomplete. Download it again." }],
+  ]) {
+    assert.equal(filtered.wc.send(channel, data), "original-send-return");
+    assert.equal(filtered.model.sendThis, filtered.wc);
+    assert.equal(filtered.model.sendPayload, data);
+  }
+  check(filtered.model.stackAllocations === 0 && filtered.model.stackReads === 0 &&
+    approvalDelegations === 3 && filtered.model.emits === 1 && filtered.model.sends === 6 &&
+    filtered.packet().records.every(record => record.stack === null),
+  "Unrelated original ingress approval commit verification and status paths delegate exactly once without acquiring or materializing callsites");
+  filtered.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
+  assert.equal(filtered.wc.send("update-status", { status: "error",
+    error: "The downloaded update is incomplete. Download it again." }), "original-send-return");
+  filtered.model.stack = "at continuation (C:\\repo\\src\\main.js:12720:9)";
+  assert.equal(filtered.wc.send("quit-approval-thaw"), "original-send-return");
+  const filteredPacket = filtered.packet();
+  check(filtered.model.stackAllocations === 2 && filtered.model.stackReads === 2 &&
+    filtered.model.sends === 8 && filteredPacket.routes.length === 1 &&
+    filteredPacket.records.filter(record => record.stack !== null).every(record =>
+      record.kind === "send:return") &&
+    filteredPacket.records.filter(record => record.stack !== null).length === 2,
+  "Only normal returned generic preflight publication and thaw materialize one callsite each and preserve actual route classification");
+  let originalStackReads = 0;
+  const originalThrow = { message: "original bounded message " + "x".repeat(5000),
+    get stack() { originalStackReads++; throw new Error("forbidden original exception stack read"); } };
+  filtered.model.originalThrow = originalThrow;
+  assert.throws(() => filtered.wc.send("quit-approval-thaw"), error => error === originalThrow);
+  assert.throws(filtered.emit, error => error === originalThrow);
+  const observedThrows = filtered.packet().records.filter(record => record.kind.endsWith(":throw"));
+  check(originalStackReads === 0 && filtered.model.stackAllocations === 2 &&
+    filtered.model.stackReads === 2 && filtered.model.sends === 9 && filtered.model.emits === 2 &&
+    observedThrows.length === 2 && observedThrows.every(record =>
+      record.stack === null && record.originalError.endsWith("[truncated]")) &&
+    originalThrow.message.length > 5000,
+  "Original throws preserve exact exception and delegation with bounded message only and never acquire or project any exception stack");
+  filtered.diagnostic.restore();
+  const h = make();
+  check(h.model.enables === 1, "Launcher diagnostics arm disabled timing before original operations");
+  check(h.emit() === true && h.model.emits === 1,
+    "Launcher ingress delegates exactly once and retains the original synchronous return");
+  h.model.ignored = true;
+  h.emit();
+  let packet = h.packet();
+  check(packet.invocations[0].admittedId === 8 && packet.invocations[1].admittedId === null &&
+    packet.terminal === "UNOBSERVED",
+  "An ignored second Install cannot inherit the first admitted id or turn id advancement into completion");
+  const payload = { status: "error", error: "The downloaded update is incomplete. Download it again." };
+  h.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101, settledAt: 90 }];
+  check(h.wc.send("update-status", payload) === "original-send-return" &&
+    h.model.sendThis === h.wc && h.model.sendPayload === payload,
+  "Launcher send preserves receiver, payload reference and original return");
+  h.model.stack = "at reset (C:\\repo\\src\\main.js:15100:9)";
+  h.wc.send("quit-approval-thaw");
+  check(h.packet().terminal === "UNOBSERVED",
+    "A reset or other refusal thaw cannot substitute for the exact post-return-false terminal route");
+  h.model.stack = "at continuation (C:\\repo\\src\\main.js:12720:9)";
+  h.wc.send("quit-approval-thaw");
+  packet = h.packet();
+  check(packet.routes.length === 1 && packet.routes[0].requestId === 8 &&
+    packet.routes[0].invocation === 1 && packet.routes[0].continuationEntry === 101 &&
+    packet.consumerJoin.startsWith("UNOBSERVED") &&
+    packet.thawCorrelation.wireId.startsWith("ABSENT"),
+  "Only same-request publication plus continuation entry and exact post-return-false thaw yields route evidence, never a join");
+  h.diagnostic.beforeReset();
+  check(h.packet().records.some(record => record.kind === "before-reset" &&
+    record.timing.some(clock => clock.id === 8 && clock.continuationInvokedAt === 101)),
+  "Original timing evidence is copied before reset can erase the seam");
+  h.wc.send("quit-approval-thaw");
+  check(h.packet().routes.length === 1, "Reset traffic cannot earn a second terminal route");
+  h.diagnostic.bodyExit();
+  h.wc.send("quit-approval-thaw");
+  check(h.packet().routes.length === 1, "Cleanup traffic is labelled and excluded from terminal route credit");
+  h.diagnostic.restore();
+  check(h.ipc.emit === h.originalEmit && h.wc.send === h.originalSend && h.model.disables === 1,
+    "Launcher observation restores both exact method owners and only its borrowed timing state");
+
+  const enabled = make({ enabled: true });
+  check(enabled.model.enables === 0, "Already-enabled timing is not re-enabled and cleared by diagnostics");
+  enabled.diagnostic.restore();
+  check(enabled.model.disables === 0, "Previously-enabled timing remains enabled after observation");
+  const fault = make();
+  const originalError = new Error("original failure " + "x".repeat(9000));
+  fault.model.stateFault = true;
+  fault.model.originalThrow = originalError;
+  assert.throws(fault.emit, error => error === originalError && error.message.length > 9000);
+  check(fault.model.emits === 1 && fault.packet().errors.length > 0,
+    "Projection faults cannot block exact-once ingress or replace or truncate its original exception");
+  assert.throws(() => fault.wc.send("update-status", payload), error => error === originalError);
+  check(fault.model.sends === 1, "Projection faults preserve exact-once send and the same original throw");
+  fault.model.jsonFault = true;
+  const unavailable = JSON.parse(fault.diagnostic.packet({ records: [] }));
+  check(unavailable.unavailable === "launcher diagnostic serialization failed",
+    "Serialization faults produce explicit valid unavailable evidence without replacing the original failure");
+  fault.diagnostic.restore();
+  const unpublished = make();
+  unpublished.emit();
+  unpublished.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
+  unpublished.model.originalThrow = originalError;
+  assert.throws(() => unpublished.wc.send("update-status", payload), error => error === originalError);
+  unpublished.model.originalThrow = null;
+  unpublished.model.stack = "at continuation (C:\\repo\\src\\main.js:12720:9)";
+  unpublished.wc.send("quit-approval-thaw");
+  check(unpublished.packet().terminal === "UNOBSERVED" &&
+    unpublished.packet().records.some(record => record.kind === "send:throw") &&
+    !unpublished.packet().records.some(record => record.kind === "send:return" && record.channel === "update-status"),
+  "Publication ENTRY or original throw cannot replace a returned generic-error publication");
+  unpublished.diagnostic.restore();
+  const wrongPublisher = make();
+  wrongPublisher.emit();
+  wrongPublisher.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
+  wrongPublisher.model.stack = "at another route (C:\\repo\\src\\main.js:13855:9)";
+  wrongPublisher.wc.send("update-status", payload);
+  wrongPublisher.model.stack = "at continuation (C:\\repo\\src\\main.js:12720:9)";
+  wrongPublisher.wc.send("quit-approval-thaw");
+  check(wrongPublisher.packet().terminal === "UNOBSERVED",
+    "A generic error from a different publication route cannot establish the NSIS preflight outcome");
+  wrongPublisher.diagnostic.restore();
+  const large = make();
+  large.updater.downloadedUpdateHelper.packageFile = "界".repeat(10000);
+  for (let i = 0; i < 80; i++) large.diagnostic.note("bounded", { ordinal: i });
+  const serialized = large.diagnostic.packet({ records: [] });
+  const bounded = JSON.parse(serialized);
+  check(Buffer.byteLength(serialized, "utf8") <= 65536 && bounded.records.length < 64 &&
+    bounded.records[0].ordinal === 0 && bounded.records.at(-1).ordinal === 79 && bounded.dropped > 0,
+  "Launcher packet trims projected evidence to valid UTF-8 bounded JSON while retaining first/last and drop counts");
+  check(bounded.records.at(-1).metadata.packageFile.endsWith("[truncated]"),
+    "Only projected oversized metadata is bounded with an explicit truncation marker");
+  large.diagnostic.restore();
+  const ownership = make();
+  const foreign = () => {};
+  ownership.wc.send = foreign;
+  assert.throws(() => ownership.diagnostic.restore(), /Launcher diagnostic restoration failed/);
+  check(ownership.wc.send === foreign && ownership.ipc.emit === ownership.originalEmit &&
+    ownership.model.disables === 1,
+  "Foreign observation ownership fails visibly without clobbering it or skipping independent restoration");
+
+  for (const [label, change] of [
+    ["no continuation entry", x => { x.model.entries = []; }],
+    ["foreign generation", x => { x.state.rendererGeneration++; }],
+    ["foreign page session", x => { x.state.rendererPageSession = "replacement"; }],
+    ["different request", x => { x.state.lastRequestId++; }],
+  ]) {
+    const mismatch = make();
+    mismatch.emit();
+    mismatch.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
+    mismatch.wc.send("update-status", payload);
+    change(mismatch);
+    mismatch.model.stack = "at continuation (C:\\repo\\src\\main.js:12720:9)";
+    mismatch.wc.send("quit-approval-thaw");
+    check(mismatch.packet().terminal === "UNOBSERVED",
+      "Ambiguous launcher correlation stays unobserved: " + label);
+    mismatch.diagnostic.restore();
+  }
+  const window = { getReloadRequestSession: () => "owned-page",
+    CustomTabs: { __shutdownFreeze: () => ({ frozen: true, id: 8, revision: 3 }) }, folia: {} };
+  let callback, disposed = 0;
+  window.folia.onQuitApprovalThaw = listener => { callback = listener; return () => { disposed++; }; };
+  window.folia.onUpdateStatus = () => { throw new Error("controlled second subscription failure"); };
+  const context = vm.createContext({ window });
+  vm.runInContext(rendererHelper + '\nobserveLauncherRenderer("owned-token")', context);
+  check(window.__installedLauncherDiagnostic.off.length === 1 &&
+    typeof window.__installedLauncherDiagnostic.off[0] === "function" &&
+    window.__installedLauncherDiagnostic.errors.includes("renderer setup unavailable"),
+  "Each obtained renderer disposer is retained before a later subscription can fail");
+  window.CustomTabs.__shutdownFreeze = () => { throw new Error("controlled freeze getter failure"); };
+  assert.doesNotThrow(() => callback());
+  check(window.__installedLauncherDiagnostic.errors.includes("renderer capture unavailable"),
+    "Passive renderer callbacks cannot throw into the production thaw delivery");
+  const collection = between(source, "      rendererDiagnostic = await boundedDialogWork(exec(`",
+    '), "Windows launcher diagnostic collection only", 1000);');
+  const expression = vm.runInNewContext(collection.slice(collection.indexOf("`")),
+    { launcherDiagnosticToken: "owned-token" });
+  const collected = vm.runInContext(expression, context);
+  check(disposed === 1 && collected.token === "owned-token" && !window.__installedLauncherDiagnostic,
+    "Actual bounded renderer collection disposes partial setup exactly once and retires only its owned buffer");
+  const callbacks = {};
+  let liveFreeze = { frozen: true, id: 8, revision: 3 }, liveDisposed = 0;
+  const liveWindow = { getReloadRequestSession: () => "owned-page",
+    CustomTabs: { __shutdownFreeze: () => liveFreeze }, folia: {
+      onQuitApprovalThaw: cb => { callbacks.thaw = cb; return () => { liveDisposed++; }; },
+      onUpdateStatus: cb => { callbacks.status = cb; return () => { liveDisposed++; }; },
+    } };
+  const liveContext = vm.createContext({ window: liveWindow });
+  vm.runInContext(rendererHelper + '\nobserveLauncherRenderer("owned-token")', liveContext);
+  callbacks.status({ status: "error" });
+  liveFreeze = { frozen: false, id: 0, revision: 3 };
+  callbacks.thaw();
+  const observed = liveWindow.__installedLauncherDiagnostic.records;
+  check(observed.at(-2).kind === "status" && observed.at(-2).freeze.id === 8 &&
+    observed.at(-1).kind === "thaw" && observed.at(-1).freeze.frozen === false &&
+    observed.at(-1).pageSession === "owned-page" &&
+    liveWindow.__installedLauncherDiagnostic.poll(false) === false,
+  "Passive renderer status/thaw receives retain owned page, receive order and real freeze state without inventing a wire id");
+  vm.runInContext(expression, liveContext);
+  check(liveDisposed === 2, "Both successful renderer subscriptions are retired by the actual collection path");
+  let starts = 0;
+  const brokenWindow = { folia: { installUpdate: () => { starts++; } } };
+  Object.defineProperty(brokenWindow, "__installedLauncherDiagnostic", {
+    get() { throw new Error("controlled observer property failure"); },
+  });
+  const brokenContext = vm.createContext({ window: brokenWindow, launcherDiagnostic: null,
+    launcherDiagnosticToken: "owned-token" });
+  brokenContext.exec = code => vm.runInContext(code, brokenContext);
+  const startSource = between(source, '  const start = () => {\n    launcherDiagnostic?.note("start");',
+    "\n\n  let launcherFailure = null;");
+  assert.doesNotThrow(() => vm.runInContext(rendererHelper + startSource + "\nstart()", brokenContext));
+  check(starts === 1, "Even renderer setup projection failure cannot block the unchanged original Install invocation");
+}
+
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => {
   let resolve, reject;
@@ -5724,7 +6046,8 @@ async function generationOwnedQuestionContracts() {
 
 (async () => {
   let failures = 0;
-  for (const run of [sourceContracts, backgroundSaveVersionContracts, consentContracts, requestContracts,
+  for (const run of [sourceContracts, backgroundSaveVersionContracts, installedLauncherDiagnosticContracts,
+    consentContracts, requestContracts,
     subscriptionContracts, sameTaskContracts, deliveryContracts,
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,
     inputMenuContracts, defaultFixtureCallerContracts, defaultFixtureOwnerContracts,

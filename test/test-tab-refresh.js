@@ -42154,6 +42154,253 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
   );
   const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, "resourcesPath");
   let updaterFixture;
+  let launcherDiagnostic = null;
+  // Passive route evidence, never a completion join or a replacement oracle.
+  const createLauncherDiagnostic = () => {
+    const records = [], invocations = [], errors = [], routes = [], assertions = [];
+    let sequence = 0, epoch = 0, cleanup = false, resetting = false, dropped = 0;
+    let prepared = null, stage = "setup", enabledTiming = false;
+    const restores = [], polls = new Map();
+    const text = value => {
+      try {
+        const result = String(value);
+        return result.length > 2048 ? result.slice(0, 2048) + "[truncated]" : result;
+      } catch { return "[unavailable]"; }
+    };
+    const scalar = value => value === undefined ? "[missing]" :
+      typeof value === "number" && !Number.isFinite(value) ? "[nonfinite]" :
+      value === null || ["boolean", "number", "string"].includes(typeof value)
+        ? typeof value === "string" ? text(value) : value : "[non-scalar]";
+    const pick = (value, fields) => Object.fromEntries(fields.map(key => [key, scalar(value?.[key])]));
+    const guard = work => {
+      try { return work(); }
+      catch { if (errors.length < 8) errors.push("diagnostic capture unavailable"); }
+    };
+    const append = (list, value) => {
+      list.push(value);
+      if (list.length > 64) { list.splice(16, 1); dropped++; }
+    };
+    const snapshot = () => {
+      const state = __shutdown.state(), helper = updater.downloadedUpdateHelper;
+      const timing = __shutdown.timing.state();
+      return {
+        state: pick(state, ["lastRequestId", "pendingId", "pendingReason", "commitPendingId",
+          "renderer", "rendererGeneration", "rendererPageSession", "authorized",
+          "shutdownPendingContinuationCount", "updateInstallStarted", "updaterFreezeRetained",
+          "updaterInstallAttemptId", "updaterInstallAttemptLaunchPhase",
+          "updaterInstallAttemptPositiveLaunchObserved"]),
+        lastAttempt: pick(state.updaterLastInstallAttempt,
+          ["id", "retrySafe", "launchPhase", "finalApprovalCommitted", "failureWhy"]),
+        metadata: { ...pick(updater, ["installerPath", "installDirectory", "quitAndInstallCalled"]),
+          helperVersion: scalar(helper?.versionInfo?.version), helperFile: scalar(helper?.file),
+          packageFile: scalar(helper?.packageFile), prepared },
+        timing: timing.requests.slice(-16).map(item => pick(item,
+          ["id", "reason", "settledAt", "continuationInvokedAt"])),
+        timingDropped: Math.max(0, timing.requests.length - 16),
+        childCount: children.length, spawnCount: spawnCalls.length,
+        child: pick(children[children.length - 1], ["pid", "unrefCalls"]),
+      };
+    };
+    const note = (kind, data = {}, stack = null) => guard(() => {
+      const record = { seq: ++sequence, epoch, stage, cleanup, resetting, kind,
+        ...data, ...snapshot(), stack: stack === null ? null : text(stack) };
+      append(records, record);
+      if (kind === "assertion" && data.ok === false && assertions.length < 8) assertions.push(record);
+      // These source locations are pinned by the existing Main binding and Source controls.
+      // Thaw has no wire id: only this exact post-return route can be correlated.
+      if (!cleanup && !resetting && kind === "send:return" && data.channel === "quit-approval-thaw" &&
+          /[\\/]src[\\/]main\.js:12720:\d+/.test(record.stack)) {
+        const id = record.state.lastRequestId;
+        const entry = record.timing.find(item => item.id === id && item.reason === "update-install" &&
+          Number.isFinite(item.continuationInvokedAt));
+        const publication = records.find(item => item.epoch === epoch && !item.cleanup && !item.resetting &&
+          item.kind === "send:return" && item.channel === "update-status" &&
+          item.payload?.error === "The downloaded update is incomplete. Download it again." &&
+          item.state.lastRequestId === id && /[\\/]src[\\/]main\.js:14009:\d+/.test(item.stack) &&
+          item.state.rendererGeneration === record.state.rendererGeneration &&
+          item.state.rendererPageSession === record.state.rendererPageSession &&
+          item.timing.some(clock => clock.id === id &&
+            clock.continuationInvokedAt === entry?.continuationInvokedAt));
+        const admitted = invocations.filter(item => item.epoch === epoch && item.admittedId === id);
+        if (entry && publication && admitted.length === 1 && routes.length < 8) routes.push({
+          requestId: id, invocation: admitted[0].ordinal, epoch,
+          publicationSeq: publication.seq, thawSeq: record.seq,
+          continuationEntry: entry.continuationInvokedAt,
+          generation: record.state.rendererGeneration, pageSession: record.state.rendererPageSession,
+          publicationMetadata: publication.metadata, thawMetadata: record.metadata,
+          outcome: "observed preflight publication and post-return-false thaw; NOT a consumer join",
+        });
+      }
+      return record;
+    });
+    const wrap = (target, key, channels, ingress) => {
+      const original = target[key];
+      const wrapper = function (channel, ...args) {
+        let owned = false, invocation = null, before = null, stack = null;
+        guard(() => {
+          owned = channels.includes(channel) && (!ingress || args[0]?.sender === wc);
+          if (!owned) return;
+          if (ingress && channel === "install-update") {
+            before = __shutdown.state().lastRequestId;
+            invocation = { ordinal: invocations.length + 1, epoch, admittedId: null };
+            append(invocations, invocation);
+          }
+          note(ingress ? "emit:entry" : "send:entry", { channel,
+            invocation: invocation?.ordinal ?? null,
+            mainFrame: ingress ? args[0]?.senderFrame === wc.mainFrame : null,
+            windowId: scalar(win.id), webContentsId: scalar(wc.id),
+            payload: pick(args[ingress ? 1 : 0],
+              ["id", "gen", "revision", "status", "error", "readyVersion", "availableVersion"]) }, stack);
+        });
+        try {
+          const result = Reflect.apply(original, this, arguments);
+          guard(() => {
+            if (!owned) return;
+            if (invocation) {
+              const after = __shutdown.state().lastRequestId;
+              if (Number.isSafeInteger(after) && after > before) invocation.admittedId = after;
+            }
+            if (!ingress && (channel === "quit-approval-thaw" ||
+                (channel === "update-status" && args[0]?.status === "error" &&
+                  args[0]?.error === "The downloaded update is incomplete. Download it again."))) {
+              stack = new Error().stack;
+            }
+            note(ingress ? "emit:return" : "send:return", { channel,
+              invocation: invocation?.ordinal ?? null, returned: scalar(result),
+              payload: pick(args[ingress ? 1 : 0],
+                ["id", "gen", "revision", "status", "error", "readyVersion", "availableVersion"]) }, stack);
+          });
+          return result;
+        } catch (error) {
+          guard(() => { if (owned) note(ingress ? "emit:throw" : "send:throw",
+            { channel, originalError: text(error?.message ?? error) }, stack); });
+          throw error;
+        }
+      };
+      const undo = replaceMethod(target, key, wrapper);
+      restores.push(() => {
+        if (target[key] !== wrapper) throw new Error("Launcher diagnostic method ownership changed: " + key);
+        undo();
+      });
+    };
+    return {
+      note,
+      install() {
+        guard(() => {
+          if (!__shutdown.timing.state().enabled) { __shutdown.timing.enable(); enabledTiming = true; }
+          wrap(ipcMain, "emit", ["install-update", "quit-approval-response",
+            "quit-approval-committed", "quit-approval-verified"], true);
+          wrap(wc, "send", ["quit-approval-request", "quit-approval-commit",
+            "quit-approval-verify", "update-status", "quit-approval-thaw"], false);
+        });
+      },
+      beforeReset() { note("before-reset"); resetting = true; epoch++; },
+      prepared(value) {
+        guard(() => { prepared = { candidate: scalar(value.candidate),
+          state: pick(value.state, ["status", "readyVersion", "availableVersion", "canInstall"]) }; });
+        resetting = false; note("prepared");
+      },
+      poll(label, value) {
+        guard(() => {
+          const current = JSON.stringify({ value, state: snapshot().state });
+          if (polls.get(label) !== current) { polls.set(label, current); note("poll", { label, value }); }
+        });
+        return value;
+      },
+      assertion(name, ok) { note("assertion", { name: text(name), ok: scalar(ok) }); },
+      stage(value) { stage = value; note("boundary"); },
+      bodyExit() { note("body-exit"); cleanup = true; },
+      packet(renderer) {
+        try {
+          const packet = { kind: "Windows launcher original-actor diagnostic", records: records.slice(),
+            invocations, assertions, routes, terminal: routes.length ? "ROUTE OBSERVED" : "UNOBSERVED",
+            consumerJoin: "UNOBSERVED: installUpdate is fire-and-forget",
+            exceptionCause: "UNOBSERVED: generic publication is not the caught NSIS exception",
+            renderer, errors, dropped,
+            thawCorrelation: {
+              wireId: "ABSENT; payload-free notification",
+              sent: records.filter(item => item.kind === "send:return" &&
+                item.channel === "quit-approval-thaw").map(item => item.seq),
+              received: renderer?.records?.filter(item => item.kind === "thaw").map(item => item.seq),
+              unmatched: "UNRESOLVED; no one-to-one pairing inferred from receipt or proximity",
+            } };
+          let json = JSON.stringify(packet);
+          while (Buffer.byteLength(json, "utf8") > 65536) {
+            const list = [packet.records, packet.renderer?.records, packet.assertions,
+              packet.routes, packet.invocations].filter(value => Array.isArray(value) && value.length > 2)
+              .sort((left, right) => right.length - left.length)[0];
+            if (!list) return '{"unavailable":"launcher diagnostic exceeded UTF-8 byte ceiling"}';
+            list.splice(1, 1);
+            packet.dropped++;
+            json = JSON.stringify(packet);
+          }
+          return json;
+        } catch { return '{"unavailable":"launcher diagnostic serialization failed"}'; }
+      },
+      restore() {
+        const failures = [];
+        for (const restore of restores.reverse()) {
+          try { restore(); } catch (error) { failures.push(error); }
+        }
+        if (enabledTiming) {
+          try { __shutdown.timing.disable(); } catch (error) { failures.push(error); }
+        }
+        if (failures.length) throw new AggregateError(failures, "Launcher diagnostic restoration failed");
+      },
+    };
+  };
+  const observeLauncherRenderer = token => {
+    try {
+      if (window.__installedLauncherDiagnostic) return;
+      const state = { token, pageSession: window.getReloadRequestSession(),
+        records: [], errors: [], off: [], seq: 0, dropped: 0, lastPoll: null };
+      window.__installedLauncherDiagnostic = state;
+      const record = (kind, data) => {
+        try {
+          const freeze = window.CustomTabs.__shutdownFreeze();
+          const fields = ["frozen", "id", "revision", "editorReadOnly", "wrapperInert",
+            "bodyInert", "deferredOperationCount", "deferredOperationsDropped"];
+          state.records.push({ seq: ++state.seq, kind,
+            pageSession: window.getReloadRequestSession(),
+            status: typeof data?.status === "string" ? data.status.slice(0, 2048) : null,
+            freeze: Object.fromEntries(fields.map(key => [key,
+              ["boolean", "number", "string"].includes(typeof freeze[key]) ? freeze[key] : "[missing]"])) });
+          if (state.records.length > 64) { state.records.splice(16, 1); state.dropped++; }
+        } catch { try {
+          if (state.errors.length < 8) state.errors.push("renderer capture unavailable");
+        } catch {} }
+      };
+      state.poll = value => {
+        try {
+          const current = JSON.stringify(window.CustomTabs.__shutdownFreeze());
+          if (current !== state.lastPoll) { state.lastPoll = current; record("thaw-poll", null); }
+        } catch { try {
+          if (state.errors.length < 8) state.errors.push("renderer poll unavailable");
+        } catch {} }
+        return value;
+      };
+      for (const [method, kind] of [["onQuitApprovalThaw", "thaw"], ["onUpdateStatus", "status"]]) {
+        const off = window.folia[method](value => record(kind, value));
+        state.off.push(off);
+        if (typeof off !== "function") throw new Error("Renderer diagnostic disposer unavailable");
+      }
+      record("installed", null);
+    } catch {
+      try {
+        const state = window.__installedLauncherDiagnostic;
+        if (state?.errors?.length < 8) state.errors.push("renderer setup unavailable");
+      } catch {}
+    }
+  };
+  let launcherDiagnosticToken = null;
+  const launcherCheck = (name, ok, detail) => {
+    launcherDiagnostic?.assertion(name, ok);
+    return check(name, ok, detail);
+  };
+  const launcherPoll = (label, value) => {
+    try { return launcherDiagnostic?.poll(label, value) ?? value; }
+    catch { return value; }
+  };
   const restoreFields = () => {
     for (const [name, descriptor] of descriptors) {
       if (descriptor) Object.defineProperty(updater, name, descriptor);
@@ -42162,13 +42409,17 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     if (resourcesDescriptor) Object.defineProperty(process, "resourcesPath", resourcesDescriptor);
     else delete process.resourcesPath;
   };
-  const setField = (name, value) =>
-    Object.defineProperty(updater, name, {
+  const setField = (name, value) => {
+    launcherDiagnostic?.note("metadata:before", { field: name });
+    const result = Object.defineProperty(updater, name, {
       value,
       writable: true,
       configurable: true,
       enumerable: false,
     });
+    launcherDiagnostic?.note("metadata:after", { field: name });
+    return result;
+  };
   const setLatch = (value) => setField("quitAndInstallCalled", value);
   const children = [];
   const spawnCalls = [];
@@ -42198,21 +42449,38 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     return child;
   });
   const reset = async () => {
+    launcherDiagnostic?.beforeReset();
     __shutdown.reset();
     rig.reset();
     spawnCalls.length = 0;
     nextSpawn = [];
     setLatch(false);
-    if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 8000)) {
+    if (!await waitForCondition(exec, `(() => {
+      const value = !window.CustomTabs.isDocumentFrozen();
+      try { window.__installedLauncherDiagnostic?.poll(value); } catch {}
+      return value;
+    })()`, 8000)) {
       throw new Error("Windows launcher fixture did not thaw before its next candidate");
     }
-    await updaterFixture.prepare();
+    const prepared = await updaterFixture.prepare();
+    launcherDiagnostic?.prepared(prepared);
   };
-  const start = () => exec(`window.folia.installUpdate(); null;`);
+  const start = () => {
+    launcherDiagnostic?.note("start");
+    let prefix = "";
+    try { prefix = `(${observeLauncherRenderer.toString()})(${JSON.stringify(launcherDiagnosticToken)});`; }
+    catch { launcherDiagnostic?.note("renderer installation unavailable"); }
+    return exec(prefix + `window.folia.installUpdate(); null;`);
+  };
 
   let launcherFailure = null;
   try {
     updaterFixture = createInstalledUpdaterFixture(exec, updater, installerPath);
+    try {
+      launcherDiagnosticToken = "launcher-" + require("node:crypto").randomUUID();
+      launcherDiagnostic = createLauncherDiagnostic();
+      launcherDiagnostic.install();
+    } catch {}
     write(installerPath, "f22 installer");
     write(packagePath, "f22 package");
     fs.mkdirSync(resourcesPath, { recursive: true });
@@ -42231,9 +42499,11 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     // update-downloaded occurs before downloadUpdate's promise tail. Its path
     // is visible to the UI, but cannot authorize installation or poison an
     // unrelated launcher while that tail is still outstanding.
+    launcherDiagnostic?.beforeReset();
     __shutdown.reset();
     rig.reset();
     const tail = await updaterFixture.prepare({ holdDownload: true });
+    launcherDiagnostic?.prepared(tail);
     try {
       const heldTail = __shutdown.state();
       await start();
@@ -42247,7 +42517,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       const afterFailedTail = __shutdown.state();
       await start();
       await sleep(100);
-      check(
+      launcherCheck(
         "a pending download tail owns update errors and invalidates its advertised installer path on failure",
         heldTail.updaterDownloadInFlight === true &&
           afterTailError.updaterDownloadInFlight === true &&
@@ -42273,16 +42543,19 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     // A custom /D or web package cannot be relayed safely, so it must fail
     // before creating a child or retaining an installation latch.
     await reset();
+    launcherDiagnostic?.stage("unsupported-directory");
     setField("installDirectory", "C:\\Unsupported Directory");
     const directoryRequestBefore = __shutdown.state().lastRequestId;
     await start();
     const unsupportedDirectoryRejected = await waitUntil(
       () =>
-        __shutdown.state().lastRequestId > directoryRequestBefore &&
-        __shutdown.state().updaterInstallAttemptId === 0,
+        launcherPoll("unsupported-directory",
+          __shutdown.state().lastRequestId > directoryRequestBefore &&
+          __shutdown.state().updaterInstallAttemptId === 0),
       5000,
     );
     const afterUnsupportedDirectory = __shutdown.state();
+    launcherDiagnostic?.stage("unsupported-package");
     setField("installDirectory", "");
     setField("downloadedUpdateHelper", {
       ...updater.downloadedUpdateHelper,
@@ -42293,15 +42566,16 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     await start();
     const unsupportedPackageRejected = await waitUntil(
       () =>
-        __shutdown.state().lastRequestId > packageRequestBefore &&
-        __shutdown.state().updaterInstallAttemptId === 0,
+        launcherPoll("unsupported-package",
+          __shutdown.state().lastRequestId > packageRequestBefore &&
+          __shutdown.state().updaterInstallAttemptId === 0),
       5000,
     );
     const afterUnsupportedPackage = __shutdown.state();
     const ordinaryHelper = { ...updater.downloadedUpdateHelper };
     delete ordinaryHelper.packageFile;
     setField("downloadedUpdateHelper", ordinaryHelper);
-    check(
+    launcherCheck(
       "unsupported Windows NSIS metadata fails closed before a launcher child exists",
       unsupportedDirectoryRejected &&
         unsupportedPackageRejected &&
@@ -42328,7 +42602,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     const directStarting = await waitUntil(() => spawnCalls.length === 1, 5000);
     const directBeforeSpawn = __shutdown.state();
     const directChild = children[children.length - 1];
-    check(
+    launcherCheck(
       "the final Windows approval is committed and frozen before any direct launcher proof",
       directStarting &&
         directBeforeSpawn.updaterInstallAttemptFinalApprovalCommitted === true &&
@@ -42344,7 +42618,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     const directAfterSpawn = __shutdown.state();
     await start();
     await sleep(100);
-    check(
+    launcherCheck(
       "a direct NSIS spawn proves one exact launcher hand-off under final phase-two approval and blocks duplicate auto-install",
       directStarting &&
         spawnCalls[0].command === installerPath &&
@@ -42399,7 +42673,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       () => __shutdown.state().updaterInstallAttemptId === 0,
       5000,
     );
-    check(
+    launcherCheck(
       "direct NSIS sync and pre-spawn failures fail closed and permit retry only because no launch was proven",
       afterDirectThrow &&
         directErrorReady &&
@@ -42422,7 +42696,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     await sleep(150);
     await start();
     await sleep(100);
-    check(
+    launcherCheck(
       "post-spawn NSIS ambiguity remains latched and cannot launch a duplicate installer",
       ambiguousReady &&
         __shutdown.state().updaterInstallAttemptPositiveLaunchObserved === true &&
@@ -42452,7 +42726,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     }
     const elevatedQuit = await waitUntil(() => rig.quits === 1, 5000);
     const elevatedState = __shutdown.state();
-    check(
+    launcherCheck(
       "EACCES retries through bundled elevate.exe and only exit zero proves the elevated installer hand-off",
       eaccesDirectReady &&
         elevatedReady &&
@@ -42478,12 +42752,34 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
   } finally {
     const stateBeforeCleanup = __shutdown.state();
     const failures = launcherFailure ? [launcherFailure] : [];
+    launcherDiagnostic?.bodyExit();
+    let rendererDiagnostic = { unavailable: "renderer observation not obtained" };
+    try {
+      rendererDiagnostic = await boundedDialogWork(exec(`(() => {
+        const state = window.__installedLauncherDiagnostic;
+        if (!state || state.token !== ${JSON.stringify(launcherDiagnosticToken)})
+          return { unavailable: 'renderer observation owner missing or changed' };
+        try {
+          for (const off of state.off) {
+            try { if (typeof off === 'function') off(); }
+            catch { if (state.errors.length < 8) state.errors.push('renderer unsubscribe unavailable'); }
+          }
+          return { token: state.token, pageSession: state.pageSession,
+            records: state.records, errors: state.errors, dropped: state.dropped };
+        } finally { delete window.__installedLauncherDiagnostic; }
+      })()`), "Windows launcher diagnostic collection only", 1000);
+    } catch {}
     for (const restore of [
       restoreSpawn, restoreFields, () => { if (updaterFixture) updaterFixture.restore(); },
       () => rig.restore(), () => __shutdown.reset(),
     ]) {
       try { await restore(); } catch (error) { failures.push(error); }
     }
+    try {
+      console.log("WINDOWS_LAUNCHER_DIAGNOSTIC " + (launcherDiagnostic
+        ? launcherDiagnostic.packet(rendererDiagnostic) : '{"unavailable":"diagnostic setup failed"}'));
+    } catch {}
+    try { launcherDiagnostic?.restore(); } catch (error) { failures.push(error); }
     if (failures.length) {
       throw new AggregateError(failures,
         "Windows launcher scenario or independent cleanup failed: " + JSON.stringify(stateBeforeCleanup));
