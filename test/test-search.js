@@ -80,6 +80,7 @@ const { inspectVisual, captureScreenshot, startErrorSentinel, proveSentinelAlive
   trapExternalOpens, waitForExternalTrap, tempDir, releaseTempDir: releaseFixture,
   REGISTERED_TEMP_DIRS } =
   require("./test-visual-utils");
+const {observeSearchRestore, runSearchRestoreContractChecks} = require("./test-search-restore-contract");
 releaseTempDir = releaseFixture;
 registeredTempDirs = REGISTERED_TEMP_DIRS;
 
@@ -577,6 +578,12 @@ function destroyOwnedWindows() {
 
 function releaseOwnedFixture(destruction) {
   if (!dir) return true;
+  if (terminalOwner?.kind === "finish" && terminalOwner.rendererCompleted !== true) {
+    retainedFixture = true;
+    registeredTempDirs.delete(dir);
+    destruction.retainedFixture = dir;
+    return false;
+  }
   if (!destruction.destroyed || retainedFixture) return false;
   registeredTempDirs.add(dir); // Safe sweep retries only after verified destruction.
   if (releaseTempDir(dir) !== true) return false;
@@ -1427,8 +1434,10 @@ async function run(win) {
 }
 
 async function runSearchLayoutCases(win) {
+  runSearchRestoreContractChecks(check);
   // The complete ordinary fixture/viewport sequence above precedes every resize.
   const bounds = win.getBounds();
+  const originalBoundsRequest = Object.freeze({...bounds});
   const contentBounds = win.getContentBounds();
   const viewport = await exec(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
   const browserZoom = ownedContents.getZoomFactor();
@@ -1578,7 +1587,13 @@ async function runSearchLayoutCases(win) {
         through:!!hit&&hit!==host&&!host.contains(hit),hit:hit&&{tag:hit.localName,id:hit.id}};
     })()`);
   };
+  const restoreObserver = observeSearchRestore(win, ownedContents, originalBoundsRequest);
   try {
+    check("search layout captures stable original geometry at native browser zoom",
+      browserZoom === 1 && JSON.stringify(bounds) === JSON.stringify(win.getBounds()) &&
+        JSON.stringify(contentBounds) === JSON.stringify(win.getContentBounds()) &&
+        viewport.width === contentBounds.width && viewport.height === contentBounds.height,
+      JSON.stringify({bounds,contentBounds,viewport,browserZoom}));
     const first = await sample("ordinary-viewport-after-complete-original-sequence");
     check("search layout starts after the original rendered With fixture and real admission",
       first.width>0&&first.height>0&&!saved.edit&&await exec(`document.querySelector('#viewer h1').textContent==='With' &&
@@ -1838,44 +1853,50 @@ async function runSearchLayoutCases(win) {
     await runSearchNativePointerCases(win);
     check("all added search layout cases reached their terminal point",true);
   } finally {
-    await bounded(ownedContents.debugger.sendCommand("Emulation.setEmulatedMedia",{media:""}),"terminal media restore",1500);
-    await exec(`(async () => {
-      if(window.__searchLayoutUnlisten)window.__searchLayoutUnlisten();
-      if(window.__searchLayoutTextUnlisten)window.__searchLayoutTextUnlisten();
-      await changeCurrentDocumentEditor(${saved.edit});
-      editorPanel.style.width=${JSON.stringify(saved.split)};
-      zoomLevel=${saved.zoom};updateZoom({persist:false});
-      document.documentElement.style.setProperty('--toc-width',${JSON.stringify(saved.token)});
-      setIndexVisible(${saved.toc});
-      if(!searchPanel.classList.contains('visible'))toggleSearchPanel();
-      searchPanel.scrollTop=0;
-      return true;
-    })()`);
-    win.setMinimumSize(...minimum);
-    win.setBounds(bounds);
-    await exec(`renderMarkdown(window.__docWith,'full')`);
-    await exec(typeScript("needle"));
-    await waitFor(exec,"original With highlights after layout restoration",`document.querySelector('#viewer h1').textContent==='With'&&
-      !loadingScreen.classList.contains('active')&&searchMatches.length===12&&pendingSearchTerm===null&&
-      searchMatches.every(match=>match.isConnected&&viewer.contains(match))`,4000);
-    const restoredBounds = win.getBounds();
-    const restoredContentBounds = win.getContentBounds();
-    const restoredViewport = await exec(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
-    const restoredBrowserZoom = ownedContents.getZoomFactor();
-    const restoredOwner = await exec(`(() => {
-      const dirty = hasUnsavedWork();
-      const descriptor = window.CustomTabs.getDocumentDescriptor();
-      if (!descriptor) throw new Error("Search layout restoration has no active document descriptor");
-      return {dirty,logicalPath:descriptor.logicalPath,ref:descriptor.ref};
-    })()`);
-    const admissionCurrent = main.__shutdown.documentAdmissionIsCurrent(saved.ref);
-    check("search layout restores original window bounds and clean document ownership",
-      JSON.stringify(restoredBounds)===JSON.stringify(bounds)&&!restoredOwner.dirty&&
-        restoredOwner.logicalPath===file&&restoredOwner.ref===saved.ref&&admissionCurrent,
-      JSON.stringify({expectedBounds:bounds,restoredBounds,originalContentBounds:contentBounds,
-        restoredContentBounds,originalViewport:viewport,restoredViewport,browserZoom,restoredBrowserZoom,
-        originalMinimumSize:minimum,expectedLogicalPath:file,expectedRef:saved.ref,
-        restoredOwner,admissionCurrent}));
+    try {
+      await bounded(ownedContents.debugger.sendCommand("Emulation.setEmulatedMedia",{media:""}),"terminal media restore",1500);
+      await exec(`(async () => {
+        if(window.__searchLayoutUnlisten)window.__searchLayoutUnlisten();
+        if(window.__searchLayoutTextUnlisten)window.__searchLayoutTextUnlisten();
+        await changeCurrentDocumentEditor(${saved.edit});
+        editorPanel.style.width=${JSON.stringify(saved.split)};
+        zoomLevel=${saved.zoom};updateZoom({persist:false});
+        document.documentElement.style.setProperty('--toc-width',${JSON.stringify(saved.token)});
+        setIndexVisible(${saved.toc});
+        if(!searchPanel.classList.contains('visible'))toggleSearchPanel();
+        searchPanel.scrollTop=0;
+        return true;
+      })()`);
+      win.setMinimumSize(...minimum);
+      win.setBounds(bounds);
+      await exec(`renderMarkdown(window.__docWith,'full')`);
+      await exec(typeScript("needle"));
+      await waitFor(exec,"original With highlights after layout restoration",`document.querySelector('#viewer h1').textContent==='With'&&
+        !loadingScreen.classList.contains('active')&&searchMatches.length===12&&pendingSearchTerm===null&&
+        searchMatches.every(match=>match.isConnected&&viewer.contains(match))`,4000);
+      const before = restoreObserver.snapshot();
+      const restoredViewport = await exec(`({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})`);
+      const restoredBrowserZoom = ownedContents.getZoomFactor();
+      const restoredOwner = await exec(`(() => {
+        const dirty = hasUnsavedWork();
+        const descriptor = window.CustomTabs.getDocumentDescriptor();
+        if (!descriptor) throw new Error("Search layout restoration has no active document descriptor");
+        return {dirty,logicalPath:descriptor.logicalPath,ref:descriptor.ref};
+      })()`);
+      const admissionCurrent = main.__shutdown.documentAdmissionIsCurrent(saved.ref);
+      const after = restoreObserver.snapshot();
+      const restore = restoreObserver.verify(before, restoredViewport, after, minimum, browserZoom, viewport.dpr);
+      stage("search-layout-restore-contract", restore);
+      check("search layout requests original bounds and retains stable coherent native geometry and clean document ownership",
+        restore.requests && restore.stable && restore.coherent && restoredBrowserZoom === browserZoom && !restoredOwner.dirty&&
+          restoredOwner.logicalPath===file&&restoredOwner.ref===saved.ref&&admissionCurrent,
+        JSON.stringify({restore,originalContentBounds:contentBounds,
+          originalViewport:viewport,restoredViewport,browserZoom,restoredBrowserZoom,
+          originalMinimumSize:minimum,expectedLogicalPath:file,expectedRef:saved.ref,
+          restoredOwner,admissionCurrent}));
+    } finally {
+      check("search layout releases its own restore observer", restoreObserver.dispose());
+    }
   }
 }
 
@@ -2115,12 +2136,34 @@ async function finish(error, completed) {
     try { check("the owned terminal path completed without a veto", false, cleanupError.message); }
     catch (_) { secondary("terminal failure could not be printed"); }
   } finally {
+    const contents = ownedContents;
+    let destroyedEventObserved = false;
+    let onDestroyed;
+    const destroyed = new Promise((resolve, reject) => {
+      if (!contents || contents.isDestroyed()) {
+        reject(new Error("the owned renderer was not live when terminal destruction was armed"));
+        return;
+      }
+      onDestroyed = () => { destroyedEventObserved = true; resolve(); };
+      contents.once("destroyed", onDestroyed);
+    });
     const destruction = cleanupOwner(owner);
     try {
       check("owned-window destruction completed without an exception",
         destruction.errors.length === 0, JSON.stringify(destruction));
       check("the exact owned windows are destroyed before the watched fixture is released",
         destruction.destroyed, JSON.stringify(destruction));
+      // Window destruction alone does not await Main's webContents destroyed handler.
+      await bounded(Promise.race([
+        destroyed, owner.aborted.then(error => { throw error; }),
+      ]), "owned renderer destroyed event");
+      const shutdown = main.__shutdown.state();
+      owner.rendererCompleted = destroyedEventObserved && contents.isDestroyed() &&
+        destruction.destroyed && shutdown.renderer === "unusable" &&
+        shutdown.rendererUnusableReason === "webContents destroyed";
+      check("the actual owned renderer destroyed event settles Main before the definitive footer",
+        owner.rendererCompleted, JSON.stringify(shutdown));
+      if (!owner.rendererCompleted) throw new Error("owned renderer destruction did not settle Main");
       const released = releaseOwnedFixture(destruction);
       check("the watched fixture was verifiably released after destroying its owner",
         released, retainedFixture ? "retained unsafe fixture (excluded from shared sweeps): " + dir
@@ -2129,6 +2172,8 @@ async function finish(error, completed) {
       terminalFailed = true;
       try { check("the watched fixture was released after destroying its owner", false, cleanupError.message); }
       catch (_) { secondary("fixture cleanup failure could not be printed"); }
+    } finally {
+      if (onDestroyed) contents.removeListener("destroyed", onDestroyed);
     }
     if (owner.emergency &&
         !results.some(result => result.name === "the owned terminal path completed without a veto")) {

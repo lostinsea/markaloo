@@ -128,13 +128,107 @@ section is kept here so the register has a visible edge.
     or harmless. Existing assertions, 180 s watchdog and future gates stay.
     The independently reviewed repair is saved locally as `12bb7dab`; this
     commit's earlier hold is superseded by that user decision.
-- `v013-reading-history` - **APPROVED; READY AFTER CURRENT NOTES UNIT**.
+- `v013-reading-history` - **APPROVED; UNWIRED MODEL; SEARCH BASELINE QUALIFIED**.
   - Keep ten total reading locations per open tab for explicit heading/link/
     search jumps. Coalesce typed previews, including the first return point.
     Preserve file-history arrows, editing state and platform shortcut ownership.
   - Add Back/Forward before Reload. Use standard native mouse commands only
     where the small route can be qualified; no hooks or new dependencies.
-- `v013-mode-position` - **APPROVED; READY AFTER CURRENT NOTES UNIT**.
+  - Notes are saved locally as `58c90b1f`. The next baseline freezes that
+    post-notes product and its fixtures, not released `8fe`. The granted
+    serialized batch covers TOC, search, toolbar, document-editor, bounded
+    scroll core/transitions/input/rich and the existing performance route.
+    No feature source changes precede it. Fresh Astra design is handed to
+    independent Sol/Luna review; implementation and qualification remain.
+    The original full-scroll timeout stays OPEN and outside this batch.
+  - First post-notes receipts: TOC 43/43; search 105/106. The exact window
+    restoration assertion observes outer height 802 to 804 and content height
+    770 to 772, with DPR 1.25, browser zoom 1 and clean document ownership.
+    The internal cause was not established by that first receipt. The original failure
+    is retained. The parent grants focused classification/diagnosis and the
+    remaining independent baselines; no tolerance change or green retry.
+    Navigation/mode behavioral edits wait for this restore classification.
+  - Remaining frozen post-notes baselines pass: toolbar 47/47, document-editor
+    60/60, scroll core 7/7, transitions 45/45, input 48/48, rich 21/21 and the
+    existing performance route 7/7. Each final native route has an observed
+    exit, matching assertion/footer accounting and unchanged source/runtime.
+    The first direct-GUI core launch is retained but unqualified because its
+    launcher did not observe the child exit. The reviewed CLI launch fixes
+    that observation defect; it does not change the suite.
+  - The independently reviewed observation-only restore diagnostic reproduces
+    search 105/106 on the frozen product. Its geometry ledger has no dropped
+    records, observation errors or missing required phases. Original and
+    diagnostic failures/captures remain separate. The saved geometry is stable;
+    the first fixture request for the original height 802 records 804 in its
+    synchronous resize event and post-call bounds snapshot. The second identical
+    request stays 804, and the renderer adopts 772
+    before the final stable sample. No observed later product setter or display/
+    state change explains it. This establishes a native API round-trip mismatch,
+    not its exact internal converter or a Markaloo resize.
+    No product repair or exact original-size oracle is demonstrated. The user
+    selected **Check the correct restore request and stable native geometry**
+    in the coordinator. The original 105/106 receipt remains retained. The
+    corrected fixture must check the actual original
+    request, completed/coherent native and renderer geometry, document ownership
+    and no later drift; it no longer proves exact original-size restoration.
+    No tolerance, offset, extra wait or geometry workaround is adopted.
+    The diagnostic batch is complete, no owned Electron remains and its native
+    slot is released. The temporary launcher is archived and removed.
+    The next serialized slot is granted for corrected full Search and narrow
+    sensitive controls, with the post-notes product still frozen at `58c90b1f`.
+    Sol implemented Astra's bounded fixture design with an invocation-local
+    observer and shared pure controls. The original sizing actors remain;
+    detached original request identity, native/renderer coherence and no later
+    drift are separate requirements. Pure controls pass 17/17 and anchors
+    resolve. Sol caught mismatched
+    stdout/report totals in the driver; Luna caught missing move-only
+    out-and-back coverage. Both corrections are written, and both independent
+    final delta reviews are clear. Corrected full Search passes 125/125 with
+    observed exit 0 and matching raw report/stdout. Both requests retain the
+    captured original 802 height; native/content/renderer remain coherent at
+    804/772/772 through verification. This is not exact-original-size restoration.
+    R1348's child has exactly the intended failures and 122/125, but its proof
+    is UNUSABLE because the harness rejects a post-footer unprefixed transcript.
+    The other selected controls were unrun in that batch. It stopped with hashes
+    restored, no owned Electron and unchanged protected process identities;
+    its native slot is released. The current images were viewed and all raw
+    receipts retained. That invocation does not qualify sensitivity.
+    Astra traced a separate source-backed fixture gap: window destruction
+    does not await Main's owned webContents destroyed handler before the footer.
+    The user-approved correction arms that actual event before the unchanged
+    destruction actor, uses the existing bounded/owner-abort path, and verifies
+    Main's existing unusable state before fixture release and reporting.
+    Actual-source VM controls pass, including wrong state, veto and omitted-await
+    sensitivity. Both independent actual-change reviews are clear, including the
+    corrected preload entry and frozen inputs. The granted corrected batch is
+    complete: Search 126/126; R1348-R1351 each PROVEN with their exact failure
+    sets and independent passing controls. Complete nested stdout/stderr and
+    child exit/command identities are retained separately. The actual Main
+    destroyed-handler warning precedes each new stdout footer; no cross-stream
+    order is inferred. All frozen inputs are restored, no owned Electron remains,
+    protected process identities are unchanged and the native slot is released.
+    The fresh captures were viewed. Both final independent evidence rechecks are
+    clear, with no remaining blocking disagreement. The selected Search baseline
+    gate is satisfied; approved navigation/mode integration may continue.
+    No old-input probe was run; the exact
+    historical R1348 stdout remains unproved. Health rules, fatal synchronous
+    exit, sentinels, assertions and deadlines are unchanged.
+  - The approved pure timeline is written separately in
+    `src/reading-history.js`, with `node test\test-reading-history.js` 37/37.
+    Fresh independent Sol/Luna code and final evidence reviews are clear for
+    this unwired slice: ten total entries, immutable values, stable IDs and
+    success-only staged changes. In-memory sensitivity checks retain exact
+    failures and independent passing controls. The suite uses the required FAIL
+    evidence separator, and existing anchors resolve. These are not registered
+    harness proofs or native qualification. No app script loading, package/
+    aggregate registration or observable navigation/mode behavior is changed.
+  - Independent Sol/Luna design rechecks are clear after the ancestor-chain
+    correction. One owner must prove/cancel inner and outer movement and
+    text visibility through clips; nested alignment remains one location.
+    Sol identified the gap, Astra agreed, and both reviewers accept the
+    correction. Actual implementation, sensitive proofs and native review
+    remain; design clearance is not feature implementation or qualification.
+- `v013-mode-position` - **APPROVED; POST-NOTES BASELINES AND DESIGN REVIEW**.
   - Preserve visible content when entering/leaving Split; do not record a
     navigation step. Preserve actual exit position and existing Discard rules.
   - Qualify content-relative anchors, pending-render/user-intent ownership,
@@ -308,7 +402,7 @@ section is kept here so the register has a visible edge.
     attribution. Source/driver freezes held through both runs; owned native
     processes exited and the slot is released. Final independent Sol/Luna
     evidence rechecks are clear, with no blocking disagreement. This unit is
-    ready to commit locally before the approved navigation/mode work resumes.
+    saved locally as `58c90b1f`; approved navigation/mode work resumes next.
   - The granted batch used fresh owned profiles after process preflight,
     one native process at a time. This is feature qualification, not an
     original-timeout diagnostic; the installed application was not reused.
