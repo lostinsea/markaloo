@@ -267,6 +267,7 @@ check_html_script "file-helpers-core.js"
 check_html_script "emoji-map.js"
 check_html_script "emoji-parser.js"
 check_html_script "reading-history.js"
+check_html_script "reading-viewport.js"
 
 if node -e "
   const fs = require('fs');
@@ -280,6 +281,7 @@ if node -e "
   const renderer = '<script src=\"renderer.js\"></script>';
   const customTabs = '<script src=\"custom-tabs.js\"></script>';
   const readingHistory = '<script src=\"reading-history.js\"></script>';
+  const readingViewport = '<script src=\"reading-viewport.js\"></script>';
   const emojiMapAt = html.indexOf(emojiMap);
   const emojiParserAt = html.indexOf(emojiParser);
   const utilsAt = html.indexOf(utils);
@@ -289,12 +291,17 @@ if node -e "
   const rendererAt = html.indexOf(renderer);
   const customTabsAt = html.indexOf(customTabs);
   const readingHistoryAt = html.indexOf(readingHistory);
+  const readingViewportAt = html.indexOf(readingViewport);
   process.exit(
     emojiMapAt >= 0 &&
       readingHistoryAt >= 0 &&
       rendererAt > readingHistoryAt &&
       customTabsAt > readingHistoryAt &&
       html.indexOf(readingHistory, readingHistoryAt + readingHistory.length) === -1 &&
+      readingViewportAt >= 0 &&
+      rendererAt > readingViewportAt &&
+      customTabsAt > readingViewportAt &&
+      html.indexOf(readingViewport, readingViewportAt + readingViewport.length) === -1 &&
       emojiParserAt > emojiMapAt &&
       utilsAt > emojiParserAt &&
       rendererAt > emojiParserAt &&
@@ -363,6 +370,7 @@ check_build_file "file-helpers.js"
 check_build_file "emoji-map.js"
 check_build_file "emoji-parser.js"
 check_build_file "reading-history.js"
+check_build_file "reading-viewport.js"
 
 if [ "$MISSING_BUILD" -eq 1 ]; then
   echo "   ✗ One or more required customizations are missing from build.files"

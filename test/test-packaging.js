@@ -1379,11 +1379,11 @@ async function main() {
   // 2. Scripts and stylesheets loaded by the renderer document.
   const indexHtml = read("src/index.html");
   const historyTag = '<script src="reading-history.js"></script>';
-  function readingHistoryLoadIsValid(html) {
+  function readingHistoryLoadIsValid(html, scriptTag = historyTag) {
     const source = html.replace(/<!--[\s\S]*?-->/g, "");
-    const at = source.indexOf(historyTag);
+    const at = source.indexOf(scriptTag);
     return at >= 0 &&
-      source.indexOf(historyTag, at + historyTag.length) === -1 &&
+      source.indexOf(scriptTag, at + scriptTag.length) === -1 &&
       at < source.indexOf('<script src="renderer.js"></script>') &&
       at < source.indexOf('<script src="custom-tabs.js"></script>');
   }
@@ -1416,10 +1416,10 @@ async function main() {
     /check_html_script\(\) \{[\s\S]*?if node -e "([\s\S]*?)"; then/)?.[1];
   const maintenanceOrder = [...historyMaintenance.matchAll(/if node -e "([\s\S]*?)"; then/g)]
     .find(match => match[1].includes("const readingHistory ="))?.[1];
-  function maintenanceAccepts(body, html) {
+  function maintenanceAccepts(body, html, script = "reading-history.js") {
     if (typeof body !== "string") return false;
     const exits = [];
-    require("node:vm").runInNewContext(body.replace(/\\"/g, '"').replace(/\$script/g, "reading-history.js"), {
+    require("node:vm").runInNewContext(body.replace(/\\"/g, '"').replace(/\$script/g, script), {
       require(name) {
         if (name !== "fs") throw new Error("Unexpected maintenance module: " + name);
         return { readFileSync(file, encoding) {
@@ -1434,7 +1434,7 @@ async function main() {
     return exits.length === 1 && exits[0] === 0;
   }
   const maintenanceFixture = [
-    "reading-history.js", "emoji-map.js", "emoji-parser.js", "utils.js", "mermaid-config.js",
+    "reading-history.js", "reading-viewport.js", "emoji-map.js", "emoji-parser.js", "utils.js", "mermaid-config.js",
     "context-menu-utils.js", "file-helpers-core.js", "renderer.js", "custom-tabs.js",
   ].map(name => '<script src="' + name + '"></script>').join("\n");
   const commentedHistory = maintenanceFixture.replace(historyTag, "<!--" + historyTag + "-->");
@@ -1450,6 +1450,39 @@ async function main() {
   check("actual maintenance order rejects duplicate and late history scripts",
     !maintenanceAccepts(maintenanceOrder, historyTag + maintenanceFixture) &&
       !maintenanceAccepts(maintenanceOrder, missingHistory + historyTag));
+  const viewportTag = '<script src="reading-viewport.js"></script>';
+  const viewportLoadFixture = viewportTag + '<script src="renderer.js"></script>' +
+    '<script src="custom-tabs.js"></script>';
+  check("reading viewport foundation is included in application package files",
+    files.includes("src/reading-viewport.js") && isPackaged(files, "src/reading-viewport.js"));
+  check("reading viewport foundation loads exactly once before renderer and tabs",
+    readingHistoryLoadIsValid(indexHtml, viewportTag));
+  check("reading viewport load oracle accepts correct dependency order",
+    readingHistoryLoadIsValid(viewportLoadFixture, viewportTag));
+  check("reading viewport load oracle rejects missing duplicate late and commented scripts",
+    !readingHistoryLoadIsValid(viewportLoadFixture.replace(viewportTag, ""), viewportTag) &&
+      !readingHistoryLoadIsValid(viewportTag + viewportLoadFixture, viewportTag) &&
+      !readingHistoryLoadIsValid(viewportLoadFixture.replace(viewportTag, "") + viewportTag, viewportTag) &&
+      !readingHistoryLoadIsValid(viewportLoadFixture.replace(viewportTag, "<!--" + viewportTag + "-->"), viewportTag));
+  check("upstream maintenance checks reading viewport loading order and package inclusion",
+    historyMaintenance.includes('check_html_script "reading-viewport.js"') &&
+      historyMaintenance.includes('check_build_file "reading-viewport.js"') &&
+      historyMaintenance.includes("readingViewportAt >= 0 &&") &&
+      historyMaintenance.includes("rendererAt > readingViewportAt &&") &&
+      historyMaintenance.includes("customTabsAt > readingViewportAt &&") &&
+      historyMaintenance.includes(
+        "html.indexOf(readingViewport, readingViewportAt + readingViewport.length) === -1"));
+  const missingViewport = maintenanceFixture.replace(viewportTag, "");
+  const commentedViewport = maintenanceFixture.replace(viewportTag, "<!--" + viewportTag + "-->");
+  check("actual maintenance presence accepts a correct viewport script and rejects missing and commented scripts",
+    maintenanceAccepts(maintenancePresence, maintenanceFixture, "reading-viewport.js") &&
+      !maintenanceAccepts(maintenancePresence, missingViewport, "reading-viewport.js") &&
+      !maintenanceAccepts(maintenancePresence, commentedViewport, "reading-viewport.js"));
+  check("actual maintenance order rejects missing commented duplicate and late viewport scripts",
+    !maintenanceAccepts(maintenanceOrder, missingViewport) &&
+      !maintenanceAccepts(maintenanceOrder, commentedViewport) &&
+      !maintenanceAccepts(maintenanceOrder, viewportTag + maintenanceFixture) &&
+      !maintenanceAccepts(maintenanceOrder, missingViewport + viewportTag));
   const reloadScript = '<script src="reload-request.js"></script>';
   const reloadScriptAt = indexHtml.indexOf(reloadScript);
   const reloadRenderer = read("src/renderer.js");
@@ -3603,6 +3636,7 @@ async function main() {
   {
     const featureCommands = {
       "test:reading-history": "node test/test-reading-history.js",
+      "test:reading-viewport": "node test/test-reading-viewport.js",
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
@@ -6549,6 +6583,7 @@ async function main() {
             // components require it. It has since been deleted.
             for (const rel of [
               "src/reading-history.js",
+              "src/reading-viewport.js",
               "libs/vendor/marked.min.js",
               "libs/vendor/mermaid.min.js",
               "libs/vendor/purify.min.js",

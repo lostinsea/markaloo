@@ -39,6 +39,17 @@ This approach means after an upstream merge, you only need to ensure these files
   the standard feature gate. Packaging checks cover the source allowlist and
   loading order; built-archive and native integration claims remain separate.
 
+### Reading viewport ownership foundation
+
+- `src/reading-viewport.js` separates genuine navigation intent from permission
+  to write the current source, render and layout's viewport.
+- Rebuilds can retire viewport work without borrowing a newer user intent.
+  Cancellation needs its issued receipt and stops writing when another owner wins.
+- The pure model is loaded and packaged. Renderer, tab-lifecycle and input
+  bridges are not connected yet. It does not certify scrolling completion.
+- `npm run test:reading-viewport` is part of the feature gate. Native behavior,
+  built archives and the remaining history integration need separate evidence.
+
 ### Document history controls
 
 - Compact Undo and Redo buttons sit beside Save in the Raw Markdown toolbar.
