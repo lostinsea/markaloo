@@ -1378,6 +1378,78 @@ async function main() {
 
   // 2. Scripts and stylesheets loaded by the renderer document.
   const indexHtml = read("src/index.html");
+  const historyTag = '<script src="reading-history.js"></script>';
+  function readingHistoryLoadIsValid(html) {
+    const source = html.replace(/<!--[\s\S]*?-->/g, "");
+    const at = source.indexOf(historyTag);
+    return at >= 0 &&
+      source.indexOf(historyTag, at + historyTag.length) === -1 &&
+      at < source.indexOf('<script src="renderer.js"></script>') &&
+      at < source.indexOf('<script src="custom-tabs.js"></script>');
+  }
+  const historyLoadFixture = historyTag + '<script src="renderer.js"></script>' +
+    '<script src="custom-tabs.js"></script>';
+  check("reading history foundation is included in application package files",
+    files.includes("src/reading-history.js") && isPackaged(files, "src/reading-history.js"));
+  check("reading history foundation loads exactly once before renderer and tabs",
+    readingHistoryLoadIsValid(indexHtml));
+  check("reading history load oracle accepts correct dependency order",
+    readingHistoryLoadIsValid(historyLoadFixture));
+  check("reading history load oracle rejects a missing script",
+    !readingHistoryLoadIsValid(historyLoadFixture.replace(historyTag, "")));
+  check("reading history load oracle rejects duplicate scripts",
+    !readingHistoryLoadIsValid(historyTag + historyLoadFixture));
+  check("reading history load oracle rejects a script after its consumers",
+    !readingHistoryLoadIsValid(historyLoadFixture.replace(historyTag, "") + historyTag));
+  check("reading history load oracle rejects a commented out script",
+    !readingHistoryLoadIsValid(historyLoadFixture.replace(historyTag, "<!--" + historyTag + "-->")));
+  const historyMaintenance = read("scripts/post-upstream-merge.sh");
+  check("upstream maintenance checks reading history loading order and package inclusion",
+    historyMaintenance.includes('check_html_script "reading-history.js"') &&
+      historyMaintenance.includes('check_build_file "reading-history.js"') &&
+      historyMaintenance.includes("readingHistoryAt >= 0 &&") &&
+      historyMaintenance.includes("rendererAt > readingHistoryAt &&") &&
+      historyMaintenance.includes("customTabsAt > readingHistoryAt &&") &&
+      historyMaintenance.includes(
+        "html.indexOf(readingHistory, readingHistoryAt + readingHistory.length) === -1"));
+  const maintenancePresence = historyMaintenance.match(
+    /check_html_script\(\) \{[\s\S]*?if node -e "([\s\S]*?)"; then/)?.[1];
+  const maintenanceOrder = [...historyMaintenance.matchAll(/if node -e "([\s\S]*?)"; then/g)]
+    .find(match => match[1].includes("const readingHistory ="))?.[1];
+  function maintenanceAccepts(body, html) {
+    if (typeof body !== "string") return false;
+    const exits = [];
+    require("node:vm").runInNewContext(body.replace(/\\"/g, '"').replace(/\$script/g, "reading-history.js"), {
+      require(name) {
+        if (name !== "fs") throw new Error("Unexpected maintenance module: " + name);
+        return { readFileSync(file, encoding) {
+          if (file !== "src/index.html" || encoding !== "utf8") {
+            throw new Error("Unexpected maintenance input: " + file);
+          }
+          return html;
+        } };
+      },
+      process: { exit(code) { exits.push(code); } },
+    }, { timeout: 1000 });
+    return exits.length === 1 && exits[0] === 0;
+  }
+  const maintenanceFixture = [
+    "reading-history.js", "emoji-map.js", "emoji-parser.js", "utils.js", "mermaid-config.js",
+    "context-menu-utils.js", "file-helpers-core.js", "renderer.js", "custom-tabs.js",
+  ].map(name => '<script src="' + name + '"></script>').join("\n");
+  const commentedHistory = maintenanceFixture.replace(historyTag, "<!--" + historyTag + "-->");
+  const missingHistory = maintenanceFixture.replace(historyTag, "");
+  check("actual maintenance loader bodies accept a correct shell fixture",
+    maintenanceAccepts(maintenancePresence, maintenanceFixture) &&
+      maintenanceAccepts(maintenanceOrder, maintenanceFixture));
+  check("actual maintenance presence rejects missing and commented history scripts",
+    !maintenanceAccepts(maintenancePresence, missingHistory) &&
+      !maintenanceAccepts(maintenancePresence, commentedHistory));
+  check("actual maintenance order rejects a commented history script",
+    !maintenanceAccepts(maintenanceOrder, commentedHistory));
+  check("actual maintenance order rejects duplicate and late history scripts",
+    !maintenanceAccepts(maintenanceOrder, historyTag + maintenanceFixture) &&
+      !maintenanceAccepts(maintenanceOrder, missingHistory + historyTag));
   const reloadScript = '<script src="reload-request.js"></script>';
   const reloadScriptAt = indexHtml.indexOf(reloadScript);
   const reloadRenderer = read("src/renderer.js");
@@ -3530,6 +3602,7 @@ async function main() {
   // Electron controllers that the older direct-electron census cannot see.
   {
     const featureCommands = {
+      "test:reading-history": "node test/test-reading-history.js",
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
@@ -6475,6 +6548,7 @@ async function main() {
             // prism-clike.min.js was never vendored and 8 of its 14 language
             // components require it. It has since been deleted.
             for (const rel of [
+              "src/reading-history.js",
               "libs/vendor/marked.min.js",
               "libs/vendor/mermaid.min.js",
               "libs/vendor/purify.min.js",

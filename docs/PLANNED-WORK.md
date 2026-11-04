@@ -128,7 +128,7 @@ section is kept here so the register has a visible edge.
     or harmless. Existing assertions, 180 s watchdog and future gates stay.
     The independently reviewed repair is saved locally as `12bb7dab`; this
     commit's earlier hold is superseded by that user decision.
-- `v013-reading-history` - **APPROVED; UNWIRED MODEL; SEARCH BASELINE QUALIFIED**.
+- `v013-reading-history` - **FOUNDATION QUALIFIED; CONSUMERS UNWIRED; SEARCH BASELINE QUALIFIED**.
   - Keep ten total reading locations per open tab for explicit heading/link/
     search jumps. Coalesce typed previews, including the first return point.
     Preserve file-history arrows, editing state and platform shortcut ownership.
@@ -213,15 +213,33 @@ section is kept here so the register has a visible edge.
     No old-input probe was run; the exact
     historical R1348 stdout remains unproved. Health rules, fatal synchronous
     exit, sentinels, assertions and deadlines are unchanged.
-  - The approved pure timeline is written separately in
-    `src/reading-history.js`, with `node test\test-reading-history.js` 37/37.
-    Fresh independent Sol/Luna code and final evidence reviews are clear for
-    this unwired slice: ten total entries, immutable values, stable IDs and
-    success-only staged changes. In-memory sensitivity checks retain exact
-    failures and independent passing controls. The suite uses the required FAIL
-    evidence separator, and existing anchors resolve. These are not registered
-    harness proofs or native qualification. No app script loading, package/
-    aggregate registration or observable navigation/mode behavior is changed.
+  - Search qualification is saved locally as `0a956d41`. The pure timeline
+    foundation in `src/reading-history.js` now has its Node feature gate,
+    explicit package entry and shell loading before renderer/tab consumers.
+    `npm run test:reading-history` passes 37/37. Its previously reviewed
+    semantics remain unchanged: ten total entries, immutable values, stable
+    IDs and success-only staged changes. Navigation/mode consumers remain
+    unwired; no native integration or built-archive qualification is claimed.
+    Source packaging passes 503/0 with two built-asar skips.
+    R1352-R1367 are individually PROVEN with exact failures and independent
+    controls; R1194/R1333/R1340 also remain PROVEN. All anchors resolve.
+    Independent review corrections are written: Luna found maintenance could
+    accept a commented script; Sol found R1359's omitted coupled failure.
+    Actual maintenance bodies now have independent positive/negative controls.
+    Both final actual-change reviews are clear.
+    The initial Node batch's R1052 COLLATERAL result and exit 1 remain retained.
+    Source comparison against `0a956d41` shows its relevant actor/oracle inputs
+    unchanged; this is not a pre-unit execution or demonstrated regression.
+    The coordinator-approved metadata-only correction lists the exact dependent
+    actor failures, not independent controls. Original independent surviving
+    controls and strict health remain. Both metadata reviews are clear; the
+    new targeted R1052 invocation is PROVEN with observed exit 0.
+    All executed payload inputs and Node restore exactly at each postflight.
+    Tracker result updates are separate from the earlier execution freeze.
+    Final independent Sol/Luna evidence rechecks are clear, with no blocking
+    disagreement. The foundation is cleared for a local commit; it is not
+    feature completion or a green result for the original batch.
+    No native slot is held.
   - Independent Sol/Luna design rechecks are clear after the ancestor-chain
     correction. One owner must prove/cancel inner and outer movement and
     text visibility through clips; nested alignment remains one location.

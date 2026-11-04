@@ -27,6 +27,18 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Reading history foundation
+
+- `src/reading-history.js` holds up to ten transient reading locations, including
+  the current location. It is separate from document Undo and file history.
+- Values are immutable. Staged jumps update the timeline only after their owner
+  confirms real travel; canceled or stale work cannot replace a newer location.
+- The shell loads the module before the renderer and tabs. Back/Forward,
+  search, tab lifetime and mode-position consumers are not connected yet.
+- `npm run test:reading-history` runs the Node model suite and is included in
+  the standard feature gate. Packaging checks cover the source allowlist and
+  loading order; built-archive and native integration claims remain separate.
+
 ### Document history controls
 
 - Compact Undo and Redo buttons sit beside Save in the Raw Markdown toolbar.

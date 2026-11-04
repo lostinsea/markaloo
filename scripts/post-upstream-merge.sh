@@ -244,7 +244,11 @@ echo "7. Checking index.html loads all custom overlay scripts..."
 
 check_html_script() {
   local script="$1"
-  if grep -q "src=\"$script\"" "$ROOT/src/index.html"; then
+  if node -e "
+    const fs = require('fs');
+    const source = fs.readFileSync('src/index.html', 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+    process.exit(source.includes('src=\"$script\"') ? 0 : 1);
+  "; then
     echo "   ✓ $script present"
   else
     echo "   ✗ MISSING: $script not found in index.html"
@@ -262,10 +266,11 @@ check_html_script "context-menu-utils.js"
 check_html_script "file-helpers-core.js"
 check_html_script "emoji-map.js"
 check_html_script "emoji-parser.js"
+check_html_script "reading-history.js"
 
 if node -e "
   const fs = require('fs');
-  const html = fs.readFileSync('src/index.html', 'utf8');
+  const html = fs.readFileSync('src/index.html', 'utf8').replace(/<!--[\s\S]*?-->/g, '');
   const emojiMap = '<script src=\"emoji-map.js\"></script>';
   const emojiParser = '<script src=\"emoji-parser.js\"></script>';
   const utils = '<script src=\"utils.js\"></script>';
@@ -274,6 +279,7 @@ if node -e "
   const fileHelpersCore = '<script src=\"file-helpers-core.js\"></script>';
   const renderer = '<script src=\"renderer.js\"></script>';
   const customTabs = '<script src=\"custom-tabs.js\"></script>';
+  const readingHistory = '<script src=\"reading-history.js\"></script>';
   const emojiMapAt = html.indexOf(emojiMap);
   const emojiParserAt = html.indexOf(emojiParser);
   const utilsAt = html.indexOf(utils);
@@ -282,8 +288,13 @@ if node -e "
   const fileHelpersCoreAt = html.indexOf(fileHelpersCore);
   const rendererAt = html.indexOf(renderer);
   const customTabsAt = html.indexOf(customTabs);
+  const readingHistoryAt = html.indexOf(readingHistory);
   process.exit(
     emojiMapAt >= 0 &&
+      readingHistoryAt >= 0 &&
+      rendererAt > readingHistoryAt &&
+      customTabsAt > readingHistoryAt &&
+      html.indexOf(readingHistory, readingHistoryAt + readingHistory.length) === -1 &&
       emojiParserAt > emojiMapAt &&
       utilsAt > emojiParserAt &&
       rendererAt > emojiParserAt &&
@@ -351,6 +362,7 @@ check_build_file "file-helpers-core.js"
 check_build_file "file-helpers.js"
 check_build_file "emoji-map.js"
 check_build_file "emoji-parser.js"
+check_build_file "reading-history.js"
 
 if [ "$MISSING_BUILD" -eq 1 ]; then
   echo "   ✗ One or more required customizations are missing from build.files"
