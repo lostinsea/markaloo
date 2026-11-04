@@ -832,7 +832,7 @@
     </div>
 
     <!-- App Update Toast -->
-    <div id="appUpdateToast" class="app-update-toast">
+    <div id="appUpdateToast" class="app-update-toast" inert>
       <div class="app-update-content">
         <div class="app-update-header">
           <svg
@@ -848,7 +848,7 @@
             <polyline points="7 10 12 15 17 10"></polyline>
             <line x1="12" y1="15" x2="12" y2="3"></line>
           </svg>
-          <div class="app-update-text">
+          <div class="app-update-text" role="status" aria-atomic="true">
             <strong id="updateTitle">Update Available</strong>
             <p id="updateMessage">A new version is available</p>
           </div>
@@ -922,6 +922,19 @@
           >
             Later
           </button>
+        </div>
+        <div id="updateNotes" class="app-update-notes" hidden>
+          <button id="updateNotesToggle" class="app-update-btn secondary"
+            type="button" aria-expanded="false" aria-controls="updateNotesPanel">
+            See what is new
+          </button>
+          <div id="updateNotesPanel" hidden>
+            <p id="updateNotesStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+            <div id="updateNotesBody" class="app-update-notes-body" role="region"
+              aria-label="Release notes" tabindex="0" hidden></div>
+            <button id="updateNotesRetry" class="app-update-btn secondary"
+              type="button" hidden>Try again</button>
+          </div>
         </div>
       </div>
     </div>

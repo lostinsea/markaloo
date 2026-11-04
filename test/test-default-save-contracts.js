@@ -258,17 +258,17 @@ function installedLauncherDiagnosticContracts() {
     "  let launcherDiagnosticToken = null;");
   const mainLines = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8")
     .replace(/\r\n/g, "\n").split("\n");
-  check(mainLines[12733].trim() === "releaseShutdownFreeze();" &&
-    mainLines.slice(12726, 12734).join("\n").includes("else if (started === false)") &&
-    mainLines[14091].includes('updateState.fail(new Error("The downloaded update is incomplete.') &&
-    mainLines.slice(14087, 14092).join("\n").includes("catch (err)"),
+  check(mainLines[12735].trim() === "releaseShutdownFreeze();" &&
+    mainLines.slice(12728, 12736).join("\n").includes("else if (started === false)") &&
+    mainLines[14140].includes('updateState.fail(new Error("The downloaded update is incomplete.') &&
+    mainLines.slice(14136, 14141).join("\n").includes("catch (err)"),
   "Launcher diagnostic route coordinates name the actual post-return-false thaw and preflight publication");
   const make = ({ enabled = false } = {}) => {
     const ipc = new (require("node:events").EventEmitter)();
     const state = { lastRequestId: 7, rendererGeneration: 3, rendererPageSession: "owned-page",
       pendingId: 0, updaterInstallAttemptId: 0 };
     const model = { ignored: false, stateFault: false, jsonFault: false, originalThrow: null,
-      stack: "at publication (C:\\repo\\src\\main.js:14092:5)", enabled, enables: 0,
+      stack: "at publication (C:\\repo\\src\\main.js:14141:5)", enabled, enables: 0,
       disables: 0, entries: [], emits: 0, sends: 0, stackAllocations: 0, stackReads: 0 };
     const wc = { id: 12, mainFrame: {}, send(channel, payload) {
       model.sends++; model.sendThis = this; model.sendPayload = payload;
@@ -347,7 +347,7 @@ function installedLauncherDiagnosticContracts() {
   filtered.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
   assert.equal(filtered.wc.send("update-status", { status: "error",
     error: "The downloaded update is incomplete. Download it again." }), "original-send-return");
-  filtered.model.stack = "at continuation (C:\\repo\\src\\main.js:12734:9)";
+  filtered.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
   assert.equal(filtered.wc.send("quit-approval-thaw"), "original-send-return");
   const filteredPacket = filtered.packet();
   check(filtered.model.stackAllocations === 2 && filtered.model.stackReads === 2 &&
@@ -389,7 +389,7 @@ function installedLauncherDiagnosticContracts() {
   h.wc.send("quit-approval-thaw");
   check(h.packet().terminal === "UNOBSERVED",
     "A reset or other refusal thaw cannot substitute for the exact post-return-false terminal route");
-  h.model.stack = "at continuation (C:\\repo\\src\\main.js:12734:9)";
+  h.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
   h.wc.send("quit-approval-thaw");
   packet = h.packet();
   check(packet.routes.length === 1 && packet.routes[0].requestId === 8 &&
@@ -434,7 +434,7 @@ function installedLauncherDiagnosticContracts() {
   unpublished.model.originalThrow = originalError;
   assert.throws(() => unpublished.wc.send("update-status", payload), error => error === originalError);
   unpublished.model.originalThrow = null;
-  unpublished.model.stack = "at continuation (C:\\repo\\src\\main.js:12734:9)";
+  unpublished.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
   unpublished.wc.send("quit-approval-thaw");
   check(unpublished.packet().terminal === "UNOBSERVED" &&
     unpublished.packet().records.some(record => record.kind === "send:throw") &&
@@ -446,7 +446,7 @@ function installedLauncherDiagnosticContracts() {
   wrongPublisher.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
   wrongPublisher.model.stack = "at another route (C:\\repo\\src\\main.js:13855:9)";
   wrongPublisher.wc.send("update-status", payload);
-  wrongPublisher.model.stack = "at continuation (C:\\repo\\src\\main.js:12734:9)";
+  wrongPublisher.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
   wrongPublisher.wc.send("quit-approval-thaw");
   check(wrongPublisher.packet().terminal === "UNOBSERVED",
     "A generic error from a different publication route cannot establish the NSIS preflight outcome");
@@ -481,7 +481,7 @@ function installedLauncherDiagnosticContracts() {
     mismatch.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
     mismatch.wc.send("update-status", payload);
     change(mismatch);
-    mismatch.model.stack = "at continuation (C:\\repo\\src\\main.js:12734:9)";
+    mismatch.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
     mismatch.wc.send("quit-approval-thaw");
     check(mismatch.packet().terminal === "UNOBSERVED",
       "Ambiguous launcher correlation stays unobserved: " + label);

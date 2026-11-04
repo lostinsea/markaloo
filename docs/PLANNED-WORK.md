@@ -38,7 +38,54 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v013-navigation-baseline` - **FUNCTIONAL CHECKS PASS; RESIDUAL TIMEOUT GATE HELD**.
+- `v013-popup-diagnosis` - **DEFINED SURFACE GATES QUALIFIED; CORRECTION CLOSED**.
+  - The user removed the one-diagnostic limit: "Not one, but as many times
+    you wanted to understand this." The serialized owned native slot is
+    assigned to this investigation, with fresh profiles and process preflight.
+  - Distinguish dropped/late callbacks, witness mismatch, real display delay
+    and controlled-provider interaction. Each experiment needs a concrete
+    remaining hypothesis; no repeated-until-green qualification or framework.
+  - Keep production timers/styles, assertions and budgets unchanged. Preserve
+    every run and the failed pair below; popup qualification remains held.
+    Report the supported correction and remaining qualification needs once
+    understood. Discuss wider work or prolonged lack of progress.
+    The installed app stays protected; the original scroll timeout stays open
+    and outside this investigation. Navigation authorization is unchanged.
+  - D1 reproduces the failure: 29/30, with one controlled-provider workload
+    failure. In that slow sample, a captured notice at 1615.88 ms already shows
+    version/actions and matches the later witness, but the observer discards
+    it before witness readiness at 1638.41 ms. No callback follows until the
+    controlled check around 5506 ms; its checking frame mismatches, then an
+    available frame is admitted at 5527.80 ms. The causal images were viewed.
+    This reproduced delay is measurement waiting, not a notice first appearing
+    at 5.5 s. Astra and independent Sol/Luna evidence reviews agree. No new
+    qualification or product fix is claimed; original sources stay frozen and
+    no owned Electron remains after D1.
+  - Retain one latest invocation-local frame across the real prerequisites.
+    Verify current ownership/state/geometry and pixels before admission; end
+    at verification time, never the earlier callback. Keep negative controls,
+    current-state checks and cleanup. The root grants a new complete matched
+    exact-`8fe`/frozen-candidate qualification after correction and dual review.
+    Preserve/view all new captures; no old sample reuse or pooling. Complete
+    About-resource claims still need image readiness and actual logo pixels.
+  - The actual-source admission controls pass 118/118; state/controller 44/44
+    and scheduler 123/123 pass. R1346/R1347 prove the retained-frame and separate
+    revision checks, restoring source bytes. Source packaging remains 489/0
+    with two built-asar skips. Both reviewers find the fixture correction clear;
+    Luna's current-authorization wording finding is corrected; both independent
+    rechecks are clear. Freeze both products and the common driver before the
+    newly granted complete matched pair. All older datasets remain preserved.
+  - R3 is complete: released `8fe` 30/30 and frozen candidate 30/30; every
+    zero-provider control and unchanged p50/p95 budget passes. Receipt,
+    prerequisite and verified timestamps remain separate. Every new original
+    PNG was viewed and shows its required popup surface. About logos are absent
+    in reference 2/3 and candidate 4; full-resource readiness is not claimed.
+    No owned Electron or frozen-source change remains from either invocation;
+    native slot released. Final independent Sol/Luna evidence rechecks are
+    clear: identities, controls, endpoint order, budgets and viewed surfaces
+    agree, with no remaining blocking disagreement. Only the defined
+    compositor-surface gates are accepted; excluded qualifications stay open.
+- `v013-navigation-baseline` - **REPAIR QUALIFIED; USER ACCEPTED RESUMING WITH TIMEOUT OPEN**.
   - Diagnose the four nested-wheel failures and notes-test editor mismatch
     before navigation work. Keep original assertions, receipts and sentinel.
   - One process-local scale-1.5 intervention reproduced the four wheel failures
@@ -63,7 +110,7 @@ section is kept here so the register has a visible edge.
   - The full-scroll invocation reached its unchanged 180 s watchdog after a
     short-inline-image assertion, before wheel checks. One bounded existing
     `blocks` route passes 27/27 but does not explain the full-run timeout.
-    No timeout increase, full-run retry or baseline exception is accepted.
+    No timeout increase or further original-timeout diagnostic is requested.
   - Luna's initial review is clear; Sol found two proof-output protocol defects,
     not a production blocker. Existing tagged-companion/stdout rules now apply;
     both independent correction/evidence rechecks are clear. Strict source
@@ -76,20 +123,23 @@ section is kept here so the register has a visible edge.
     Empty-case saves span 13.852/14.056 s versus the retained timeout's 95.983 s.
     No hidden-prefix hang or candidate-specific slowdown reproduced. The old
     delay mechanism remains unproved; passing reruns do not silently clear the
-    gate. Navigation/mode work stays held pending disposition; no further
-    native diagnostic invocation follows automatically.
-- `v013-reading-history` - **APPROVED; BASELINE GATE HELD**.
+    gate. The user explicitly chose **Resume navigation; keep the earlier
+    timeout open**. The timeout is still unresolved, not fixed, proved external
+    or harmless. Existing assertions, 180 s watchdog and future gates stay.
+    The independently reviewed repair is saved locally as `12bb7dab`; this
+    commit's earlier hold is superseded by that user decision.
+- `v013-reading-history` - **APPROVED; READY AFTER CURRENT NOTES UNIT**.
   - Keep ten total reading locations per open tab for explicit heading/link/
     search jumps. Coalesce typed previews, including the first return point.
     Preserve file-history arrows, editing state and platform shortcut ownership.
   - Add Back/Forward before Reload. Use standard native mouse commands only
     where the small route can be qualified; no hooks or new dependencies.
-- `v013-mode-position` - **APPROVED; BASELINE GATE HELD**.
+- `v013-mode-position` - **APPROVED; READY AFTER CURRENT NOTES UNIT**.
   - Preserve visible content when entering/leaving Split; do not record a
     navigation step. Preserve actual exit position and existing Discard rules.
   - Qualify content-relative anchors, pending-render/user-intent ownership,
     search recovery and source/caret/Undo invariants separately.
-- `v013-daily-updates` - **LOCALLY QUALIFIED ON WINDOWS; INDEPENDENT REVIEWS CLEAR**.
+- `v013-daily-updates` - **FUNCTIONALLY QUALIFIED; SHARED POPUP TIMING PENDING**.
   - Keep startup/manual checks; add one Main daily scheduler and a persisted
     automatic-reminder local-day high-water mark. Manual feedback stays usable.
   - Sol/high implemented the bounded scheduler, durable claim-before-join,
@@ -132,9 +182,8 @@ section is kept here so the register has a visible edge.
     controller mock missing required names and a Darwin-incompatible transfer
     phase; corrected without changing macOS's manual-download policy. Both
     accepted the artifact-control correction below. Both independent Sol/Luna
-    fixture/evidence rechecks are clear; daily unit locally qualified on
-    Windows. Built-asar and native macOS/Linux remain unclaimed; remaining
-    0.13 features and approved baseline repairs are pending.
+    functional fixture/evidence rechecks are clear; daily functionality is
+    qualified on Windows. Built-asar and native macOS/Linux remain unclaimed.
   - The first native candidate was 175/176. Its new Download-failure control
     wrongly assumed a batch-shared fake artifact was absent. The corrected
     setup proves prior bytes exist, then requires identical SHA256 after the
@@ -155,21 +204,117 @@ section is kept here so the register has a visible edge.
     About-open. `docs/PERF-AUDIT.md` records the raw unchanged samples, actual
     method and predeclared quantile budgets. Keep those original observations
     separate from the corrected retrospective comparison below.
-  - The approved common `--perf-ui` driver measures visible cached notice and
-    first About presentation separately, including finite animations and two
+  - The retained common `--perf-ui` driver measures cached-notice and first
+    About renderer readiness separately, including finite animations and two
     frames. The reference product is archived directly from released `8fe`;
     the extended driver is a common external overlay, not original release
-    source. Both five-sample runs pass the unchanged
-    `max(reference * 20%, 50 ms)` p50/p95 increase budget. Notice p50/p95:
+    source. Both five-sample runs fit the numerical
+    `max(reference * 20%, 50 ms)` p50/p95 increase budget. Notice proxy p50/p95:
     1591.22/1905.41 -> 1527.68/1689.01 ms; first About:
     62.034/63.040 -> 62.663/63.001 ms. Startup/prose also fit their matching
     seeded workload budgets. Samples/spreads/source and common-driver hashes
     are in the permanent audit and session receipts; no speedup is claimed.
     Actual reference/candidate notice/About and selected light/dark, narrow,
     enlarged-text and dirty-Split captures were viewed.
-- `v013-release-notes` - **APPROVED; QUEUED AFTER BASELINE REPAIRS**.
-  - Initially collapsed offered-version notes; extra request only on expansion.
-    Keep existing Atom discovery, isolated safe rendering and popup actions.
+    **The About presentation acceptance is withdrawn:** the full retained-image
+    audit finds no dialog/backdrop in daily candidate captures 2 and 3. Keep all
+    ten About images, paired JSON and raw samples; do not infer a product cause.
+    The notice endpoint shares the insufficient DOM predicate. The single
+    corrected cumulative R2 pair below did not qualify. The new post-correction
+    R3 comparison qualifies its defined shared-surface gates with clear
+    independent evidence reviews; it does not isolate daily-update attribution.
+    Functional 177/177 and separate startup/prose observations remain valid.
+- `v013-release-notes` - **FUNCTIONAL AND DEFINED SURFACE GATES QUALIFIED**.
+  - Finish this independent approved unit before navigation/mode edits.
+    Unchanged pure baselines at `12bb7dab`: state 43/43 and scheduler 123/123.
+    No installed-app or native macOS/Linux coverage is claimed.
+  - Main owns one exact-tag request/cache, bound to presentation, target and
+    renderer generation. First expansion alone starts the additional request;
+    ordinary Atom discovery still carries its existing bundled content.
+    Errors need explicit Retry; stale responses are retired, not empty success.
+  - Private fresh marked/DOMPurify instances render inert basic Markdown.
+    Response, Markdown, HTML, node and total-request limits have exact boundary
+    controls. Popup actions stay independent; narrow/short layouts have a
+    separately scrollable region. Built artifacts remain unqualified.
+  - Pure notes/admission/oracle contracts 118/118, scheduler 123/123 and state/controller contracts 44/44
+    pass. The new native phase needed a matching controller-VM inventory/count
+    correction; keep its original protocol-error receipt. No native run caused
+    that negative. Strict source packaging passes 489/0 with two asar skips.
+  - New notes reverts and the coupled coordinate/authentication records each
+    prove exact intended failures and independent controls; source hashes
+    restored. Sol found a visibility-only false retirement, an idle provider
+    event that could not drive the fixture and a macOS download-policy mismatch.
+    Main now admits the clicked current owner across temporary hiding; the
+    fixture uses a real owned check and platform-correct actions. Astra confirms
+    the narrower authority boundary. Luna found a stale qualification-status
+    sentence; corrected. Sol's correction review also caught a shared absolute
+    test counter causing collateral proof failure; the case now measures its
+    own increment. Exact failure sets stay unchanged.
+  - Both independent correction reviews are clear. Notes reverts, including
+    the new admission/route controls and rebound records, pass individually
+    on the current source with every guarded byte restored. Actual native
+    notes/controller and popup comparison entered owned qualification.
+  - Focused actual notes pass 27/27; the standard updater command passes
+    204/204. Real marked/isolated DOMPurify render the exact Markdown limit.
+    Lazy requests, hidden admission/completion/failure, cache/target/dismissal,
+    progress/action ownership and protected disk checks pass. Normal, narrow/
+    enlarged and short/enlarged notes captures were viewed.
+  - The retrospective five-sample popup pair fits the numerical budgets, but
+    candidate About capture 0 omits the dialog despite DOM/open/opacity/
+    two-frame checks passing. **About performance is not accepted.** Keep all
+    original samples/captures. Direct bitmap checks correct the first report:
+    candidate 4 does show About/backdrop. Astra identifies an insufficient
+    evidence boundary, not a proved product/compositor cause.
+  - The narrow fixture correction uses actual presentation-frame pixels and
+    saves the frame ending the measurement, with fail-loud negative controls.
+    Independent correction reviews precede the single newly authorized pair.
+    Its reference is fixed before either invocation to exact released `8fe`,
+    against the final cumulative candidate. Same runtime, common driver,
+    matching state, five samples/source, budgets and watchdogs. R2 used its
+    original single-pair limit: no sample replacement, product style changes,
+    removed animation or settling delay.
+    Both independent fixture reviews are clear; Luna's sole documentation
+    ambiguity about the allowed pair was corrected and both reviewers confirmed.
+    R1345 proves the actual-source pixel oracle rejects document-only,
+    missing-button and missing-backdrop images while its controls pass.
+  - The single corrected pair completed: exact released `8fe` reference 30/30,
+    final cumulative candidate 28/30. Every new PNG was viewed and shows the
+    required popup surfaces; some first About frames omit the logo.
+    Candidate 0/4 each reaches a controlled provider check before completion,
+    violating the unchanged zero-provider workload control. Notice p95
+    5496.05 ms exceeds the reference 1912.43 ms plus its unchanged budget.
+    About arithmetic fits but does not independently qualify this failed pair.
+    **Shared popup qualification stays held.** Keep every sample/capture;
+    no repeated run, dropped case or product workaround. Retained Astra
+    classified existing source/API receipts: late subscription and ignored
+    early callbacks leave an observer gap; native repaint is not a guaranteed
+    subscriber refresh. No callback/rejection timing distinguishes that from
+    actual display delay or a transient witness mismatch. No product cause
+    is proved for those uninstrumented samples.
+    Product/fixture hashes stayed fixed, owned Electron exited and native slot
+    was released. That original allowance applied to R2 only and is superseded:
+    the user subsequently authorized D1 diagnosis, the supported latest-frame
+    correction and a NEW complete matching pair after independent review.
+    D1 reproduces observer waiting in one slow case; it is not qualification
+    or a retroactive explanation of every R2 sample.
+    Final independent Sol/Luna evidence reviews agree: raw identities,
+    controls, arithmetic and retained limits are clear for handoff, not
+    feature completion or performance acceptance. No blocking disagreement.
+  - After the supported D1 correction and clear independent fixture reviews,
+    the newly authorized complete R3 pair passes 30/30 on both products.
+    All unchanged p50/p95 budgets and zero-provider controls pass. Every new
+    capture was viewed; no full-resource/physical-display claim is made.
+    This is cumulative released-`8fe` to final candidate, not isolated notes
+    attribution. Source/driver freezes held through both runs; owned native
+    processes exited and the slot is released. Final independent Sol/Luna
+    evidence rechecks are clear, with no blocking disagreement. This unit is
+    ready to commit locally before the approved navigation/mode work resumes.
+  - The granted batch used fresh owned profiles after process preflight,
+    one native process at a time. This is feature qualification, not an
+    original-timeout diagnostic; the installed application was not reused.
+  - Main additions move two passive launcher diagnostic coordinates; their
+    exact source checks and anchor records follow the new lines. Installer
+    actors, predicates, deadlines and deferred follow-up scope are unchanged.
 - 0.13 handoff: Astra design and fresh independent Sol/Luna plan reviews pass.
   Sol owns this isolated branch and its register; implementation reviews remain.
   Base is released `8fe8239d`. The first baseline command lacked Electron;
@@ -188,17 +333,17 @@ section is kept here so the register has a visible edge.
   the fixture's false native-edge assumption. It does not establish historical
   OS scale. The patch fixture's contradictory mode and exact Undo exception
   stack are now captured. Do not weaken the sentinel.
-  Navigation gate stays closed until the approved narrow repairs restore the
-  relevant green baseline. Finish the current updater unit, then prioritize
-  the bounded wheel-cause probe and actual-editor fixture repair. Preserve
-  original assertions, failed receipts and sentinel sensitivity; no unrelated
-  debt, tolerance changes or non-green exception is selected.
+  The narrow repairs and bounded comparison above are now complete. The user
+  accepted resuming navigation with the earlier timeout explicitly open.
+  Finish release-notes qualification, then resume navigation/mode work.
+  Preserve original assertions, failed receipts and sentinel sensitivity;
+  no unrelated debt, tolerance changes or further timeout probe is selected.
   Independent updater-state 42/42 and native updater 143/143 baselines pass.
   Existing five-sample updater performance passes: startup p50/p95
   1350.36/1679.98 ms; prose admission 212.74/214.65 ms. About-open
-  performance is now measured separately under the approved retrospective
-  common-driver fixture. Both independent final fixture/evidence reviews are
-  clear; navigation remains held. No release or installer scope
+  performance requires the corrected cumulative common-driver comparison:
+  the old DOM-based About acceptance is withdrawn. Functional review results
+  remain separate. No release or installer scope
   changes follow from this handoff.
   Native execution is serial and session-owned; never reuse the installed app.
   Before/after performance uses existing scroll/corpus fixtures, repeated

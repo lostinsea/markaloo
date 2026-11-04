@@ -526,11 +526,45 @@ flowchart LR
   with an injected clock/timer/provider, never a test-only production IPC.
   It is also selected by the normal update controller. Windows local gates
   pass: state 43/43, scheduler 123/123, real controller 177/177, individual
-  sensitive proofs and the matching popup performance comparison. Selected
-  captures were viewed. Both independent Sol/Luna fixture/evidence rechecks
-  are clear; the daily unit is locally qualified on Windows. Built-asar and
+  sensitive proofs. Selected captures were viewed. Both independent functional
+  fixture/evidence rechecks are clear; daily functionality is qualified on
+  Windows. The earlier About timing acceptance remains withdrawn; the new
+  cumulative defined shared-surface gates pass with clear independent
+  evidence reviews. Built-asar and
   native macOS/Linux qualification are not claimed. Expandable
   release notes and navigation/mode work are not implemented by this unit.
+
+#### On-demand release notes
+
+- The update notice starts with **See what is new** collapsed.
+  First expansion requests only its offered version; no release aggregation.
+- Existing Atom update discovery is unchanged and already bundles note content.
+  The separate exact-tag REST request does not run before expansion.
+- Main chooses the canonical repository/tag from its own current presentation.
+  Renderer ID/version arguments are comparison guards, not URL authority.
+- One popup shares pending, loaded, empty or failed state. Collapse retains it;
+  only **Try again** replaces a settled request. New target/presentation,
+  dismissal, committed navigation, renderer loss and final shutdown retire it.
+  Temporary About/minimization hiding does not replace ownership.
+- Notes never own check, download or install state. Existing explicit Download
+  creates a new presentation, so that action resets notes once; subsequent
+  progress snapshots preserve the disclosure.
+- Basic Markdown uses fresh marked and DOMPurify instances, without document
+  hooks. Links are inert labels; images are alt text; authored HTML is escaped.
+  No active media, navigation, styles, forms or authored IDs/classes are kept.
+- Fixed limits: 256 KiB streamed response, 65,536 Markdown code units,
+  262,144 generated HTML code units, 2,048 descendant nodes, 10 s total fetch
+  and streaming time. These are policy bounds, not measured speed claims.
+- The viewport-bounded notice wraps actions and scrolls long notes separately.
+  Hidden notices are inert; only small status messages are live announcements.
+- `test:update-release-notes` is pure Node. The normal update controller also
+  selects `--notes` through production Main/preload and the real offline parser.
+  Windows native controller and notes captures pass. The new post-correction
+  cumulative released-product/candidate comparison passes all zero-provider
+  controls and unchanged notice/About surface budgets; both independent final
+  evidence reviews are clear. Every new capture was viewed. Image-resource readiness is not
+  qualified; retained failed datasets do not establish a product regression.
+  Proof receipts and current review status are tracked in `PLANNED-WORK.md`.
 
 ### Reading zoom
 

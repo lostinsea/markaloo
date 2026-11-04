@@ -11,6 +11,7 @@ const {
   Menu,
   autoUpdater: electronAutoUpdater,
   powerMonitor,
+  net,
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -21,6 +22,7 @@ const { OwnedDialogs, SCHEMES: DIALOG_SCHEMES, ownerRendererAvailable } = requir
 const { popupTheme } = require("./popup-theme");
 let ownedDialogs = null;
 let updateSchedule = null;
+let updateNotes = null;
 let updateMainDialogDepth = 0;
 function trackUpdateDialog(promise) {
   updateMainDialogDepth += 1;
@@ -13538,6 +13540,7 @@ let updaterDownloadInFlight = false;
 let updateInstallApprovalPending = false;
 const { createUpdateState } = require("./update-state");
 const { createUpdateSchedule } = require("./update-schedule");
+const { createUpdateReleaseNotes } = require("./update-release-notes");
 let updateSurface = null;
 const updateState = createUpdateState({
   installedVersion: app.getVersion(),
@@ -13594,15 +13597,33 @@ updateSchedule = createUpdateSchedule({
       (origin === "manual" || !updateSurface.modal);
   },
   publish: state => {
+    updateNotes?.reconcile();
     const win = updateReaderWindow();
     if (win) win.webContents.send("update-status", state);
   },
+});
+
+updateNotes = createUpdateReleaseNotes({
+  getOffer: () => {
+    const win = updateReaderWindow();
+    const state = updateSchedule.snapshot();
+    if (!win || !isUpdaterSender({ sender: win.webContents, senderFrame: updateSurface?.frame }) ||
+        state.presentationDismissed || !state.presentationId || !state.presentationVersion ||
+        state.presentationVersion !== state.availableVersion) return null;
+    return {
+      id: state.presentationId, version: state.presentationVersion,
+      owner: JSON.stringify([approvalRendererGeneration, approvalRendererPageSession]),
+    };
+  },
+  fetch: (url, options) => net.fetch(url, options),
+  log,
 });
 
 function bindUpdateWindow(win) {
   const changed = () => updateSchedule?.changed();
   const focus = () => updateSchedule?.reconcile("focus");
   const navigated = () => {
+    updateNotes?.clear();
     updateSurface = null;
     changed();
   };
@@ -13611,6 +13632,7 @@ function bindUpdateWindow(win) {
   win.webContents.on("did-navigate", navigated);
   win.webContents.on("render-process-gone", navigated);
   win.once("closed", () => {
+    updateNotes?.clear();
     updateSurface = null;
     win.removeListener("focus", focus);
     for (const event of ["show", "hide", "restore", "minimize"]) win.removeListener(event, changed);
@@ -13627,6 +13649,33 @@ function isUpdaterSender(event) {
 ipcMain.handle("get-update-state", event => {
   if (!isUpdaterSender(event)) throw new Error("Invalid update request");
   return updateSchedule.snapshot();
+});
+
+ipcMain.handle("get-update-release-notes", async (event, request) => {
+  if (!isUpdaterSender(event) || !request || typeof request !== "object" ||
+      Array.isArray(request) ||
+      Object.keys(request).sort().join(",") !== "presentationId,retry,version" ||
+      typeof request.presentationId !== "string" ||
+      !/^[a-zA-Z0-9-]{1,80}$/.test(request.presentationId) ||
+      typeof request.version !== "string" || request.version.length === 0 ||
+      request.version.length > 128 || typeof request.retry !== "boolean") {
+    throw new Error("Invalid release notes request");
+  }
+  const state = updateSchedule.snapshot();
+  const retired = () => ({ status: "retired", presentationId: request.presentationId, version: request.version });
+  if (state.presentationDismissed ||
+      state.presentationId !== request.presentationId ||
+      state.presentationVersion !== request.version) {
+    return retired();
+  }
+  try {
+    const result = await updateNotes.load(request.presentationId, request.version, request.retry);
+    if (!isUpdaterSender(event)) return retired();
+    return result;
+  } catch (error) {
+    if (error.code === "UPDATE_NOTES_RETIRED" || !isUpdaterSender(event)) return retired();
+    throw error;
+  }
 });
 
 // Private preload observation, not renderer-selected dates, targets or URLs.
@@ -14831,6 +14880,7 @@ app.on("will-quit", () => {
   updateStartupTimer = null;
   powerMonitor.removeListener("resume", resumeUpdateSchedule);
   updateSchedule.stop();
+  updateNotes.clear();
 });
 
 // SEC-30 download policy, split out from the will-download listener above so

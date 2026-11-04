@@ -1,5 +1,137 @@
 # Performance Audit
 
+## On-demand release notes - defined compositor-surface gates qualified
+
+- New post-correction R3 pair: exact released `8fe` reference 30/30 and frozen
+  cumulative candidate 30/30. All five samples per source pass the unchanged
+  zero-provider controls and added p50/p95 budget `max(reference * 20%, 50 ms)`.
+  This measures daily updates, baseline repairs and notes together.
+- The identical reviewed common driver is
+  `8affa47035847c2a846ad23193b787c306578b8ff7532f1a66dec92cd0a113a0`.
+  Receipt, prerequisite and verification times are kept separately.
+  The endpoint is `verifiedAt`, never the earlier retained-frame receipt.
+- Both source freezes stayed unchanged during execution. Owned Electron
+  processes exited; the native slot is released. Runtime remains Node 24.18.1
+  and Electron 43.4.1 on Windows x64, with matching seeded state.
+- Every new original capture was viewed: all required notice/About surfaces
+  are present. About logos are absent in reference 2/3 and candidate 4.
+  **No resource-complete About claim:** image readiness was not measured, and
+  panel/button/backdrop pixels do not prove all assets. Earliest natural paint,
+  physical display, build/install and native macOS/Linux are not qualified.
+- R3 raw samples, frame timestamps, image hashes/views, budget arithmetic and
+  postflights are in session `94a712c9`, `files\release-notes-unit`,
+  `popup-performance-comparison-r3.json` and `corrected-pair-freeze-r3.json`.
+  Final independent Sol/Luna evidence rechecks are clear. Both agree on source
+  identity, workload controls, verification order, arithmetic and actual surfaces;
+  no blocking disagreement remains. All R1/R2/D1 data remain intact; nothing
+  is pooled, dropped or replaced.
+
+| R3 journey | Released `8fe` p50 / p95 (ms) | Candidate p50 / p95 (ms) |
+|---|---:|---:|
+| Startup readiness | 1162.0702 / 1259.9679 | 1271.0830 / 1309.8592 |
+| Prose admission | 182.7393 / 184.6628 | 181.3946 / 185.1706 |
+| Verified notice surface | 1474.5772 / 1543.9889 | 1584.0845 / 1624.3586 |
+| Verified About surface | 87.1774 / 97.4017 | 94.8505 / 101.1155 |
+
+### Retained failed evidence and reproduced measurement defect
+
+- D1 reproduces a measurement defect in one controlled slow case. A notice
+  frame at 1615.88 ms already matches the final witness, but is discarded before
+  witness readiness at 1638.41 ms. The observer waits for later provider-driven
+  callbacks and reports 5527.80 ms. This endpoint measures observer waiting,
+  not first appearance at 5.5 s; it does not explain every earlier R2 case.
+- The fixture correction retains only the latest invocation-local frame.
+  After the real prerequisites, it checks current owner/state/geometry and
+  pixels, then timestamps `verifiedAt`. It never uses the earlier callback
+  time as the endpoint. Stale/negative frames cannot fall back to older images.
+- A new complete released-`8fe`/frozen-candidate pair is authorized after
+  correction and independent review, with the same sample counts and budgets.
+  It will use a new dataset, not reuse D1 or replace selected R2 samples.
+  Resource-complete About remains unproved without image readiness and logo
+  pixels; panel/button/backdrop witnesses alone support only that narrower view.
+- The retained R2 results and earlier authorization limits below are historical.
+  R3 above is the accepted new defined shared-surface comparison.
+
+- Reference fixed before the corrected pair: exact released
+  `8fe8239d2b2351414e2f5ae56e1be3950221fa0c`, versus the frozen dirty notes
+  candidate on `12bb7dab`, identified by its full product/fixture hashes.
+  This measures the cumulative daily-updater, baseline-repair and notes change,
+  not separate performance effects of those units. The revised common driver
+  is separate from the archived product. Navigation's residual timeout stays open.
+- Keep the existing five-sample actual notice/About journeys, pinned runtime,
+  matching settings and identical measurement bytes on both products.
+- Keep the existing added p50/p95 budget: at most
+  `max(reference * 20%, 50 ms)`. Do not replace popup paint with prose admission.
+- Notes parsing is lazy and separately bounded by input/output policy limits.
+  Those limits do not prove parsing speed or interrupt synchronous Markdown
+  work. Actual native notes pass 27/27, including the exact Markdown limit,
+  isolated real sanitization and action/layout checks; selected captures viewed.
+  No expanded-panel timing acceptance is claimed.
+- The first `12bb`-reference pair fits its numerical budgets, but candidate
+  About capture 0 shows only the document. DOM-open/opacity/two-frame
+  checks did not prove the captured presentation. **About is not accepted.**
+  Its delay/capture cause is not yet established; do not call it a product
+  regression or harmless screenshot race. A direct bitmap check corrected the
+  initial image identification: candidate 4 does contain About and its backdrop.
+- Raw samples/captures and source/common-driver identities are preserved in
+  session `94a712c9`, `files\release-notes-unit`, `perf-reference-r1`,
+  `perf-candidate-r1` identities and `popup-performance-comparison.json`.
+  That JSON's `allPass` means numerical comparisons only, not qualification.
+  No samples are removed, replaced or pooled.
+- The corrected common fixture uses Electron presentation-frame callbacks,
+  actual panel/button/backdrop pixels and a document-only negative control.
+  The R2 driver saved the same frame whose callback ended the timer. One scheduled repaint
+  is included; this is verified compositor presentation under the common driver,
+  not physical-monitor scan-out or an independently proved earliest natural paint.
+- The single corrected pair is complete: reference 30/30, candidate 28/30.
+  Candidate samples 0 and 4 each reached one controlled provider check before
+  completion, failing the existing zero-provider workload control. This is
+  the injected provider, not evidence of real network traffic.
+  **The R2 comparison is not accepted.** The new post-correction pair above
+  is separate; no replacement sample, product workaround or original-timeout
+  probe is authorized.
+- Every new notice/About PNG was viewed. All show the required panel/text/
+  buttons and About backdrop. Some first About frames omit the logo:
+  reference 0/2 and candidate 1. The narrow pixel witnesses do not establish
+  completion of every image asset.
+
+| Retained metric | Released `8fe` p50 / p95 (ms) | Candidate p50 / p95 (ms) | Arithmetic only |
+|---|---:|---:|---|
+| Startup readiness | 1376.1644 / 1586.1250 | 1277.2098 / 1416.6488 | Fits budget |
+| Prose admission | 201.1485 / 205.4553 | 200.4179 / 203.0636 | Fits budget |
+| Verified notice frame | 1673.5516 / 1912.4309 | 1709.6973 / 5496.0523 | p95 exceeds budget |
+| Verified About frame | 95.8007 / 96.1481 | 93.9365 / 123.8204 | Fits budget |
+
+- Keep all five samples per source. Candidate notice samples 0/4 end at
+  5424.6665/5496.0523 ms; the other three end at 1709.6973/1688.1463/1600.3414 ms.
+  The receipts do not yet distinguish product display delay, subscription/
+  repaint waiting or a witness mismatch. Do not infer a product regression.
+  About arithmetic is not separate acceptance of a comparison with failed
+  workload controls.
+- Bounded Astra source/API review finds an observer gap: subscription starts
+  after cached-notice DOM readiness and ignores callbacks before witness
+  readiness. Ordinary-window `invalidate()` schedules native repaint, not a
+  direct subscriber refresh. The startup check supplies a possible later
+  visual change near that boundary, but no callback/rejection timing was kept.
+  No persistent disabled-button style mismatch or five-second cached-display
+  gate is established by R2. The subsequently authorized D1 supplies the narrow
+  reproduced observer-wait diagnosis above, not proof about every R2 sample.
+- Common driver SHA256:
+  `1de56e57822f49b1b222a8a562a7f6735d7910dcb889b1fa9e19f41772cd9c5e`.
+  Same pinned runtime, seeded settings, separate owned profiles and unchanged
+  budgets/watchdogs. Product/fixture hashes stayed frozen through both runs.
+  That batch left no owned Electron; its slot was released. The current grant
+  covers the new complete post-correction pair after clear review.
+- Raw launch-order samples, both postflights, image hashes/views and failed
+  controls: `files\release-notes-unit\popup-performance-comparison-r2.json`,
+  `corrected-pair-freeze-r2.json`, `reference-product-identity-r2.json`,
+  `perf-reference-r2.log` and `perf-candidate-r2.log`, same session.
+  Earlier samples/captures remain intact. Candidate-only expanded-notes
+  checks have no released-version timing baseline.
+- Final independent Sol/Luna evidence reviews agree on the identities,
+  failed controls, arithmetic and retained limits. Clear for evidence handoff,
+  not feature completion or performance acceptance; no blocking disagreement.
+
 ## Nested-wheel baseline repair - current candidate
 
 - Retrospective reference: exact `86526c11` product exported from Git.
@@ -22,8 +154,8 @@
   tail from these small samples. No sample was removed or rerun for a pass.
 - Separate settled-scroll controls pass: callback sample p95 0.10 ms against
   4 ms, no geometry rebuilds or source Range reads, bounded follower writes.
-- **Overall qualification stays held.** The full scroll suite reached its
-  unchanged 180 s watchdog. A separate bounded diagnostic subsequently passed
+- **User accepted resuming with the earlier timeout open.** That full scroll
+  run reached its unchanged 180 s watchdog. A bounded diagnostic passed
   full 313/313 on both reference and candidate in 87.103/87.771 s, using one
   reviewed logging-only overlay and the unchanged watchdog. This is diagnostic
   evidence, not a new performance acceptance sample.
@@ -31,6 +163,8 @@
   in the original timeout. The hidden oracle/frame chain completed in both.
   No candidate-specific stall reproduced; the old delay mechanism is still
   unproved. Passing reruns do not automatically explain or waive that timeout.
+  The explicit user disposition reopens navigation/mode work, not the
+  timeout investigation. Future assertions/watchdogs/budgets stay unchanged.
   Diagnostic receipts: `files\v013-full-scroll-timeout-r1`, same session.
 - Raw samples, source/common-fixture identity and comparison:
   session `94a712c9`, `files\v013-baseline-repair-candidate-r1`,
@@ -506,20 +640,27 @@
   The measured driver is retained separately. Later platform/mock/artifact-
   control corrections change only non-performance fixture paths; measured
   production source bytes remain the final candidate's bytes.
-- Startup: Main load through painted empty reader. Notice: same start through
-  visible offered-version toast. Prose: real 64 KiB admission through paint.
-  About: first actual menu action through visible dialog above that document.
-  These measure different journeys; none substitutes for another.
+- Retained method: Main load through empty-reader readiness, cached-notice
+  renderer readiness, real 64 KiB prose admission and first About renderer
+  readiness. The popup DOM/animation/two-frame endpoint does not independently
+  certify compositor presentation. These remain separate numeric observations.
 
 | Metric | Reference p50 / p95 (ms) | Candidate p50 / p95 (ms) | Allowed increase p50 / p95 (ms) |
 |---|---:|---:|---:|
 | Startup | 1310.0233 / 1624.3947 | 1215.0972 / 1376.0974 | 262.0047 / 324.8789 |
 | Painted prose admission | 177.5443 / 178.3837 | 174.5280 / 177.3100 | 50 / 50 |
 | Initial cached notice | 1591.2220 / 1905.4078 | 1527.6757 / 1689.0097 | 318.2444 / 381.0816 |
-| First About presentation | 62.0340 / 63.0399 | 62.6633 / 63.0014 | 50 / 50 |
+| About renderer-ready proxy - acceptance withdrawn | 62.0340 / 63.0399 | 62.6633 / 63.0014 | 50 / 50 |
 
-- Every quantile fits the predeclared increase budget. About p50 increases
-  0.6293 ms; lower values elsewhere are not treated as an improvement claim.
+- Every numeric quantile fits its budget; **the earlier About presentation
+  acceptance is withdrawn**. Candidate captures 2 and 3 contain no About or
+  backdrop; all five reference captures show them. The identical old/current
+  predicate is insufficient. Preserve every image/sample, including candidate 3.
+- Initial-notice numbers also use that DOM endpoint; keep their arithmetic
+  result separate from the corrected shared popup-presentation acceptance.
+  Startup/prose observations and functional 177/177 are not withdrawn.
+  The single corrected cumulative `8fe` comparison above replaces the shared
+  popup gate; it does not retroactively validate these old timing endpoints.
 - Reference samples, in launch order (ms):
   startup `[1310.0233,1203.1799,1624.3947,1200.2402,1434.9013]`;
   prose `[178.3837,177.5443,177.6561,173.9973,175.4014]`;
@@ -540,7 +681,7 @@
   `files/daily-common-perf-driver-r4.js`,
   `files/daily-popup-performance-comparison-r4.json` and
   `files/v013-updater-reference-identity.json`.
-- Viewed reference/candidate `perf-ui-0-notice.png` and `perf-ui-0-about.png`,
+- Initially viewed reference/candidate `perf-ui-0-notice.png` and `perf-ui-0-about.png`,
   plus the native fixture's light/dark narrow 150% About and normal/narrow 125%
   dirty-Split captures. Actions and text remain visible within the popup.
 - Ordinary final updater acceptance passes state 43/43, scheduler 123/123 and
@@ -548,8 +689,11 @@
   a fixture mistook pre-existing unchanged fake artifact bytes for a download
   failure; corrected with before/after SHA256 and sensitive proof.
   No installer ran. Source packaging passes with two built-asar skips.
-  Both independent Sol/Luna fixture/evidence rechecks are clear; the daily unit
-  is locally qualified on Windows. No built-asar, install or native macOS/Linux
+- Both functional fixture/evidence reviews are clear; daily functionality
+  is qualified locally on Windows, with shared popup timing requalification
+  pending. The later all-About capture audit is retained separately in
+  `files\release-notes-unit`; it supersedes the earlier About acceptance.
+  No built-asar, install or native macOS/Linux
   acceptance is claimed.
 
 ## About and updater state - bounded check, 2026-10-20

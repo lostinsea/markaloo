@@ -15,6 +15,110 @@
   const later = document.getElementById("laterUpdateBtn");
   const close = document.getElementById("closeUpdateToast");
   const menu = document.getElementById("aboutMenuItem");
+  const notesRoot = document.getElementById("updateNotes");
+  const notesToggle = document.getElementById("updateNotesToggle");
+  const notesPanel = document.getElementById("updateNotesPanel");
+  const notesStatus = document.getElementById("updateNotesStatus");
+  const notesBody = document.getElementById("updateNotesBody");
+  const notesRetry = document.getElementById("updateNotesRetry");
+  let notes = null;
+  let notesParser = null;
+  let notesPurifier = null;
+
+  function resetNotes() {
+    notes = null;
+    notesBody.replaceChildren();
+    notesBody.hidden = true;
+    notesPanel.hidden = true;
+    notesRetry.hidden = true;
+    notesStatus.textContent = "";
+    notesToggle.setAttribute("aria-expanded", "false");
+    notesToggle.textContent = "See what is new";
+  }
+
+  function renderNotes(visible) {
+    notesRoot.hidden = !visible || !notes;
+    if (!notes) return;
+    notesToggle.setAttribute("aria-expanded", String(notes.expanded));
+    notesToggle.textContent = notes.expanded ? "What is new" : "See what is new";
+    notesPanel.hidden = !notes.expanded;
+    notesBody.hidden = notes.status !== "loaded";
+    notesRetry.hidden = notes.status !== "error";
+    notesBody.setAttribute("aria-busy", String(notes.status === "loading"));
+    notesStatus.textContent = notes.status === "loading" ? "Loading release notes..."
+      : notes.status === "empty" ? "No release notes were provided for this version."
+      : notes.status === "error" ? "Release notes could not be shown. Please try again."
+      : "";
+  }
+
+  function renderNotesMarkdown(body) {
+    if (typeof body !== "string" || body.length > 65536) {
+      throw new Error("The release notes are too large to show here.");
+    }
+    if (!notesParser) {
+      const escape = text => text.replace(/[&<>"']/g, value =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[value]);
+      const renderer = new marked.Renderer();
+      renderer.link = function (token) { return this.parser.parseInline(token.tokens); };
+      renderer.image = token => escape(token.text);
+      renderer.html = token => escape(token.text);
+      const parser = new marked.Marked({ renderer, gfm: true, breaks: false, async: false });
+      // The document sanitizer has local-image and iframe hooks. This factory
+      // call owns separate hooks and settings, not just different call options.
+      const purifier = DOMPurify(window);
+      if (purifier === DOMPurify || !purifier?.isSupported) {
+        throw new Error("The release notes renderer is unavailable.");
+      }
+      notesParser = parser;
+      notesPurifier = purifier;
+    }
+    const html = notesParser.parse(body);
+    if (typeof html !== "string" || html.length > 262144) {
+      throw new Error("The rendered release notes are too large to show here.");
+    }
+    const fragment = notesPurifier.sanitize(html, {
+      ALLOWED_TAGS: ["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
+        "em", "strong", "del", "s", "code", "pre", "blockquote", "br", "hr"],
+      ALLOWED_ATTR: [], ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
+      RETURN_DOM_FRAGMENT: true,
+    });
+    const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_ALL);
+    let count = 0;
+    while (walker.nextNode()) {
+      if (++count > 2048) throw new Error("The release notes have too many items to show here.");
+    }
+    return fragment;
+  }
+
+  async function loadNotes(retry = false) {
+    const owner = notes;
+    if (!owner || owner.status === "loading" || (!retry && owner.status !== "idle")) return;
+    owner.status = "loading";
+    if (document.activeElement === notesRetry) notesToggle.focus();
+    renderNotes(toast.classList.contains("show"));
+    try {
+      const value = await window.folia.getUpdateReleaseNotes(owner.id, owner.version, retry);
+      if (notes !== owner || value.status === "retired") return;
+      const fragment = value.body ? renderNotesMarkdown(value.body) : null;
+      owner.status = value.body ? "loaded" : "empty";
+      notesBody.replaceChildren(...(fragment ? [fragment] : []));
+    } catch (error) {
+      if (notes !== owner) return;
+      owner.status = "error";
+      console.error("Could not show release notes:", error);
+    } finally {
+      if (notes === owner) renderNotes(toast.classList.contains("show"));
+    }
+  }
+
+  notesToggle.addEventListener("click", () => {
+    if (!notes) return;
+    notes.expanded = !notes.expanded;
+    if (!notes.expanded && notesPanel.contains(document.activeElement)) notesToggle.focus();
+    renderNotes(toast.classList.contains("show"));
+    if (notes.expanded) void loadNotes();
+  });
+  notesRetry.addEventListener("click", () => { void loadNotes(true); });
 
   function description(value) {
     const lines = [];
@@ -83,13 +187,25 @@
     install.hidden = !state.canInstall;
     install.style.display = "";
     later.textContent = "Later";
-    toast.classList.toggle("show", !!state.canShowUpdate &&
-      !!state.presentationId && !state.presentationDismissed && dismissed !== state.presentationId);
+    const visible = !!state.canShowUpdate && !!state.presentationId &&
+      !state.presentationDismissed && dismissed !== state.presentationId;
+    toast.classList.toggle("show", visible);
+    toast.inert = !visible;
+    renderNotes(visible);
   }
 
   function apply(value) {
     if (!Number.isSafeInteger(value?.revision) ||
         (state && value.revision < state.revision)) return;
+    const target = value.presentationId && value.presentationVersion &&
+      value.presentationVersion === value.availableVersion &&
+      !value.presentationDismissed && dismissed !== value.presentationId;
+    if (!target || notes?.id !== value.presentationId ||
+        notes?.version !== value.presentationVersion) {
+      resetNotes();
+      if (target) notes = { id: value.presentationId, version: value.presentationVersion,
+        expanded: false, status: "idle" };
+    }
     state = value;
     render();
   }
@@ -123,17 +239,22 @@
       window.folia.dismissUpdateNotice(state.presentationId);
     }
     toast.classList.remove("show");
+    toast.inert = true;
+    resetNotes();
+    renderNotes(false);
   }
   later.addEventListener("click", dismiss);
   close.addEventListener("click", dismiss);
-  toast.setAttribute("role", "status");
+  toast.setAttribute("role", "region");
+  toast.setAttribute("aria-label", "Application update");
   close.setAttribute("aria-label", "Dismiss update notice");
   const unsubscribe = window.folia.onUpdateStatus(apply);
-  window.addEventListener("pagehide", unsubscribe, { once: true });
+  window.addEventListener("pagehide", () => { unsubscribe(); resetNotes(); }, { once: true });
   window.folia.getUpdateState().then(apply, error => {
     message.textContent = "Update status could not be read. Reopen the window to try again.";
     title.textContent = "Update status unavailable";
     toast.classList.add("show");
+    toast.inert = false;
     console.error("Could not read update state:", error);
   });
 })();

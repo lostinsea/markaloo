@@ -878,6 +878,24 @@ const api = Object.freeze({
   openUpdateRelease() {
     ipcRenderer.send("open-update-release");
   },
+  async getUpdateReleaseNotes(presentationId, version, retry = false) {
+    if (typeof presentationId !== "string" ||
+        !/^[a-zA-Z0-9-]{1,80}$/.test(presentationId) ||
+        typeof version !== "string" || version.length === 0 || version.length > 128 ||
+        typeof retry !== "boolean") throw new TypeError("Invalid release notes request");
+    const value = await ipcRenderer.invoke("get-update-release-notes", {
+      presentationId, version, retry,
+    });
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        value.presentationId !== presentationId || value.version !== version) {
+      throw new TypeError("Invalid release notes response");
+    }
+    if (value.status === "retired") return Object.freeze({ status: "retired", presentationId, version });
+    if (value.status !== "loaded" || typeof value.body !== "string" || value.body.length > 65536) {
+      throw new TypeError("Invalid release notes response");
+    }
+    return Object.freeze({ status: "loaded", presentationId, version, body: value.body });
+  },
   async getUpdateState() {
     const state = await ipcRenderer.invoke("get-update-state");
     if (!state || !Number.isSafeInteger(state.revision) ||

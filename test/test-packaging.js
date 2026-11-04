@@ -860,6 +860,10 @@ async function main() {
     files.includes("src/update-schedule.js") && isPackaged(files, "src/update-schedule.js") &&
       mainJs.includes('require("./update-schedule")') &&
       !isPackaged(files.filter(file => file !== "src/update-schedule.js"), "src/update-schedule.js"));
+  check("release notes loader is explicitly shipped and Main imports that exact helper",
+    files.includes("src/update-release-notes.js") && isPackaged(files, "src/update-release-notes.js") &&
+      mainJs.includes('require("./update-release-notes")') &&
+      !isPackaged(files.filter(file => file !== "src/update-release-notes.js"), "src/update-release-notes.js"));
   // MacUpdater has no BaseUpdater-style, attributable synchronous
   // before-quit-for-update/app.quit pair. This platform path cannot be driven
   // live from the Windows/Linux packaging harness, so pin its fail-closed
@@ -1857,7 +1861,7 @@ async function main() {
     renderer: { acknowledgeFileDeletion: 1, onFileDeleted: 1, onFileNotFound: 1,
       onExternalFileOpenRequest: 1, onError: 1 },
     "app-updates": { onUpdateStatus: 1, getUpdateState: 2, checkForUpdates: 1,
-      openUpdateRelease: 1, dismissUpdateNotice: 1 },
+      openUpdateRelease: 1, dismissUpdateNotice: 1, getUpdateReleaseNotes: 1 },
     "custom-tabs": { getQuitApprovalGeneration: 1, announceQuitApprovalReady: 1,
       respondToQuitApproval: 3, respondToQuitCommit: 1, respondToQuitVerification: 1,
       requestQuitApprovalRetry: 1, reportQuitApprovalOverflow: 1,
@@ -3527,7 +3531,7 @@ async function main() {
   {
     const featureCommands = {
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
-      "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-about-updates.js",
+      "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
       "test:document-editor": "npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
       "test:editor-history": "node test/test-editor-history-controls.js",
@@ -3640,9 +3644,9 @@ async function main() {
       process: { platform, argv: ["node", "fixture", ...args] },
     });
     check("the standard updates command actually selects combined acceptance and preserves its focused route",
-      pkg.scripts["test:updates"] === "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-about-updates.js" &&
-      JSON.stringify(aboutPhases([])) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "download-failure"]) &&
-      JSON.stringify(aboutPhases([], "darwin")) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily"]) &&
+      pkg.scripts["test:updates"] === "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js" &&
+      JSON.stringify(aboutPhases([])) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "notes", "download-failure"]) &&
+      JSON.stringify(aboutPhases([], "darwin")) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "notes"]) &&
       JSON.stringify(aboutPhases(["--combined"])) === '["combined"]');
     check("daily update controller retains its focused native route and pure gate",
       JSON.stringify(aboutPhases(["--daily"])) === '["daily"]' &&
@@ -3650,6 +3654,11 @@ async function main() {
       pkg.scripts["test:updates-download-failure"] === "node test/test-about-updates.js --download-failure" &&
       pkg.scripts["test:updates-daily"] === "node test/test-about-updates.js --daily" &&
       pkg.scripts["test:update-schedule"] === "node test/test-update-schedule.js");
+    check("release notes are reached by the standard native command with their pure and focused routes",
+      JSON.stringify(aboutPhases(["--notes"])) === '["notes"]' &&
+      pkg.scripts["test:updates-notes"] === "node test/test-about-updates.js --notes" &&
+      pkg.scripts["test:update-release-notes"] === "node test/test-update-release-notes.js" &&
+      pkg.scripts["test:updates"].includes("node test/test-update-release-notes.js --companion && "));
     const panels = ["startup", "welcomeChoice", "fresh", "freshClosed", "toc", "notes", "closed", "invalid", "missing", "unreadable"];
     const readingPhases = phaseSelection("test/test-reading.js", {
       panelPhases: panels,

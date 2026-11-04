@@ -51,6 +51,154 @@ const downloadFailureRequired = [
   "download failure scenarios introduce no unexpected renderer errors or stalls",
   "download failure setup proves pre-existing controlled artifact bytes",
 ];
+const notesRequired = [
+  "notes checks and popup creation make no additional content request",
+  "notes actual expansion uses the fixed exact offered tag through Main and preload",
+  "notes collapse and re-expansion share the held request without disabling actions",
+  "notes actual Markdown renderer isolates document hooks and removes active content",
+  "notes loaded result is reused across collapse and temporary About hiding",
+  process.platform === "darwin"
+    ? "notes manual-only platform retains its release action without native download authority"
+    : "notes live download progress preserves the same expanded request and install action",
+  "notes fresh presentation starts collapsed without carrying the prior cache",
+  "notes same-presentation target change aborts old ownership and resets disclosure",
+  "notes intentional mismatch is visibly reported and the live error sentinel records it",
+  "notes explicit retry loads the exact target and caches an honest empty result",
+  "notes a lower live offer cannot redirect higher remembered target notes",
+  "notes close dismisses and aborts its owned request without reopening",
+  "notes fixture preserves protected disk and never installs or opens externally",
+  "notes scenarios introduce no unexpected renderer errors or stalls",
+  "notes first expansion survives hiding before actual Main admission",
+  "notes hidden completion and restore reuse the same expanded owner",
+  "notes collapsed hide and restore never fetch content",
+  "notes active failure while hidden restores Retry without a stuck loading state",
+  ...["normal", "narrow enlarged", "short enlarged"].map(value =>
+    `notes ${value} layout keeps main actions reachable and notes independently scrollable`),
+];
+
+function popupFrameMatches(image, witness, background = null) {
+  const { width, height } = image.getSize();
+  const bitmap = image.toBitmap();
+  if (image.isEmpty() || !Number.isInteger(width) || !Number.isInteger(height) ||
+      width < 1 || height < 1 || bitmap.length !== width * height * 4 ||
+      !Number.isFinite(witness.width) || witness.width <= 0 ||
+      !Number.isFinite(witness.height) || witness.height <= 0) {
+    throw new Error("Invalid popup presentation image or viewport");
+  }
+  const sx = width / witness.width, sy = height / witness.height;
+  if (Math.abs(sx - sy) > 2 / Math.min(witness.width, witness.height)) {
+    throw new Error("Popup presentation image has inconsistent scaling");
+  }
+  for (const kind of ["panel", "button", ...(witness.backdrop ? ["backdrop"] : [])]) {
+    if (witness.patches.filter(patch => patch.kind === kind).length < 3) {
+      throw new Error("Insufficient popup presentation witnesses");
+    }
+  }
+  let base = null;
+  if (witness.backdrop) {
+    const size = background?.getSize();
+    if (!size || size.width !== width || size.height !== height || background.isEmpty()) {
+      throw new Error("Invalid pre-open presentation image");
+    }
+    base = background.toBitmap();
+    if (base.length !== bitmap.length) throw new Error("Invalid pre-open bitmap");
+  }
+  const patches = witness.patches.map(patch => {
+    const x = Math.floor(patch.x * sx), y = Math.floor(patch.y * sy);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 1 || y < 1 ||
+        x >= width - 1 || y >= height - 1 || patch.color.length !== 4 ||
+        !patch.color.every(Number.isFinite) || patch.color.slice(0, 3).some(c => c < 0 || c > 255) ||
+        (patch.kind === "backdrop" ? !(patch.color[3] > 0 && patch.color[3] < 1) : patch.color[3] !== 1)) {
+      throw new Error("Invalid popup presentation patch");
+    }
+    return { ...patch, x, y };
+  });
+  return patches.every(patch => {
+    const { x, y } = patch;
+    let matches = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const offset = ((y + dy) * width + x + dx) * 4;
+      const expected = patch.color.slice(0, 3).map((value, channel) =>
+        patch.kind === "backdrop"
+          ? value * patch.color[3] + base[offset + 2 - channel] * (1 - patch.color[3]) : value);
+      // Interior BGRA patches avoid text; allow only small color quantization.
+      if (bitmap[offset + 3] === 255 &&
+          expected.every((value, channel) => Math.abs(bitmap[offset + 2 - channel] - value) <= 4)) matches++;
+    }
+    return matches >= 8;
+  });
+}
+
+function popupObservationEpoch(win, state, schedule, lifecycle, expectsSchedule) {
+  const contents = win.webContents;
+  if (!state || !!schedule !== expectsSchedule ||
+      win.isDestroyed() || contents.isDestroyed() || !win.isVisible() || win.isMinimized()) {
+    throw new Error("Popup observation lost its actual window or updater owner");
+  }
+  return JSON.stringify({
+    window: win.id, contents: contents.id, renderer: contents.getOSProcessId(),
+    lifecycle, url: contents.getURL(), size: win.getContentSize(),
+    zoom: contents.getZoomFactor(), visible: win.isVisible(), minimized: win.isMinimized(),
+    updateState: state.snapshot(), scheduleState: schedule ? schedule.snapshot() : null,
+  });
+}
+
+function createPopupFrameAdmission({ currentEpoch, matches, now }) {
+  let latest = null, readiness = null, ended = false, resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  function stop(error) {
+    if (ended) return;
+    ended = true;
+    latest = null;
+    readiness = null;
+    if (error) reject(error);
+  }
+  function verify() {
+    if (ended || !readiness || !latest) return;
+    try {
+      const epoch = currentEpoch();
+      if (epoch !== readiness.epoch) throw new Error("Popup observation changed after witness preparation");
+      if (epoch !== latest.epoch) {
+        latest = null;
+        return;
+      }
+      if (!matches(latest.image, readiness.witness, readiness.background)) return;
+      if (currentEpoch() !== epoch) throw new Error("Popup observation changed during pixel verification");
+      const verifiedAt = now();
+      if (!Number.isFinite(verifiedAt) ||
+          verifiedAt < readiness.at || verifiedAt < latest.at) {
+        throw new Error("Popup verification clock is inconsistent");
+      }
+      const result = { image: latest.image, frameReceivedAt: latest.at,
+        prerequisitesReadyAt: readiness.at, verifiedAt, witness: readiness.witness };
+      stop();
+      resolve(result);
+    } catch (error) { stop(error); }
+  }
+  return {
+    promise,
+    frame(image, at) {
+      if (ended) return;
+      try {
+        if (!Number.isFinite(at)) throw new Error("Invalid popup frame timestamp");
+        latest = { image, at, epoch: currentEpoch() };
+        verify();
+      } catch (error) { stop(error); }
+    },
+    ready(witness, background, epoch) {
+      if (ended) return;
+      try {
+        if (currentEpoch() !== epoch) throw new Error("Popup observation changed during witness preparation");
+        const at = now();
+        if (!Number.isFinite(at)) throw new Error("Invalid popup readiness timestamp");
+        readiness = { witness, background, epoch, at };
+        // The last real frame may precede the final RAF/witness IPC return.
+        verify();
+      } catch (error) { stop(error); }
+    },
+    stop,
+  };
+}
 
 if (typeof electron === "string") {
   const { spawnSync } = require("child_process");
@@ -71,8 +219,9 @@ if (typeof electron === "string") {
     : process.argv.includes("--combined") ? ["combined"]
     : process.argv.includes("--daily") ? ["daily"]
     : process.argv.includes("--download-failure") ? ["download-failure"]
+    : process.argv.includes("--notes") ? ["notes"]
     : ["combined", "discover", "offline", "equal", "newer", "malformed", "current",
-      "daily", ...nativeDownloadPhases, ...portablePhases];
+      "daily", "notes", ...nativeDownloadPhases, ...portablePhases];
   console.log("About update evidence: " + batch);
   let passed = 0, total = 0;
   for (const phase of phases) {
@@ -100,7 +249,7 @@ if (typeof electron === "string") {
     const failures = assertions.filter(line => line.startsWith("FAIL ")).length;
     const good = Number(footer?.[2]), count = Number(footer?.[3]);
     const required = phase === "combined" ? combinedRequired : phase === "daily" ? dailyRequired
-      : phase === "download-failure" ? downloadFailureRequired : [];
+      : phase === "download-failure" ? downloadFailureRequired : phase === "notes" ? notesRequired : [];
     const complete = required.every(name =>
       assertionNames.filter(actual => actual === name).length === 1);
     if (result.error || footers.length !== 1 || footer[1] !== phase || count < 3 ||
@@ -123,7 +272,7 @@ if (typeof electron === "string") {
     }
     const sourceRoot = path.resolve(process.env.MARKALOO_UPDATE_SOURCE_ROOT || root);
     const sourceHashes = Object.fromEntries(["main.js", "main-preload.js", "app-updates.js", "update-state.js",
-      "update-schedule.js", "index.html", "styles.css", "custom-styles.css"].map(name => {
+      "update-schedule.js", "update-release-notes.js", "index.html", "styles.css", "custom-styles.css"].map(name => {
       const file = path.join(sourceRoot, "src", name);
       return [name, fs.existsSync(file) ? createHash("sha256").update(fs.readFileSync(file)).digest("hex") : null];
     }));
@@ -143,7 +292,7 @@ if (typeof electron === "string") {
   const { EventEmitter } = require("events");
   const Module = require("module");
   const phase = process.argv[2];
-  if (!["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "download-failure",
+  if (!["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "notes", "download-failure",
     "portable-failure", "portable-throw", "portable-cancel", "portable-ambiguous",
     ...Array.from({ length: 5 }, (_, i) => "perf-" + i),
     ...Array.from({ length: 5 }, (_, i) => "perf-ui-" + i)].includes(phase)) {
@@ -183,9 +332,12 @@ if (typeof electron === "string") {
   app.setAppLogsPath(path.join(batch, "logs"));
   const settingsFile = path.join(profile, "window-state.json");
   let dailyClock = new Date(2026, 10, 3, 10).getTime(), dailyElapsed = 0;
-  let dailyOwner = null, dailyState = null, dailyTimerId = 0;
+  let dailyOwner = null, dailyState = null, notesState = null, dailyTimerId = 0;
+  let perfState = null, perfSchedule = null;
+  const perfExpectsSchedule = perfUi && fs.existsSync(path.join(
+    process.env.MARKALOO_UPDATE_SOURCE_ROOT || root, "src", "update-schedule.js"));
   const dailyTimers = new Map();
-  if (phase === "daily" || phase === "download-failure" || perfUi) {
+  if (phase === "daily" || phase === "download-failure" || phase === "notes" || perfUi) {
     fs.writeFileSync(settingsFile, JSON.stringify({ width: 1100, height: 780,
       updateAvailability: { schema: 1, version: "0.10.0" } }));
   }
@@ -199,9 +351,28 @@ if (typeof electron === "string") {
   if (phase !== "equal") app.getVersion = () => runtimeVersion;
   const provider = new EventEmitter();
   const counts = { checks: 0, downloads: 0, launches: 0, installs: 0, kills: 0, external: [] };
+  const notesRequests = [];
+  let notesAdmissionGate = null, notesAdmissions = 0;
+  let stopPerfFrames = null;
+  if (phase === "notes") counts.notesRequests = [];
+  const notesElectron = Object.create(electron);
+  Object.defineProperty(notesElectron, "net", { value: {
+    fetch(url, options) {
+      counts.notesRequests.push({ url, credentials: options.credentials, redirect: options.redirect });
+      return new Promise((resolve, reject) => {
+        const request = { url, signal: options.signal, resolve, reject, aborted: false };
+        notesRequests.push(request);
+        options.signal.addEventListener("abort", () => {
+          request.aborted = true;
+          reject(new Error("Fixture notes request aborted"));
+        }, { once: true });
+      });
+    },
+  } });
   let releaseHeldLaunch;
   const installAttempts = () => counts.launches + counts.installs;
   let checkGate = null, checkMode = phase === "offline" ? "error" : "available";
+  let offerVersion = "0.10.0";
   let downloadGate = null;
   const artifact = path.join(batch, "fixture-installer.exe");
   provider.quitAndInstallCalled = false;
@@ -211,7 +382,7 @@ if (typeof electron === "string") {
     counts.checks++;
     if (checkGate) await checkGate;
     if (checkMode === "error") throw new Error("Fixture is offline");
-    const version = checkMode === "current" ? runtimeVersion : "0.10.0";
+    const version = checkMode === "current" ? runtimeVersion : offerVersion;
     provider.emit(checkMode === "current" ? "update-not-available" : "update-available", { version });
     return { updateInfo: { version } };
   };
@@ -234,13 +405,27 @@ if (typeof electron === "string") {
   };
   const originalLoad = Module._load;
   Module._load = function (request, parent, isMain) {
+    if (phase === "notes" && request === "electron" && path.basename(parent.filename) === "main.js") {
+      return notesElectron;
+    }
     if (request === "electron-updater") return { autoUpdater: provider };
-    if (phase === "daily" && request === "./update-state" &&
+    if ((["daily", "notes"].includes(phase) || perfUi) && request === "./update-state" &&
         path.basename(parent.filename) === "main.js") {
       const actual = originalLoad.call(this, request, parent, isMain);
       return { ...actual, createUpdateState(options) {
-        dailyState = actual.createUpdateState(options);
-        return dailyState;
+        const state = actual.createUpdateState(options);
+        if (phase === "daily") dailyState = state;
+        else if (phase === "notes") notesState = state;
+        else perfState = state;
+        return state;
+      } };
+    }
+    if (perfUi && request === "./update-schedule" &&
+        path.basename(parent.filename) === "main.js") {
+      const actual = originalLoad.call(this, request, parent, isMain);
+      return { ...actual, createUpdateSchedule(options) {
+        perfSchedule = actual.createUpdateSchedule(options);
+        return perfSchedule;
       } };
     }
     if (phase === "daily" && request === "./update-schedule" &&
@@ -311,8 +496,18 @@ if (typeof electron === "string") {
   let chosen = fixture;
   dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
   dialog.showMessageBoxSync = () => { throw new Error("Unexpected native modal"); };
+  const originalHandle = ipcMain.handle;
+  if (phase === "notes") ipcMain.handle = function (channel, handler) {
+    return originalHandle.call(this, channel, channel !== "get-update-release-notes" ? handler
+      : async (...args) => {
+        notesAdmissions++;
+        if (notesAdmissionGate) await notesAdmissionGate;
+        return handler(...args);
+      });
+  };
   if (perf) measurement.stages.beforeMainRequire = performance.now() - started;
   const main = require(path.join(process.env.MARKALOO_UPDATE_SOURCE_ROOT || root, "src", "main.js"));
+  ipcMain.handle = originalHandle;
   if (perf) measurement.stages.afterMainRequire = performance.now() - started;
   if (!perf || perfUi) Object.defineProperty(app, "isPackaged", { get: () => true });
   const { startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
@@ -752,7 +947,203 @@ if (typeof electron === "string") {
     const observation = await sentinel.stop();
     check(combinedRequired[9], observation.hits.length === 0 && observation.stalls.length === 0, observation);
   }
+  async function releaseNotes() {
+    const initialPresentation = (await snapshot()).presentationId;
+    await click("aboutCheckUpdates");
+    await pageWait("notes manual check completed",
+      `window.folia.getUpdateState().then(s=>s.canCheck&&s.availableVersion==='0.10.0'&&` +
+      `s.presentationOrigin==='manual'&&s.presentationId!==${JSON.stringify(initialPresentation)})`);
+    await closeAbout();
+    await pageWait("notes offered popup", "appUpdateToast.classList.contains('show')&&!appUpdateToast.inert");
+    check(notesRequired[0], notesRequests.length === 0 && counts.checks >= 1 &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='false'&&updateNotesPanel.hidden"));
+    win.hide();
+    await wait("collapsed notes hidden", async () => !(await snapshot()).canShowUpdate);
+    win.show();
+    await pageWait("collapsed notes restored", "appUpdateToast.classList.contains('show')");
+    check(notesRequired[16], notesRequests.length === 0 &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='false'"));
+    const resolveNotes = (index, body, tag = decodeURIComponent(new URL(notesRequests[index].url).pathname.split("/").pop())) =>
+      notesRequests[index].resolve(new Response(JSON.stringify({ tag_name: tag, body })));
+    let admitNotes;
+    notesAdmissionGate = new Promise(resolve => { admitNotes = resolve; });
+    await click("updateNotesToggle");
+    await wait("held first notes admission", () => notesAdmissions === 1);
+    win.hide();
+    await wait("expanded notes hidden before admission", async () => !(await snapshot()).canShowUpdate);
+    check(notesRequired[14], notesRequests.length === 0 &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='true'&&updateNotesStatus.textContent.includes('Loading')"));
+    admitNotes();
+    notesAdmissionGate = null;
+    await wait("first notes request", () => notesRequests.length === 1);
+    check(notesRequired[1],
+      notesRequests[0].url === "https://api.github.com/repos/lostinsea/markaloo/releases/tags/v0.10.0" &&
+      counts.notesRequests[0].credentials === "omit" && counts.notesRequests[0].redirect === "error" &&
+      await exec("!updateNotesPanel.hidden&&updateNotesStatus.textContent.includes('Loading')"));
+    await click("updateNotesToggle"); await click("updateNotesToggle");
+    check(notesRequired[2], notesRequests.length === 1 &&
+      await exec("!downloadUpdateBtn.disabled&&!laterUpdateBtn.disabled&&!closeUpdateToast.disabled"));
+    await exec(`window.__notesHookHits=0;
+      window.__notesHook=()=>{window.__notesHookHits++};
+      DOMPurify.addHook('afterSanitizeAttributes',window.__notesHook);
+      window.__notesResourceStart=performance.getEntriesByType('resource').length;true`);
+    const markdown = ("## Offered 0.10.0\n\n**Safe notes** and [inert label](https://example.invalid/notes).\n\n" +
+      "![Inert image label](https://example.invalid/image.png)\n\n" +
+      '<img src="https://example.invalid/html.png" onerror="window.__notesExecuted=true">\n' +
+      '<iframe src="https://example.invalid/frame"></iframe>\n' +
+      '<script>window.__notesExecuted=true</script>\n' +
+      '<svg onload="window.__notesExecuted=true"></svg>\n' +
+      '<form><input autofocus><button>Do not run</button></form>\n\n' +
+      Array.from({ length: 70 }, (_, index) => `- Bounded readable item ${index}`).join("\n")).padEnd(65536, "x");
+    resolveNotes(0, markdown);
+    await pageWait("actual notes body", "!updateNotesBody.hidden&&!!updateNotesBody.querySelector('h2')");
+    const safety = await exec(`(()=>{
+      const body=updateNotesBody,forbidden=body.querySelectorAll(
+        'a,img,script,style,iframe,svg,math,form,input,button,object,embed,audio,video,'+
+        '[id],[class],[style],[href],[src],[data-x],[onclick],[onerror]');
+      const removed=DOMPurify.removeHook('afterSanitizeAttributes');
+      return {text:body.textContent.includes('Safe notes')&&body.textContent.includes('inert label')&&
+          body.textContent.length>60000,
+        basic:!!body.querySelector('strong')&&!!body.querySelector('li'),forbidden:forbidden.length,
+        hooks:window.__notesHookHits,ownHook:removed===window.__notesHook,
+        executed:window.__notesExecuted===true,
+        requests:performance.getEntriesByType('resource').slice(window.__notesResourceStart)
+          .filter(entry=>/^https?:/.test(entry.name)).map(entry=>entry.name)};
+    })()`);
+    check(notesRequired[3], safety.text && safety.basic && safety.forbidden === 0 &&
+      safety.hooks === 0 && safety.ownHook && !safety.executed && safety.requests.length === 0, safety);
+    win.show();
+    await pageWait("completed notes restored", "appUpdateToast.classList.contains('show')&&!updateNotesBody.hidden");
+    check(notesRequired[15], notesRequests.length === 1 &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='true'&&updateNotesRetry.hidden"));
+    for (const [label, width, height, zoom, theme] of [
+      ["normal", 1100, 780, 1, "clarity"],
+      ["narrow enlarged", 480, 700, 1.5, "abyss"],
+      ["short enlarged", 700, 380, 1.25, "clarity"],
+    ]) {
+      win.setContentSize(width, height); win.webContents.setZoomFactor(zoom);
+      await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});appUpdateToast.scrollTop=0;true`);
+      await exec("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
+      const geometry = await exec(`(()=>{
+        const toast=appUpdateToast.getBoundingClientRect(),body=updateNotesBody;
+        const actions=[downloadUpdateBtn,laterUpdateBtn,closeUpdateToast].every(button=>{
+          const r=button.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+          return !button.hidden&&!button.disabled&&r.width>0&&r.height>0&&button.contains(hit)&&
+            r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1;
+        });
+        const before=body.scrollTop;body.scrollTop+=40;
+        return {inside:toast.left>=0&&toast.top>=0&&toast.right<=innerWidth+1&&toast.bottom<=innerHeight+1,
+          actions,scrollable:body.clientHeight>0&&body.scrollHeight>body.clientHeight&&body.scrollTop>before,
+          keyboard:body.tabIndex===0&&!body.hidden,width:innerWidth,height:innerHeight,
+          dpr:devicePixelRatio,zoom:${zoom}};
+      })()`);
+      fs.writeFileSync(path.join(batch, `notes-${label.replace(/ /g, "-")}.png`),
+        (await win.webContents.capturePage()).toPNG());
+      check(`notes ${label} layout keeps main actions reachable and notes independently scrollable`,
+        geometry.inside && geometry.actions && geometry.scrollable && geometry.keyboard, geometry);
+    }
+    win.setContentSize(1100, 780); win.webContents.setZoomFactor(1);
+    await click("updateNotesToggle"); await click("updateNotesToggle");
+    await openAbout(); await closeAbout();
+    check(notesRequired[4], notesRequests.length === 1 &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='true'&&!updateNotesBody.hidden"));
+
+    if (process.platform === "darwin") {
+      const manual = await snapshot();
+      check(notesRequired[5], manual.manualOnly && !manual.canInstall && counts.downloads === 0 &&
+        await exec("!downloadUpdateBtn.hidden&&!downloadUpdateBtn.disabled&&" +
+          "downloadUpdateBtn.textContent==='Open release downloads'&&installUpdateBtn.hidden"));
+    } else {
+      let releaseDownload;
+      downloadGate = new Promise(resolve => { releaseDownload = resolve; });
+      await click("downloadUpdateBtn");
+      await wait("notes actual held download", () => counts.downloads === 1);
+      await pageWait("download presentation reset", "updateNotesToggle.getAttribute('aria-expanded')==='false'");
+      await click("updateNotesToggle");
+      await wait("notes during download", () => notesRequests.length === 2);
+      const downloading = await snapshot();
+      releaseDownload();
+      await pageWait("notes actual ready install", "window.folia.getUpdateState().then(s=>s.canInstall)");
+      const ready = await snapshot();
+      check(notesRequired[5], ready.presentationId === downloading.presentationId &&
+        notesRequests.length === 2 && !notesRequests[1].aborted &&
+        await exec("updateNotesToggle.getAttribute('aria-expanded')==='true'&&" +
+          "!installUpdateBtn.hidden&&!installUpdateBtn.disabled&&updateNotesStatus.textContent.includes('Loading')"));
+      resolveNotes(1, "");
+      await pageWait("empty notes after download", "updateNotesStatus.textContent.includes('No release notes')");
+    }
+    const cachedRequestCount = notesRequests.length;
+    await click("laterUpdateBtn");
+    const previousPresentation = (await snapshot()).presentationId;
+    await openAbout(); await click("aboutCheckUpdates");
+    await pageWait("notes fresh manual presentation",
+      `window.folia.getUpdateState().then(s=>s.canCheck&&s.presentationId!==${JSON.stringify(previousPresentation)})`);
+    await closeAbout();
+    check(notesRequired[6], notesRequests.length === cachedRequestCount &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='false'&&updateNotesPanel.hidden"));
+    await click("updateNotesToggle");
+    await wait("old target request before replacement", () => notesRequests.length === cachedRequestCount + 1);
+    const before = await snapshot();
+    offerVersion = "0.11.0";
+    await notesState.check();
+    await pageWait("higher target on same presentation", "window.folia.getUpdateState().then(s=>s.presentationVersion==='0.11.0')");
+    const changed = await snapshot();
+    check(notesRequired[7], before.presentationId === changed.presentationId &&
+      notesRequests[cachedRequestCount].aborted &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='false'&&updateNotesBody.hidden"));
+    resolveNotes(cachedRequestCount, "Retired target");
+    await click("updateNotesToggle");
+    await wait("replacement target request", () => notesRequests.length === cachedRequestCount + 2);
+    await sentinel.mute("intentional exact-target mismatch");
+    win.hide();
+    await wait("notes failure owner hidden", async () => !(await snapshot()).canShowUpdate);
+    resolveNotes(cachedRequestCount + 1, "Wrong release", "v0.10.0");
+    await pageWait("notes visible mismatch error", "!updateNotesRetry.hidden&&updateNotesStatus.textContent.includes('could not')");
+    win.show();
+    await pageWait("failed notes restored", "appUpdateToast.classList.contains('show')&&!updateNotesRetry.hidden");
+    check(notesRequired[17], notesRequests.length === cachedRequestCount + 2 &&
+      await exec("updateNotesToggle.getAttribute('aria-expanded')==='true'&&!updateNotesStatus.textContent.includes('Loading')"));
+    await sentinel.drain();
+    const negative = sentinel.currentMute().suppressed;
+    check(notesRequired[8], negative.length === 1 && negative[0].kind === "console-error" &&
+      negative[0].detail.startsWith("Could not show release notes:") &&
+      negative[0].detail.includes("did not match") && (await snapshot()).status !== "error", negative);
+    await sentinel.unmute();
+    await click("updateNotesToggle"); await click("updateNotesToggle");
+    const beforeRetry = notesRequests.length;
+    await click("updateNotesRetry");
+    await wait("explicit notes retry", () => notesRequests.length === cachedRequestCount + 3);
+    resolveNotes(cachedRequestCount + 2, "");
+    await pageWait("retry empty notes", "updateNotesStatus.textContent.includes('No release notes')");
+    await click("updateNotesToggle"); await click("updateNotesToggle");
+    check(notesRequired[9], beforeRetry === cachedRequestCount + 2 &&
+      notesRequests.length === cachedRequestCount + 3 &&
+      notesRequests[cachedRequestCount + 2].url.endsWith("/v0.11.0") &&
+      await exec("updateNotesRetry.hidden"));
+    const retryPresentation = (await snapshot()).presentationId;
+    offerVersion = "0.10.0";
+    await openAbout(); await click("aboutCheckUpdates");
+    await pageWait("lower live offer",
+      `window.folia.getUpdateState().then(s=>s.canCheck&&s.lastCheck==='not-available'&&` +
+      `s.presentationId!==${JSON.stringify(retryPresentation)})`);
+    await closeAbout(); await click("updateNotesToggle");
+    await wait("higher remembered target notes", () => notesRequests.length === cachedRequestCount + 4);
+    check(notesRequired[10], (await snapshot()).availableVersion === "0.11.0" &&
+      notesRequests[cachedRequestCount + 3].url.endsWith("/v0.11.0"));
+    await click("closeUpdateToast");
+    await wait("notes close abort", () => notesRequests[cachedRequestCount + 3].aborted);
+    resolveNotes(cachedRequestCount + 3, "Dismissed late result");
+    await sentinel.drain();
+    check(notesRequired[11], await exec("appUpdateToast.inert&&!appUpdateToast.classList.contains('show')&&updateNotes.hidden"));
+    check(notesRequired[12], counts.downloads === (process.platform === "darwin" ? 0 : 1) &&
+      installAttempts() === 0 &&
+      counts.external.length === 0 && fs.readFileSync(fixture, "utf8") === originalBody);
+    const observation = await sentinel.stop();
+    check(notesRequired[13], observation.hits.length === 0 && observation.stalls.length === 0, observation);
+  }
+
   async function finish(error) {
+    stopPerfFrames?.();
     if (error) check("About update harness completed", false, error.stack);
     clearTimeout(watchdog);
     const passed = results.filter(Boolean).length;
@@ -780,6 +1171,91 @@ if (typeof electron === "string") {
         return {opacity:getComputedStyle(element).opacity,width:rect.width,height:rect.height,
           inside:rect.left>=0&&rect.top>=0&&rect.right<=innerWidth+1&&rect.bottom<=innerHeight+1};
       })()`);
+      async function presentedPopup(id, buttonId, trigger = async () => {}) {
+        const contents = win.webContents;
+        let lifecycle = 0, layout, triggeredAt, background = null;
+        const admission = createPopupFrameAdmission({
+          currentEpoch: () => popupObservationEpoch(win, perfState, perfSchedule, lifecycle, perfExpectsSchedule),
+          matches: popupFrameMatches, now: () => performance.now(),
+        });
+        const changed = () => {
+          lifecycle++;
+          admission.stop(new Error("Popup window or renderer changed during observation"));
+        };
+        const listeners = [
+          [contents, "did-navigate"], [contents, "render-process-gone"], [contents, "destroyed"],
+          [contents, "zoom-changed"], [win, "closed"], [win, "resize"], [win, "hide"], [win, "minimize"],
+        ];
+        for (const [target, event] of listeners) target.on(event, changed);
+        let timer = null, stopped = false;
+        stopPerfFrames = () => {
+          if (stopped) return;
+          stopped = true;
+          clearTimeout(timer);
+          for (const [target, event] of listeners) target.removeListener(event, changed);
+          admission.stop();
+          if (!contents.isDestroyed()) contents.endFrameSubscription();
+        };
+        try {
+          const prepare = (async () => {
+            const active = () => {
+              if (stopped) throw new Error("Popup observation was canceled during preparation");
+            };
+            background = id === "aboutDialog" ? await contents.capturePage() : null;
+            active();
+            timer = setTimeout(() => admission.stop(new Error("No verified popup presentation frame")), 9000);
+            contents.beginFrameSubscription(false, image => admission.frame(image, performance.now()));
+            triggeredAt = performance.now();
+            await trigger();
+            active();
+            layout = await paintedSurface(id);
+            active();
+            const epoch = popupObservationEpoch(win, perfState, perfSchedule, lifecycle, perfExpectsSchedule);
+            const witness = await exec(`(()=>{
+            const root=document.getElementById(${JSON.stringify(id)});
+            const button=document.getElementById(${JSON.stringify(buttonId)});
+            const r=root.getBoundingClientRect(),b=button.getBoundingClientRect();
+            const color=value=>{
+              if(!/^rgba?\\(/.test(value))throw Error('Unsupported popup color');
+              const parts=value.match(/[\\d.]+/g).map(Number);
+              return parts.length===3?[...parts,1]:parts;
+            };
+            const panel=color(getComputedStyle(root).backgroundColor);
+            const fill=color(getComputedStyle(button).backgroundColor);
+            const patches=[
+              {kind:'panel',x:r.left+8,y:r.top+32,color:panel},
+              {kind:'panel',x:r.right-8,y:r.top+r.height/2,color:panel},
+              {kind:'panel',x:r.left+8,y:r.bottom-24,color:panel},
+              ...[[.1,.3],[.9,.3],[.1,.7]].map(([x,y])=>({
+                kind:'button',x:b.left+b.width*x,y:b.top+b.height*y,color:fill}))
+            ];
+            const backdrop=root.tagName==='DIALOG';
+            if(backdrop){
+              const tint=color(getComputedStyle(root,'::backdrop').backgroundColor);
+              for(const y of [.2,.5,.8]){
+                const point={kind:'backdrop',x:8,y:innerHeight*y,color:tint};
+                if(point.x>=r.left&&point.x<=r.right&&point.y>=r.top&&point.y<=r.bottom)
+                  throw Error('Backdrop witness is covered by its panel');
+                patches.push(point);
+              }
+            }
+            return {width:innerWidth,height:innerHeight,patches,backdrop};
+            })()`);
+            active();
+            if (background && popupFrameMatches(background, witness, background)) {
+              throw new Error("Document-only image passed the popup presentation predicate");
+            }
+            admission.ready(witness, background, epoch);
+            contents.invalidate();
+          })();
+          const [, frame] = await Promise.all([prepare, admission.promise]);
+          return { ...frame, at: frame.verifiedAt, png: frame.image.toPNG(),
+            layout, background, triggeredAt };
+        } finally {
+          stopPerfFrames();
+          stopPerfFrames = null;
+        }
+      }
       await pageWait("painted reader", "!!document.getElementById('viewer')&&typeof window.CustomTabs?.getTabs==='function'");
       measurement.stages.readerObserved = performance.now() - started;
       measurement.frames = await exec(`new Promise(resolve=>{
@@ -799,13 +1275,20 @@ if (typeof electron === "string") {
         await pageWait("cached update notice visible",
           "document.getElementById('appUpdateToast').classList.contains('show')&&" +
           "document.getElementById('updateMessage').textContent.includes('0.10.0')");
-        measurement.noticePaint = await paintedSurface("appUpdateToast");
-        measurement.cachedNoticeReady = performance.now() - started;
+        const notice = await presentedPopup("appUpdateToast", "downloadUpdateBtn");
+        measurement.noticePaint = notice.layout;
+        measurement.noticeWitness = notice.witness;
+        measurement.noticeFrameTiming = {
+          received: notice.frameReceivedAt - started,
+          prerequisitesReady: notice.prerequisitesReadyAt - started,
+          verified: notice.verifiedAt - started,
+        };
+        measurement.cachedNoticeReady = notice.at - started;
         check("popup performance proves an offered cached version in the painted ordinary notice",
           measurement.noticePaint.opacity === "1" && measurement.noticePaint.height > 0 &&
           measurement.noticePaint.inside &&
           (await snapshot()).availableVersion === "0.10.0");
-        fs.writeFileSync(path.join(batch, phase + "-notice.png"), (await win.webContents.capturePage()).toPNG());
+        fs.writeFileSync(path.join(batch, phase + "-notice.png"), notice.png);
         await click("laterUpdateBtn");
       }
       const { generate } = require("../bench/corpus");
@@ -817,16 +1300,24 @@ if (typeof electron === "string") {
       await exec("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
       measurement.open = performance.now() - openStarted;
       if (perfUi) {
-        const aboutStarted = performance.now();
-        await openAbout();
-        measurement.aboutPaint = await paintedSurface("aboutDialog");
-        measurement.aboutOpen = performance.now() - aboutStarted;
+        const about = await presentedPopup("aboutDialog", "aboutCheckUpdates", openAbout);
+        measurement.aboutPaint = about.layout;
+        measurement.aboutWitness = about.witness;
+        measurement.aboutFrameTiming = {
+          received: about.frameReceivedAt - about.triggeredAt,
+          prerequisitesReady: about.prerequisitesReadyAt - about.triggeredAt,
+          verified: about.verifiedAt - about.triggeredAt,
+        };
+        measurement.aboutOpen = about.at - about.triggeredAt;
         check("popup performance measures the first genuinely open About above the representative document",
           measurement.aboutPaint.opacity === "1" && measurement.aboutPaint.height > 0 &&
           measurement.aboutPaint.inside &&
           await exec("document.getElementById('aboutDialog').open&&" +
             "viewer.querySelector('h1')?.textContent==='Update performance fixture'"));
-        fs.writeFileSync(path.join(batch, phase + "-about.png"), (await win.webContents.capturePage()).toPNG());
+        check("popup compositor predicate rejects the pre-About document for both surfaces",
+          !popupFrameMatches(about.background, measurement.noticeWitness) &&
+          !popupFrameMatches(about.background, measurement.aboutWitness, about.background));
+        fs.writeFileSync(path.join(batch, phase + "-about.png"), about.png);
       }
       check("performance sample uses a real representative prose document", await exec("originalMarkdown.length>65536&&viewer.querySelectorAll('p').length>150"));
       check("performance sample runs without updater network calls", counts.checks === 0 && counts.downloads === 0);
@@ -860,6 +1351,8 @@ if (typeof electron === "string") {
     check("opening About performs no provider check or download", counts.checks === 0 && counts.downloads === 0);
     if (phase === "daily") {
       await daily();
+    } else if (phase === "notes") {
+      await releaseNotes();
     } else if (phase === "download-failure") {
       await closeAbout();
       await pageWait("download failure cached notice",

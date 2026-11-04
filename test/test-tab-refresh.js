@@ -42209,14 +42209,14 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       // These source locations are pinned by the existing Main binding and Source controls.
       // Thaw has no wire id: only this exact post-return route can be correlated.
       if (!cleanup && !resetting && kind === "send:return" && data.channel === "quit-approval-thaw" &&
-          /[\\/]src[\\/]main\.js:12734:\d+/.test(record.stack)) {
+          /[\\/]src[\\/]main\.js:12736:\d+/.test(record.stack)) {
         const id = record.state.lastRequestId;
         const entry = record.timing.find(item => item.id === id && item.reason === "update-install" &&
           Number.isFinite(item.continuationInvokedAt));
         const publication = records.find(item => item.epoch === epoch && !item.cleanup && !item.resetting &&
           item.kind === "send:return" && item.channel === "update-status" &&
           item.payload?.error === "The downloaded update is incomplete. Download it again." &&
-          item.state.lastRequestId === id && /[\\/]src[\\/]main\.js:14092:\d+/.test(item.stack) &&
+          item.state.lastRequestId === id && /[\\/]src[\\/]main\.js:14141:\d+/.test(item.stack) &&
           item.state.rendererGeneration === record.state.rendererGeneration &&
           item.state.rendererPageSession === record.state.rendererPageSession &&
           item.timing.some(clock => clock.id === id &&

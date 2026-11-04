@@ -231,7 +231,7 @@ async function run() {
         if (name === "electron") return "controlled-electron";
         if (name === "child_process") return { spawnSync(_exe, args) {
           phases.push(args[1]);
-          const inventory = { combined: "combinedRequired", daily: "dailyRequired",
+          const inventory = { combined: "combinedRequired", daily: "dailyRequired", notes: "notesRequired",
             "download-failure": "downloadFailureRequired" }[args[1]];
           const names = inventory
             ? vm.runInContext(inventory, context)
@@ -253,9 +253,10 @@ async function run() {
   check("update controller excludes Windows portable fixtures on Linux and macOS",
     ["linux", "darwin"].every(platform => {
       const phases = controllerPhases(platform);
-      return phases.length === (platform === "darwin" ? 8 : 9) &&
+      return phases.length === (platform === "darwin" ? 9 : 10) &&
         phases.includes("download-failure") === (platform !== "darwin") &&
         phases.includes("combined") && phases.includes("discover") && phases.includes("daily") &&
+        phases.includes("notes") &&
         !phases.some(phase => phase.startsWith("portable-"));
     }));
   let macDownloadRefused = false;
@@ -265,6 +266,9 @@ async function run() {
     ["win32", "linux"].every(platform =>
       JSON.stringify(controllerPhases(platform, ["--download-failure"])) === '["download-failure"]') &&
     macDownloadRefused);
+  check("update controller selects the complete notes phase on every platform",
+    ["win32", "linux", "darwin"].every(platform =>
+      JSON.stringify(controllerPhases(platform, ["--notes"])) === '["notes"]'));
 }
 run().then(() => {
   const passed = results.filter(Boolean).length;

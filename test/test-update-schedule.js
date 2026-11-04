@@ -561,7 +561,7 @@ function mainPorts() {
   const context = vm.createContext({ path, pathToFileURL, __dirname: path.join(__dirname, "..", "src"),
     shutdownOwnerWindow: () => win, updateReaderWindow: () => win,
     ownedDialogs: null, updateMainDialogDepth: 0, pendingShutdown: false, pendingShutdownCommit: false,
-    ipcMain: ports, updateSchedule: f.owner, updateSurface: null });
+    ipcMain: ports, updateSchedule: f.owner, updateSurface: null, updateNotes: null });
   vm.runInContext(between("function isApprovalSender(event) {", "\nfunction addDiagnosticCount") +
     "\n" + between("function bindUpdateWindow(win) {", "// Called once by getAutoUpdater()"), context);
   context.bindUpdateWindow(win);
@@ -661,6 +661,7 @@ function toastFixture(initial) {
     const node = { style: {}, hidden: false, textContent: "", disabled: false,
       addEventListener(event, callback) { this[event] = callback; },
       setAttribute() {},
+      replaceChildren() {},
       classList: {
         add: value => classes.add(value), remove: value => classes.delete(value),
         toggle(value, enabled) { if (enabled) classes.add(value); else classes.delete(value); },
