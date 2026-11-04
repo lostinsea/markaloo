@@ -12,9 +12,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   const tableReceipts = new WeakMap();
   const textReceipts = new WeakMap(), sourceTextReceipts = new WeakMap();
   let pendingSource = false, lastEditor = 0, lastPreview = 0;
+  let pendingNestedWheel = null;
   const stats = { builds: 0, scrolls: 0, writes: 0, callbacks: [] };
 
   function clearGeometry() {
+    pendingNestedWheel = null;
     anchors = [];
     scrollPoints.editor = [];
     scrollPoints.preview = [];
@@ -769,6 +771,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   }
   function invalidate() {
     dirty = true;
+    pendingNestedWheel = null;
     schedule();
   }
   const resize = new ResizeObserver(entries => {
@@ -1081,6 +1084,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     }
     target = Math.min(otherMax, Math.max(0, target));
     if (Math.abs(follower.scrollTop - target) > .75) {
+      pendingNestedWheel = null;
       follower.scrollTop = target;
       stats.writes++;
     }
@@ -1097,39 +1101,59 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     if (stats.callbacks.length > 256) stats.callbacks.shift();
   }
   function claim(side) {
+    pendingNestedWheel = null;
     if (!active() || frozen()) return;
     owner = side;
     if (side === 'editor') {
       window.dispatchEvent(new Event('editor-scroll-intent'));
     }
   }
-  function nestedScroller(target, pane, direction = 0) {
+  function nestedScroller(target, pane) {
+    let nested = null;
     for (let node = target instanceof Element ? target : target.parentElement; node && node !== pane; node = node.parentElement) {
       const max = node.scrollHeight - node.clientHeight;
       if (max <= 1) continue;
       const style = getComputedStyle(node);
       if (!/auto|scroll/.test(style.overflowY)) continue;
-      if (!direction || (direction < 0 ? node.scrollTop > 1 : node.scrollTop < max - 1) ||
-          /contain|none/.test(style.overscrollBehaviorY)) return true;
+      if (/contain|none/.test(style.overscrollBehaviorY)) return 'contained';
+      nested = 'chainable';
     }
-    return false;
+    return nested;
   }
   for (const [side, pane] of [['editor', editor], ['preview', preview]]) {
     pane.addEventListener('wheel', event => {
+      pendingNestedWheel = null;
       if (event.ctrlKey || event.metaKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY) ||
-          event.defaultPrevented || nestedScroller(event.target, pane, event.deltaY)) return;
+          event.defaultPrevented) return;
+      const nested = nestedScroller(event.target, pane);
+      if (nested) {
+        // Native endpoints can differ from rounded DOM ranges. Claim only actual
+        // outer travel; the deadline prevents an old wheel owning a later scroll.
+        if (nested === 'chainable' && usable()) pendingNestedWheel = {
+          side, direction: Math.sign(event.deltaY), top: pane.scrollTop,
+          source: committed, selection: identity(), until: performance.now() + 250,
+        };
+        return;
+      }
       claim(side);
     }, { passive: true });
     pane.addEventListener('pointerdown', event => {
+      pendingNestedWheel = null;
       if (!nestedScroller(event.target, pane)) claim(side);
     }, { passive: true });
     pane.addEventListener('keydown', event => {
+      pendingNestedWheel = null;
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) claim(side);
     });
     pane.addEventListener('scroll', event => {
-      if (event.target !== pane || !usable()) return;
+      if (event.target !== pane) return;
+      if (!usable()) { pendingNestedWheel = null; return; }
       const last = side === 'editor' ? lastEditor : lastPreview;
       if (Math.abs(pane.scrollTop - last) < .5) return; // Horizontal scrolling is independent.
+      const intent = pendingNestedWheel;
+      if (intent && performance.now() > intent.until) pendingNestedWheel = null;
+      else if (intent?.side === side && intent.source === committed && intent.selection === identity() &&
+          (pane.scrollTop - intent.top) * intent.direction > .5) claim(side);
       if (!owner) owner = side;
       if (side !== owner) return; // A follower never takes ownership from a scroll event.
       stats.scrolls++;
@@ -1141,6 +1165,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     source: text => new Source(text),
     start() { pendingSource = true; clearGeometry(); },
     commit(source, { textPending = false } = {}) {
+      pendingNestedWheel = null;
       if (committed?.selection !== source.selection) owner = 'preview';
       committed = source;
       for (const [table, receipt] of source.editableTables) {
@@ -1162,6 +1187,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       frame = 0;
     },
     enter() {
+      pendingNestedWheel = null;
       owner = 'preview';
       lastEditor = lastPreview = 0;
       observe();

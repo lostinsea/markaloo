@@ -3531,7 +3531,7 @@ async function main() {
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
       "test:document-editor": "npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
       "test:editor-history": "node test/test-editor-history-controls.js",
-      "test:editor-scroll": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
+      "test:editor-scroll": "node test/test-editor-scroll-state.js --companion && node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
       "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
       "test:table-cells-source": "node --check src/table-cell-editor.js && node --check test/test-table-cell-editor.js && node test/test-table-cell-editor.js --source",
       "test:table-cells-ui": "electron test/test-table-cell-editor.js --partition=input && electron test/test-table-cell-editor.js --partition=remaining && electron test/test-table-cell-editor.js --partition=shared",

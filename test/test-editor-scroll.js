@@ -354,14 +354,15 @@ async function nativeWheel(side, deltaY, selector = null, record = null) {
         intendedPre: selectedPre.tag === "PRE" && selectedPre.connected && selectedPrePath !== null,
         nestedOverflow: nested.range > 1,
         effectiveOverflow: nested.overflowY === "auto",
-        requestedEdge: up ? nested.top <= 1 : nested.top >= nested.range - 1,
+        requestedEdge: record.interior ? nested.top > 1 && nested.top < nested.range - 1 : up ? nested.top <= 1 :
+          Number.isFinite(record.endpoint) && nested.top === record.endpoint,
         pointDescendantHit: hit.containedInIntendedPre && hit.path !== null,
         expectedBehavior: nested.overscrollBehaviorY === record.expectedBehavior,
         ownerEditor: outer.owner === "editor",
         editorTravel: (up ? outer.editor.top : outer.editor.range - outer.editor.top) > 5,
         previewTravel: (up ? outer.preview.top : outer.preview.range - outer.preview.top) > 5,
       };
-      check(`nested native wheel ${record.case} has overflowing edge hit behavior owner and outer-travel setup`,
+      check(`nested native wheel ${record.case} has overflowing ${record.interior ? "interior" : "edge"} hit behavior owner and outer-travel setup`,
         Object.values(record.setup).every(Boolean), record);
     }
     win.focus();
@@ -1055,6 +1056,27 @@ async function run() {
         const after=${expression};
         return {after,post:(${nestedWheelStateSource})(viewer.querySelector('pre:not(.mermaid)'),after.owner)};
       })()`);
+      const parkNativeBottom = async (key, behavior) => {
+        const before = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+        const parking = receipt.nestedWheel[key + "-parking"] = { case: key + "-parking",
+          expectedBehavior: behavior, before, endpoint: await exec("viewer.querySelector('pre:not(.mermaid)').scrollTop") };
+        await nativeWheel("preview", -70, "pre:not(.mermaid)", parking);
+        const observed = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+        parking.after = observed.after; parking.post = observed.post;
+        const { after } = observed;
+        const stayed = JSON.stringify(before) === JSON.stringify(after);
+        const chained = after.owner === "preview" && after.preview > before.preview + 5 && after.editor > before.editor + 5;
+        check(`native bottom parking ${key} preserves independent or synchronized outer travel`,
+          behavior === "auto" ? stayed || chained : stayed, parking);
+        await exec("markdownEditor.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));true");
+        await frames();
+        const reclaimed = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+        check(`native bottom parking ${key} reclaims ownership without moving any viewport`,
+          reclaimed.after.owner === "editor" && reclaimed.after.editor === after.editor &&
+          reclaimed.after.preview === after.preview && reclaimed.post.nested.top === parking.post.nested.top,
+          { parking, reclaimed });
+        return parking.post.nested.top;
+      };
       for (const bottom of [true, false]) {
         await exec(`(() => {
           const p=viewer.querySelector('pre:not(.mermaid)'),r=p.getBoundingClientRect(),v=viewer.getBoundingClientRect();
@@ -1064,9 +1086,10 @@ async function run() {
         })()`);
         await settle();
         await exec("markdownEditor.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));true");
+        const endpoint = bottom ? await parkNativeBottom("bottom", "auto") : 0;
         const before = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
         const key = bottom ? "bottom" : "top";
-        const wheel = receipt.nestedWheel[key] = { case: key, expectedBehavior: "auto", before };
+        const wheel = receipt.nestedWheel[key] = { case: key, expectedBehavior: "auto", before, endpoint };
         await nativeWheel("preview", bottom ? -70 : 70, "pre:not(.mermaid)", wheel);
         const observed = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,...getEditorScrollDiagnostics()})");
         const after = observed.after;
@@ -1080,9 +1103,35 @@ async function run() {
           (after.preview - before.preview) * (bottom ? 1 : -1) > 5 &&
           (after.editor - before.editor) * (bottom ? 1 : -1) > 5, { before, after });
         wheel.postEdge = wheel.post.nested.range > 1 &&
-          (bottom ? wheel.post.nested.top >= wheel.post.nested.range - 1 : wheel.post.nested.top <= 1);
+          (bottom ? wheel.post.nested.top === endpoint : wheel.post.nested.top <= 1);
         check(`nested native wheel ${key} retains its requested nested edge after input`, wheel.postEdge, wheel);
       }
+      await exec(`(() => {
+        viewer.querySelector('pre:not(.mermaid)').scrollTop=90;
+        markdownEditor.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));return true;
+      })()`);
+      await settle();
+      const interiorBefore = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+      const interior = receipt.nestedWheel.interior = { case: "interior", interior: true,
+        expectedBehavior: "auto", before: interiorBefore };
+      await nativeWheel("preview", -70, "pre:not(.mermaid)", interior);
+      const interiorObserved = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
+      interior.after = interiorObserved.after; interior.post = interiorObserved.post;
+      check("native nested interior scrolling preserves outer position and ownership",
+        JSON.stringify(interiorBefore) === JSON.stringify(interior.after) &&
+        interior.post.nested.top > interior.pre.nested.top + 5 &&
+        interior.post.nested.top < interior.post.nested.range - 1, interior);
+      const followerBefore = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,writes:getEditorScrollDiagnostics().writes})");
+      await exec(`(() => {
+        viewer.querySelector('pre:not(.mermaid)').dispatchEvent(new WheelEvent('wheel',{deltaY:70,bubbles:true}));
+        markdownEditor.scrollTop+=70;return true;
+      })()`);
+      await settle();
+      const followerAfter = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,...getEditorScrollDiagnostics()})");
+      check("controller-written follower scrolling cannot consume a nested gesture",
+        followerAfter.owner === "editor" && followerAfter.writes > followerBefore.writes &&
+        followerAfter.editor > followerBefore.editor + 5 && followerAfter.preview > followerBefore.preview + 5,
+        { followerBefore, followerAfter });
       for (const behavior of ["contain", "none"]) {
         await exec(`(() => {
           const p=viewer.querySelector('pre:not(.mermaid)');
@@ -1090,8 +1139,9 @@ async function run() {
           markdownEditor.dispatchEvent(new WheelEvent('wheel',{deltaY:1,bubbles:true}));return true;
         })()`);
         await settle();
+        const endpoint = await parkNativeBottom(behavior, behavior);
         const before = await exec("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
-        const wheel = receipt.nestedWheel[behavior] = { case: behavior, expectedBehavior: behavior, before };
+        const wheel = receipt.nestedWheel[behavior] = { case: behavior, expectedBehavior: behavior, before, endpoint };
         await nativeWheel("preview", -70, "pre:not(.mermaid)", wheel);
         const observed = await nestedWheelAfter("({editor:markdownEditor.scrollTop,preview:viewer.scrollTop,owner:getEditorScrollDiagnostics().owner})");
         const after = observed.after;
@@ -1102,7 +1152,7 @@ async function run() {
           sampledPreview: wheel.post.outer.preview.top - wheel.pre.outer.preview.top };
         check(`nested overscroll ${behavior} preserves outer position and ownership`,
           before.owner === "editor" && JSON.stringify(before) === JSON.stringify(after), { before, after });
-        wheel.postEdge = wheel.post.nested.range > 1 && wheel.post.nested.top >= wheel.post.nested.range - 1;
+        wheel.postEdge = wheel.post.nested.range > 1 && wheel.post.nested.top === endpoint;
         check(`nested native wheel ${behavior} retains its requested nested edge after input`, wheel.postEdge, wheel);
       }
       await exec("viewer.querySelector('pre:not(.mermaid)').removeAttribute('style');viewer.querySelector('pre:not(.mermaid) code').removeAttribute('style');true");
@@ -1712,6 +1762,10 @@ app.whenReady().then(async () => {
   win = BrowserWindow.getAllWindows()[0];
   // Apply the same frame scheduling to baseline and candidate observations.
   win.webContents.setBackgroundThrottling(false);
+  const display = require("electron").screen.getDisplayMatching(win.getBounds());
+  receipt.display = { bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor,
+    windowBounds: win.getBounds(), contentBounds: win.getContentBounds(),
+    zoomFactor: win.webContents.getZoomFactor(), dpr: await exec("devicePixelRatio") };
   try { await run(); }
   catch (error) { check("scroll harness reaches completion", false, String(error.stack || error)); }
   fs.writeFileSync(path.join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2));

@@ -413,6 +413,10 @@ flowchart LR
   It does not scroll past visible content to manufacture a pixel-for-pixel match.
 - Wheel, scrollbar and keyboard input choose the driving pane. Follower scroll
   events cannot take ownership. TOC, search and zoom explicitly use the preview.
+- A nested wheel claims the outer pane only after actual same-direction travel.
+  Rounded DOM ranges do not predict its native endpoint. Containment, newer
+  input, document/mode changes and a short expiry retire pending nested intent.
+  Controller-written follower movement cannot claim that intent.
 - Explicit TOC, document search, internal-link and note navigation cancel the
   saved tab restore before smooth scrolling. Later layout changes cannot replay
   that old reading position. Ordinary tab restoration still follows layout.

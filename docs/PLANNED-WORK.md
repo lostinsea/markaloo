@@ -38,6 +38,46 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `v013-navigation-baseline` - **FUNCTIONAL CHECKS PASS; RESIDUAL TIMEOUT GATE HELD**.
+  - Diagnose the four nested-wheel failures and notes-test editor mismatch
+    before navigation work. Keep original assertions, receipts and sentinel.
+  - One process-local scale-1.5 intervention reproduced the four wheel failures
+    on the same diagnostic/product bytes as the passing scale-1.25 observation.
+    Historical OS scale remains unknown. No user OS/display setting changed.
+  - Native parking and measured chaining exposed two causes: the fixture assumed
+    a programmatic bottom was the native endpoint; the product then rejected
+    real outer travel below its rounded endpoint prediction.
+  - The repair retains one bounded, current-source nested intent and claims only
+    actual same-direction outer travel. Native parking precedes strict endpoint,
+    positive-travel and containment assertions; no tolerance was widened.
+  - Ownership contracts pass 24/24; ordinary and forced-scale native input each
+    pass 48/48. R1034/R1035 and R1330-R1332 individually prove their exact
+    intended failures and independent controls; all product bytes restored.
+  - Matched retrospective open/Split performance fits the unchanged budgets;
+    the separate settled-callback controls pass. See `PERF-AUDIT.md`.
+  - The notes fixture's captured stack proves its boolean-only mode contradicted
+    the actual Reader DOM. Real Split/input/Undo passes 344/344; R1329 restores
+    the old fixture and produces only the expected sentinel failure. Final
+    combined-product regression also passes 344/344; R1329 was re-proven.
+    The sentinel stays live; actual Split and correspondence captures viewed.
+  - The full-scroll invocation reached its unchanged 180 s watchdog after a
+    short-inline-image assertion, before wheel checks. One bounded existing
+    `blocks` route passes 27/27 but does not explain the full-run timeout.
+    No timeout increase, full-run retry or baseline exception is accepted.
+  - Luna's initial review is clear; Sol found two proof-output protocol defects,
+    not a production blocker. Existing tagged-companion/stdout rules now apply;
+    both independent correction/evidence rechecks are clear. Strict source
+    packaging passes 487/0; R1333 proves omission of the new ownership gate.
+    The two built-asar checks remain skipped, not accepted as a build/install.
+    The bounded diagnostic is complete: one verified pre-repair reference and
+    one frozen candidate, both full 313/313 in 87.103/87.771 s, with identical
+    reviewed observation bytes and the unchanged watchdog. Product/fixture
+    hashes stayed fixed; owned native processes exited and the slot is released.
+    Empty-case saves span 13.852/14.056 s versus the retained timeout's 95.983 s.
+    No hidden-prefix hang or candidate-specific slowdown reproduced. The old
+    delay mechanism remains unproved; passing reruns do not silently clear the
+    gate. Navigation/mode work stays held pending disposition; no further
+    native diagnostic invocation follows automatically.
 - `v013-reading-history` - **APPROVED; BASELINE GATE HELD**.
   - Keep ten total reading locations per open tab for explicit heading/link/
     search jumps. Coalesce typed previews, including the first return point.
@@ -127,7 +167,7 @@ section is kept here so the register has a visible edge.
     are in the permanent audit and session receipts; no speedup is claimed.
     Actual reference/candidate notice/About and selected light/dark, narrow,
     enlarged-text and dirty-Split captures were viewed.
-- `v013-release-notes` - **APPROVED; WAITING FOR SCHEDULER UNIT**.
+- `v013-release-notes` - **APPROVED; QUEUED AFTER BASELINE REPAIRS**.
   - Initially collapsed offered-version notes; extra request only on expansion.
     Keep existing Atom discovery, isolated safe rendering and popup actions.
 - 0.13 handoff: Astra design and fresh independent Sol/Luna plan reviews pass.
@@ -143,9 +183,11 @@ section is kept here so the register has a visible edge.
   One authorized input-only scroll rerun is 28/32 with the same four failures;
   one patch rerun remains 340/341. Actual official Windows receipts match the
   suite and recorded product hashes but have different edge/raster geometry.
-  The local nested-wheel cause stays unresolved; no DPI cause is proved.
-  Patch source points to a boolean-only editor fixture versus actual Split
-  authority; no full exception stack was captured. Do not weaken the sentinel.
+  A later controlled process-local scale intervention reproduced the exact
+  fractional endpoint signature and exposed a real ownership defect alongside
+  the fixture's false native-edge assumption. It does not establish historical
+  OS scale. The patch fixture's contradictory mode and exact Undo exception
+  stack are now captured. Do not weaken the sentinel.
   Navigation gate stays closed until the approved narrow repairs restore the
   relevant green baseline. Finish the current updater unit, then prioritize
   the bounded wheel-cause probe and actual-editor fixture repair. Preserve

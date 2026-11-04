@@ -1,5 +1,43 @@
 # Performance Audit
 
+## Nested-wheel baseline repair - current candidate
+
+- Retrospective reference: exact `86526c11` product exported from Git.
+  Git-filtered source/lockfile blobs match; archive CRLF bytes are recorded.
+  Both products use the same extended measurement fixture and pinned runtime.
+- Owned Windows x64, Electron 43.4.1, AMD EPYC 7763, DPR 1.25, zoom 1.
+  Existing alternating mixed/plain fixture, three samples each, separate
+  writable profiles. Nearest-rank p50/p95; these sample p95 values are maxima.
+- Unchanged open/Split budget: added p50/p95 must not exceed the larger of
+  20% of reference or 50 ms. Every measured comparison fits that budget.
+
+| Journey | Reference p50 / p95 (ms) | Candidate p50 / p95 (ms) |
+|---|---:|---:|
+| Mixed open | 148.51 / 554.82 | 135.95 / 538.79 |
+| Mixed Split entry | 123.70 / 125.20 | 92.80 / 124.20 |
+| Plain open | 91.48 / 96.57 | 79.05 / 85.58 |
+| Plain Split entry | 92.60 / 2999.70 | 92.40 / 92.90 |
+
+- Keep the noisy reference Split sample; do not infer a speedup or population
+  tail from these small samples. No sample was removed or rerun for a pass.
+- Separate settled-scroll controls pass: callback sample p95 0.10 ms against
+  4 ms, no geometry rebuilds or source Range reads, bounded follower writes.
+- **Overall qualification stays held.** The full scroll suite reached its
+  unchanged 180 s watchdog. A separate bounded diagnostic subsequently passed
+  full 313/313 on both reference and candidate in 87.103/87.771 s, using one
+  reviewed logging-only overlay and the unchanged watchdog. This is diagnostic
+  evidence, not a new performance acceptance sample.
+- The diagnostic's empty-case save spans were 13.852/14.056 s versus 95.983 s
+  in the original timeout. The hidden oracle/frame chain completed in both.
+  No candidate-specific stall reproduced; the old delay mechanism is still
+  unproved. Passing reruns do not automatically explain or waive that timeout.
+  Diagnostic receipts: `files\v013-full-scroll-timeout-r1`, same session.
+- Raw samples, source/common-fixture identity and comparison:
+  session `94a712c9`, `files\v013-baseline-repair-candidate-r1`,
+  `performance-identity.json`, `performance-comparison.json`, `perf-reference`,
+  `perf-candidate`, `cost`. Captures were viewed. No build/install or native
+  macOS/Linux qualification.
+
 ## Remaining expensive edits - bounded diagnostic, 2026-10-24
 
 - Baseline: locally adopted `572f3744`; mirror retention and 400 ms unchanged.

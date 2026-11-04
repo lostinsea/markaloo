@@ -168,6 +168,58 @@ const TOP_BLOCKS = `
   })()
 `;
 
+async function verifyNotesEditorUndo(win, exec, undoPath, storeBeforeUndo) {
+  const { captureScreenshot } = require("./test-visual-utils");
+  await exec("changeCurrentDocumentEditor(true)");
+  await waitFor(exec, "the notes Undo editor render", RENDER_SETTLED);
+  const editUndoSetup = await exec(`({
+    mode:isEditMode,split:contentWrapper.classList.contains('split-view'),
+    path:currentFilePath,owner:currentDocumentActionOwner()===window.CustomTabs.getActiveTab(),
+    source:window.CustomTabs.snapshotExactEditorContent(),editor:markdownEditor.value,
+    note:!!viewer.querySelector('[data-note-title="KEEPME"]'),
+    dirty:hasUnsavedChanges,history:historySnapshot()
+  })`);
+  check("notes Undo companion enters the admitted editor with current saved source",
+    editUndoSetup.mode && editUndoSetup.split && editUndoSetup.owner && !editUndoSetup.dirty &&
+    editUndoSetup.path === undoPath && editUndoSetup.source === storeBeforeUndo &&
+    editUndoSetup.editor === storeBeforeUndo && editUndoSetup.note, JSON.stringify(editUndoSetup));
+  win.focus();
+  await exec("markdownEditor.focus();markdownEditor.setSelectionRange(markdownEditor.value.length,markdownEditor.value.length);null");
+  await win.webContents.insertText("\nTYPED\n");
+  const editUndoTyped = await exec(`({
+    editor:markdownEditor.value,source:window.CustomTabs.snapshotExactEditorContent(),
+    dirty:hasUnsavedChanges,history:historySnapshot()
+  })`);
+  check("notes Undo companion records actual source input as one undo step",
+    editUndoTyped.editor === storeBeforeUndo + "\nTYPED\n" &&
+    editUndoTyped.source === editUndoTyped.editor && editUndoTyped.dirty &&
+    editUndoTyped.history.undo.length === editUndoSetup.history.undo.length + 1 &&
+    editUndoTyped.history.redo.length === 0 &&
+    fs.readFileSync(undoPath, "utf8") === storeBeforeUndo, JSON.stringify(editUndoTyped));
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Z", modifiers: ["control"] });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Z", modifiers: ["control"] });
+  await waitFor(exec, "notes Undo source and preview settlement",
+    `markdownEditor.value===${JSON.stringify(storeBeforeUndo)}&&!undoRedoRendering&&(${RENDER_SETTLED})`);
+  const editUndo = await exec(`({
+    editor:markdownEditor.value,source:window.CustomTabs.snapshotExactEditorContent(),
+    path:currentFilePath,owner:currentDocumentActionOwner()===window.CustomTabs.getActiveTab(),
+    dirty:hasUnsavedChanges,note:!!viewer.querySelector('[data-note-title="KEEPME"]'),
+    typed:viewer.textContent.includes('TYPED'),history:historySnapshot()
+  })`);
+  check("Ctrl+Z still undoes in edit mode",
+    editUndo.editor === storeBeforeUndo && editUndo.source === storeBeforeUndo &&
+    editUndo.path === undoPath && editUndo.owner && !editUndo.dirty && editUndo.note &&
+    !editUndo.typed && editUndo.history.undo.length === editUndoSetup.history.undo.length &&
+    editUndo.history.redo.length === 1 &&
+    fs.readFileSync(undoPath, "utf8") === storeBeforeUndo, JSON.stringify(editUndo));
+  await captureScreenshot(win, "patch-note-undo-split");
+  await exec("changeCurrentDocumentEditor(false)");
+  check("notes Undo companion leaves through the supported clean editor lifecycle",
+    await exec(`!isEditMode&&!contentWrapper.classList.contains('split-view')&&
+      currentFilePath===${JSON.stringify(undoPath)}&&originalMarkdown===${JSON.stringify(storeBeforeUndo)}&&
+      !hasUnsavedChanges`) && fs.readFileSync(undoPath, "utf8") === storeBeforeUndo);
+}
+
 async function run(win) {
   const { admitTestDocument, startErrorSentinel, proveSentinelAlive, captureScreenshot, trapExternalOpens, readExternalOpens, clearExternalOpens, waitForExternalTrap } = require("./test-visual-utils");
   let sentinel = startErrorSentinel(win, { label: "patch" });
@@ -2838,27 +2890,8 @@ async function run(win) {
       (await settle(undoPath, () => true)) === storeAfterUndo,
       JSON.stringify({ disk: await settle(undoPath, () => true), store: storeAfterUndo }),
     );
-    // The gate must not have cost edit mode its undo.
-    const editUndo = await exec(`
-      (async () => {
-        isEditMode = true;
-        markdownEditor.value = originalMarkdown;
-        hasUnsavedChanges = false;
-        historyPush(markdownEditor.value);
-        markdownEditor.value = markdownEditor.value + '\\nTYPED\\n';
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
-        return markdownEditor.value.includes('TYPED');
-      })()
-    `);
-    check("Ctrl+Z still undoes in edit mode", editUndo === false, String(editUndo));
-    await exec(`
-      isEditMode = false;
-      hasUnsavedChanges = false;
-      failedSaves.clear();
-      updateUnsavedIndicator();
-      historyClear();
-      null
-    `);
+    // Exact-source Undo requires the admitted Split editor, not just its flag.
+    await verifyNotesEditorUndo(win, exec, undoPath, storeBeforeUndo);
 
     // ---- 6. A FAILED auto-save must not leave the note quietly discardable ----
     // View mode has no retry: Ctrl+S is edit-mode only and the Save button
