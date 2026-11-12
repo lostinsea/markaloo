@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v013-routine-profile-gates` - **INTEGRATED; LOCAL VALIDATION IN PROGRESS**.
+- `v013-routine-profile-gates` - **INTEGRATED; FOCUSED LOCAL CHECKS PASSED**.
   - The reviewed release selection is assembled in an isolated worktree.
     Original candidate bytes and excluded installer paths remain untouched.
   - `test:profile-entry` runs entry, document-receipt and startup-admission
@@ -46,8 +46,20 @@ section is kept here so the register has a visible edge.
   - Admission tests skip non-Windows before imports and reject a wrong Windows
     Node version before fixtures. The required runtime is Node 24.18.1.
   - Existing independent Sol/Luna source reviews are carried forward.
-    Actual guard behavior, the complete chain and CI runtime binding are being
-    checked. This is not final release qualification or permission to publish.
+    Actual Linux skip, wrong Windows Node rejection, the unchanged three-suite
+    command and a deliberate second-suite failure all behaved as required.
+    CI, `.nvmrc` and the admission module agree on the runtime.
+  - Literal relative imports in tracked production JS resolve without the
+    excluded installer sources. Dynamic/package runtime checks remain open.
+    This is not final release qualification or permission to publish.
+- `v013-feature-route-oracle` - **REVIEWED; PROOF EXECUTION PENDING**.
+  - The accepted editor command already runs fixture and history companions.
+  - The oracle now recognizes both exact calls only under the editor command.
+    Omission, duplicate, wrong-argument, wrong-parent and cycle controls remain.
+    Package scripts, CI and product code are unchanged.
+  - Local packaging checks pass. Independent Sol/Luna static reviews cover the
+    oracle, matching revert records and this status entry.
+    Proof execution stays with the proof lane.
 - `v013-popup-diagnosis` - **DEFINED SURFACE GATES QUALIFIED; CORRECTION CLOSED**.
   - The user removed the one-diagnostic limit: "Not one, but as many times
     you wanted to understand this." The serialized owned native slot is

@@ -3771,7 +3771,8 @@ async function main() {
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
-      "test:document-editor": "npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
+      "test:document-editor": "npm run test:editor-fixtures -- --companion && npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
+      "test:editor-fixtures": "node test/test-document-editor-fixture-controls.js",
       "test:editor-history": "node test/test-editor-history-controls.js",
       "test:editor-scroll": "node test/test-editor-scroll-state.js --companion && node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
       "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
@@ -3780,14 +3781,16 @@ async function main() {
       "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     };
     const featureScripts = Object.keys(featureCommands);
+    const editorCompanions = ["test:editor-fixtures", "test:editor-history"];
     function orderedCalls(scripts, name, ancestors = []) {
       if (typeof scripts[name] !== "string" || ancestors.includes(name)) return null;
       const calls = [name];
       for (const command of scripts[name].split(/\s*&&\s*/)) {
-        const forwardedHistory = name === "test:document-editor" &&
-          command.trim() === "npm run test:editor-history -- --companion";
+        const forwardedCompanion = name === "test:document-editor" &&
+          editorCompanions.find(child => command.trim() === `npm run ${child} -- --companion`);
         const match = command.trim().match(/^npm\s+(?:run\s+)?([\w:-]+)$/);
-        const nestedName = forwardedHistory ? "test:editor-history" : match?.[1];
+        if (name === "test:document-editor" && editorCompanions.includes(match?.[1])) return null;
+        const nestedName = forwardedCompanion || match?.[1];
         if (!nestedName) {
           if (/(?:^|\s)npm(?:\s|$)/.test(command)) return null;
           continue;
@@ -3837,7 +3840,7 @@ async function main() {
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm run test:missing" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...fixtureScripts, "test:features": "npm test" }, "test")));
     const nestedCellRoutes = { ...fixtureScripts, ...featureCommands,
-      "test:features": featureScripts.filter(name => !["test:editor-history", "test:table-cells-source", "test:table-cells-ui"].includes(name))
+      "test:features": featureScripts.filter(name => ![...editorCompanions, "test:table-cells-source", "test:table-cells-ui"].includes(name))
         .map(name => "npm run " + name).join(" && ") };
     check("feature gate follows the real cell source and UI subroutes and rejects omissions or duplication",
       beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
@@ -3852,13 +3855,20 @@ async function main() {
     check("feature gate follows the editor history subroute and rejects omission or duplication",
       beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
       !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
-        "test:document-editor": "node --check test/test-document-editor.js && electron test/test-document-editor.js" }, "test")) &&
+        "test:document-editor": "npm run test:editor-fixtures -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js" }, "test")) &&
       !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
         "test:features": nestedCellRoutes["test:features"] + " && npm run test:editor-history" }, "test")));
+    check("feature gate follows the editor fixture subroute and rejects omission or duplication",
+      beforeLegacy(orderedCalls(nestedCellRoutes, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:document-editor": "npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js" }, "test")) &&
+      !beforeLegacy(orderedCalls({ ...nestedCellRoutes,
+        "test:features": nestedCellRoutes["test:features"] + " && npm run test:editor-fixtures" }, "test")));
     check("history companion forwarding requires its exact child and parent and retains cycle detection",
       JSON.stringify(orderedCalls(nestedCellRoutes, "test:document-editor")) ===
-        JSON.stringify(["test:document-editor", "test:editor-history"]) &&
+        JSON.stringify(["test:document-editor", ...editorCompanions]) &&
       [
+        ["test:document-editor", "npm run test:editor-history"],
         ["test:document-editor", "npm run test:editor-history -- --unknown"],
         ["test:document-editor", "npm run test:editor-history -- --companion extra"],
         ["test:document-editor", "npm run test:editor-scroll -- --companion"],
@@ -3867,6 +3877,16 @@ async function main() {
         orderedCalls({ ...nestedCellRoutes, [name]: command }, name) === null) &&
       orderedCalls({ ...nestedCellRoutes,
         "test:editor-history": "npm run test:document-editor" }, "test:document-editor") === null);
+    check("fixture companion forwarding requires its exact child and parent and retains cycle detection",
+      [
+        ["test:document-editor", "npm run test:editor-fixtures"],
+        ["test:document-editor", "npm run test:editor-fixtures -- --unknown"],
+        ["test:document-editor", "npm run test:editor-fixtures -- --companion extra"],
+        ["test:syntax", "npm run test:editor-fixtures -- --companion"],
+      ].every(([name, command]) =>
+        orderedCalls({ ...nestedCellRoutes, [name]: command }, name) === null) &&
+      orderedCalls({ ...nestedCellRoutes,
+        "test:editor-fixtures": "npm run test:document-editor" }, "test:document-editor") === null);
     function phaseSelection(file, context) {
       const expressions = [...stripJsComments(read(file)).matchAll(/const phases = ([\s\S]*?);\r?\n/g)];
       if (expressions.length !== 1) return null;
