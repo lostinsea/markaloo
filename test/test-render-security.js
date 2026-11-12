@@ -17,6 +17,847 @@ const path = require("path");
 const vm = require("vm");
 const { pathToFileURL } = require("url");
 const { isDeepStrictEqual } = require("util");
+const securityFixtureReadFile = fs.readFileSync;
+
+function createN11MaintenanceObservation(environment) {
+  const identityKeys = ["tabId", "documentRef", "pageSession", "rendererGeneration",
+    "documentGeneration", "pathKey"];
+  const sameIdentity = (a, b) => !!a && !!b && identityKeys.every(key => a[key] === b[key]);
+  const grants = [], continuations = [], closes = [], faults = [];
+  let control = null, scheduling = null, active = null, requestedClose = null, nextScopeId = 0;
+  const dataValue = (object, key) => {
+    for (let owner = object; owner; owner = Object.getPrototypeOf(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (descriptor) return Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+    }
+    return undefined;
+  };
+  const invalidate = () => grants.forEach(grant => { grant.live = false; });
+  const live = grant => grant.live && grant.accepted &&
+    environment.isCurrent(grant.identity, grant.file);
+  const current = () => active && (active.kind === "close" || active.kind === "unmatched-close" ||
+    active.kind === "unowned-watcher" ||
+    active.valid && live(active.grant)) ? active : null;
+  const goodRecords = (records, kinds, paths, closing = false) => records.length === kinds.length &&
+    records.every((record, index) => record.kind === kinds[index] && record.terminal &&
+      !record.error && !record.forbidden &&
+      (record.kind === "realpath" ? record.file === paths.normalised &&
+        record.resolved === paths.canonical :
+       record.kind === "exists" ? record.file === paths.logical && record.exists === true :
+        record.file === (closing ? paths.canonical : paths.logical) &&
+          record.regular === true && record.directory === false));
+  const observation = {
+    scope: current,
+    effect(message) { faults.push(message); },
+    record(record) {
+      const scope = current();
+      if (scope?.kind === "unowned-watcher") {
+        faults.push("N11 watcher work lacks exact causal ownership");
+        return false;
+      }
+      if (!scope || scope.kind === "unmatched-close") return false;
+      record.maintenance = Object.freeze({ kind: scope.kind, id: scope.id });
+      scope.records.push(record);
+      return true;
+    },
+    invoke(channel, handler, receiver, args) {
+      const [event, data] = args;
+      if (channel !== "query-document-deletion-state") invalidate();
+      const identity = environment.authenticate(channel, event, data);
+      // These branches register only after Main accepts this supplied/current
+      // owner. A message without an actual registration grants nothing.
+      const supported = identity && (channel === "start-file-watching" ||
+        channel === "resume-file-watching" ||
+        channel === "set-active-file" && data.trackingActive === true);
+      const previousControl = control, previousActive = active;
+      const candidate = { identity, file: data?.filePath, grants: [] };
+      control = supported ? candidate : null;
+      let closing = null;
+      if (requestedClose && identity && sameIdentity(identity, requestedClose.identity) &&
+          data.filePath === requestedClose.paths.logical &&
+          requestedClose.calls.length < 2 &&
+          channel === ["query-document-deletion-state",
+            "retire-deleted-document-owner"][requestedClose.calls.length]) {
+        closing = { kind: "close", id: ++nextScopeId,
+          request: requestedClose, channel, records: [], complete: false,
+          acknowledgedDeletion: data.acknowledgedDeletion,
+          expectedDeletionRevision: data.expectedDeletionRevision };
+        requestedClose.calls.push(closing);
+        active = closing;
+      } else {
+        const unmatchedClose = channel === "query-document-deletion-state" ||
+          channel === "retire-deleted-document-owner";
+        if (unmatchedClose) faults.push("N11 unmatched or invalid close control: " + channel);
+        // Keep the original handler running, but retain its work as unowned
+        // even when no gesture or no-late drain is currently observing it.
+        active = unmatchedClose ? { kind: "unmatched-close" } : null;
+      }
+      try {
+        const result = handler.apply(receiver, args);
+        const synchronous = result === null ||
+          typeof result !== "object" && typeof result !== "function";
+        if (supported && synchronous &&
+            candidate.grants.length === 1 &&
+            environment.isCurrent(identity, candidate.file)) {
+          candidate.grants[0].accepted = true;
+        }
+        if (closing) {
+          closing.complete = synchronous;
+        }
+        return result;
+      } finally {
+        control = previousControl;
+        active = previousActive;
+      }
+    },
+    watch(...args) {
+      if (active?.kind === "watcher" || active?.kind === "unowned-watcher") {
+        faults.push("N11 watcher callback attempted an unsupported registration");
+        return environment.watch.apply(this, args);
+      }
+      const candidate = control;
+      if (!candidate || args.length !== 3 || args[0] !== candidate.file ||
+          args[1]?.persistent !== false || typeof args[2] !== "function") {
+        return environment.watch.apply(this, args);
+      }
+      const callback = args[2];
+      const grant = { identity: Object.freeze({ ...candidate.identity }),
+        file: candidate.file, callback, accepted: false, verified: false, live: true, closed: false };
+      const forwarded = function(...eventArgs) {
+        const previous = scheduling, previousActive = active;
+        const notification = eventArgs[0] === "change" && live(grant)
+          ? { grant, continuations: [] } : null;
+        scheduling = notification;
+        // Only the authenticated debounce may own work, not its synchronous
+        // watcher callback or an outer scope that callback happened to interrupt.
+        active = { kind: "unowned-watcher" };
+        try { return callback.apply(this, eventArgs); }
+        finally {
+          if (notification && notification.continuations.length !== 1) {
+            faults.push("N11 watcher notification did not schedule its single debounce");
+          }
+          scheduling = previous;
+          active = previousActive;
+        }
+      };
+      const watcher = environment.watch.call(this, args[0], args[1], forwarded);
+      grant.watcher = watcher;
+      grant.closeDescriptor = Object.getOwnPropertyDescriptor(watcher, "close");
+      grant.close = dataValue(watcher, "close");
+      grant.observedClose = function(...closeArgs) {
+        grant.live = false;
+        const result = grant.close.apply(this, closeArgs);
+        grant.closed = true;
+        return result;
+      };
+      grant.onClose = () => { grant.live = false; grant.closed = true; };
+      grant.onError = () => { grant.live = false; faults.push("N11 watcher error"); };
+      if (typeof grant.close !== "function" || !Reflect.set(watcher, "close", grant.observedClose)) {
+        faults.push("N11 watcher close method cannot be observed without changing its behavior");
+        return watcher;
+      }
+      watcher.on("close", grant.onClose);
+      watcher.on("error", grant.onError);
+      grants.push(grant);
+      candidate.grants.push(grant);
+      return watcher;
+    },
+    setTimeout(callback, delay, ...args) {
+      const notification = scheduling, grant = notification?.grant;
+      if (!grant || typeof callback !== "function" || delay !== 150) {
+        if (grant || active?.kind === "watcher" || active?.kind === "unowned-watcher") {
+          faults.push("N11 watcher scheduled an unexpected continuation");
+        }
+        return environment.setTimeout.call(this, callback, delay, ...args);
+      }
+      const token = { kind: "watcher", id: ++nextScopeId, grant,
+        callback, records: [], cancelled: false, executed: false, complete: false };
+      const forwarded = function(...callbackArgs) {
+        const previous = active, previousScheduling = scheduling;
+        token.valid = !token.cancelled && !token.executed && live(grant);
+        token.executed = true;
+        // Never propagate this token into Promise/other asynchronous descendants.
+        active = token.valid ? token : { kind: "unowned-watcher" };
+        scheduling = null;
+        try { return callback.apply(this, callbackArgs); }
+        catch (error) { token.error = error; throw error; }
+        finally {
+          token.complete = true;
+          active = previous;
+          scheduling = previousScheduling;
+        }
+      };
+      token.timer = environment.setTimeout.call(this, forwarded, delay, ...args);
+      continuations.push(token);
+      notification.continuations.push(token);
+      return token.timer;
+    },
+    clearTimeout(timer) {
+      for (const token of continuations) {
+        if (token.timer === timer) token.cancelled = true;
+      }
+      return environment.clearTimeout.apply(this, arguments);
+    },
+    checkpoint() { return grants.length; },
+    verifyOwner(identity, paths, selectionGeneration, checkpoint = 0) {
+      const fresh = grants.slice(checkpoint);
+      const grant = fresh[0];
+      if (!Number.isSafeInteger(checkpoint) || checkpoint < 0 || checkpoint > grants.length ||
+          !Number.isSafeInteger(selectionGeneration) || selectionGeneration <= 0 ||
+          fresh.length !== 1 || !live(grant) || grant.closed ||
+          !sameIdentity(grant.identity, identity) || grant.file !== paths.logical ||
+          grant.identity.selectionGeneration !== selectionGeneration) {
+        throw new Error("N11 owner verification requires exactly one fresh accepted live registration");
+      }
+      grant.paths = Object.freeze({ ...paths });
+      grant.verified = true;
+      return true;
+    },
+    beginClose(identity, paths) {
+      if (requestedClose || !environment.isCurrent(identity, paths.logical)) {
+        throw new Error("N11 close observation lacks its exact live owner");
+      }
+      requestedClose = { identity: Object.freeze({ ...identity }),
+        paths: Object.freeze({ ...paths }), calls: [], complete: false };
+      closes.push(requestedClose);
+      return requestedClose;
+    },
+    finishClose(request) {
+      if (request !== requestedClose ||
+          !environment.isRetired(request.identity, request.paths.logical)) {
+        throw new Error("N11 requested close did not retire its retained owner");
+      }
+      request.complete = true;
+      requestedClose = null;
+    },
+    validate(raw, route, final = false) {
+      if (grants.some(grant => dataValue(grant.watcher, "close") !==
+          (grant.released ? grant.close : grant.observedClose))) {
+        throw new Error("N11 watcher close observation lost ownership");
+      }
+      const accounted = route.slice();
+      for (const token of continuations) {
+        if (!token.executed) {
+          if (final && !token.cancelled) throw new Error("N11 watcher continuation remains pending");
+          continue;
+        }
+        if (!token.valid || !token.complete || token.error || !token.grant.verified ||
+            !goodRecords(token.records, ["exists", "stat", "realpath"], token.grant.paths)) {
+          throw new Error("N11 watcher work lacks exact causal ownership or terminal effects");
+        }
+        accounted.push(...token.records);
+      }
+      for (const request of closes) {
+        if (!request.complete || request.calls.length !== 2 ||
+            request.calls.some(call => !call.complete ||
+              !goodRecords(call.records, ["stat"], request.paths, true))) {
+          throw new Error("N11 close work lacks its bounded authenticated query and retirement");
+        }
+        // Electron's original returnValue can be setter-only. Keep that event
+        // untouched; successful retirement is independently read from Main.
+        const retirement = request.calls[1];
+        if (retirement.acknowledgedDeletion !== false ||
+            !Number.isSafeInteger(retirement.expectedDeletionRevision) ||
+            retirement.expectedDeletionRevision < 0) {
+          throw new Error("N11 requested clean close carried unexpected deletion consent");
+        }
+        request.calls.forEach(call => accounted.push(...call.records));
+      }
+      if (faults.length || accounted.length !== raw.length ||
+          new Set(accounted).size !== raw.length ||
+          raw.some(record => !accounted.includes(record)) ||
+          final && (requestedClose || grants.some(grant => !grant.closed))) {
+        throw new Error("N11 complete raw filesystem history is not independently reconciled");
+      }
+      return true;
+    },
+    releaseWatchers() {
+      for (const grant of grants) {
+        const watcher = grant.watcher;
+        if (dataValue(watcher, "close") !== grant.observedClose) {
+          throw new Error("N11 watcher close observation lost ownership");
+        }
+        watcher.removeListener("close", grant.onClose);
+        watcher.removeListener("error", grant.onError);
+        if (grant.closeDescriptor) Object.defineProperty(watcher, "close", grant.closeDescriptor);
+        else delete watcher.close;
+        if (dataValue(watcher, "close") !== grant.close) {
+          throw new Error("N11 watcher close identity was not restored");
+        }
+        grant.released = true;
+      }
+    },
+  };
+  return observation;
+}
+
+async function proveN11MaintenanceContracts(check, source, rendererSource) {
+  if (typeof source !== "string" || typeof rendererSource !== "string") {
+    throw new Error("N11 controls require their actual recorder and renderer sources");
+  }
+  function fixture() {
+    const identity = { tabId: 7, documentRef: "source-ref", pageSession: "page",
+      rendererGeneration: 2, documentGeneration: 7, pathKey: "source-key",
+      selectionGeneration: 3 };
+    const paths = { logical: "C:\\fixture\\source.md", normalised: "C:\\fixture\\source.md",
+      canonical: "C:\\canonical\\source.md" };
+    const event = {}, receiver = {}, raw = [], route = [], watchers = [], timers = [], cleared = [];
+    const originalCloses = [];
+    let admitted = true, lastTimer = null, operation = null, callbackCount = 0;
+    const environment = {
+      isCurrent: owner => admitted && owner.documentRef === identity.documentRef,
+      isRetired: owner => !admitted && owner.documentRef === identity.documentRef,
+      authenticate: (channel, sender, data) => sender === event && data?.filePath === paths.logical
+        ? channel.includes("document-") ? data : data.owner : null,
+      watch(file, options, callback) {
+        const listeners = new Map();
+        const watcher = { file, options, callback, closed: false,
+          on(name, listener) { listeners.set(name, listener); return this; },
+          listenerCount(name) { return listeners.has(name) ? 1 : 0; },
+          removeListener(name, listener) {
+            if (listeners.get(name) === listener) listeners.delete(name);
+            return this;
+          },
+          close(...args) { this.closed = true; this.closeArgs = args; return "close-result"; },
+        };
+        originalCloses.push(watcher.close);
+        watchers.push(watcher);
+        return watcher;
+      },
+      setTimeout(callback, delay, ...args) {
+        const timer = { callback, delay, args };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimeout(timer) { cleared.push(timer); return "clear-result"; },
+    };
+    const observation = createN11MaintenanceObservation(environment);
+    const record = (kind, extra = {}) => {
+      const entry = { kind, terminal: true, forbidden: false,
+        file: kind === "realpath" ? paths.normalised : paths.logical,
+        ...(kind === "exists" ? { exists: true } :
+          kind === "realpath" ? { resolved: paths.canonical } :
+            { regular: true, directory: false }), ...extra };
+      raw.push(entry);
+      if (!observation.record(entry)) route.push(entry);
+    };
+    const triplet = () => {
+      callbackCount++;
+      record("exists"); record("stat"); record("realpath");
+    };
+    const callback = function(eventType, filename) {
+      if (this !== watchers.at(-1) || eventType !== "change" || filename !== "source.md") {
+        throw new Error("N11 control lost its original watcher receiver or arguments");
+      }
+      if (lastTimer) observation.clearTimeout(lastTimer);
+      lastTimer = observation.setTimeout(function(...args) {
+        if (this !== lastTimer || args[0] !== "timer-argument") {
+          throw new Error("N11 control lost its original timer receiver or arguments");
+        }
+        if (operation) operation(record, triplet);
+        else triplet();
+        return "timer-result";
+      }, 150, "timer-argument");
+      return "watch-result";
+    };
+    const data = { filePath: paths.logical, owner: identity, trackingActive: true };
+    const register = (channel = "resume-file-watching", incoming = data, handler = null, sender = event) =>
+      observation.invoke(channel, handler || function(originalEvent, originalData, extra) {
+        if (this !== receiver || originalEvent !== sender || originalData !== incoming ||
+            extra !== "handler-argument") throw new Error("N11 control changed Main forwarding");
+        observation.watch.call(receiver, incoming.filePath, { persistent: false }, callback);
+        return "handler-result";
+      }, receiver, [sender, incoming, "handler-argument"]);
+    const verify = checkpoint => {
+      try { return observation.verifyOwner(identity, paths, identity.selectionGeneration, checkpoint); }
+      catch { return false; }
+    };
+    const change = () => watchers.at(-1).callback.call(watchers.at(-1), "change", "source.md");
+    const fire = timer => {
+      // These are injected control timers, never real application continuations.
+      lastTimer = timer;
+      return timer.callback.call(timer, ...timer.args);
+    };
+    const accepted = () => {
+      try { return observation.validate(raw, route) && route.length === 0; }
+      catch { return false; }
+    };
+    return { observation, environment, event, receiver, identity, paths, raw, route,
+      watchers, timers, cleared, originalCloses, data, callback, record, triplet,
+      register, verify, change, fire, accepted,
+      setOperation: value => { operation = value; }, callbacks: () => callbackCount,
+      retire: () => { admitted = false; } };
+  }
+  const missing = fixture();
+  check("N11 maintenance setup rejects verification without any watcher registration",
+    !missing.verify() && missing.watchers.length === 0);
+  const selected = fixture();
+  selected.register("select-file-tracking");
+  const selectedCheckpoint = selected.observation.checkpoint();
+  check("N11 maintenance setup cannot grant the actual synchronous selection channel",
+    selected.watchers.length === 1 && selectedCheckpoint === 0 && !selected.verify());
+  selected.register("pause-file-watching", selected.data, () => selected.watchers[0].close());
+  selected.register();
+  check("N11 maintenance setup requires a fresh exact-owner pause/resume registration",
+    selected.watchers[0].closed && selected.watchers.length === 2 &&
+      selected.verify(selectedCheckpoint));
+  const restoredCheckpoint = selected.observation.checkpoint();
+  selected.identity.selectionGeneration++;
+  selected.register("select-file-tracking", selected.data, function() {
+    selected.watchers.at(-1).close();
+    selected.observation.watch(selected.paths.logical, { persistent: false }, selected.callback);
+  });
+  check("N11 maintenance setup cannot reuse a grant after source reselection",
+    !selected.verify(restoredCheckpoint));
+  selected.register("pause-file-watching", selected.data, () => selected.watchers.at(-1).close());
+  selected.register();
+  check("N11 maintenance setup verifies exactly one new restored-source registration",
+    selected.verify(restoredCheckpoint) && selected.identity.selectionGeneration === 4);
+  const stale = fixture();
+  stale.register(); stale.verify();
+  check("N11 maintenance setup rejects a live but pre-checkpoint registration",
+    !stale.verify(stale.observation.checkpoint()));
+  stale.watchers[0].close();
+  check("N11 maintenance setup rejects a closed registration", !stale.verify());
+  const extraRegistration = fixture();
+  extraRegistration.register("resume-file-watching", extraRegistration.data, function() {
+    extraRegistration.observation.watch(extraRegistration.paths.logical,
+      { persistent: false }, extraRegistration.callback);
+    extraRegistration.observation.watch(extraRegistration.paths.logical,
+      { persistent: false }, extraRegistration.callback);
+  });
+  check("N11 maintenance setup rejects multiple new registrations", !extraRegistration.verify());
+  const positive = fixture();
+  const registration = positive.register();
+  positive.verify();
+  const notification = positive.change(), timer = positive.timers[0];
+  const completion = positive.fire(timer);
+  check("N11 maintenance control accepts only a verified registered watcher continuation",
+    registration === "handler-result" && notification === "watch-result" &&
+      completion === "timer-result" && timer.delay === 150 && positive.callbacks() === 1 &&
+      positive.raw.length === 3 && positive.accepted());
+  positive.observation.clearTimeout(timer);
+  positive.watchers[0].close();
+  const finalLedger = positive.observation.validate(positive.raw, positive.route, true);
+  positive.observation.releaseWatchers();
+  check("N11 maintenance control closes and restores only its owned watcher observations",
+    finalLedger && positive.watchers[0].close === positive.originalCloses[0] &&
+      positive.watchers[0].listenerCount("close") === 0 &&
+      positive.watchers[0].listenerCount("error") === 0);
+  for (const duplicate of [true, false]) {
+    const state = fixture();
+    state.register(); state.verify(); state.change(); state.fire(state.timers[0]);
+    state.raw.push(duplicate ? state.raw[0] : { kind: "stat", terminal: true });
+    check("N11 maintenance control rejects " + (duplicate ? "duplicated" : "unaccounted") +
+      " raw history without resetting it", state.raw.length === 4 && !state.accepted());
+  }
+  for (const [label, prepare] of [
+    ["direct route", state => state.triplet()],
+    ["unrelated late callback", state => state.environment.setTimeout(() => state.triplet(), 150)],
+    ["outside authenticated handler", state => {
+      state.observation.watch(state.paths.logical, { persistent: false }, function() {
+        state.observation.setTimeout(() => state.triplet(), 150);
+      });
+      state.change(); state.fire(state.timers[0]);
+    }],
+    ["rejected selection cannot manufacture a grant", state => {
+      state.register("set-active-file", state.data, () => "rejected");
+      state.triplet();
+    }],
+  ]) {
+    const state = fixture();
+    prepare(state);
+    if (label === "unrelated late callback") state.fire(state.timers[0]);
+    check("N11 maintenance control rejects " + label,
+      state.callbacks() === 1 && state.raw.length === 3 && state.route.length === 3 &&
+        !state.accepted());
+  }
+  for (const [label, change] of [
+    ["cancelled timer", state => state.observation.clearTimeout(state.timers[0])],
+    ["replaced timer", state => state.change()],
+    ["closed watcher", state => state.watchers[0].close("close-argument")],
+    ["same-path different owner ingress", state => state.register("set-active-file",
+      { ...state.data, owner: { ...state.identity, tabId: 8 } }, () => "rejected")],
+    ["same-path selection ingress", state => state.register("set-active-file",
+      { ...state.data, owner: { ...state.identity, selectionGeneration: 4 } }, () => "rejected")],
+    ["adoption ingress", state => state.register("complete-document-disk-adoption",
+      state.data, () => "rejected")],
+    ["retirement ingress", state => state.register("retire-deleted-document-owner",
+      { ...state.identity, filePath: state.paths.logical }, () => "rejected")],
+  ]) {
+    const state = fixture();
+    state.register(); state.verify(); state.change();
+    const result = change(state);
+    state.fire(state.timers[0]);
+    check("N11 maintenance control rejects work after " + label,
+      state.callbacks() === 1 && state.route.length === 3 && !state.accepted());
+    if (label === "closed watcher") {
+      check("N11 maintenance control forwards actual watcher close result and arguments",
+        result === "close-result" && state.watchers[0].closed &&
+          state.watchers[0].closeArgs[0] === "close-argument");
+    }
+    if (label === "cancelled timer" || label === "replaced timer") {
+      check("N11 maintenance control forwards actual timer cancellation: " + label,
+        state.cleared.includes(state.timers[0]) &&
+          result === (label === "cancelled timer" ? "clear-result" : "watch-result"));
+    }
+  }
+  for (const [label, operation] of [
+    ["wrong path", record => { record("exists", { file: "C:\\other.md" }); record("stat"); record("realpath"); }],
+    ["extra read", (record, triplet) => { triplet(); record("read", { length: 1 }); }],
+    ["failed operation", record => { record("exists"); record("stat", { error: "EACCES" }); record("realpath"); }],
+    ["forbidden operation", record => { record("exists", { forbidden: true }); record("stat"); record("realpath"); }],
+    ["unexpected delivery", (record, triplet) => { triplet(); }],
+  ]) {
+    const state = fixture();
+    state.register(); state.verify(); state.change();
+    state.setOperation(operation);
+    if (label === "unexpected delivery") state.observation.effect("unexpected delivery");
+    state.fire(state.timers[0]);
+    check("N11 maintenance control rejects " + label, state.raw.length >= 3 && !state.accepted());
+  }
+  const unverified = fixture();
+  unverified.register(); unverified.change(); unverified.fire(unverified.timers[0]);
+  check("N11 maintenance control rejects registration without independent document verification",
+    unverified.raw.length === 3 && !unverified.accepted());
+  for (const [label, incoming, sender] of [
+    ["wrong retained owner", { documentGeneration: 8 }, null],
+    ["wrong retained selection", { selectionGeneration: 4 }, null],
+    ["foreign sender", {}, {}],
+  ]) {
+    const state = fixture();
+    state.register("set-active-file", { ...state.data, owner: { ...state.identity, ...incoming } },
+      null, sender || state.event);
+    state.verify(); state.change(); state.fire(state.timers[0]);
+    check("N11 maintenance control rejects " + label, state.raw.length === 3 && !state.accepted());
+  }
+  for (const exceptional of [false, true]) {
+    const state = fixture(), result = exceptional ? new Error("original failure") : Promise.resolve("original");
+    let returned;
+    try {
+      returned = state.register("resume-file-watching", state.data, function() {
+        state.observation.watch(state.paths.logical, { persistent: false }, state.callback);
+        if (exceptional) throw result;
+        return result;
+      });
+    } catch (error) { returned = error; }
+    state.verify(); state.change(); state.fire(state.timers[0]);
+    check("N11 maintenance control forwards but cannot grant an " +
+      (exceptional ? "exceptional handler" : "asynchronous handler"),
+      returned === result && state.raw.length === 3 && !state.accepted());
+  }
+  const replacement = fixture();
+  replacement.register(); replacement.verify(); replacement.change(); replacement.change();
+  replacement.fire(replacement.timers[1]);
+  check("N11 maintenance control accepts only the live replacement debounce token",
+    replacement.cleared.includes(replacement.timers[0]) && replacement.raw.length === 3 &&
+      replacement.accepted());
+  const duplicate = fixture();
+  duplicate.register("resume-file-watching", duplicate.data, function() {
+    duplicate.observation.watch(duplicate.paths.logical, { persistent: false }, function() {
+      duplicate.observation.setTimeout(() => duplicate.triplet(), 150);
+      duplicate.observation.setTimeout(() => duplicate.triplet(), 150);
+    });
+  });
+  duplicate.verify(); duplicate.change();
+  duplicate.timers.forEach(duplicate.fire);
+  check("N11 maintenance control rejects extra debounce continuations from one notification",
+    duplicate.raw.length === 6 && !duplicate.accepted());
+  for (const pending of [true, false]) {
+    const state = fixture();
+    state.register(); state.verify(); state.change();
+    if (pending) state.watchers[0].close();
+    else state.fire(state.timers[0]);
+    let message = "";
+    try { state.observation.validate(state.raw, state.route, true); }
+    catch (error) { message = error.message; }
+    check("N11 maintenance control keeps final accounting open for " +
+      (pending ? "uncancelled continuations" : "unclosed watchers"),
+      pending ? message === "N11 watcher continuation remains pending" :
+        state.accepted() && message === "N11 complete raw filesystem history is not independently reconciled");
+  }
+  const descendant = fixture();
+  descendant.register(); descendant.verify(); descendant.change();
+  descendant.setOperation((_record, triplet) => { Promise.resolve().then(triplet); });
+  descendant.fire(descendant.timers[0]);
+  await Promise.resolve();
+  check("N11 maintenance control gives no ownership to an asynchronous descendant",
+    descendant.callbacks() === 1 && descendant.route.length === 3 && !descendant.accepted());
+
+  function close(state, requested = true, successful = true, alteration = {}) {
+    const request = requested ? state.observation.beginClose(state.identity, state.paths) : null;
+    const query = { known: true, revision: 0, ownDeletion: false, orphaned: false,
+      pathOnly: false, unreadable: false, unresolved: false };
+    const data = { ...state.identity, filePath: state.paths.logical,
+      acknowledgedDeletion: false, expectedDeletionRevision: 0, ...alteration.data };
+    const result = [];
+    const replies = [];
+    Object.defineProperty(state.event, "returnValue", {
+      set(value) { replies.push(value); }, configurable: false,
+    });
+    for (const channel of ["query-document-deletion-state", "retire-deleted-document-owner"]) {
+      result.push(state.observation.invoke(channel, function(event) {
+        state.record("stat", { file: state.paths.canonical, ...alteration.stat });
+        if (alteration.extra) state.record("read", { length: 1 });
+        event.returnValue = channel === "query-document-deletion-state" ? query :
+          { retired: successful, why: "no-evidence", revision: 0,
+            retiredEvidence: false, unresolved: false };
+        if (channel === "retire-deleted-document-owner" && successful) state.retire();
+        return alteration.asynchronous ? Promise.resolve(channel) : channel;
+      }, state.receiver, [state.event, data]));
+    }
+    if (request && successful) state.observation.finishClose(request);
+    return { request, result, replies };
+  }
+  const retired = fixture(), closed = close(retired);
+  check("N11 maintenance control bounds the requested authenticated clean close",
+    retired.raw.length === 2 && retired.accepted() &&
+      closed.replies.length === 2 && closed.replies[0].known === true &&
+      closed.replies[1].retired === true &&
+      closed.result.join(",") === "query-document-deletion-state,retire-deleted-document-owner");
+  retired.observation.invoke("query-document-deletion-state", function() {
+    retired.record("stat", { file: retired.paths.canonical });
+  }, retired.receiver, [retired.event, { ...retired.identity, filePath: retired.paths.logical }]);
+  check("N11 maintenance control rejects borrowing after successful retirement",
+    retired.raw.length === 3 && retired.route.length === 1 && !retired.accepted());
+  const unsolicited = fixture();
+  close(unsolicited, false);
+  check("N11 maintenance control rejects unsolicited close work",
+    unsolicited.raw.length === 2 && unsolicited.route.length === 2 && !unsolicited.accepted());
+  const refused = fixture(), refusal = close(refused, true, false);
+  let rejected = false;
+  try { refused.observation.finishClose(refusal.request); } catch { rejected = true; }
+  check("N11 maintenance control rejects failed retirement without clearing its request",
+    rejected && refused.raw.length === 2 && !refused.accepted());
+  for (const [label, alteration] of [
+    ["wrong close owner", { data: { tabId: 99 } }],
+    ["wrong close path", { data: { filePath: "C:\\other.md" } }],
+    ["close consent", { data: { acknowledgedDeletion: true } }],
+    ["invalid close revision", { data: { expectedDeletionRevision: NaN } }],
+    ["unexpected close read", { extra: true }],
+    ["failed close stat", { stat: { error: "EACCES" } }],
+    ["asynchronous close handler", { asynchronous: true }],
+  ]) {
+    const state = fixture();
+    close(state, true, true, alteration);
+    check("N11 maintenance control rejects " + label, state.raw.length >= 2 && !state.accepted());
+  }
+
+  const extract = (start, end, input = source) => {
+    const first = input.indexOf(start), last = input.indexOf(end, first + start.length);
+    if (first < 0 || last < 0 || input.indexOf(start, first + start.length) !== -1) {
+      throw new Error("N11 actual-source control anchor is missing or ambiguous: " + start);
+    }
+    return input.slice(first, last);
+  };
+  const recorderSource = [
+    extract("  function " + "n11WorkOwner(owner) {", "  function " + "n11SourceRestorationWork("),
+    extract("  function " + "n11FSVerdict(", "  function " + "n11ObserveFS("),
+    extract("  function " + "n11ObserveFS(", "  const " + "n11ObservedRealPath ="),
+    extract("  function " + "n11Counts(", "  function " + "n11ValidateMaintenance("),
+    extract("  async function " + "n11NoLate() {", "  async function " + "n11Wait("),
+  ].join("\n");
+  function recorderFixture() {
+    const state = fixture(), failures = [];
+    const page = { observing: true, clicks: [], errors: [], notifications: [],
+      dialogs: [], confirms: [], sentinel: [], modal: [] };
+    const context = vm.createContext({
+      n11Maintenance: state.observation, n11RawWork: state.raw, n11Work: state.route,
+      n11Faults: [], n11Active: null, n11FSDrainDepth: 0, n11Sealed: null,
+      n11Entries: [], n11Sends: [], n11Navs: [], expectedSecurityQuestion: null, win: {},
+      isDeepStrictEqual,
+      check: (name, passed) => { if (!passed) failures.push(name); },
+      n11AuthorityIntact: () => true, waitForExternalTrap: async () => true,
+      n11Barrier: async () => {}, n11ReadPage: async () => page,
+      n11SnapshotOpens: () => ({ shell: 0, external: 0 }),
+      n11ValidateMaintenance: () => state.observation.validate(state.raw, state.route),
+    });
+    vm.runInContext(recorderSource, context);
+    const sealed = Object.freeze(context.n11Counts(page, { shell: 0, external: 0 }));
+    context.n11Sealed = sealed;
+    let originalCalls = 0;
+    const record = (kind, extra = {}) => context.n11ObserveFS(kind, () => {
+      originalCalls++;
+      return kind === "exists" ? true : kind === "realpath" ? state.paths.canonical :
+        kind === "read" ? "x" : { isFile: () => true, isDirectory: () => false };
+    }, state.receiver, [extra.file || (kind === "realpath" ?
+      state.paths.normalised : state.paths.logical)]);
+    const triplet = () => { record("exists"); record("stat"); record("realpath"); };
+    state.setOperation(triplet);
+    return { ...state, context, sealed, failures, record, triplet,
+      originalCalls: () => originalCalls };
+  }
+  async function noLate(state, delivery = () => {}) {
+    state.context.n11Barrier = async () => { delivery(); await Promise.resolve(); };
+    try { await state.context.n11NoLate(); return true; }
+    catch (error) {
+      if (error.message !== "N11 late effects or changed observation authority") throw error;
+      return false;
+    }
+  }
+  const owned = recorderFixture();
+  owned.register(); owned.verify(); owned.change();
+  check("N11 actual recorder permits owned post-seal work without moving the route endpoint",
+    await noLate(owned, () => owned.fire(owned.timers[0])) &&
+      owned.raw.length === 3 && owned.raw.every(record => record.maintenance?.kind === "watcher") &&
+      owned.route.length === 0 && owned.context.n11Sealed === owned.sealed && owned.sealed.work === 0 &&
+      owned.context.n11FSVerdict({ text: "external" }, owned.route, "", "").ok);
+  for (const kind of ["unrelated-after-return", "async-descendant", "invalidated", "cancelled"]) {
+    const state = recorderFixture();
+    state.register(); state.verify(); state.change();
+    if (kind === "async-descendant") {
+      state.setOperation(() => { state.triplet(); Promise.resolve().then(state.triplet); });
+    } else if (kind === "invalidated") {
+      state.register("select-file-tracking", state.data, () => "rejected");
+    } else if (kind === "cancelled") {
+      state.observation.clearTimeout(state.timers[0]);
+    }
+    const accepted = await noLate(state, () => {
+      state.fire(state.timers[0]);
+      if (kind === "unrelated-after-return") state.triplet();
+    });
+    check("N11 actual recorder and immutable no-late gate reject " + kind,
+      !accepted && state.raw.length === (kind === "invalidated" || kind === "cancelled" ? 3 : 6) &&
+        state.route.length === 3 && state.raw.every(record => record.terminal) &&
+        state.context.n11Sealed === state.sealed && state.sealed.work === 0 &&
+        state.failures.includes("N11 immutable endpoints reject late or unattributed effects") &&
+        !state.context.n11FSVerdict({ text: "external" }, state.route, "", "").ok);
+  }
+  const extraRead = recorderFixture();
+  extraRead.register(); extraRead.verify(); extraRead.change();
+  extraRead.setOperation(() => { extraRead.triplet(); extraRead.record("read"); });
+  check("N11 actual maintenance reconciliation rejects an extra read despite an unchanged route seal",
+    !await noLate(extraRead, () => extraRead.fire(extraRead.timers[0])) &&
+      extraRead.raw.length === 4 && extraRead.route.length === 0 && extraRead.sealed.work === 0);
+  const forbidden = recorderFixture();
+  check("N11 actual recorder retains forbidden work before refusing the original filesystem call",
+    !await noLate(forbidden, () => {
+      try { forbidden.record("stat", { file: "\\\\probe.invalid\\share\\secret" }); } catch {}
+    }) && forbidden.raw.length === 1 && forbidden.route.length === 1 &&
+      forbidden.raw[0].forbidden && forbidden.originalCalls() === 0);
+  const boundedClose = recorderFixture();
+  close(boundedClose);
+  check("N11 actual recorder retains only the requested ordered close as maintenance",
+    await noLate(boundedClose) && boundedClose.raw.length === 2 &&
+      boundedClose.raw.every(record => record.maintenance?.kind === "close") &&
+      boundedClose.route.length === 0 && boundedClose.context.n11Sealed === boundedClose.sealed);
+  for (const kind of ["unrequested", "wrong-owner", "wrong-path", "duplicate-query"]) {
+    const state = recorderFixture();
+    if (kind !== "unrequested") state.observation.beginClose(state.identity, state.paths);
+    const data = { ...state.identity, filePath: state.paths.logical,
+      ...(kind === "wrong-owner" ? { tabId: 99 } : {}),
+      ...(kind === "wrong-path" ? { filePath: "C:\\other.md" } : {}) };
+    const handler = function(event, incoming, extra) {
+      if (this !== state.receiver || event !== state.event || incoming !== data || extra !== "extra") {
+        throw new Error("N11 unmatched query changed original forwarding");
+      }
+      state.record("stat", { file: state.paths.canonical });
+      return "original-query-result";
+    };
+    const invoke = () => state.observation.invoke("query-document-deletion-state",
+      handler, state.receiver, [state.event, data, "extra"]);
+    if (kind === "duplicate-query") invoke();
+    const result = invoke();
+    check("N11 actual recorder observes " + kind + " query work outside every drain and gesture",
+      result === "original-query-result" && state.context.n11FSDrainDepth === 0 &&
+        state.context.n11Active === null && state.route.length === 1 &&
+        state.raw.length === (kind === "duplicate-query" ? 2 : 1) &&
+        state.route[0].terminal && !state.route[0].maintenance && !await noLate(state));
+  }
+  const idleQuery = recorderFixture();
+  const idleResult = idleQuery.observation.invoke("query-document-deletion-state",
+    () => "original-refusal", idleQuery.receiver, [idleQuery.event, null]);
+  check("N11 unmatched query attribution fails even when the original handler refuses without work",
+    idleResult === "original-refusal" && idleQuery.raw.length === 0 && idleQuery.route.length === 0 &&
+      !await noLate(idleQuery) && idleQuery.context.n11Sealed === idleQuery.sealed);
+  const armSource = extract("  async function " + "n11ArmSource(", "  function n11Slice(") +
+    extract("  function " + "securityImageOwnerMatches(", "  async function admitSecurityImageFixture(") +
+    extract("  function " + "n11WorkOwner(", "  function n11SourceRestorationWork(");
+  const intentSource = extract("function setFileTrackingIntent(", "\n// WHO OWNS A DOCUMENT",
+    rendererSource) + extract("function watcherControlEnvelope(", "\nfunction registerDocumentOwner(",
+    rendererSource);
+  for (const kind of ["initial-and-restored", "no-registration", "extra-registration", "moved-selection"]) {
+    const state = fixture(), controls = [];
+    state.identity.documentRef = "a".repeat(64);
+    const body = "# Fixture\n", heading = "Fixture";
+    const descriptor = { ref: state.identity.documentRef, logicalPath: state.paths.logical,
+      documentUrl: pathToFileURL(state.paths.logical).href };
+    const snapshot = () => ({
+      id: state.identity.tabId, path: state.paths.logical, current: state.paths.logical,
+      tabs: [{ id: state.identity.tabId, path: state.paths.logical }],
+      content: body, original: body, live: body, descriptor,
+      identity: Object.fromEntries(Object.entries(state.identity)
+        .filter(([key]) => key !== "selectionGeneration")),
+      pageSession: state.identity.pageSession, selectionGeneration: state.identity.selectionGeneration,
+      state: { maintained: true, dirty: false, liveWitnessMatchesContent: true },
+      markedDirty: false, pending: { pending: false, count: 0 }, heading, loading: false, welcome: false,
+    });
+    const owner = snapshot();
+    const renderer = vm.createContext({
+      currentFilePath: state.paths.logical, reloadRequestSession: state.identity.pageSession,
+      isFileTrackingActive: true, fileTrackingPauseOwner: null,
+      fileTrackingPathKey: value => value, documentOwnerFor: () => ({ ...state.identity }),
+      window: {
+        currentFilePath: state.paths.logical,
+        getReloadRequestSession: () => state.identity.pageSession,
+        getActiveFileSelectionGeneration: () => state.identity.selectionGeneration,
+        CustomTabs: { getActiveDocumentIdentity: () => snapshot().identity },
+        markaloo: {
+          pauseFileWatching(data) {
+            controls.push("pause");
+            state.register("pause-file-watching", data, () => state.watchers.at(-1).close());
+          },
+          resumeFileWatching(data) {
+            controls.push("resume");
+            state.register("resume-file-watching", data, kind === "no-registration" ? () => {} :
+              kind === "extra-registration" ? () => {
+                for (let index = 0; index < 2; index++) {
+                  state.observation.watch(state.paths.logical, { persistent: false }, state.callback);
+                }
+              } : null);
+          },
+        },
+      },
+    });
+    vm.runInContext(intentSource, renderer);
+    let barriers = 0;
+    const context = vm.createContext({
+      n11SourcePath: state.paths.logical, n11SourcePaths: state.paths,
+      n11FixtureBody: body, n11Heading: heading, n11Owner: owner,
+      n11Maintenance: state.observation, isDeepStrictEqual, pathToFileURL,
+      exec: async script => vm.runInContext(script, renderer),
+      readSecurityImageOwner: async () => snapshot(),
+      n11Barrier: async () => {
+        barriers++;
+        if (kind === "moved-selection") state.identity.selectionGeneration++;
+      },
+      check: (_name, passed) => { if (!passed) throw new Error("N11 setup assertion failed"); },
+    });
+    vm.runInContext(armSource, context);
+    state.register("select-file-tracking");
+    let error = null;
+    try { await context.n11ArmSource(owner); } catch (caught) { error = caught; }
+    if (kind === "initial-and-restored") {
+      check("N11 actual fixture setup uses the existing renderer pause/resume and bounded barrier",
+        !error && barriers === 1 && controls.join(",") === "pause,resume" &&
+          state.watchers.length === 2 && state.watchers[0].closed);
+      state.identity.selectionGeneration++;
+      state.register("select-file-tracking", state.data, () => {
+        state.watchers.at(-1).close();
+        state.observation.watch(state.paths.logical, { persistent: false }, state.callback);
+      });
+      await context.n11ArmSource(snapshot());
+      check("N11 actual fixture setup rearms the restored selection without replacing its source owner",
+        barriers === 2 && controls.join(",") === "pause,resume,pause,resume" &&
+          context.n11Owner === owner && owner.selectionGeneration === 3 &&
+          state.identity.selectionGeneration === 4 && state.watchers.length === 4);
+    } else {
+      check("N11 actual fixture setup fails without retry after " + kind,
+        !!error && barriers === 1 && controls.join(",") === "pause,resume" &&
+          context.n11Owner === owner);
+    }
+  }
+}
 
 // Isolate this suite's userData profile before main.js exists and before the
 // app is ready. See test-userdata-isolation.js.
@@ -35,6 +876,15 @@ let observedMain = null;
 let chooserAllowance = null;
 let expectedSecurityQuestion = null;
 const securityGestureRegistration = { handler: null, installed: null, count: 0, observer: null };
+const securityMaintenanceRegistration = { observer: null, handlers: new Map(),
+  channels: new Set(["start-file-watching", "resume-file-watching", "set-active-file",
+    "pause-file-watching", "stop-file-watching", "select-file-tracking",
+    "register-document-owner", "prepare-document-disk-adoption",
+    "commit-document-disk-adoption", "check-committed-disk-adoption",
+    "respond-document-replacement-consent", "report-adoption-tracking-conflict",
+    "complete-document-disk-adoption", "abandon-document-disk-adoption",
+    "quarantine-selected-file-tracking", "query-document-deletion-state",
+    "retire-deleted-document-owner"]) };
 let dir = null;
 let registeredTempDirs = null;
 let abortingSecurityHarness = false;
@@ -188,14 +1038,34 @@ if (
     failSecurityUnattended(new Error("A window existed before security Main observation"));
   }
   app.once("browser-window-created", (_event, win) => { observedMain = win; });
-  // Capture only the one actual registration. The fixed dispatcher always
-  // forwards the original receiver/arguments/result, including Promise identity;
-  // local observation never obtains a private transport or invokes Main itself.
+  // Capture original registrations before Main loads; forward the original
+  // event, receiver, arguments and result, including Promise identity.
   const registerSecurityHandle = ipcMain.handle;
   const securityRegisterDescriptor = Object.getOwnPropertyDescriptor(ipcMain, "handle");
+  const registerSecurityOn = ipcMain.on;
+  const securityOnDescriptor = Object.getOwnPropertyDescriptor(ipcMain, "on");
+  const captureSecurityMaintenance = (channel, handler) => {
+    if (securityMaintenanceRegistration.handlers.has(channel) || typeof handler !== "function") {
+      throw new Error("Unexpected security maintenance Main registration: " + channel);
+    }
+    const forwarded = function() {
+      const observer = securityMaintenanceRegistration.observer;
+      return observer ? observer.invoke(channel, handler, this, arguments) :
+        handler.apply(this, arguments);
+    };
+    securityMaintenanceRegistration.handlers.set(channel, { handler, forwarded });
+    return forwarded;
+  };
+  const captureSecurityOn = function(channel, handler) {
+    return securityMaintenanceRegistration.channels.has(channel)
+      ? registerSecurityOn.call(this, channel, captureSecurityMaintenance(channel, handler))
+      : registerSecurityOn.apply(this, arguments);
+  };
   const captureSecurityHandle = function(channel, handler) {
     if (channel !== "private-trusted-document-gesture") {
-      return registerSecurityHandle.apply(this, arguments);
+      return securityMaintenanceRegistration.channels.has(channel)
+        ? registerSecurityHandle.call(this, channel, captureSecurityMaintenance(channel, handler))
+        : registerSecurityHandle.apply(this, arguments);
     }
     if (++securityGestureRegistration.count !== 1 || typeof handler !== "function") {
       throw new Error("Unexpected trusted-gesture Main registration");
@@ -220,8 +1090,17 @@ if (
     return registerSecurityHandle.call(this, channel, forwarded);
   };
   ipcMain.handle = captureSecurityHandle;
+  ipcMain.on = captureSecurityOn;
   try { require("../src/main.js"); }
   finally {
+    if (ipcMain.on !== captureSecurityOn) {
+      throw new Error("Security maintenance registration capture lost ownership");
+    }
+    if (securityOnDescriptor) Object.defineProperty(ipcMain, "on", securityOnDescriptor);
+    else delete ipcMain.on;
+    if (ipcMain.on !== registerSecurityOn) {
+      throw new Error("Security maintenance registration capture did not restore its registrar");
+    }
     if (ipcMain.handle !== captureSecurityHandle) {
       throw new Error("Security Main registration capture lost ownership");
     }
@@ -2491,7 +3370,8 @@ async function run(win) {
         tabs: tabs.getTabs().map(item => ({ id: item.id, path: item.filePath })),
         descriptor: tabs.getDocumentDescriptor(),
         identity: tabs.getActiveDocumentIdentity(${JSON.stringify(filePath)}, pageSession),
-        pageSession, state, markedDirty: tab?.hasUnsavedChanges,
+        pageSession, selectionGeneration: window.getActiveFileSelectionGeneration?.() ?? null,
+        state, markedDirty: tab?.hasUnsavedChanges,
         pending: window.getPendingSaveStatus(),
         heading: document.querySelector('#viewer h1')?.textContent,
         welcome: !!document.querySelector('#viewer .welcome'),
@@ -2580,7 +3460,7 @@ async function run(win) {
       before.id === owner.id && before.pageSession === owner.pageSession &&
       isDeepStrictEqual(before.identity, owner.identity) &&
       before.descriptor.ref === owner.descriptor.ref &&
-      fs.readFileSync(filePath, "utf8") === markdown;
+      securityFixtureReadFile.call(fs, filePath, "utf8") === markdown;
     check("SETUP only the known clean image owner exists before close: " + heading,
       clean, JSON.stringify(before));
     if (!clean) throw new Error("Refusing to close an unknown, dirty or saving image owner");
@@ -3302,7 +4182,11 @@ async function run(win) {
             return { text: document.getElementById('notificationMessage')?.textContent,
               visible: !!toast && toast.classList.contains('show') &&
                 toast.getClientRects().length > 0 && getComputedStyle(toast).visibility !== 'hidden' &&
-                Number(getComputedStyle(toast).opacity) > 0 };
+                Number(getComputedStyle(toast).opacity) > 0,
+              show: toast ? toast.classList.contains('show') : null,
+              layout: toast ? toast.getClientRects().length : null,
+              visibility: toast ? getComputedStyle(toast).visibility : null,
+              opacity: toast ? getComputedStyle(toast).opacity : null };
           })(),
         };
       })()`);
@@ -3675,11 +4559,27 @@ async function run(win) {
             terminalOffers[0].path === linkedPath) targetRetired = await retireLinkedTarget();
         const terminalNotices = terminalDeliveries.filter(item => item.channel === "show-error");
         if (terminalNotices.length) {
-          await waitLocal(async () => {
-            const page = await readPage();
-            return page.errors.length >= before.errors + terminalNotices.length &&
-              page.notification.visible && page.notification.text === terminalNotices.at(-1).message;
-          }, "typed public refusal delivery and visible notification for " + label);
+          let refusalObservation = {state:"not-evaluated"}, refusalReadPending = false;
+          try {
+            await waitLocal(async () => {
+              refusalReadPending = true;
+              const page = await readPage();
+              refusalReadPending = false;
+              const accepted = page.errors.length >= before.errors + terminalNotices.length &&
+                page.notification.visible && page.notification.text === terminalNotices.at(-1).message;
+              refusalObservation = {state:"evaluated",accepted,errorCount:page.errors.length,
+                errors:page.errors,notification:page.notification};
+              return accepted;
+            }, "typed public refusal delivery and visible notification for " + label);
+          } catch (error) {
+            console.log("SEC-12 OBSERVATION refusal notification: " + JSON.stringify({
+              label,state:refusalReadPending ? "observation-error" : "poll-failed",
+              expectedErrorCount:before.errors + terminalNotices.length,
+              expectedNotice:terminalNotices.at(-1).message,lastPoll:refusalObservation,
+              error:{name:error?.name ?? null,message:error?.message ?? null,stack:error?.stack ?? null},
+            }, (_key,value) => value === undefined ? {type:"undefined"} : value));
+            throw error;
+          }
         }
         await requireSource("terminal " + label);
         await pageBarrier();
@@ -4058,11 +4958,7 @@ async function run(win) {
   const n11Render = async (md) => {
     await n11NoLate();
     if (n11Owner) {
-      await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
-      if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
-        throw new Error("N11 previous source Main admission did not actually retire");
-      }
-      n11Owner = null;
+      await n11CloseSource();
       await n11NoLate();
     }
     const heading = /^# (.+)$/m.exec(md)?.[1];
@@ -4074,14 +4970,17 @@ async function run(win) {
       throw new Error("N11 refuses to overwrite a different fixture body");
     }
     fs.writeFileSync(file, md, "utf8");
+    const normalised = path.normalize(path.resolve(file));
+    const paths = Object.freeze({ logical: file, normalised,
+      canonical: n11RealPath.call(n11RealPathHost, normalised) });
+    n11ExpectedPaths.set(file, paths);
     n11Owner = await admitSecurityImageFixture(file, md, heading, [], []);
     n11SourcePath = file; n11FixtureBody = md; n11Heading = heading;
-    const normalised = path.normalize(path.resolve(file));
     // Independent fixture metadata, not an expectation learned from a Main
     // record that the terminal filesystem verdict is about to judge.
-    n11SourcePaths = Object.freeze({ logical: file, normalised,
-      canonical: n11RealPath.call(n11RealPathHost, normalised) });
-    n11KnownOwners.set(n11Owner.id, { owner: n11Owner, file, body: md, heading });
+    n11SourcePaths = paths;
+    n11KnownOwners.set(n11Owner.id, { owner: n11Owner, file, body: md, heading, paths });
+    await n11ArmSource(n11Owner);
     await n11NoLate();
   };
 
@@ -4140,6 +5039,8 @@ async function run(win) {
   const n11RealPathHost = fs.realpathSync, n11RealPath = n11RealPathHost.native;
   const n11Stat = fs.statSync, n11Send = n11Contents.send;
   const n11Exists = fs.existsSync, n11ReadFile = fs.readFileSync;
+  const n11Watch = fs.watch, n11Timers = globalThis;
+  const n11SetTimeout = n11Timers.setTimeout, n11ClearTimeout = n11Timers.clearTimeout;
   const n11Registration = { handler: securityGestureRegistration.handler,
     installed: securityGestureRegistration.installed };
   const n11Slots = {
@@ -4149,8 +5050,19 @@ async function run(win) {
     stat: Object.getOwnPropertyDescriptor(fs, "statSync"),
     exists: Object.getOwnPropertyDescriptor(fs, "existsSync"),
     read: Object.getOwnPropertyDescriptor(fs, "readFileSync"),
+    maintenance: Object.getOwnPropertyDescriptor(securityMaintenanceRegistration, "observer"),
+    watch: Object.getOwnPropertyDescriptor(fs, "watch"),
+    timeout: Object.getOwnPropertyDescriptor(n11Timers, "setTimeout"),
+    clearTimeout: Object.getOwnPropertyDescriptor(n11Timers, "clearTimeout"),
   };
   const n11Entries = [], n11Sends = [], n11Work = [], n11Faults = [], n11Actions = [];
+  // Route endpoints never include maintenance and never move to forgive it.
+  // The separate raw ledger retains every observed call and is reconciled first.
+  const n11RawWork = [], n11ExpectedPaths = new Map();
+  const n11TargetPath = path.join(s12dir, "httpd.md");
+  n11ExpectedPaths.set(n11TargetPath, Object.freeze({ logical: n11TargetPath,
+    normalised: path.normalize(path.resolve(n11TargetPath)),
+    canonical: n11RealPath.call(n11RealPathHost, n11TargetPath) }));
   const n11KnownOwners = new Map(), n11ReadinessErrors = [];
   let n11Owner = null, n11SourcePath = null, n11FixtureBody = null, n11Heading = null;
   let n11SourcePaths = null;
@@ -4163,6 +5075,91 @@ async function run(win) {
     !n11Contents.isDestroyed() && n11Contents.mainFrame === n11Frame &&
     !n11Frame.isDestroyed() && n11Contents.getURL() === n11PageUrl &&
     n11Frame.url === n11PageUrl;
+  const n11OwnerKeys = Object.freeze(["tabId", "documentRef", "pageSession",
+    "rendererGeneration", "documentGeneration", "pathKey"]);
+  const n11RetainedOwner = identity => n11Shutdown.documentSessionState().owners.find(owner =>
+    n11OwnerKeys.every(key => owner[key] === identity[key]));
+  const n11AdmissionCurrent = identity => {
+    const state = n11Shutdown.state();
+    return n11SamePage() && state.renderer === "ready" &&
+      state.rendererGeneration === identity.rendererGeneration &&
+      state.rendererPageSession === identity.pageSession &&
+      n11Shutdown.documentAdmissionIsCurrent(identity.documentRef) === true;
+  };
+  const n11Maintenance = createN11MaintenanceObservation({
+    watch: n11Watch, setTimeout: n11SetTimeout, clearTimeout: n11ClearTimeout,
+    isCurrent(identity, file) {
+      const owner = n11RetainedOwner(identity), paths = n11ExpectedPaths.get(file);
+      return n11AdmissionCurrent(identity) && !!paths && !!owner &&
+        owner.spelling === (process.platform === "win32" ?
+          paths.normalised.toLowerCase() : paths.normalised) &&
+        owner.readTarget === paths.canonical;
+    },
+    isRetired(identity) {
+      return n11SamePage() && n11Shutdown.documentAdmissionIsCurrent(identity.documentRef) === false &&
+        !n11RetainedOwner(identity);
+    },
+    authenticate(channel, event, data) {
+      const close = channel === "query-document-deletion-state" ||
+        channel === "retire-deleted-document-owner";
+      const identity = close ? data : data?.owner;
+      if (!data || !identity || event.sender !== n11Contents || event.senderFrame !== n11Frame ||
+          !n11SamePage() || !n11ExpectedPaths.has(data.filePath) ||
+          !Number.isSafeInteger(identity.tabId) || identity.tabId <= 0 ||
+          !Number.isSafeInteger(identity.documentGeneration) || identity.documentGeneration <= 0 ||
+          typeof identity.pathKey !== "string" || !identity.pathKey ||
+          !close && (!Number.isSafeInteger(identity.selectionGeneration) ||
+            identity.selectionGeneration <= 0) ||
+          data.pageSession !== identity.pageSession ||
+          data.rendererGeneration !== identity.rendererGeneration ||
+          !n11AdmissionCurrent(identity)) return null;
+      return Object.freeze(Object.fromEntries(["tabId", "documentRef", "pageSession",
+        "rendererGeneration", "documentGeneration", "pathKey", "selectionGeneration"]
+        .map(key => [key, identity[key]])));
+    },
+  });
+  async function n11CloseSource() {
+    const close = n11Maintenance.beginClose(n11WorkOwner(n11Owner), n11SourcePaths);
+    await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
+    if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
+      throw new Error("N11 source Main admission did not actually retire");
+    }
+    n11Maintenance.finishClose(close);
+    n11Owner = null;
+  }
+  async function n11ArmSource(owner) {
+    if (!securityImageOwnerMatches(owner, n11SourcePath, n11FixtureBody, n11Heading) ||
+        !isDeepStrictEqual(owner.identity, n11Owner.identity) ||
+        !isDeepStrictEqual(owner.descriptor, n11Owner.descriptor) ||
+        !Number.isSafeInteger(owner.selectionGeneration) || owner.selectionGeneration <= 0) {
+      throw new Error("N11 watcher setup lacks its independently verified current source");
+    }
+    const checkpoint = n11Maintenance.checkpoint();
+    await exec(`(() => {
+      const identity = window.CustomTabs.getActiveDocumentIdentity(
+        ${JSON.stringify(n11SourcePath)}, window.getReloadRequestSession());
+      if (typeof setFileTrackingIntent !== 'function' || !isFileTrackingActive ||
+          window.currentFilePath !== ${JSON.stringify(n11SourcePath)} ||
+          JSON.stringify(identity) !== ${JSON.stringify(JSON.stringify(owner.identity))} ||
+          window.getActiveFileSelectionGeneration() !== ${owner.selectionGeneration}) {
+        throw new Error('N11 source changed before its exact-owner pause/resume');
+      }
+      setFileTrackingIntent(false);
+      if (setFileTrackingIntent(true) !== true) throw new Error('N11 source resume was refused');
+      return true;
+    })()`);
+    await n11Barrier();
+    const current = await readSecurityImageOwner(n11SourcePath);
+    if (!securityImageOwnerMatches(current, n11SourcePath, n11FixtureBody, n11Heading) ||
+        !isDeepStrictEqual(current.identity, owner.identity) ||
+        !isDeepStrictEqual(current.descriptor, owner.descriptor) ||
+        current.selectionGeneration !== owner.selectionGeneration) {
+      throw new Error("N11 source changed while its watcher was being registered");
+    }
+    check("SETUP N11 exact-source pause/resume produces one fresh authenticated watcher: " + n11Heading,
+      n11Maintenance.verifyOwner(n11WorkOwner(current), n11SourcePaths,
+        current.selectionGeneration, checkpoint));
+  }
   function n11Slice(records, start) {
     if (!Number.isSafeInteger(start) || start < 0 || start > records.length) {
       throw new Error("N11 observation history was truncated or has an invalid endpoint");
@@ -4211,6 +5208,7 @@ async function run(win) {
     },
   };
   const n11ObservedSend = function(channel, value) {
+    if (n11Maintenance.scope()) n11Maintenance.effect("Unexpected N11 maintenance delivery: " + channel);
     if (channel === "external-file-open-request" || channel === "show-error") {
       n11Sends.push({ action: n11Active?.id ?? null, channel,
         ...(channel === "show-error" ? { message: value } : { path: value?.filePath }) });
@@ -4286,13 +5284,16 @@ async function run(win) {
     // checks use captured originals, never a path exemption or async mute.
     // Idle no-late/disposal drains have no gesture owner. Keep their work as
     // observed-drain evidence, not silently delegated or credited to Main input.
-    const record = forbidden || action?.pending || n11FSDrainDepth > 0 ?
+    const record = forbidden || action?.pending || n11FSDrainDepth > 0 || n11Maintenance.scope() ?
       { action: action?.id ?? null, inGesture: !!action?.entry,
         interval: action?.pending ? "case" : "observed-drain",
         phase: action?.phase ?? null, owner: n11WorkOwner(action?.source),
         restoration: action?.phase === "source-restoration" ? action.restoration?.context ?? null : null,
         kind, file, forbidden, terminal: false } : null;
-    if (record) n11Work.push(record);
+    if (record) {
+      n11RawWork.push(record);
+      if (!n11Maintenance.record(record)) n11Work.push(record);
+    }
     if (forbidden) {
       n11Faults.push("Main attempted remote N11 filesystem work");
       check("N11 Main never attempts remote filesystem work", false, JSON.stringify(record));
@@ -4358,6 +5359,18 @@ async function run(win) {
       dialogs: page.dialogs.length, confirms: page.confirms.length,
       sentinel: page.sentinel.length, modal: page.modal.length };
   }
+  function n11ValidateMaintenance(final = false) {
+    const slots = [[securityMaintenanceRegistration, "observer", n11Maintenance],
+      [fs, "watch", n11Maintenance.watch], [n11Timers, "setTimeout", n11Maintenance.setTimeout],
+      [n11Timers, "clearTimeout", n11Maintenance.clearTimeout],
+      [fs, "existsSync", n11ObservedExists], [fs, "statSync", n11ObservedStat],
+      [fs, "readFileSync", n11ObservedRead], [n11RealPathHost, "native", n11ObservedRealPath],
+      [n11Contents, "send", n11ObservedSend]];
+    if (slots.some(([object, key, value]) => n11DataSlotValue(object, key) !== value)) {
+      throw new Error("N11 maintenance observation authority changed");
+    }
+    return n11Maintenance.validate(n11RawWork, n11Work, final);
+  }
   async function n11Barrier() {
     await exec(`new Promise(resolve => requestAnimationFrame(() =>
       requestAnimationFrame(() => resolve(true))))`);
@@ -4370,11 +5383,14 @@ async function run(win) {
     await n11Barrier();
     const trapReady = n11AuthorityIntact() && await waitForExternalTrap(win);
     const page = await n11ReadPage();
+    let maintenanceError = null;
+    try { n11ValidateMaintenance(); }
+    catch (error) { maintenanceError = String(error.message || error); }
     const now = n11Counts(page, n11SnapshotOpens());
-    if (!isDeepStrictEqual(now, n11Sealed) || !page.observing || !trapReady ||
+    if (maintenanceError || !isDeepStrictEqual(now, n11Sealed) || !page.observing || !trapReady ||
         n11Faults.length || expectedSecurityQuestion !== null || !n11AuthorityIntact()) {
       check("N11 immutable endpoints reject late or unattributed effects", false,
-        JSON.stringify({ sealed: n11Sealed, now, faults: n11Faults }));
+        JSON.stringify({ sealed: n11Sealed, now, faults: n11Faults, maintenanceError }));
       throw new Error("N11 late effects or changed observation authority");
     }
     } finally { n11FSDrainDepth--; }
@@ -4413,9 +5429,13 @@ async function run(win) {
     }
   }
   async function n11Install() {
+    await proveN11MaintenanceContracts(check, fs.readFileSync(__filename, "utf8"),
+      fs.readFileSync(path.join(__dirname, "..", "src", "renderer.js"), "utf8"));
     if (securityGestureRegistration.count !== 1 || typeof n11Registration.handler !== "function" ||
         typeof n11Registration.installed !== "function" ||
         Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer")?.value !== null ||
+        Object.getOwnPropertyDescriptor(securityMaintenanceRegistration, "observer")?.value !== null ||
+        securityMaintenanceRegistration.handlers.size !== securityMaintenanceRegistration.channels.size ||
         typeof n11SnapshotOpens !== "function" ||
         Object.values(n11Slots).some(slot => slot && !Object.hasOwn(slot, "value")) ||
         !n11AuthorityIntact() || expectedSecurityQuestion !== null ||
@@ -4428,6 +5448,10 @@ async function run(win) {
     n11PageAttempted = true;
     const starting = n11SnapshotOpens();
     securityGestureRegistration.observer = n11Observer;
+    securityMaintenanceRegistration.observer = n11Maintenance;
+    fs.watch = n11Maintenance.watch;
+    n11Timers.setTimeout = n11Maintenance.setTimeout;
+    n11Timers.clearTimeout = n11Maintenance.clearTimeout;
     n11Contents.send = n11ObservedSend;
     n11RealPathHost.native = n11ObservedRealPath;
     fs.statSync = n11ObservedStat;
@@ -4656,7 +5680,11 @@ async function run(win) {
     check("SETUP N11 Markdown target and source have exact actual two-tab Main identities",
       exact, JSON.stringify({ target, retained }));
     if (!exact) throw new Error("N11 refuses to close an unproven Markdown target");
-    n11KnownOwners.set(target.id, { owner: target, file: targetPath, body: "# httpd\n", heading: "httpd" });
+    const targetPaths = n11ExpectedPaths.get(targetPath);
+    n11KnownOwners.set(target.id, { owner: target, file: targetPath, body: "# httpd\n",
+      heading: "httpd", paths: targetPaths });
+    // Rearming this short-lived target could manufacture route witnesses.
+    // Its watcher effects remain unowned, never silently "verified" as zero.
     const action = n11Active;
     if (!action?.pending || action.text !== "md" || action.source !== n11Owner ||
         action.phase !== "route" || action.restoration ||
@@ -4672,6 +5700,7 @@ async function run(win) {
     const restoration = action.restoration = { context, completed: false };
     action.phase = "source-restoration";
     try {
+    const close = n11Maintenance.beginClose(n11WorkOwner(target), targetPaths);
     await exec(`(() => {
       const p = window.__securityN11, tabs = window.CustomTabs, t = tabs.getActiveTab();
       const state = t && tabs.__documentState(t), pending = window.getPendingSaveStatus();
@@ -4708,6 +5737,8 @@ async function run(win) {
     const retired = n11Shutdown.documentAdmissionIsCurrent(target.descriptor.ref) === false;
     check("N11 Markdown target really retires its Main admission and restores the original source", retired);
     if (!retired) throw new Error("N11 target's Main admission is still live");
+    n11Maintenance.finishClose(close);
+    const restoredOwner = await readSecurityImageOwner(n11SourcePath);
     await n11Wait(() => {
       const work = n11Work.filter(record => n11SourceRestorationWork(record, context));
       return work.some(record => record.kind === "stat") && work.some(record => record.kind === "realpath");
@@ -4719,6 +5750,9 @@ async function run(win) {
         n11Shutdown.documentAdmissionIsCurrent(context.target.documentRef) !== false) {
       throw new Error("N11 source-restoration phase did not complete with its original owners");
     }
+    // Prove the original restoration's own filesystem witnesses before any
+    // fixture rearm can produce additional source reads.
+    await n11ArmSource(restoredOwner);
     restoration.completed = true;
     } finally { action.phase = "post-restoration"; }
     await exec(`delete window.__securityN11.close; true`);
@@ -4836,6 +5870,7 @@ async function run(win) {
       const clicked = validated.clicks[0];
       const consentClear = validated.dialogs.length === 0 && validated.confirms.length === 0 &&
         validated.modal.length === 0 && expectedSecurityQuestion === null && n11AuthorityIntact();
+      n11ValidateMaintenance();
       const fsVerdict = n11FSVerdict(action, validated.work, logical, real);
       const exactFS = fsVerdict.ok;
       const ok = validated.clicks.length === 1 && clicked.selected && clicked.trusted &&
@@ -5384,11 +6419,7 @@ async function run(win) {
   }
   n11Sealed = Object.freeze({ ...probeBefore, external: probeBefore.external + probeExternal.length });
   await n11NoLate();
-  await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
-  if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
-    throw new Error("N11 ordinary source admission did not actually retire");
-  }
-  n11Owner = null;
+  await n11CloseSource();
   await n11NoLate();
   const empty = await readSecurityImageOwner(null);
   await n11NoLate();
@@ -5417,11 +6448,7 @@ async function run(win) {
     await restore("known ordinary source", async () => {
       if (!n11Owner) return;
       if (!await n11Healthy()) throw new Error("Cannot close an uncertain N11 source; fixtures retained");
-      await closeSecurityImageFixture(n11Owner, n11SourcePath, n11FixtureBody, n11Heading);
-      if (n11Shutdown.documentAdmissionIsCurrent(n11Owner.descriptor.ref) !== false) {
-        throw new Error("N11 source Main retirement was not confirmed");
-      }
-      n11Owner = null;
+      await n11CloseSource();
     });
     await restore("page witness", async () => {
       if (n11PageAttempted || n11PageInstalled) retiredPage = Object.freeze(await n11DisposePage());
@@ -5434,6 +6461,11 @@ async function run(win) {
     // final synchronous snapshot/comparison/property-release boundary.
     try { n11Contents.removeListener("did-start-navigation", onN11Nav); }
     catch (error) { restorationErrors.push("navigation listener: " + String(error.message || error)); }
+    try { n11Maintenance.releaseWatchers(); }
+    catch (error) { restorationErrors.push("watcher observations: " + String(error.message || error)); }
+    let maintenanceAccounted = false;
+    try { maintenanceAccounted = n11ValidateMaintenance(true); }
+    catch (error) { restorationErrors.push("maintenance accounting: " + String(error.message || error)); }
     try { finalOpens = n11SnapshotOpens(); }
     catch (error) { restorationErrors.push({ label: "final shared histories", error }); }
     const finalCounts = {
@@ -5445,13 +6477,25 @@ async function run(win) {
       dialogs: retiredPage?.dialogs ?? null, confirms: retiredPage?.confirms ?? null,
       sentinel: retiredPage?.sentinel ?? null, modal: retiredPage?.modal ?? null,
     };
-    const accounted = n11Sealed !== null && isDeepStrictEqual(finalCounts, n11Sealed) &&
+    const accounted = maintenanceAccounted && n11Sealed !== null && isDeepStrictEqual(finalCounts, n11Sealed) &&
       n11Faults.length === 0 && expectedSecurityQuestion === null && n11AuthorityIntact() && trapReady;
     try {
       if (n11Installed || Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer")?.value === n11Observer) {
         n11RestoreSlot(securityGestureRegistration, "observer", n11Observer, null, n11Slots.observer);
       }
     } catch (error) { restorationErrors.push({ label: "Main gesture observer", error }); }
+    for (const [object, key, installed, original, descriptor] of [
+      [securityMaintenanceRegistration, "observer", n11Maintenance, null, n11Slots.maintenance],
+      [fs, "watch", n11Maintenance.watch, n11Watch, n11Slots.watch],
+      [n11Timers, "setTimeout", n11Maintenance.setTimeout, n11SetTimeout, n11Slots.timeout],
+      [n11Timers, "clearTimeout", n11Maintenance.clearTimeout, n11ClearTimeout, n11Slots.clearTimeout],
+    ]) {
+      try {
+        if (n11Installed || Object.getOwnPropertyDescriptor(object, key)?.value === installed) {
+          n11RestoreSlot(object, key, installed, original, descriptor);
+        }
+      } catch (error) { restorationErrors.push({ label: "maintenance " + key, error }); }
+    }
     try {
       if (n11Installed || Object.getOwnPropertyDescriptor(n11Contents, "send")?.value === n11ObservedSend) {
         n11RestoreSlot(n11Contents, "send", n11ObservedSend, n11Send, n11Slots.send);
@@ -5488,6 +6532,11 @@ async function run(win) {
       Object.getOwnPropertyDescriptor(fs, "statSync")?.value === n11Stat &&
       Object.getOwnPropertyDescriptor(fs, "existsSync")?.value === n11Exists &&
       Object.getOwnPropertyDescriptor(fs, "readFileSync")?.value === n11ReadFile &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(securityMaintenanceRegistration, "observer"),
+        n11Slots.maintenance) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(fs, "watch"), n11Slots.watch) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(n11Timers, "setTimeout"), n11Slots.timeout) &&
+      isDeepStrictEqual(Object.getOwnPropertyDescriptor(n11Timers, "clearTimeout"), n11Slots.clearTimeout) &&
       isDeepStrictEqual(Object.getOwnPropertyDescriptor(securityGestureRegistration, "observer"), n11Slots.observer) &&
       isDeepStrictEqual(Object.getOwnPropertyDescriptor(n11Contents, "send"), n11Slots.send) &&
       isDeepStrictEqual(Object.getOwnPropertyDescriptor(n11RealPathHost, "native"), n11Slots.realpath) &&
@@ -5502,6 +6551,7 @@ async function run(win) {
       item.label + ": " + String(item.error.message || item.error));
     check("N11 final immutable accounting covers asynchronous owner/page disposal", accounted,
       JSON.stringify({ sealed: n11Sealed, finalCounts, faults: n11Faults,
+        maintenanceAccounted, rawWork: n11RawWork,
         recoveryLoads: n11RecoveryLoads,
         readinessErrors: n11ReadinessErrors }));
     check("N11 owned Main observations restore exact identities and retain the shared trap",
@@ -6938,10 +7988,13 @@ async function run(win) {
   // same external/local policy as every other link instead of falling through
   // to Chromium's default follow.
   const sec11AreaBody =
-    '# Nav\n\n<img src="x.png" usemap="#m" alt="m">\n' +
+    '# Nav\n\n<img src="sec11-image-map-carrier.png" width="200" height="200" usemap="#m" alt="m">\n' +
       '<map name="m"><area shape="rect" coords="0,0,20,20" ' +
       'href="https://probe.invalid/area" alt="AreaProbe"></map>\n';
   const sec11AreaFile = path.join(dir, "sec11-image-map.md");
+  const sec11AreaImage = path.join(dir, "sec11-image-map-carrier.png");
+  fs.writeFileSync(sec11AreaImage, relPng);
+  const sec11AreaImageUrl = pathToFileURL(sec11AreaImage).href;
   const sec11Contents = win.webContents, sec11Frame = sec11Contents.mainFrame;
   const sec11PageUrl = sec11Contents.getURL();
   const sec11Shutdown = require("../src/main.js").__shutdown;
@@ -6961,6 +8014,7 @@ async function run(win) {
   const sec11Entries = [], sec11Sends = [], sec11Navigation = [], sec11Faults = [], sec11Work = [];
   let sec11Phase = "admission";
   let sec11Owner = null, sec11Active = false, sec11Installed = false, sec11PageAttempted = false;
+  let sec11InputAttempted = false;
   let areaState, urlBeforeArea, urlAfterArea, externalUrl, sec11Failure = null;
   const sec11SamePage = () => win === observedMain && !win.isDestroyed() &&
     win.webContents === sec11Contents && !sec11Contents.isDestroyed() &&
@@ -6994,6 +8048,11 @@ async function run(win) {
   const sec11OnNavigation = (details, url, _inPlace, mainFrame) => {
     const main = typeof details?.isMainFrame === "boolean" ? details.isMainFrame : mainFrame;
     if (main) sec11Navigation.push({ url: details?.url || url, sameDoc: details?.isSameDocument });
+  };
+  const sec11OnDiagnostic = details => {
+    if (details.message?.startsWith("SEC-11 OBSERVATION ")) {
+      console.log(details.message);
+    }
   };
   const sec11FsSlots = [
     [fs,"statSync","stat"], [fs,"existsSync","exists"],
@@ -7098,6 +8157,7 @@ async function run(win) {
     sec11Contents.send = sec11ObservedSend;
     for (const item of sec11FsSlots) item.object[item.key] = item.installed;
     sec11Contents.on("did-start-navigation", sec11OnNavigation);
+    sec11Contents.on("console-message", sec11OnDiagnostic);
     sec11PageAttempted = true;
     await exec(`(() => {
       if (window.__securityArea || !Array.isArray(window.__e2eErrors) ||
@@ -7146,10 +8206,35 @@ async function run(win) {
         attributes:true,attributeFilter:['open','class'],attributeOldValue:true});
       return true;
     })()`);
-    sec11Owner = await admitSecurityImageFixture(sec11AreaFile, sec11AreaBody, "Nav", ["m"], []);
-    // Keep the original forced-full case and settle, without clearing admission observations.
+    sec11Owner = await admitSecurityImageFixture(sec11AreaFile, sec11AreaBody, "Nav", ["m"], ["m"]);
+    // The 200px presentation is a fixture choice, not a proven minimum or a hit guarantee.
+    // Decode the post-full-render image within the original settle allowance.
     await exec(`window.renderMarkdown(${JSON.stringify(sec11AreaBody)}, "full")`);
-    await sleep(1000);
+    await exec(`(async () => {
+      const deadline = ${Date.now() + 1000};
+      const image = document.querySelector('#viewer img[usemap="#m"]');
+      for (;;) {
+        const r = image?.getBoundingClientRect();
+        const observation = {current:image?.isConnected === true &&
+            document.querySelectorAll('#viewer img[usemap="#m"]').length === 1 &&
+            document.querySelector('#viewer img[usemap="#m"]') === image,
+          src:image?.src,currentSrc:image?.currentSrc,complete:image?.complete,
+          naturalWidth:image?.naturalWidth,naturalHeight:image?.naturalHeight,
+          width:r?.width,height:r?.height};
+        const remaining = deadline - Date.now();
+        if (remaining > 0 && observation.current &&
+            observation.src === ${JSON.stringify(sec11AreaImageUrl)} &&
+            observation.currentSrc === ${JSON.stringify(sec11AreaImageUrl)} &&
+            observation.complete === true && observation.naturalWidth === 32 &&
+            observation.naturalHeight === 32 && observation.width === 200 &&
+            observation.height === 200) return true;
+        if (remaining <= 0) {
+          console.log('SEC-11 OBSERVATION image readiness: ' + JSON.stringify(observation));
+          throw new Error('SEC-11 post-full-render local image did not decode within its settle allowance');
+        }
+        await new Promise(resolve => setTimeout(resolve, Math.min(40,remaining)));
+      }
+    })()`);
     areaState = await exec(`(() => {
       const a = document.querySelector('#viewer area');
       return a ? {present:true,href:a.getAttribute('href')} : {present:false};
@@ -7170,8 +8255,27 @@ async function run(win) {
         points.push({x:Math.round(r.left+Math.min(r.width,20)*fx),
           y:Math.round(r.top+Math.min(r.height,20)*fy)});
       }
-      const point = points.find(p => document.elementFromPoint(p.x,p.y) === a);
-      if (!point) throw new Error('SEC-11 original AREA has no verified visible pointer hit');
+      const hits = [];
+      const point = points.find(p => {
+        const hit = document.elementFromPoint(p.x,p.y);
+        hits.push(hit);
+        return hit === a;
+      });
+      if (!point) {
+        console.log('SEC-11 OBSERVATION pointer witness: ' + JSON.stringify({
+          image:{currentSrc:image.currentSrc,complete:image.complete,
+            naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,
+            rect:{x:r.x,y:r.y,left:r.left,top:r.top,right:r.right,bottom:r.bottom,
+              width:r.width,height:r.height}},
+          viewport:{width:window.innerWidth,height:window.innerHeight,
+            devicePixelRatio:window.devicePixelRatio,scrollX:window.scrollX,scrollY:window.scrollY},
+          samples:points.map((point,index) => ({...point,hit:hits[index] === null ? null : {
+            tag:hits[index].tagName,id:hits[index].id,
+            class:hits[index].getAttribute('class'),href:hits[index].getAttribute('href'),
+            alt:hits[index].getAttribute('alt'),originalArea:hits[index] === a}}))
+        }));
+        throw new Error('SEC-11 original AREA has no verified visible pointer hit');
+      }
       p.target = a;
       return {...point,hit:document.elementFromPoint(point.x,point.y)===a,
         href:a.getAttribute('href'),width:r.width,height:r.height};
@@ -7191,6 +8295,7 @@ async function run(win) {
     urlBeforeArea = sec11Contents.getURL();
     sec11Phase = "route";
     sec11Active = true;
+    sec11InputAttempted = true;
     sec11Contents.sendInputEvent({type:"mouseDown",x:sec11Point.x,y:sec11Point.y,button:"left",clickCount:1});
     sec11Contents.sendInputEvent({type:"mouseUp",x:sec11Point.x,y:sec11Point.y,button:"left",clickCount:1});
     await sleep(700);
@@ -7238,7 +8343,7 @@ async function run(win) {
     if (sec11PageAttempted) {
       try {
         if (!sec11SamePage()) throw new Error("Original image-map page is unavailable");
-        await exec(`(() => {
+        await exec(`(() => { try {
           const p = window.__securityArea;
           if (!p) return true;
           if (p.owner !== ${JSON.stringify(sec11Key)}) throw new Error('Image-map cleanup has no observation owner');
@@ -7267,30 +8372,42 @@ async function run(win) {
             p.notices.length === 0 && p.dialogCalls.length === 0 && p.confirms.length === 0 &&
             p.notifications.length === 0 && !p.opened &&
             window.__lastRenderError === null && window.__pwned === null &&
-            p.clicks.length === 1 && p.clicks[0].selected &&
-            p.clicks[0].event.isTrusted && p.clicks[0].event.defaultPrevented;
+            (${sec11InputAttempted} ? p.clicks.length === 1 && p.clicks[0].selected &&
+            p.clicks[0].event.isTrusted && p.clicks[0].event.defaultPrevented :
+            p.clicks.length === 0);
           if (!quiet || releaseErrors.length) throw new Error('Image-map cleanup retains failed observations: '+
             JSON.stringify({releaseErrors,errors:p.errors,notices:p.notices,dialogs:p.dialogCalls,
               confirms:p.confirms,notifications:p.notifications,opened:p.opened,clicks:p.clicks.length}));
           delete window.__securityArea;
           return true;
-        })()`);
-      } catch (error) { errors.push("page: " + String(error.message || error)); }
+        } catch (error) {
+          console.log('SEC-11 OBSERVATION renderer cleanup: ' + JSON.stringify({
+            name:error?.name ?? null,message:error?.message ?? null,stack:error?.stack ?? null
+          }));
+          throw error;
+        } })()`);
+      } catch (error) { errors.push("page: " + String(error.stack || error.message || error)); }
     }
     try { sec11Contents.removeListener("did-start-navigation",sec11OnNavigation); }
-    catch (error) { errors.push("navigation: " + String(error.message || error)); }
-    if (!sec11Failure) {
+    catch (error) { errors.push("navigation: " + String(error.stack || error.message || error)); }
+    if (!sec11Failure || !sec11InputAttempted) {
       try {
         const external = await visualUtils.readExternalOpens(win);
         const shell = await visualUtils.readShellOpens(win);
-        if (!isDeepStrictEqual(external,[...sec11BeforeExternal,"https://probe.invalid/area"]) ||
+        if (!sec11InputAttempted) {
+          if (!isDeepStrictEqual(external,sec11BeforeExternal) ||
+              !isDeepStrictEqual(shell,sec11BeforeShell) || sec11Entries.length ||
+              sec11Sends.length || sec11Navigation.length || sec11Faults.length || sec11Work.length) {
+            throw new Error("Unaccounted effects before image-map native input");
+          }
+        } else if (!isDeepStrictEqual(external,[...sec11BeforeExternal,"https://probe.invalid/area"]) ||
             !isDeepStrictEqual(shell,sec11BeforeShell) || sec11Entries.length !== 1 ||
             sec11Sends.length || sec11Navigation.length || sec11Faults.length ||
             !sec11Work.every(sec11RetirementWork) ||
             sec11Shutdown.documentAdmissionIsCurrent(sec11Owner.descriptor.ref) !== false) {
           throw new Error("Unaccounted effects during image-map observation disposal");
         }
-      } catch (error) { errors.push("terminal effects: " + String(error.message || error)); }
+      } catch (error) { errors.push("terminal effects: " + String(error.stack || error.message || error)); }
     }
     if (sec11Installed) {
       for (const [object,key,installed,slot] of [
@@ -7306,14 +8423,24 @@ async function run(win) {
           if (!isDeepStrictEqual(Object.getOwnPropertyDescriptor(object,key),slot)) {
             throw new Error("Original observation descriptor was not restored");
           }
-        } catch (error) { errors.push(key + ": " + String(error.message || error)); }
+        } catch (error) { errors.push(key + ": " + String(error.stack || error.message || error)); }
       }
       sec11Installed = false;
     }
     sec11Active = false;
-    if (!sec11Authority() || !await waitForExternalTrap(win)) errors.push("Main authority/shared trap");
-    if (errors.length) throw new Error("SEC-11 image-map observation cleanup failed: " +
-      errors.join("; ") + (sec11Failure ? "\nOriginal failure: " + String(sec11Failure.stack || sec11Failure) : ""));
+    try {
+      if (!sec11Authority() || !await waitForExternalTrap(win)) errors.push("Main authority/shared trap");
+    } catch (error) { errors.push("authority: " + String(error.stack || error.message || error)); }
+    try { sec11Contents.removeListener("console-message",sec11OnDiagnostic); }
+    catch (error) { errors.push("diagnostic: " + String(error.stack || error.message || error)); }
+    if (errors.length) {
+      const cleanupError = new Error("SEC-11 image-map observation cleanup failed: " + errors.join("; "));
+      console.log("SEC-11 OBSERVATION Main cleanup: " + JSON.stringify({
+        name:cleanupError.name,message:cleanupError.message,stack:cleanupError.stack,
+        originalFailure:sec11Failure ? String(sec11Failure.stack || sec11Failure) : null,
+      }));
+      if (!sec11Failure) throw cleanupError;
+    }
   }
   if (sec11Failure) throw sec11Failure;
   check(
@@ -8111,6 +9238,7 @@ async function run(win) {
 }
 
 app.whenReady().then(async () => {
+  const watchdogDeadline = Date.now() + 180000;
   const watchdog = setTimeout(() => {
     const failed = results.filter((r) => !r.ok).length;
     console.log(
@@ -8120,7 +9248,7 @@ app.whenReady().then(async () => {
       `\n=== TIMED OUT after ${results.length - failed}/${results.length} checks ===`,
     );
     failSecurityUnattended(new Error("Security watchdog expired"));
-  }, 180000);
+  }, Math.max(0, watchdogDeadline - Date.now()));
   watchdog.unref?.();
 
   try {
@@ -8170,6 +9298,7 @@ app.whenReady().then(async () => {
     results.push({ name: "harness", ok: false });
   }
 
+  // Transfer only the original watchdog's remaining time to terminal cleanup.
   clearTimeout(watchdog);
   // Keep the last watched owner from triggering Main's window-all-closed quit
   // before its destruction and the failure footer have been verified.
@@ -8178,19 +9307,106 @@ app.whenReady().then(async () => {
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
   });
   let destructionConfirmed = true;
-  for (const [owner, contents] of securityWindows) {
-    if (owner === cleanupKeepalive) continue;
-    try {
-      if (!owner.isDestroyed()) owner.destroy();
-      if (!owner.isDestroyed() || !contents.isDestroyed()) destructionConfirmed = false;
-    } catch {
-      destructionConfirmed = false;
+  const destructionObservations = [];
+  const destructionOwners = [], destructionListeners = [], destructionWaits = [];
+  const destructionBudget = {deadline:watchdogDeadline,remaining:"not-evaluated",expired:false};
+  let destructionTimer = null;
+  try {
+    // Arm every captured contents before destroying any owner, then recheck to
+    // cover destruction between the initial state read and listener registration.
+    for (const [owner, contents] of securityWindows) {
+      if (owner === cleanupKeepalive) continue;
+      const observation = {before:"not-evaluated",after:"not-evaluated",
+        contents:"not-evaluated",contentsAfterImmediate:"not-evaluated",
+        finalOwner:"not-evaluated",finalContents:"not-evaluated",destroyCalled:false};
+      destructionObservations.push(observation);
+      destructionOwners.push({owner,contents,observation});
+      let done;
+      destructionWaits.push(new Promise(resolve => { done = resolve; }));
+      const onDestroyed = () => done();
+      try {
+        if (contents.isDestroyed()) done();
+        else {
+          destructionListeners.push({contents,onDestroyed,observation});
+          contents.on("destroyed",onDestroyed);
+          if (contents.isDestroyed()) done();
+        }
+      } catch (error) {
+        observation.subscriptionError = {name:error?.name ?? null,message:error?.message ?? null,
+          stack:error?.stack ?? null};
+        destructionConfirmed = false;
+        done();
+      }
+    }
+    const deadlineWait = new Promise(resolve => {
+      const remaining = watchdogDeadline - Date.now();
+      destructionBudget.remaining = Math.max(0,remaining);
+      const expire = () => { destructionBudget.expired = true; resolve(); };
+      if (remaining <= 0) expire();
+      else destructionTimer = setTimeout(expire,remaining);
+    });
+    for (const {owner,contents,observation} of destructionOwners) {
+      try {
+        if (!(observation.before = owner.isDestroyed())) {
+          observation.destroyCalled = true;
+          owner.destroy();
+        }
+        observation.after = owner.isDestroyed();
+        observation.contents = contents.isDestroyed();
+      } catch (error) {
+        observation.error = {name:error?.name ?? null,message:error?.message ?? null,
+          stack:error?.stack ?? null};
+        destructionConfirmed = false;
+      }
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    for (const {contents,observation} of destructionOwners) {
+      if (observation.contents !== false) continue;
+      try { observation.contentsAfterImmediate = contents.isDestroyed(); }
+      catch (error) {
+        observation.contentsAfterImmediate = "observation-error";
+        observation.contentsAfterImmediateError = {name:error?.name ?? null,
+          message:error?.message ?? null,stack:error?.stack ?? null};
+        destructionConfirmed = false;
+      }
+    }
+    await Promise.race([Promise.all(destructionWaits),deadlineWait]);
+    for (const {owner,contents,observation} of destructionOwners) {
+      try {
+        observation.finalOwner = owner.isDestroyed();
+        observation.finalContents = contents.isDestroyed();
+        if (!observation.finalOwner || !observation.finalContents) destructionConfirmed = false;
+      } catch (error) {
+        observation.finalError = {name:error?.name ?? null,message:error?.message ?? null,
+          stack:error?.stack ?? null};
+        destructionConfirmed = false;
+      }
+    }
+  } catch (error) {
+    destructionBudget.error = {name:error?.name ?? null,message:error?.message ?? null,
+      stack:error?.stack ?? null};
+    destructionConfirmed = false;
+  } finally {
+    clearTimeout(destructionTimer);
+    for (const {contents,onDestroyed,observation} of destructionListeners) {
+      try { contents.removeListener("destroyed",onDestroyed); }
+      catch (error) {
+        observation.listenerError = {name:error?.name ?? null,message:error?.message ?? null,
+          stack:error?.stack ?? null};
+        destructionConfirmed = false;
+      }
     }
   }
-  await new Promise(resolve => setImmediate(resolve));
-  if (cleanupKeepalive.isDestroyed() ||
-      BrowserWindow.getAllWindows().some(owner => owner !== cleanupKeepalive) ||
-      !securityDialogGuardsIntact()) destructionConfirmed = false;
+  if (Date.now() >= watchdogDeadline) destructionBudget.expired = true;
+  if (destructionBudget.expired) destructionConfirmed = false;
+  const destructionFinal = {keepalive:"not-evaluated",otherWindows:"not-evaluated",
+    dialogGuards:"not-evaluated"};
+  if ((destructionFinal.keepalive = cleanupKeepalive.isDestroyed()) ||
+      (destructionFinal.otherWindows = BrowserWindow.getAllWindows().some(owner => owner !== cleanupKeepalive)) ||
+      !(destructionFinal.dialogGuards = securityDialogGuardsIntact())) destructionConfirmed = false;
+  if (!destructionConfirmed) console.log("SECURITY OBSERVATION destruction predicate: " +
+    JSON.stringify({owners:destructionObservations,budget:destructionBudget,final:destructionFinal},
+      (_key,value) => value === undefined ? {type:"undefined"} : value));
   check("security fixture cleanup confirms owner destruction before release", destructionConfirmed);
   if (destructionConfirmed && results.every(result => result.ok)) {
     registeredTempDirs.add(dir);
