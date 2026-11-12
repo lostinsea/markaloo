@@ -3,9 +3,9 @@
 // just as important - DECLINES to move a profile something else has already
 // relocated.
 //
-// The function is executed out of main.js rather than reimplemented here: the
+// The function is executed out of profile-startup.js rather than reimplemented here: the
 // source text is sliced and evaluated, so what runs is the shipped code. If
-// main.js is refactored such that the slice no longer matches, this fails loud
+// profile-startup.js is refactored such that the slice no longer matches, this fails loud
 // rather than silently testing nothing.
 //
 // Pure, so it is driven directly against a stub rather than by booting Electron
@@ -24,6 +24,7 @@ const path = require("path");
 const vm = require("vm");
 
 const src = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+const profileSrc = fs.readFileSync(path.join(__dirname, "..", "src", "profile-startup.js"), "utf8");
 
 let pass = 0;
 let fail = 0;
@@ -40,7 +41,7 @@ function check(name, cond, detail) {
     fail++;
   }
 }
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "folia-dev-profile-test-"));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-dev-profile-test-"));
 // Plain-node tier, so no Electron app.exit() can terminate mid-stack and the
 // removal below on the normal path is reached in the ordinary case. This hook
 // covers the two paths that skip it: an escaping throw from any check, and the
@@ -62,16 +63,16 @@ process.on("exit", () => {
     /* best effort; a later run's mkdtemp is unaffected either way */
   }
 });
-const devStart = src.indexOf("const DEV_PROFILE_SUFFIX");
-const devEnd = src.indexOf("function applyDevProfile", devStart);
+const devStart = profileSrc.indexOf("const DEV_PROFILE_SUFFIX");
+const devEnd = profileSrc.indexOf("function applyDevProfile", devStart);
 if (devStart === -1 || devEnd === -1) {
-  console.error("FAIL could not extract devProfileDecision from main.js");
+  console.error("FAIL could not extract devProfileDecision from profile-startup.js");
   process.exit(1);
 }
 // eslint-disable-next-line no-new-func
 const decide = new Function(
   "path",
-  src.slice(devStart, devEnd) + "\nreturn devProfileDecision;"
+  profileSrc.slice(devStart, devEnd) + "\nreturn devProfileDecision;"
 )(path);
 
 function fakeApp(o) {
@@ -89,7 +90,7 @@ const devDecision = decide(
 check(
   "a development run is redirected to a profile of its own",
   devDecision.reason === "dev" &&
-    path.resolve(devDecision.target) === path.resolve(path.join(APPDATA, "Folia-dev")),
+    path.resolve(devDecision.target) === path.resolve(path.join(APPDATA, "Markaloo-dev")),
   JSON.stringify(devDecision)
 );
 check(
@@ -102,13 +103,13 @@ const renamedDecision = decide(
   fakeApp({ name: "Markaloo", appData: APPDATA, userData: path.join(APPDATA, "Markaloo") })
 );
 check(
-  "the renamed development build keeps the original isolated profile",
+  "the renamed development build selects the Markaloo development profile",
   renamedDecision.reason === "dev" &&
-    path.resolve(renamedDecision.target) === path.resolve(path.join(APPDATA, "Folia-dev")),
+    path.resolve(renamedDecision.target) === path.resolve(path.join(APPDATA, "Markaloo-dev")),
   JSON.stringify(renamedDecision)
 );
 check(
-  "a packaged build is never redirected",
+  "an old default application name selects Markaloo, not Folia",
   decide(
     fakeApp({
       isPackaged: true,
@@ -116,7 +117,7 @@ check(
       appData: APPDATA,
       userData: path.join(APPDATA, "Folia"),
     })
-  ).target === null,
+  ).target === path.join(APPDATA, "Markaloo"),
   JSON.stringify(
     decide(
       fakeApp({
@@ -137,9 +138,8 @@ const packagedRename = decide(
   }),
 );
 check(
-  "a renamed packaged build keeps the installed profile and single-instance lock",
-  packagedRename.reason === "packaged-compatibility" &&
-    path.resolve(packagedRename.target) === path.resolve(path.join(APPDATA, "Folia")),
+  "a packaged Markaloo build keeps its own default profile",
+  packagedRename.reason === "existing-profile" && packagedRename.target === null,
   JSON.stringify(packagedRename),
 );
 const packagedRelocation = decide(
@@ -165,7 +165,7 @@ const relocated = decide(
   fakeApp({
     name: "Folia",
     appData: APPDATA,
-    userData: path.join(os.tmpdir(), "folia-test-userdata", "some-suite"),
+    userData: path.join(os.tmpdir(), "markaloo-test-userdata", "some-suite"),
   })
 );
 check(
@@ -187,21 +187,21 @@ check(
   JSON.stringify(caseDecision)
 );
 
-const applySource = src.slice(
+const applySource = profileSrc.slice(
   devStart,
-  src.indexOf("\n// MEASURED END TO END", devEnd),
+  profileSrc.indexOf("\n// ENTRY STARTUP", devEnd),
 );
 check(
   "the profile application function is included in the live-code probe",
-  applySource.includes("function applyDevProfile()") &&
+  applySource.includes("function applyDevProfile(app)") &&
     applySource.includes("app.setPath(\"userData\", decision.target)"),
 );
 function applyPackagedProfile(setPath) {
   const packaged = fakeApp({
     isPackaged: true,
-    name: "Markaloo",
+    name: "Folia",
     appData: APPDATA,
-    userData: path.join(APPDATA, "Markaloo"),
+    userData: path.join(APPDATA, "Folia"),
   });
   let userData = packaged.getPath("userData");
   packaged.getPath = key => key === "appData" ? APPDATA : userData;
@@ -217,13 +217,13 @@ function applyPackagedProfile(setPath) {
     "path",
     "fs",
     "console",
-    `${applySource}\nreturn applyDevProfile;`,
+    `${applySource}\nreturn () => applyDevProfile(app);`,
   )(packaged, path, fs, console);
   return { apply, packaged };
 }
-const firstProfile = path.join(APPDATA, "Folia");
+const firstProfile = path.join(APPDATA, "Markaloo");
 check(
-  "the first-time install fixture has no legacy profile",
+  "the first-time install fixture has no Markaloo profile",
   !fs.existsSync(firstProfile),
 );
 const applied = applyPackagedProfile(() => {});
@@ -234,15 +234,15 @@ try {
   appliedDecision = { reason: error.message };
 }
 check(
-  "the packaged rebrand actually selects the existing profile before startup",
-  appliedDecision.reason === "packaged-compatibility" &&
+  "the packaged rebrand selects Markaloo before startup",
+  appliedDecision.reason === "packaged" &&
     path.resolve(applied.packaged.getPath("userData")) ===
-      path.resolve(path.join(APPDATA, "Folia")),
+      path.resolve(path.join(APPDATA, "Markaloo")),
 );
 check(
-  "a first-time install creates the legacy profile before Electron sets its path",
+  "a redirected first-time install creates Markaloo before Electron sets its path",
   fs.existsSync(firstProfile) &&
-    appliedDecision.reason === "packaged-compatibility",
+    appliedDecision.reason === "packaged" && !fs.existsSync(path.join(APPDATA, "Folia")),
 );
 const marker = path.join(firstProfile, "settings-marker");
 if (fs.existsSync(firstProfile)) fs.writeFileSync(marker, "saved");
@@ -251,7 +251,7 @@ let upgradePreserved = false;
 let upgradeError;
 try {
   upgradePreserved =
-    upgraded.apply().reason === "packaged-compatibility" &&
+    upgraded.apply().reason === "packaged" &&
     fs.existsSync(marker) &&
     fs.readFileSync(marker, "utf8") === "saved";
 } catch (error) {
@@ -277,6 +277,28 @@ check(
 );
 
 // root is removed by the process.on("exit") hook registered beside its mkdtemp.
+
+function checkDevToolsOptIn() {
+  const definitions = [...src.matchAll(/^function devToolsAllowed\(\) \{[\s\S]*?^\}/gm)];
+  check("the shipped DevTools opt-in function was located uniquely", definitions.length === 1);
+  if (definitions.length !== 1) return;
+  for (const packaged of [true, false]) {
+    for (const value of [undefined, "0", "1", "true", "01", " 1 "]) {
+      const allowed = vm.runInNewContext(
+        definitions[0][0] + "\ndevToolsAllowed();",
+        {
+          app: { isPackaged: packaged },
+          process: { env: value === undefined ? {} : { Markaloo_devtools: value } },
+        },
+      );
+      check(
+        `DevTools opt-in (${packaged ? "packaged" : "development"}, ${value === undefined ? "missing" : JSON.stringify(value)}) uses the exact Markaloo_devtools switch`,
+        allowed === (!packaged || value === "1"),
+      );
+    }
+  }
+}
+checkDevToolsOptIn();
 
 async function checkDiagnosticLogging() {
   const starts = [...src.matchAll(/^const logFilePath = /gm)];
@@ -304,7 +326,7 @@ async function checkDiagnosticLogging() {
       ? { bytes: fs.readFileSync(file), stat: fs.statSync(file) }
       : null;
     const observed = { opens: 0, messages: [], errors: [], nativeErrors: [] };
-    const env = value === undefined ? {} : { FOLIA_DIAGNOSTIC_LOG: value };
+    const env = value === undefined ? {} : { MARKALOO_DIAGNOSTIC_LOG: value };
     const runtime = vm.runInNewContext(
       code + "\n({ log, logStream });",
       {
@@ -517,7 +539,7 @@ function checkTestIsolationOwnership() {
   }
 
   const ordinary = path.join(root, "isolation-ordinary");
-  const ordinaryProfile = path.join(ordinary, "folia-test-userdata", suite);
+  const ordinaryProfile = path.join(ordinary, "markaloo-test-userdata", suite);
   fs.mkdirSync(ordinaryProfile, { recursive: true });
   const stale = path.join(ordinaryProfile, "stale.txt");
   fs.writeFileSync(stale, "stale test state");
@@ -532,7 +554,7 @@ function checkTestIsolationOwnership() {
       fs.realpathSync.native(clean.userData) === expectedProfile);
 
   const aliasTarget = path.join(root, "isolation-temp-target");
-  const aliasProfile = path.join(aliasTarget, "folia-test-userdata", suite);
+  const aliasProfile = path.join(aliasTarget, "markaloo-test-userdata", suite);
   fs.mkdirSync(aliasProfile, { recursive: true });
   const aliasStale = path.join(aliasProfile, "stale.txt");
   fs.writeFileSync(aliasStale, "stale alias state");
@@ -552,7 +574,7 @@ function checkTestIsolationOwnership() {
 
   for (const kind of ["parent", "suite"]) {
     const privateTemp = path.join(root, "isolation-" + kind);
-    const parent = path.join(privateTemp, "folia-test-userdata");
+    const parent = path.join(privateTemp, "markaloo-test-userdata");
     const profile = path.join(parent, suite);
     const outside = path.join(root, "isolation-" + kind + "-outside");
     const outsideProfile = kind === "parent" ? path.join(outside, suite) : outside;
@@ -578,7 +600,7 @@ function checkTestIsolationOwnership() {
 
   for (const kind of ["parent", "suite"]) {
     const privateTemp = path.join(root, "isolation-file-" + kind);
-    const parent = path.join(privateTemp, "folia-test-userdata");
+    const parent = path.join(privateTemp, "markaloo-test-userdata");
     fs.mkdirSync(kind === "parent" ? privateTemp : parent, { recursive: true });
     const obstruction = kind === "parent" ? parent : path.join(parent, suite);
     fs.writeFileSync(obstruction, "owned non-directory witness");
@@ -586,7 +608,7 @@ function checkTestIsolationOwnership() {
       fs.lstatSync(obstruction).isFile() &&
         fs.readFileSync(obstruction, "utf8") === "owned non-directory witness");
     const result = run(privateTemp, kind === "parent"
-      ? path.join(fs.realpathSync.native(privateTemp), "folia-test-userdata", suite)
+      ? path.join(fs.realpathSync.native(privateTemp), "markaloo-test-userdata", suite)
       : null);
     check("a non-directory " + kind + " is refused before profile removal, creation or enumeration",
       result.refused && result.exitCode === 1 && result.diagnostics.length > 0 &&

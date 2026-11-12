@@ -4,9 +4,9 @@
  */
 
 (function () {
-const emojiMap = typeof window !== 'undefined' ? window.FoliaEmojiMap : require('./emoji-map');
+const emojiMap = typeof window !== 'undefined' ? window.MarkalooEmojiMap : require('./emoji-map');
 if (!emojiMap) {
-  throw new Error('FoliaEmojiMap must load before emoji-parser.js');
+  throw new Error('MarkalooEmojiMap must load before emoji-parser.js');
 }
 
 /**
@@ -33,6 +33,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = emojiParser;
 }
 if (typeof window !== 'undefined') {
-  window.FoliaEmoji = emojiParser;
+  window.MarkalooEmoji = emojiParser;
 }
 })();

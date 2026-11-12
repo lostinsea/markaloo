@@ -155,7 +155,7 @@ function mermaidPage() {
         name === "openFile" ? { click: () => { state.opened = true; } } : null,
     querySelector: () => null, querySelectorAll: () => Array(state.blocks).fill({}) };
   page.getReloadRequestSession = () => "page";
-  page.folia = { getQuitApprovalGeneration: async () => 1 };
+  page.markaloo = { getQuitApprovalGeneration: async () => 1 };
   page.identity = { tabId: 1, documentRef: "a".repeat(64), pageSession: "page", pathKey: "key" };
   page.adoption = { known: true, versionMatches: true, pathKey: "key" };
   page.queryDocumentDiskAdoptionState = () => page.adoption;

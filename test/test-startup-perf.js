@@ -257,7 +257,7 @@ async function run() {
     // Exercise the real document frame and production preload. A synthetic
     // ipcMain event has no sender identity and must be refused.
     Object.defineProperty(app, "isPackaged", { configurable: true, get: () => true });
-    await admission.execute("window.folia.checkForUpdates();true");
+    await admission.execute("window.markaloo.checkForUpdates();true");
     await completed;
   } finally {
     if (packagedDescriptor) Object.defineProperty(app, "isPackaged", packagedDescriptor);

@@ -1,6 +1,6 @@
 'use strict';
 
-window.FoliaReloadRequest = Object.freeze({
+window.MarkalooReloadRequest = Object.freeze({
   create({ state, session, document, readSnapshot, requestReload, i18n, console, setTimeout }) {
     function showNotification(message, duration = 3000) {
       const toast = document.getElementById('notificationToast');

@@ -27,17 +27,278 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Windows Folia settings import
+
+- Normal profiles use Markaloo/Markaloo-dev. An explicit relocation stays selected.
+- Only packaged Windows startup imports the default Folia profile, before Main
+  opens storage. Development, macOS and Linux do not import production Folia data.
+- The copy includes window/update settings, document-session files and LevelDB
+  data, including numeric WAL files. It excludes locks, diagnostic logs and caches.
+- Windows holds the existing LevelDB LOCK exclusively while copying. A temporary
+  sibling is published only after the copied files match the source snapshot.
+- Existing Markaloo state is never overwritten or merged. Busy, malformed or
+  incomplete imports stop with a warning and keep Folia available.
+- Unsaved editor text is not persisted and is not recovered by this copy.
+- Setup attempts registered Folia removal only before writing new payload,
+  shortcuts or associations. Stock `/S` selects silent removal; `--updated` keeps
+  app data, with `/KEEP_APP_DATA` as in the pinned template. Removal may precede
+  successful import. `/S` does not prevent the old uninstaller from closing apps.
+- Elevated setup skips per-user removal. Install folders cannot overlap the
+  current user's default Folia/Markaloo profiles, including development profiles.
+  Arbitrary profile relocations and other users' profiles are not discoverable
+  by this setup hook.
+- Failed or unsupported removal warns and leaves first-start import enabled.
+  No post-quit waiter or installed-app uninstall path remains.
+- Installer helpers/native transaction providers are not required by normal
+  startup. The installer uses electron-builder's normal flow. Its custom
+  running-app check never closes apps, but ordinary assisted all-users elevation
+  skips that check in both instances and warns that Folia removal was skipped.
+- `test-legacy-install.js` exercises disposable copy output and closed startup/
+  process mocks. Its PowerShell source checks are not a real Windows lock,
+  registry, uninstaller or installed-upgrade qualification.
+
 ### Reading history foundation
 
 - `src/reading-history.js` holds up to ten transient reading locations, including
   the current location. It is separate from document Undo and file history.
 - Values are immutable. Staged jumps update the timeline only after their owner
   confirms real travel; canceled or stale work cannot replace a newer location.
-- The shell loads the module before the renderer and tabs. Back/Forward,
-  search, tab lifetime and mode-position consumers are not connected yet.
+- The shell loads the module before the renderer and tabs. The renderer's
+  per-actual-tab consumer records TOC, fragment and genuine Search jumps using
+  current instant-request completion and execution permits. Ordinary scrolling,
+  mode/tab switches and Notes-panel jumps do not append history.
+- After manual scrolling away from a saved destination, Back first restores that
+  destination. This return leaves the entire timeline and Forward branch unchanged.
+  The next Back visits the older entry. The oldest saved destination can also
+  recover, but an empty tab cannot invent one. A text-free viewport does not block
+  a saved checkpoint return. Ordinary traversal still needs a current location;
+  a no-motion checkpoint return cannot traverse if that fresh capture fails.
+- Input without movement does not consume an extra Back. Failed, interrupted or
+  stale checkpoint restoration does not fall through to an older entry.
+  Deliberate new jumps and Forward still capture the actual scrolled departure;
+  only a successful new jump truncates Forward.
+- Input cancellation precedes its owned intent/permit admission. A small scroller
+  witness confirms movement before enabling checkpoint return; restoration is not
+  movement evidence. Source/layout changes discard unproved witnesses, while a
+  confirmed return keeps its semantic destination and obtains fresh restore authority.
+- Changing the split-view scroll driver cancels its old queued follower update.
+  A real scroll or explicit preview navigation schedules a fresh update; a
+  no-motion editor click cannot retarget the previous driver's queued work.
+- Typing coalesces one owned destination and captures its origin before debounce.
+  Before the first preview, Back cancels that pending query and recovers its
+  origin rather than consuming an older entry. Availability is published after exact request
+  admission, even without older history; a no-travel return does not fabricate a
+  location, change the committed revision or discard Forward.
+  An uncommitted preview retains a recoverable Back without inventing a reached
+  entry. Manual interruption and tab changes end coalescing without losing that
+  tab's origin or last reached destination. Passive highlight repair cannot jump.
+- Named Back and Forward toolbar buttons precede Reload. They share the guarded
+  current-tab action with main-document shortcuts: Windows Alt+Left/Right,
+  Linux Ctrl+Alt+- / Ctrl+Shift+-, and macOS Control+- / Control+Shift+-.
+  Command-minus remains zoom. Recognized blocked/exhausted history chords cannot
+  fall through to minus-zoom; plain Left/Right retain file-history behavior.
+- In the main document on Windows, trusted mouse buttons 3/4 request Back/Forward
+  on press, not release. Both phases cancel the browser default there, including
+  when app navigation is blocked or exhausted. Editable targets or focused
+  editors do not navigate.
+- Windows reading history does not consume separate native Back/Forward commands.
+  Native-only devices and special keyboard buttons may therefore lose this route;
+  toolbar buttons and main-document Alt+Left/Right remain available. Linux/macOS
+  keep the existing native-command receiver and do not install the DOM mouse adapter.
+  Main/preload bridge contracts stay unchanged. Physical-device behavior after
+  this source correction remains unqualified.
+- Windows mouse reading-history commands do not cover sandboxed `@@@html` panels.
+  Use the Back/Forward toolbar buttons there. Alt+Left/Right delivery is not
+  promised while focus is inside a panel.
+- Location capture/restoration uses the dynamically read production adapter,
+  not an outer-only fallback. Its Source-backed text values retain the complete
+  supported nested chain and both horizontal axes. Back/Forward restore with one
+  permit through inner and outer requests; no traversal can renew authority
+  between them. Optional capture refusal never disables an otherwise permitted
+  document jump.
 - `npm run test:reading-history` runs the Node model suite and is included in
   the standard feature gate. Packaging checks cover the source allowlist and
-  loading order; built-archive and native integration claims remain separate.
+  loading order. `test:reading-consumers` exercises actual renderer/core/toolbar
+  bodies with controlled location/native-request ports, plus composed actual
+  Source/producer/location-adapter TOC-to-toolbar traversal, including a nested
+  both-axis origin. `test:reading-controls` covers the platform routes and
+  bridge. Both are in the feature gate. These Node results are not real-app,
+  native device or built-archive qualification.
+
+### Reader visual qualification
+
+- **Default for every release:** controlled visual inspection in a disposable,
+  owned window. It is not a fallback after another image-matcher investigation.
+- Logical, Source, DOM, geometry and nonempty-capture checks do not prove the
+  intended text, loading state and TOC were actually displayed.
+- Automatic frame/content correlation is not established. This is a test
+  limitation, not a diagnosed product defect.
+- Do not repeat colored-marker/region, fixed-RAF/sleep or generic image-matcher
+  approaches each release. Reopen automation only with concrete new capability
+  or evidence addressing that correlation AND explicit user approval.
+- Never turn another failed capture-fix attempt into a newly discovered manual
+  fallback. Keep original images, discrepancies and false acceptance results.
+
+**Opt-in hold mode; bounded Windows verification**
+
+- `test/test-reading-history-native.js` defaults to its ordinary logical run,
+  automatic captures and owned teardown. It does not stop for inspection.
+- The exact opt-in switch is `--reader-inspection-holds`. The test-only controls
+  live in `test/reading-history-inspection.js`, inside the existing owned window.
+  No new native dialog, external application, stdin channel or window is used.
+- The mode holds initial Alpha, actual TOC Beta, document Back Alpha and final
+  Forward Gamma. Continue removes the controls and takes one original image
+  before advancing. Cancel, timeout or owner interruption fails into owned
+  teardown; no automatic continuation or capture retry is allowed.
+- Each hold has a Main-owned 30-second limit, including panel installation.
+  Four holds allow at most 120 seconds of deliberate waiting. Interrupted
+  cleanup has a separate one-second bound. The existing startup watchdog stays
+  at 180 seconds and observer watchdog at 240 seconds. If these bounds cannot
+  support an inspection, stop for a scope decision; do not extend them silently.
+- Source-point, document, focus and history checks detect control interference;
+  they do not prove displayed pixels. The mode keeps the ordinary logical checks,
+  fixture, dialog guards and first-Search-debounce sequence unchanged. The first
+  three holds in the ordinary journey end before its manual/Search journeys.
+  Its final Gamma hold starts only after the critical first-Search-debounce
+  sequence has completed.
+- Inspection records retain action identities, Source positions, operator
+  actions, errors and image paths/hashes. Initial Alpha adds `00-alpha-initial`;
+  Beta and Back Alpha retain `01-beta-recorded` and `02-alpha-back`; final Gamma
+  retains `05-forward-gamma-preserved` without adding another image.
+  The extra image adds no logical PASS. Continue is not visual acceptance:
+  receipt `visualAcceptance` stays null and image `viewed` stays false.
+- Controls leaving the DOM does not prove they left the captured frame. Inspect
+  the original images too; keep stale, obscured or mismatched images as failures,
+  without relabeling or recapture.
+- Node-only controls: `node test/test-reading-history-inspection.js`. These do
+  not launch Electron or establish native focus, display or capture correctness.
+- `--windows-history-keys` selects a separate Windows-only journey instead of
+  the ordinary run. It uses trusted Alt+Left/Right at empty and exhausted history,
+  at real Alpha/Beta/Gamma locations, and while the empty Search input has focus.
+  Combine it with `--reader-inspection-holds` for the same four controlled
+  endpoints. Keyboard images use the separate `keys00` through `keys03` names.
+- Keyboard source-only controls remain in
+  `node test/test-reading-navigation-controls.js`.
+- **Bounded keyboard Windows verification:** 31 logical checks, ten
+  Electron-delivered Alt+Left/Right attempts (four traversals and six guarded or
+  exhausted attempts), four controlled endpoints and all four original images
+  viewed. This does not qualify physical keyboard devices, OS-global routing,
+  in-flight Search, other focus/modal guards, the wider matrix, other platforms,
+  performance or release.
+- `--reading-history-noop` selects a separate same-position TOC journey. After
+  Alpha/Beta/Gamma and Back to Beta, repeat the real Beta TOC request. Its actual
+  completion must report `no-observed-travel`; moved or unrecordable setup fails,
+  without corrective positioning. One Back must reach Alpha, then Forward must
+  reach Beta and the original Gamma without a duplicate stop or branch loss.
+  This selector cannot be combined with `--windows-history-keys`.
+- Combine the no-op selector with `--reader-inspection-holds` for initial Alpha,
+  Beta after the no-op, Back Alpha and Forward Gamma. Original images use
+  `noop00` through `noop03`; initial Alpha adds no logical PASS.
+- **Bounded no-op Windows verification:** Root329/330 ordered 28, one genuine
+  Beta TOC completion with `no-observed-travel`, and exact unchanged Source,
+  viewport, document/Undo/Redo, Search, focus, zoom and availability. Back/Forward
+  retain the original Alpha/Beta/Gamma branch without a duplicate stop or loss.
+  Four controlled endpoints and all four original images were actually viewed.
+  One independent safety snapshot passed; Root confirmed operational closure.
+  Final independent test-slice reviews are a separate gate. Other failed jumps,
+  timelines/lifetime, Search variants, modes, physical input, platforms,
+  performance and release remain outside this bounded result.
+- **Source-only/native-pending:** `--reader-branch-replacement` selects
+  Alpha -> TOC Beta -> Back Alpha -> TOC Gamma -> Back Alpha -> Forward Gamma.
+  Beta must exist Forward before the successful, observed-travel Gamma request.
+  The final Back/Forward must expose exactly Alpha/Gamma, without obsolete Beta
+  or a duplicate stop. Exact document/selection/Undo/Redo, Search, focus and zoom
+  checks remain separate from the intended Source-position changes.
+- This selector cannot be combined with `--windows-history-keys` or
+  `--reading-history-noop`. With `--reader-inspection-holds`, it uses the same
+  four checkpoint identities and bounds; image names are `branch00` through
+  `branch03`. Pure source controls do not establish native or visual acceptance.
+  Actual native verification and fresh final Sol/Luna reviews are later gates.
+- **Bounded Windows verification:** 34 logical checks, four controlled endpoints
+  and all six original images verified. This is not full Reader, wider matrix,
+  other-platform, performance or release qualification.
+- Every new owned invocation needs an observer bound to the exact switch and
+  current entry/helper/source identities, fresh readiness, an exclusive slot
+  and a separate exact grant. Old launch packets are not execution authority.
+  No extra environment variable is needed. This document grants no execution.
+
+**Bounded controlled-inspection procedure**
+
+1. Use the authorized disposable window and isolated profile/evidence paths.
+   At the initial hold, inspect actual Alpha text, loading state and TOC selection.
+   Record observations separately, then Continue. Do not scroll or navigate.
+2. The harness clicks the actual TOC Beta item. At its hold, inspect Beta text,
+   loading state and TOC selection; record observations, then Continue.
+3. The harness clicks the actual document Back button. At its hold, inspect Alpha
+   text, loading state and TOC selection; record observations, then Continue.
+   These are real DOM handlers, not qualified physical button delivery.
+4. After the unchanged Search-cancellation journey, the harness clicks the
+   actual document Forward button to Gamma. Inspect Gamma text, loading state
+   and TOC selection; record observations, then Continue. Keep any content/TOC
+   discrepancy; do not infer that a hold fixed an earlier capture.
+5. Record platform, app/source/test identities, actions, logical results, original
+   image paths/hashes, observed text/loading/TOC and a separate visual outcome.
+   Actually view the retained original images. Keep any discrepancy; do not
+   relabel, discard or recapture until green.
+
+- If any displayed checkpoint is wrong or unobserved, visual acceptance stays
+  blocked regardless of logical passes. Do not infer an older attempt's cause
+  from a later successful inspection.
+- This covers only the inspected Reader journey on the recorded platform. It
+  does not replace the wider history, performance or platform matrix, or prove
+  general native-motion arrival.
+
+### Displayed Source and Edit/Split position
+
+- The renderer admits the exact displayed Source independently of pending cache
+  or editor text. Cache installations carry content labels and fresh witnesses.
+  Disk-adoption rollback checks the entire operation, tab/state lifetime,
+  installation witness and mutation revision before restoring any metadata or
+  bytes; successful state retains only the opaque operation, not a document
+  rollback snapshot.
+- Fresh and retained bodies keep producer-owned associations through final
+  heading, collapse, code/PRE/copy, Notes and table decoration. A generation-
+  checked final publication binds those exact associations. Unknown mutations
+  cannot publish or resurrect old authority.
+- Edit/Split changes wait for actual presentation completion and recheck consent,
+  dirty input, Save, tab, selection and mode before changing layout. Restoration
+  resolves Source-backed text with its complete nested chain, supports rewrap
+  and known table-breakout translation, and preserves editor selection/source,
+  dirty/Undo state and horizontal offsets. There is no nearest-heading or
+  top-of-document substitute.
+- Discard restores captured nested horizontal offsets only after its private
+  Source handoff validates the replacement owners. Layout-only mode changes and
+  clean pending previews keep their current horizontal positions; Reader and
+  Split outer horizontal positions stay independent.
+- Failed visible-atom capture exposes a bounded geometry-stage diagnostic through
+  the existing scroll diagnostics. It contains no document text or DOM references,
+  performs no extra layout reads, and does not change capture acceptance.
+- Failed restoration records which existing guard refused: before a write,
+  after native completion, or at the final check. The last record is not a
+  restore ledger or proof of the underlying cause; no predicate is rerun.
+- A current mode operation can prepare private displayed-to-target Source
+  correspondence for one bounded net insertion/removal before the entire
+  retained atom context, including inside a supported code/table owner. Unique
+  final text and the complete current owner structure are authoritative; this
+  does not claim historical block survival through indistinguishable recreation.
+  Changed-Source mode restoration without an accepted correspondence refuses
+  before request admission or position writes, with no ordinary-resolver retry.
+  The public/history location schema and restore contract remain unchanged.
+- **Still open:** context-changing edits (including insertion immediately before
+  the atom), replacements and separated changes remain required edit-restoration
+  cases, not accepted normal-feature exclusions. Actual Reader/Split/Search/tab/
+  reload/mode qualification, viewed captures, performance and sensitive revert
+  execution also remain open.
+- `test:reading-landmarks`, `test:reading-producers` and `test:reading-mode`
+  register the Source service and actual producer/mode source suites in the
+  feature gate. Their controlled DOM/Range/native-request ports are not browser
+  layout or native integration evidence.
+- The native mode fixture places code between two measured adjacent lines,
+  clear of its real rounded corner. Unsupported geometry or a failed single
+  placement stops that case; it does not skip an atom or retry capture.
+- Table headers are valid reading atoms. The body-only native history case
+  positions between measured header labels before its fresh departure capture;
+  it keeps exact body/source checks and refuses an unsupported single placement.
 
 ### Reading viewport ownership foundation
 
@@ -45,10 +306,50 @@ This approach means after an upstream merge, you only need to ensure these files
   to write the current source, render and layout's viewport.
 - Rebuilds can retire viewport work without borrowing a newer user intent.
   Cancellation needs its issued receipt and stops writing when another owner wins.
-- The pure model is loaded and packaged. Renderer, tab-lifecycle and input
-  bridges are not connected yet. It does not certify scrolling completion.
-- `npm run test:reading-viewport` is part of the feature gate. Native behavior,
-  built archives and the remaining history integration need separate evidence.
+- The renderer now binds logical ownership to actual tab objects with WeakMap
+  lifetime metadata. Validated switch intent, accepted handoff, file admission
+  and committed retirement fence old writes synchronously. Canceled close does
+  not retire a tab; same-tab source/render/layout invalidation retains genuine
+  intent while retiring old viewport permission.
+- Capture-phase reading/editor/root/background input includes nested and
+  horizontal gestures even without outer travel. Unrelated controls, dialogs
+  and Notes-list scrolling are excluded. Follower scroll and programmatic
+  preview claims do not create genuine intent.
+- Tab/reload restoration (including resize retries), file-open completion,
+  zoom correction, full-render reset, Undo/Redo, view edits/Notes and Discard
+  check permits at their delayed viewport writes. Source, stacks, dirty state,
+  autosave and cleanup do not depend on those permits. Search captures an
+  originating ticket before debounce; stale callbacks cannot consume a newer
+  query. Passive repair updates highlights/counters without minting a ticket or
+  navigating. Enter rebuilds pending highlights, then issues only its final
+  Next/Previous jump under the captured genuine request.
+- Zoom admission also rejects synchronous source/layout reentry during its
+  invalidation notification. Such reentry can preserve genuine intent, but
+  cannot renew an old burst anchor with the intervening viewport's permission.
+- The shared TOC/fragment/Search/Notes document-target helper now requests
+  explicit `instant`, preserving native target, block, nearest-inline and snap
+  selection. It observes synchronous request-local root/element offset writes
+  and then the **exact native Promise**, requiring `interrupted === false`.
+  The optional completion record also needs current ownership, unchanged
+  layout/target/ancestor chain and an exact target fragment inside every observable
+  overflow/paint clip and the layout/visual viewport. Ambiguous geometry,
+  unsupported clips or unavailable completion refuse only the record: the
+  underlying instant jump still runs. No scrollend/quiet-frame substitute is used.
+- This is **request-local offset completion, not arrival/global drain**.
+  Native motion tracking is not exposed and
+  its unbound cancellation callback throws if reached. A public Window or
+  scrollingElement current-offset write addresses layout, not the aggregate
+  root/visual viewport, and rounding/snap need not preserve displacement.
+  Nothing here claims to stop existing user animation or prove arrival. The
+  history consumer separately requires current completed travel and bounded
+  captured locations before committing. A target fragment is not a text/caret landmark. Oversized
+  targets without a fully exposed fragment remain unrecordable, not disabled.
+  Deferred independent layout/snap/compositor work and paint
+  are outside this request's Promise. No host certificate, global scroll style
+  or general native-cancellation workaround is adopted.
+- `npm run test:reading-viewport` includes actual-source Node VM controls.
+  Native integration, sensitive revert execution, built archives, performance
+  and assembled real-app history/mode behavior need separate evidence.
 
 ### Document history controls
 
@@ -923,8 +1224,18 @@ than asking:
   later update prompts.
 
 **The foreground reload completion is scoped to the tab and render that started
-it.** `renderMarkdown()` is genuinely async - mermaid/D2 diagrams take seconds -
-and renderer's `file-reload-result` handler awaits it. Anything the overlay does
+it.** Mermaid/D2 diagrams and deferred highlighting can take time.
+
+- `renderMarkdown()` returns initial completion after the content commit and
+  idle callback scheduling. This does not mean paint, input or reading readiness.
+- The supplied viewport context exposes that same render's final completion.
+  Reading readiness still requires successful source publication.
+- Open, reload, mode changes and edit continuations capture and await both
+  promises before applying their existing ownership and no-loss checks.
+- A retired tab or selection settles its own completion without deferred
+  decoration or error replacement, even when no newer render has started.
+
+Anything the overlay does
 after that `await` therefore runs against whatever document is active *then*,
 not the one that was reloaded. Two real failures came out of this:
 
@@ -935,7 +1246,7 @@ not the one that was reloaded. Two real failures came out of this:
   the tab dirty instead of clearing the flag. The baseline is *sampled through
   the same expression as the live read*, immediately after `delegateReload()`
   returns - not taken from `data.content`. Renderer runs synchronously up to
-  its `await renderMarkdown(...)`, so by then it has already assigned
+  its render wait, so by then it has already assigned
   `markdownEditor.value = data.content`, and a `<textarea>` normalises CRLF to
   LF on assignment. Comparing against the raw `data.content` reported every
   Windows-line-ending file as edited on every reload with no user input at all,

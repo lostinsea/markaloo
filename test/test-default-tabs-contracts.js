@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { createReadingViewport } = require(path.join(__dirname, "..", "src", "reading-viewport.js"));
 
 const source = fs.readFileSync(path.join(__dirname, "test-tab-refresh.js"), "utf8")
   .replace(/\r\n/g, "\n");
@@ -36,10 +37,11 @@ const admissionHelper = between(source,
 const finalOracle = between(source,
   "  const raceOwns = (snapshot, fixture, text) =>",
   '\n  await clearFixtureTabs("file-open race teardown")');
+const continuationStart = "      Promise.all([initial, viewport.completion]).then(() => {";
 const continuation = between(producer,
-  "      window.renderMarkdown(tab.content).then(() => {",
+  continuationStart,
   "\n      }).catch((error) => {")
-  .slice("      window.renderMarkdown(tab.content).then(() => {".length);
+  .slice(continuationStart.length);
 
 let passed = 0;
 async function check(name, run) {
@@ -108,12 +110,22 @@ function selected(state, index) {
 function runContinuation(overrides = {}, body = continuation) {
   const tab = {};
   const calls = [];
+  const viewportOwner = createReadingViewport({
+    readIntent: () => [tab],
+    readViewport: () => [tab],
+    stopMotion() { throw new Error("No native motion is registered by this source fixture"); },
+    changed() {},
+  });
   const context = {
     generation: 1, renderGeneration: 1, activeTabId: 1, tabId: 1,
     tabs: [tab], tab, isDocumentFrozen: () => false,
     adoptionApproval: null, position: {}, fileOpenContext: {},
     autoReloaded: null, mayMutateDocument: () => true,
-    restorePosition: () => calls.push("restore"),
+    viewport: { permit: viewportOwner.capturePermit() },
+    restorePosition: (_position, permit) => {
+      assert(viewportOwner.isPermitCurrent(permit), "Continuation forwards its actual owned viewport permit");
+      calls.push("restore");
+    },
     window: { completeFileOpen: (_context, restore) => {
       calls.push("complete");
       restore();
@@ -262,7 +274,7 @@ async function main() {
         documentSessionState: () => ({ owners: [mainRecord] }),
       },
       exec: code => vm.runInNewContext(code, {
-        window: { folia: { queryDocumentDeletionState: request => {
+        window: { markaloo: { queryDocumentDeletionState: request => {
           queries.push(request);
           return {
             known: request.documentGeneration === boundGeneration &&
@@ -359,7 +371,7 @@ async function main() {
         boundedDialogWork: work => work,
         exec: async code => {
           if (code.includes("Object.prototype.hasOwnProperty")) return false;
-          if (code.includes("window.folia.openFileDialog()")) {
+          if (code.includes("window.markaloo.openFileDialog()")) {
             await dialog.showOpenDialog(owner, options);
             return undefined;
           }

@@ -1,8 +1,7 @@
 # Security Audit — Markaloo
 
-> Markaloo retains the `folia-*` internal channels and temporary-path prefixes
-> described below. They are not displayed as the product name. This audit also
-> preserves exact historical evidence rather than renaming old code samples.
+> Current first-party APIs, transient messages and temporary paths use
+> `markaloo` names. Quoted historical code and measurements stay unchanged.
 
 > **Amendment (1.0 rebrand).** This audit was written while the fork was still
 > named Omnicore Markdown Viewer. It was later named Folia, and identifiers
@@ -475,7 +474,7 @@ The table popup at `main.js:1856-1868` shows the correct configuration — the d
 
 **2026-10-12 production bridge migration, still not isolation completion.**
 Main windows now always load the packaged `src/main-preload.js`. Its first
-fixed method, `folia.readOwnedTabDiskSnapshot`, copies and validates the
+fixed method, `markaloo.readOwnedTabDiskSnapshot`, copies and validates the
 request/owner envelope and the returned snapshot; main still authorizes the
 sender, session, registered physical target and stable descriptor. Explicit
 authorization refusal remains `null`; malformed envelopes/responses and
@@ -495,7 +494,7 @@ retained as `owned-bridge-focused-r3-20261012.log`,
 `owned-bridge-packaging-r2-20261012.log` and
 `owned-bridge-exact-proofs-r2-20261012.log` in the continuation evidence.
 
-**Second consumer, one-use dialog extras.** `folia.readDialogExtra` accepts
+**Second consumer, one-use dialog extras.** `markaloo.readDialogExtra` accepts
 only the main-issued grant/session/generation envelope, not a caller-selected
 path. Its response shares the owned-read snapshot validation and adds path
 validation. Main consumes the grant before I/O, refuses replay/foreign/stale
@@ -1749,7 +1748,7 @@ Also note the temp files are only removed on the `closed` event — an app crash
 
 Two helpers in `main.js`, `writePopupDocument(kind, html)` and `removePopupDocument(tmp)`,
 replace the five hand-rolled paths. Each popup document goes into its own
-`mkdtempSync(path.join(os.tmpdir(), "folia-"))` directory — unpredictable name, mode
+`mkdtempSync(path.join(os.tmpdir(), "markaloo-"))` directory — unpredictable name, mode
 0700 — and is written with `{ flag: "wx", mode: 0o600 }`. The two controls are
 complementary and both are needed:
 

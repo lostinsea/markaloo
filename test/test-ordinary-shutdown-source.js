@@ -598,7 +598,8 @@ const cases = [
   ["queued production continuation is not mistaken for a started async handoff", async () => {
     const actualFunctions = [
       "enableShutdownTiming", "beginShutdownTiming", "markShutdownTiming",
-      "completeShutdownTiming", "shutdownTimingState", "runApprovedContinuations",
+      "completeShutdownTiming", "shutdownTimingState", "isCurrentOrdinaryShutdownIntent",
+      "runApprovedContinuations",
     ].map(name => extract(main, name)).join("\n");
     const completedLimit = main.match(/^const SHUTDOWN_TIMING_COMPLETED_LIMIT = \d+;$/m);
     assert(completedLimit, "actual timing limit declaration exists");
@@ -631,6 +632,7 @@ const cases = [
       let deletionEvidenceCapacityLatched = false;
       let updaterContinuationEpoch = 0, shutdownRequestSeq = 1, shutdownContinuationEpoch = 0;
       let shutdownPendingContinuationCount = 0;
+      const startupClosingState = { ordinaryGeneration: 0 };
       const SHUTDOWN_CONTINUATION_PENDING = Symbol('pending');
       ${actualFunctions}
       const __shutdown = { timing: { state: shutdownTimingState } };
@@ -639,7 +641,7 @@ const cases = [
       beginShutdownTiming(1, 'window-close');
       ({
         queue: continuation => runApprovedContinuations(
-          [{ reason: 'window-close', continuation }], 1, {}, 1, 0, 0, false),
+          [{ reason: 'window-close', continuation, ordinaryGeneration: 0 }], 1, {}, 1, 0, 0, false),
         wait: () => waitForOrdinaryShutdownContinuation('window-close', 0),
         pending: () => shutdownPendingContinuationCount,
       });

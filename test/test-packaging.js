@@ -12,7 +12,8 @@
 // and <link> in index.html, @font-face URLs in styles.css) and asserts each is
 // matched by the allowlist.
 //
-// Run: node test-packaging.js
+// Run: node test/test-packaging.js
+// Node-only CLI/reload source checks: node test/test-packaging.js --cli-reload-contracts
 
 const fs = require("fs");
 const path = require("path");
@@ -135,7 +136,192 @@ function isPackaged(files, rel) {
   return included;
 }
 
+function runCliContracts(mainJs) {
+  const extensionHelpers = require("../src/file-helpers");
+  // Top-level closing braces bound this function without a neighbouring comment.
+  const handlers = [...mainJs.matchAll(/^function handleFileArgument\([^)]*\) \{[\s\S]*?^}/gm)];
+  check("HYGIENE CLI fixture extracts exactly one actual argument handler", handlers.length === 1);
+  if (handlers.length !== 1) throw new Error("Cannot extract the actual CLI argument handler");
+  const cliSource = handlers[0][0];
+  const workingDirectory = path.join(ROOT, "cli-request-directory");
+  const otherDirectory = path.join(ROOT, "cli-other-directory");
+  const standardExtensions = [".md", ".markdown", ".mdown", ".mkd", ".mkdn", ".mmd", ".mermaid"];
+  const extensionCases = [...standardExtensions, ".ow", ".txt", ".json", ".md.txt", "",
+    ".MD", ".MKDN", ".MERMAID", ".OW"];
+  const existing = new Set([workingDirectory, otherDirectory].flatMap(directory =>
+    [...extensionCases.map(ext => path.resolve(directory, "document" + ext)),
+      path.resolve(directory, ".md")]));
+  const absolutePath = path.join(ROOT, "cli-absolute", "absolute.md");
+  existing.add(absolutePath);
+  const queried = [];
+  function policy(source) {
+    return require("vm").runInNewContext(source + "\nhandleFileArgument;", {
+      app: { isPackaged: false }, log() {}, path,
+      fs: { existsSync(candidate) { queried.push(candidate); return existing.has(candidate); } },
+      isMarkdownFile: extensionHelpers.isMarkdownFile,
+    }, { timeout: 1000 });
+  }
+  const cliPolicy = policy(cliSource);
+  const expectedPath = path.resolve(workingDirectory, "document.md");
+  check("HYGIENE actual CLI selection preserves aliases case and CLI-only legacy ow",
+    extensionCases.every(ext => {
+      const selected = cliPolicy(["markaloo", "document" + ext], workingDirectory);
+      return selected === ([...standardExtensions, ".ow"].includes(ext.toLowerCase())
+        ? path.resolve(workingDirectory, "document" + ext) : null);
+    }) && cliPolicy(["markaloo", ".md"], workingDirectory) === null);
+  queried.length = 0;
+  check("HYGIENE actual CLI resolves relative paths against each request working directory",
+    cliPolicy(["markaloo", "./nested/../document.md"], workingDirectory) === expectedPath &&
+      cliPolicy(["markaloo", "document.md"], otherDirectory) ===
+        path.resolve(otherDirectory, "document.md") &&
+      queried.join("\n") === [expectedPath, path.resolve(otherDirectory, "document.md")].join("\n"));
+  check("HYGIENE actual CLI keeps absolute paths independent of request working directory",
+    cliPolicy(["markaloo", absolutePath], workingDirectory) === absolutePath &&
+      cliPolicy(["markaloo", absolutePath], otherDirectory) === absolutePath);
+  queried.length = 0;
+  check("HYGIENE actual CLI returns null without probing the executable flags or dev directory",
+    [[], [absolutePath], ["markaloo", "--document.md", "."]]
+      .every(argv => cliPolicy(argv, workingDirectory) === null) && queried.length === 0);
+  queried.length = 0;
+  check("HYGIENE actual CLI rejects missing and unsupported paths before selecting the first valid file",
+    cliPolicy(["markaloo", "missing.md", "document.txt", ".md"], workingDirectory) === null &&
+      cliPolicy(["markaloo", "missing.md", "document.txt", "document.md", absolutePath],
+        workingDirectory) === expectedPath &&
+      queried.includes(path.resolve(workingDirectory, "missing.md")) &&
+      queried.includes(path.resolve(workingDirectory, "document.txt")) &&
+      !queried.includes(absolutePath));
+
+  const consumers = [...mainJs.matchAll(/^startupContext\.setConsumer\(request => \{[\s\S]*?^\}, [^\r\n]*\);/gm)];
+  check("HYGIENE CLI fixture extracts exactly one startup request consumer", consumers.length === 1);
+  if (consumers.length !== 1) throw new Error("Cannot extract the actual startup request consumer");
+  let consume;
+  const queued = [];
+  require("vm").runInNewContext(consumers[0][0], {
+    startupContext: { setConsumer(callback) { consume = callback; } },
+    startupDocuments: { classified: new Map(), pending: new Map() },
+    nativeDocumentOpenTickets: new Set(), mainWindow: null,
+    handleFileArgument: cliPolicy,
+    queueStartupDocument(request, filePath) { queued.push({ request, filePath }); return true; },
+  }, { timeout: 1000 });
+  const first = { args: ["markaloo", "document.md"], cwd: workingDirectory };
+  const second = { args: ["markaloo", "document.md"], cwd: otherDirectory };
+  const absent = { args: ["markaloo", "missing.md"], cwd: workingDirectory };
+  queried.length = 0;
+  check("HYGIENE actual startup consumer passes request args and cwd and caches classification",
+    consume(first) === true && consume(first) === true && consume(second) === true &&
+      consume(absent) === false && consume(absent) === false &&
+      queued.length === 3 && queued[0].request === first && queued[1].request === first &&
+      queued[0].filePath === expectedPath && queued[1].filePath === expectedPath &&
+      queued[2].request === second &&
+      queued[2].filePath === path.resolve(otherDirectory, "document.md") &&
+      queried.join("\n") === [expectedPath, path.resolve(otherDirectory, "document.md"),
+        path.resolve(workingDirectory, "missing.md")].join("\n"));
+  const ambient = cliSource.replace("path.resolve(workingDirectory, arg)", "path.resolve(arg)");
+  const boolean = cliSource.replace("return filePath;", "return true;");
+  const missing = cliSource.replace("if (fs.existsSync(candidate))", "if (true)");
+  check("HYGIENE CLI path oracle rejects ambient cwd boolean returns and nonexistent file admission",
+    ambient !== cliSource && boolean !== cliSource && missing !== cliSource &&
+      policy(ambient)(first.args, first.cwd) !== expectedPath &&
+      policy(boolean)(first.args, first.cwd) === true &&
+      policy(missing)(absent.args, absent.cwd) === path.resolve(workingDirectory, "missing.md"));
+}
+
+function hasOwnedReloadCompletion(source) {
+  const code = stripJsComments(source);
+  const before = code.indexOf("const approvedBeforeDisplay =");
+  const viewport = code.indexOf("const viewport = data.viewport || {};");
+  const initial = code.indexOf("const initial = renderMarkdown(data.content, null, viewport);");
+  // Promise.all captures both invocation-owned values before yielding.
+  const completion = code.indexOf("await Promise.all([initial, viewport.completion]);");
+  const after = code.indexOf("const approvedAfterDisplay =");
+  return before >= 0 && viewport > before && initial > viewport &&
+    completion > initial && after > completion &&
+    !/\bawait\b/.test(code.slice(0, completion));
+}
+
+function runReloadContracts(rendererBoundarySource) {
+  const ownedReloadHelper = rendererBoundarySource.split(
+    "function approvedOwnedReloadSnapshotMatches(",
+  )[1]?.split("function normaliseReloadSnapshot(")[0] || "";
+  const handlers = [...rendererBoundarySource.matchAll(
+    /^documentEvents\.on\('file-reload-result', async \(event, data\) => \{[\s\S]*?^\}\);/gm,
+  )];
+  check("delegated reload fixture extracts exactly one complete actual handler", handlers.length === 1);
+  if (handlers.length !== 1) throw new Error("Cannot extract the actual delegated reload handler");
+  const delegatedReload = handlers[0][0];
+  const reloadRender = delegatedReload.indexOf("const initial = renderMarkdown(data.content, null, viewport);");
+  const afterReloadDisplay = delegatedReload.indexOf("const approvedAfterDisplay =");
+  check(
+    "delegated reload verifies actual retained owner source and version through one fixed metadata helper on both sides of display",
+    ownedReloadHelper.includes("window.markaloo.checkOwnedTabDiskSnapshot({") &&
+      ownedReloadHelper.includes("filePath, sourcePath, owner,") &&
+      ownedReloadHelper.includes("pageSession: owner.pageSession,") &&
+      ownedReloadHelper.includes("rendererGeneration: owner.rendererGeneration,") &&
+      ownedReloadHelper.includes("diskVersion: version,") &&
+      ownedReloadHelper.includes("checked.matches === true && checked.pathKey === pathKey") &&
+      ownedReloadHelper.includes("diskVersionsEqual(checked.diskVersion, version)") &&
+      hasOwnedReloadCompletion(delegatedReload) &&
+      (delegatedReload.match(/approvedOwnedReloadSnapshotMatches\(/g) || []).length === 2 &&
+      delegatedReload.includes("const acceptedOwner = data.trackingSelection.owner;") &&
+      delegatedReload.includes("const acceptedSourcePath = data.path;") &&
+      delegatedReload.includes("const acceptedDiskVersion = data.trackingSelection.diskVersion;") &&
+      (delegatedReload.match(/acceptedOwnerPath, acceptedSourcePath, acceptedOwner,/g) || []).length === 2 &&
+      (delegatedReload.match(/approvedPathKey, acceptedDiskVersion/g) || []).length === 2 &&
+      !/approvedReloadSnapshotMatches\s*\(|bindApprovedReloadPath\s*\(|currentReloadPhysicalKey\s*\(|(?:window\.fs|ipcRenderer)\.|checkCommittedDiskAdoption/.test(
+        ownedReloadHelper + delegatedReload,
+      ),
+  );
+  const delegatedAfterRender = delegatedReload.slice(reloadRender, afterReloadDisplay);
+  const delegatedAfterCheck = delegatedReload.slice(afterReloadDisplay).split(
+    "if (!approvedAfterDisplay)",
+  )[0];
+  check(
+    "delegated reload completion fences local sequence selection spelling tab and freeze before checks and any stale effects",
+    delegatedReload.includes("acceptedSequence === fileOpenSequence") &&
+      delegatedReload.includes("acceptedSelectionGeneration === activeFileSelectionGeneration") &&
+      delegatedReload.includes("acceptedStateKey === fileTrackingPathKey(currentFilePath)") &&
+      delegatedReload.includes("window.CustomTabs.getActiveTabId() === acceptedOwner.tabId") &&
+      delegatedAfterRender.includes("if (!stillSelected() ||") &&
+      delegatedAfterRender.includes("ipc-reload-result-after-render") &&
+      delegatedAfterCheck.includes("if (!stillSelected() ||") &&
+      delegatedAfterCheck.includes("ipc-reload-result-after-render-check") &&
+      delegatedReload.includes("ipc-reload-result-after-check") &&
+      delegatedReload.indexOf("reloadPathAliases.set(spelling, approvedPathKey);") >
+        delegatedReload.indexOf("ipc-reload-result-after-check") &&
+      delegatedReload.indexOf("reloadPathAliases.set(spelling, approvedPathKey);") <
+        delegatedReload.indexOf("if (!approvedBeforeDisplay)"),
+  );
+  const render = "const initial = renderMarkdown(data.content, null, viewport);";
+  const completion = "await Promise.all([initial, viewport.completion]);";
+  const beforeRender = delegatedReload.replace(render, "await Promise.resolve();\n" + render);
+  const beforeCapture = delegatedReload.replace(completion, "await initial;\n" + completion);
+  const initialOnly = delegatedReload.replace(completion, "await initial;");
+  const delayedInitial = delegatedReload.replace(render,
+    "const initial = await renderMarkdown(data.content, null, viewport);");
+  check("delegated reload completion oracle rejects an await before invocation or completion capture",
+    beforeRender !== delegatedReload && beforeCapture !== delegatedReload &&
+      delayedInitial !== delegatedReload &&
+      !hasOwnedReloadCompletion(beforeRender) && !hasOwnedReloadCompletion(beforeCapture) &&
+      !hasOwnedReloadCompletion(delayedInitial));
+  check("delegated reload completion oracle rejects waiting for only the initial render",
+    initialOnly !== delegatedReload && !hasOwnedReloadCompletion(initialOnly));
+}
+
+function reportResult() {
+  console.log(
+    `\n=== ${pass} passed, ${fail} failed${skipped.length ? `, ${skipped.length} SKIPPED: ${skipped.join(", ")}` : ""} ===\n`,
+  );
+  process.exit(fail === 0 ? 0 : 1);
+}
+
 async function main() {
+  if (process.argv.includes("--cli-reload-contracts")) {
+    console.log("\n=== Packaging CLI/reload source contracts only ===\n");
+    runCliContracts(read("src/main.js"));
+    runReloadContracts(read("src/renderer.js"));
+    reportResult();
+    return;
+  }
   console.log("\n=== Packaging allowlist ===\n");
 
   {
@@ -906,7 +1092,7 @@ async function main() {
   }
   check("found at least one preload reference in main.js", referenced.size > 0);
   const testPreloadGate =
-    /const testPreloadPreferences\s*=\s*!app\.isPackaged\s*&&\s*process\.argv\.includes\(\s*["']--folia-test-preload["']\s*\)\s*\?\s*\{\s*preload:\s*path\.join\(\s*__dirname\s*,\s*["']\.\.\/test\/test-preload\.js["']\s*\)\s*\}\s*:\s*\{\s*\};/.test(
+    /const testPreloadPreferences\s*=\s*!app\.isPackaged\s*&&\s*process\.argv\.includes\(\s*["']--markaloo-test-preload["']\s*\)\s*\?\s*\{\s*preload:\s*path\.join\(\s*__dirname\s*,\s*["']\.\.\/test\/test-preload\.js["']\s*\)\s*\}\s*:\s*\{\s*\};/.test(
       mainJs,
     );
   check(
@@ -937,7 +1123,7 @@ async function main() {
       !mainJs.includes("...testPreloadPreferences") &&
       /if \(testPreloadPreferences\.preload && !testPreloadRegistered\)/.test(mainJs) &&
       /filePath: testPreloadPreferences\.preload/.test(mainJs) &&
-      /additionalArguments:\s*\[\s*`--folia-session-bootstrap=\$\{privateBootstrapNonce\}`,\s*\.\.\.\(testPreloadPreferences\.preload \? \["--folia-test-pdf-restore"\] : \[\]\)/.test(mainJs),
+      /additionalArguments:\s*\[\s*`--markaloo-session-bootstrap=\$\{privateBootstrapNonce\}`,\s*\.\.\.\(testPreloadPreferences\.preload \? \["--markaloo-test-pdf-restore"\] : \[\]\)/.test(mainJs),
   );
   const mainWindowPreferences = mainJs.split("mainWindow = new BrowserWindow({")[1]
     ?.split("additionalArguments:")[0] || "";
@@ -952,13 +1138,13 @@ async function main() {
       app: { isPackaged }, privateBootstrapNonce: "a".repeat(64), testPreloadPreferences: {},
     }) : null);
   check("SEC-08 native window advertises newline diagnostics only in development",
-    diagnosticArguments[0]?.includes("--folia-newline-alignment-diagnostics") === true &&
-      diagnosticArguments[1]?.includes("--folia-newline-alignment-diagnostics") === false);
+    diagnosticArguments[0]?.includes("--markaloo-newline-alignment-diagnostics") === true &&
+      diagnosticArguments[1]?.includes("--markaloo-newline-alignment-diagnostics") === false);
   const diagnosticBridges = [];
   for (const [argv, reply] of [[[], true],
-    [["--folia-newline-alignment-diagnostics"], true],
-    [["--folia-newline-alignment-diagnostics"], false],
-    [["--folia-newline-alignment-diagnostics"], "invalid"]]) {
+    [["--markaloo-newline-alignment-diagnostics"], true],
+    [["--markaloo-newline-alignment-diagnostics"], false],
+    [["--markaloo-newline-alignment-diagnostics"], "invalid"]]) {
     const calls = [];
     const preloadEvents = new EventEmitter();
     preloadEvents.invoke = async channel => { calls.push(channel); return reply; };
@@ -987,8 +1173,8 @@ async function main() {
       diagnosticBridges[3].calls.join(",") === "newline-alignment-diagnostics-enabled");
   const preloadSource = stripJsComments(read("src/main-preload.js"));
   check("SEC-08 production preload publishes only contextBridge and imports only Electron",
-    preloadSource.includes('contextBridge.exposeInMainWorld("folia", api);') &&
-      !preloadSource.includes("globalThis.folia") &&
+    preloadSource.includes('contextBridge.exposeInMainWorld("markaloo", api);') &&
+      !preloadSource.includes("globalThis.markaloo") &&
       (preloadSource.match(/\brequire\s*\(/g) || []).length === 1 &&
       /require\("electron"\)/.test(preloadSource));
   const pageSources = ["renderer.js", "custom-tabs.js", "custom-performance.js"]
@@ -1089,28 +1275,17 @@ async function main() {
       { name: "All Files", extensions: ["*"] },
     ]) && nativeOpenOptions.properties.join(",") === "openFile,multiSelections" &&
       !/\b(?:SUPPORTED_EXTENSIONS|isMarkdownFile|TRUSTED_DROP_EXTS)\b/.test(dialogSource.slice(dialogSource.indexOf(".then("))));
-  const cliSource = mainJs.match(/function handleFileArgument\(argv\) \{[\s\S]*?(?=\r?\n\/\/ Check for file argument on first launch)/);
-  let checkedNativePath = false;
-  const cliPolicy = require("vm").runInNewContext(cliSource[0] + "\nhandleFileArgument;", {
-    app: { isPackaged: false }, log() {}, path,
-    fs: { existsSync() { checkedNativePath = true; return true; } },
-    isMarkdownFile: extensionHelpers.isMarkdownFile, fileToOpen: null,
-  });
-  check("HYGIENE actual CLI selection preserves aliases case and CLI-only legacy ow",
-    [...extensionCases, ".MD", ".MKDN", ".MERMAID", ".OW"].every(ext =>
-      cliPolicy(["folia", "document" + ext]) ===
-        [...standardExtensions, ".ow"].includes(ext.toLowerCase())) &&
-      checkedNativePath && !cliPolicy(["folia", ".md"]));
+  runCliContracts(mainJs);
   const testSignals = [], testCapabilities = {};
   require("vm").runInNewContext(read("test/test-preload.js"), {
-    process: { isMainFrame: true, contextIsolated: true, argv: ["--folia-test-pdf-restore"] },
+    process: { isMainFrame: true, contextIsolated: true, argv: ["--markaloo-test-pdf-restore"] },
     require(name) {
       if (name !== "electron") throw new Error(`Unexpected test preload import: ${name}`);
       return { contextBridge: { exposeInMainWorld(name, api) { testCapabilities[name] = api; } },
         ipcRenderer: { send(channel, data) { testSignals.push({ channel, data }); } } };
     },
   });
-  const phaseMarker = testCapabilities.__foliaTestDocumentControl;
+  const phaseMarker = testCapabilities.__markalooTestDocumentControl;
   check("SEC-08 isolated test diagnostic accepts only fixed phases and finite generation metadata without raw transport",
     Object.keys(phaseMarker).join(",") === "mark" &&
       phaseMarker.mark("raw-channel") === false &&
@@ -1130,7 +1305,7 @@ async function main() {
   const lexicalResults = lexicalCases.map(([platform, input, resolved, spelling]) => {
     const context = { window: {}, navigator: { platform } };
     require("vm").runInNewContext(read("src/utils.js"), context);
-    const value = context.window.FoliaUtils.normaliseDocumentPath(input);
+    const value = context.window.MarkalooUtils.normaliseDocumentPath(input);
     return { input, value, valid: resolved === null ? value === null :
       value?.resolved === resolved && value.spelling === spelling && Object.isFrozen(value) };
   });
@@ -1139,7 +1314,7 @@ async function main() {
   check(
     "changed clean-tab reads use the fixed production bridge instead of renderer raw IPC",
     read("src/custom-tabs.js").includes(
-      "snapshot = await window.folia.refreshOwnedTabDiskSnapshot({",
+      "snapshot = await window.markaloo.refreshOwnedTabDiskSnapshot({",
     ) &&
       !read("src/custom-tabs.js").includes(
         'tabIpc.invoke("refresh-owned-tab-disk-snapshot"',
@@ -1149,7 +1324,7 @@ async function main() {
     "function completeFileOpen(context, visualCompletion = null) {",
   )[1]?.split("// Upstream fallback:")[0] || "";
   const ownedMetadataPort = ownedMetadataCompletion.indexOf(
-    "window.folia.checkOwnedTabDiskSnapshot({",
+    "window.markaloo.checkOwnedTabDiskSnapshot({",
   );
   const ownedMetadataAfterCheck = ownedMetadataCompletion.slice(ownedMetadataPort).split(
     "if (!approvedSnapshotMatches)",
@@ -1174,7 +1349,7 @@ async function main() {
     "function beginFileOpen(data, options = {}) {",
   )[1]?.split("// Clear undo/redo history on new file")[0] || "";
   const committedOpenPort = approvedOpenPreselection.indexOf(
-    "window.folia.checkCommittedDiskAdoption({",
+    "window.markaloo.checkCommittedDiskAdoption({",
   );
   const approvedOpenRefusal = approvedOpenPreselection.indexOf("if (!approved) {");
   const approvedOpenAlias = approvedOpenPreselection.indexOf(
@@ -1214,60 +1389,11 @@ async function main() {
         approvedOpenPostselection,
       ),
   );
-  const ownedReloadHelper = rendererBoundarySource.split(
-    "function approvedOwnedReloadSnapshotMatches(",
-  )[1]?.split("function normaliseReloadSnapshot(")[0] || "";
-  const delegatedReload = rendererBoundarySource.split(
-    "documentEvents.on('file-reload-result', async (event, data) => {",
-  )[1]?.split("// Handle external file open request")[0] || "";
-  const beforeReloadDisplay = delegatedReload.indexOf("const approvedBeforeDisplay =");
-  const reloadRender = delegatedReload.indexOf("await renderMarkdown(data.content);");
-  const afterReloadDisplay = delegatedReload.indexOf("const approvedAfterDisplay =");
-  check(
-    "delegated reload verifies actual retained owner source and version through one fixed metadata helper on both sides of display",
-    ownedReloadHelper.includes("window.folia.checkOwnedTabDiskSnapshot({") &&
-      ownedReloadHelper.includes("filePath, sourcePath, owner,") &&
-      ownedReloadHelper.includes("pageSession: owner.pageSession,") &&
-      ownedReloadHelper.includes("rendererGeneration: owner.rendererGeneration,") &&
-      ownedReloadHelper.includes("diskVersion: version,") &&
-      ownedReloadHelper.includes("checked.matches === true && checked.pathKey === pathKey") &&
-      ownedReloadHelper.includes("diskVersionsEqual(checked.diskVersion, version)") &&
-      beforeReloadDisplay >= 0 && reloadRender > beforeReloadDisplay &&
-      afterReloadDisplay > reloadRender &&
-      (delegatedReload.match(/approvedOwnedReloadSnapshotMatches\(/g) || []).length === 2 &&
-      delegatedReload.includes("const acceptedOwner = data.trackingSelection.owner;") &&
-      delegatedReload.includes("const acceptedSourcePath = data.path;") &&
-      delegatedReload.includes("const acceptedDiskVersion = data.trackingSelection.diskVersion;") &&
-      (delegatedReload.match(/acceptedOwnerPath, acceptedSourcePath, acceptedOwner,/g) || []).length === 2 &&
-      (delegatedReload.match(/approvedPathKey, acceptedDiskVersion/g) || []).length === 2 &&
-      !/approvedReloadSnapshotMatches\s*\(|bindApprovedReloadPath\s*\(|currentReloadPhysicalKey\s*\(|(?:window\.fs|ipcRenderer)\.|checkCommittedDiskAdoption/.test(
-        ownedReloadHelper + delegatedReload,
-      ),
-  );
-  const delegatedAfterRender = delegatedReload.slice(reloadRender, afterReloadDisplay);
-  const delegatedAfterCheck = delegatedReload.slice(afterReloadDisplay).split(
-    "if (!approvedAfterDisplay)",
-  )[0];
-  check(
-    "delegated reload completion fences local sequence selection spelling tab and freeze before checks and any stale effects",
-    delegatedReload.includes("acceptedSequence === fileOpenSequence") &&
-      delegatedReload.includes("acceptedSelectionGeneration === activeFileSelectionGeneration") &&
-      delegatedReload.includes("acceptedStateKey === fileTrackingPathKey(currentFilePath)") &&
-      delegatedReload.includes("window.CustomTabs.getActiveTabId() === acceptedOwner.tabId") &&
-      delegatedAfterRender.includes("if (!stillSelected() ||") &&
-      delegatedAfterRender.includes("ipc-reload-result-after-render") &&
-      delegatedAfterCheck.includes("if (!stillSelected() ||") &&
-      delegatedAfterCheck.includes("ipc-reload-result-after-render-check") &&
-      delegatedReload.includes("ipc-reload-result-after-check") &&
-      delegatedReload.indexOf("reloadPathAliases.set(spelling, approvedPathKey);") >
-        delegatedReload.indexOf("ipc-reload-result-after-check") &&
-      delegatedReload.indexOf("reloadPathAliases.set(spelling, approvedPathKey);") <
-        delegatedReload.indexOf("if (!approvedBeforeDisplay)"),
-  );
+  runReloadContracts(rendererBoundarySource);
   check(
     "dialog extras use the grant-only production bridge instead of renderer raw IPC",
     read("src/custom-tabs.js").includes(
-      "const snapshot = await window.folia.readDialogExtra({",
+      "const snapshot = await window.markaloo.readDialogExtra({",
     ) &&
       !read("src/custom-tabs.js").includes(
         'tabIpc.invoke("read-dialog-extra"',
@@ -1360,7 +1486,7 @@ async function main() {
     'if (!data.document || typeof data.document.openTicket !== "string" ||',
   );
   const pendingReopenRead = pendingReopenConsumer.indexOf(
-    "const settledSnapshot = await window.folia.readOpenTicketSnapshot({",
+    "const settledSnapshot = await window.markaloo.readOpenTicketSnapshot({",
   );
   check(
     "pending-Save reopening requires a current native ticket after settlement and the freeze fence without renderer disk fallback",
@@ -1492,7 +1618,7 @@ async function main() {
       indexHtml.indexOf(reloadScript, reloadScriptAt + reloadScript.length) === -1 &&
       indexHtml.indexOf('<script src="renderer.js"></script>') > reloadScriptAt &&
       reloadRenderer.includes("throw new Error('The reload request module must load before the renderer');") &&
-      (reloadRenderer.match(/FoliaReloadRequest\.create\(/g) || []).length === 1 &&
+      (reloadRenderer.match(/MarkalooReloadRequest\.create\(/g) || []).length === 1 &&
       reloadRenderer.includes("latestByPath: latestReloadRequestByPath,") &&
       reloadRenderer.includes("return reloadRequests.dispatch({"));
   check("ordinary tabs runs actual-code contract checks before Electron with failure propagation",
@@ -1527,7 +1653,7 @@ async function main() {
   ];
   const actorContractCommand = actorContractCommands.join(" && ");
   const preservedOrdinaryGroups = [
-    "packaging", "profile", "corpus", "startup", "document-session", "features",
+    "packaging", "profile", "profile-entry", "legacy-install", "corpus", "startup", "document-session", "features",
     "tabs", "reload-dialog", "owned-dialogs", "dialogs", "security", "popups",
     "visual", "search", "toc", "reading", "zoom", "responsive", "mermaid",
     "patch", "tables", "theme",
@@ -1617,7 +1743,7 @@ async function main() {
     };
   }
   const defaultFixtureSourceSummary =
-    "899 source/VM controls passed; 0 groups failed; native execution NOT RUN";
+    "1201 source/VM controls passed; 0 groups failed; native execution NOT RUN";
   const defaultFixtureSourcePassed = (output, error) =>
     !error && output.trim() === defaultFixtureSourceSummary;
   check("default fixture source controls preserve SPLIT admission and original failure evidence",
@@ -1625,8 +1751,8 @@ async function main() {
     JSON.stringify(defaultFixtureSourceError || { stdout: defaultFixtureSourceOutput }));
   check("default fixture source gate rejects zero partial duplicate and failed control results",
     defaultFixtureSourcePassed(defaultFixtureSourceSummary, null) &&
-      [defaultFixtureSourceSummary.replace("899 ", "0 "),
-        defaultFixtureSourceSummary.replace("899 ", "898 "),
+      [defaultFixtureSourceSummary.replace("1201 ", "0 "),
+        defaultFixtureSourceSummary.replace("1201 ", "1200 "),
         defaultFixtureSourceSummary + "\n" + defaultFixtureSourceSummary,
         defaultFixtureSourceSummary.replace("0 groups failed", "1 groups failed")]
         .every(output => !defaultFixtureSourcePassed(output, null)) &&
@@ -1665,8 +1791,8 @@ async function main() {
       indexHtml.indexOf(tableScript) > indexHtml.indexOf(inlineScript) &&
       indexHtml.indexOf('<script src="renderer.js"></script>') > indexHtml.indexOf(tableScript) &&
       indexHtml.indexOf(inlineScript, indexHtml.indexOf(inlineScript) + inlineScript.length) === -1 &&
-      read("src/table-cell-editor.js").includes("window.FoliaInlineFormatting") &&
-      (inlineConsumers.match(/FoliaInlineFormatting\.attachInlineEditor\(/g) || []).length === 2 &&
+      read("src/table-cell-editor.js").includes("window.MarkalooInlineFormatting") &&
+      (inlineConsumers.match(/MarkalooInlineFormatting\.attachInlineEditor\(/g) || []).length === 2 &&
       inlineSource.includes("function attachInlineEditor(") &&
       !inlineConsumers.includes("function formatTableCellEmphasis"));
   {
@@ -1729,7 +1855,7 @@ async function main() {
         /const Mode = Object\.freeze\(\{\s*INSERT: 'insert',\s*UPDATE_TABLE: 'update-table',\s*UPDATE_ROWS: 'update-rows',?\s*\}\);/.test(tableSource) &&
         /function validateMode\(mode\) \{\s*if \(!Object\.values\(Mode\)\.includes\(mode\)\) fail\('tableCells\.mode'\);/.test(tableSource) &&
         /return \{ Mode, validateMode,/.test(tableSource) &&
-        /const TableCellMode = FoliaTableCells\.Mode;/.test(rendererSource));
+        /const TableCellMode = MarkalooTableCells\.Mode;/.test(rendererSource));
     check("Insert table and both Edit scopes launch the one shared visual popup",
       dialog.includes('id="tableCellGrid"') && dialog.includes('id="tableCellError"') &&
         (shell.match(/\bid="tableCellDialog"/g) || []).length === 1 &&
@@ -1737,7 +1863,7 @@ async function main() {
         /ctxInsertTable && ctxInsertTable\.addEventListener\('click', \(\) => \{\s*hideContextMenu\(\);\s*openTableCellEditor\(TableCellMode\.INSERT\);\s*\}\);/.test(rendererSource) &&
         /ctxEditTable\?\.addEventListener\('click', \(\) => openTableCellEditor\(TableCellMode\.UPDATE_TABLE\)\);/.test(rendererSource) &&
         /ctxEditSelectedRows\?\.addEventListener\('click', \(\) => openTableCellEditor\(TableCellMode\.UPDATE_ROWS\)\);/.test(rendererSource) &&
-        /FoliaTableCells\.validateMode\(mode\);/.test(open) &&
+        /MarkalooTableCells\.validateMode\(mode\);/.test(open) &&
         !/\b(?:tableInsert\w*|openTableInsertDialog|insertTableFromDialog|buildTableMarkdown|renderTableInDOM)\b|table-insert-(?:dialog|overlay|preview|error)/.test(
           shell + "\n" + rendererSource),
       "the shared dialog, its three launch routes, or removal of the legacy UI changed");
@@ -1760,8 +1886,8 @@ async function main() {
         /tableCellUpdate\.disabled = true;[\s\S]*?tableCellDialog\.showModal\(\);/.test(open));
     check("shared Edit scope derives header permissions from the captured source rows",
       /case TableCellMode\.INSERT:\s*break;/.test(open) &&
-        /case TableCellMode\.UPDATE_ROWS:[\s\S]*?FoliaTableCells\.resolveSource\(model, selection\.start, selection\.end, mode\)[\s\S]*?FoliaTableCells\.resolvePreview\(model, selection\.range, viewer,[\s\S]*?break;/.test(open) &&
-        /case TableCellMode\.UPDATE_TABLE:[\s\S]*?FoliaTableCells\.resolveSourceLine\(model, selection\.sourceLine, mode\)[\s\S]*?FoliaTableCells\.resolvePreviewTable\(model, selection\.tableNode, viewer,[\s\S]*?break;/.test(open) &&
+        /case TableCellMode\.UPDATE_ROWS:[\s\S]*?MarkalooTableCells\.resolveSource\(model, selection\.start, selection\.end, mode\)[\s\S]*?MarkalooTableCells\.resolvePreview\(model, selection\.range, viewer,[\s\S]*?break;/.test(open) &&
+        /case TableCellMode\.UPDATE_TABLE:[\s\S]*?MarkalooTableCells\.resolveSourceLine\(model, selection\.sourceLine, mode\)[\s\S]*?MarkalooTableCells\.resolvePreviewTable\(model, selection\.tableNode, viewer,[\s\S]*?break;/.test(open) &&
         /const header = target\.table\.rows\[0\];\s*const displayRows = target\.rows\.includes\(header\) \? target\.rows : \[header, \.\.\.target\.rows\];\s*populateTableCellGrid\(session, displayRows\.map\(original =>\s*\(\{ original, header: original === header, editable: target\.rows\.includes\(original\) \}\)\)\);/.test(open));
     check("shared table draft counts use live rows and columns in a read-only status",
       /<p\b[^>]*id="tableCellCounts"[^>]*aria-live="polite"[^>]*>/.test(dialog) &&
@@ -1954,7 +2080,7 @@ async function main() {
     onImageSelected: 1,
   };
   const uiPortObserved = Object.fromEntries(Object.keys(uiPortCounts).map(method => [
-    method, (documentUiSource.match(new RegExp(`window\\.folia\\.${method}\\(`, "g")) || []).length,
+    method, (documentUiSource.match(new RegExp(`window\\.markaloo\\.${method}\\(`, "g")) || []).length,
   ]));
   check(
     "SEC-08 renderer uses all fixed UI request and response ports without raw channel access",
@@ -1985,13 +2111,13 @@ async function main() {
   );
   check(
     "SEC-08 tab size confirmation uses only the fixed production port",
-    (tabSource.match(/window\.folia\.confirmLargeRender\(/g) || []).length === 1 &&
+    (tabSource.match(/window\.markaloo\.confirmLargeRender\(/g) || []).length === 1 &&
       !/ipcRenderer\.sendSync\(\s*["']confirm-large-render["']/.test(tabSource),
   );
   check(
     "SEC-08 browser open and reveal callers use fixed ports without raw path IPC",
-    (rendererSource.match(/window\.folia\.openApprovedDocument\(/g) || []).length === 2 &&
-      (rendererSource.match(/window\.folia\.revealApprovedDocument\(/g) || []).length === 1 &&
+    (rendererSource.match(/window\.markaloo\.openApprovedDocument\(/g) || []).length === 2 &&
+      (rendererSource.match(/window\.markaloo\.revealApprovedDocument\(/g) || []).length === 1 &&
       !/ipcRenderer\.(?:send|invoke)\(\s*["'](?:open-file-path|request-open-file|open-folder-in-explorer)["']/.test(rendererSource) &&
       tabSource.includes("window.revealApprovedDocumentFolder(p)") &&
       !/require\(["']electron["']\)/.test(tabSource),
@@ -2005,7 +2131,7 @@ async function main() {
   for (const [consumer, counts] of Object.entries(controlPortCounts)) {
     const source = stripJsComments(read(`src/${consumer}.js`));
     const observed = Object.fromEntries(Object.keys(counts).map(method => [
-      method, (source.match(new RegExp(`window\\.folia\\s*\\.\\s*${method}\\(`, "g")) || []).length,
+      method, (source.match(new RegExp(`window\\.markaloo\\s*\\.\\s*${method}\\(`, "g")) || []).length,
     ]));
     check(
       `SEC-08 ${consumer} uses every fixed control and notice port without raw channels`,
@@ -2019,7 +2145,7 @@ async function main() {
         "SEC-08 production shutdown subscribers precede the single readiness query",
         queryAt >= 0 && ["onQuitApprovalRequest", "onQuitApprovalCommit",
           "onQuitApprovalVerification", "onQuitApprovalThaw"].every(method => {
-          const at = source.indexOf(`window.folia.${method}(`);
+          const at = source.indexOf(`window.markaloo.${method}(`);
           return at >= 0 && at < queryAt;
         }),
       );
@@ -2043,8 +2169,8 @@ async function main() {
     const source = stripJsComments(read(`src/${consumer}.js`));
     check(
       `SEC-08 ${consumer} consumes the browser document registry without raw document IPC`,
-      /const\s+documentEvents\s*=\s*window\.FoliaDocumentEvents\s*;/.test(source) &&
-        /if\s*\(\s*!window\.FoliaDocumentEvents\s*\)/.test(source) &&
+      /const\s+documentEvents\s*=\s*window\.MarkalooDocumentEvents\s*;/.test(source) &&
+        /if\s*\(\s*!window\.MarkalooDocumentEvents\s*\)/.test(source) &&
         !/(?:ipcRenderer|tabIpc)\.(?:on|listeners|removeAllListeners)\(\s*["'](?:file-opened|file-open-result|file-reload-result|save-markdown-result|file-changed-externally)["']/.test(source),
     );
   }
@@ -2060,29 +2186,29 @@ async function main() {
   );
   const emojiParserSource = stripJsComments(read("src/emoji-parser.js"));
   const emojiParserBrowserMap =
-    /const\s+emojiMap\s*=\s*typeof\s+window\s*!==\s*["']undefined["']\s*\?\s*window\.FoliaEmojiMap\s*:\s*require\s*\(\s*["']\.\/emoji-map["']\s*\)\s*;/.test(
+    /const\s+emojiMap\s*=\s*typeof\s+window\s*!==\s*["']undefined["']\s*\?\s*window\.MarkalooEmojiMap\s*:\s*require\s*\(\s*["']\.\/emoji-map["']\s*\)\s*;/.test(
       emojiParserSource,
     );
   const emojiParserMapGuard =
-    /if\s*\(\s*!emojiMap\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']FoliaEmojiMap must load before emoji-parser\.js["']\s*\)\s*;\s*\}/.test(
+    /if\s*\(\s*!emojiMap\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']MarkalooEmojiMap must load before emoji-parser\.js["']\s*\)\s*;\s*\}/.test(
       emojiParserSource,
     );
   check(
-    "SEC-08 emoji parser uses FoliaEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map",
+    "SEC-08 emoji parser uses MarkalooEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map",
     emojiParserBrowserMap && emojiParserMapGuard,
     JSON.stringify({ emojiParserBrowserMap, emojiParserMapGuard }),
   );
   const emojiBinding =
-    /const\s*\{\s*parseEmojis\s*\}\s*=\s*window\.FoliaEmoji\s*;/.test(rendererSource);
+    /const\s*\{\s*parseEmojis\s*\}\s*=\s*window\.MarkalooEmoji\s*;/.test(rendererSource);
   const emojiRequire = /require\s*\(\s*["'](?:\.\/)?emoji-parser(?:\.js)?["']\s*\)/.test(
     rendererSource,
   );
   const rendererEmojiGuard =
-    /if\s*\(\s*!window\.FoliaEmoji\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']FoliaEmoji must load before renderer\.js["']\s*\)\s*;\s*\}/.test(
+    /if\s*\(\s*!window\.MarkalooEmoji\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']MarkalooEmoji must load before renderer\.js["']\s*\)\s*;\s*\}/.test(
       rendererSource,
     );
   check(
-    "SEC-08 renderer consumes window.FoliaEmoji and fails loudly without a CommonJS fallback",
+    "SEC-08 renderer consumes window.MarkalooEmoji and fails loudly without a CommonJS fallback",
     emojiBinding && !emojiRequire && rendererEmojiGuard,
     JSON.stringify({ emojiBinding, emojiRequire, rendererEmojiGuard }),
   );
@@ -2092,19 +2218,19 @@ async function main() {
     JSON.stringify({ packaged: isPackaged(files, "src/utils.js") }),
   );
   const utilsBinding =
-    /const\s*\{\s*removeBOM\s*,\s*getFileName\s*,\s*getDirectory\s*,\s*normaliseDocumentPath\s*,\s*escapeRegex\s*,\s*formatBytes\s*\}\s*=\s*window\.FoliaUtils\s*;/.test(
+    /const\s*\{\s*removeBOM\s*,\s*getFileName\s*,\s*getDirectory\s*,\s*normaliseDocumentPath\s*,\s*escapeRegex\s*,\s*formatBytes\s*\}\s*=\s*window\.MarkalooUtils\s*;/.test(
       rendererSource,
     );
   const utilsRequire = /require\s*\(\s*["'](?:\.\/)?utils(?:\.js)?["']\s*\)/.test(
     rendererSource,
   );
   check(
-    "SEC-08 renderer consumes window.FoliaUtils without a CommonJS fallback",
+    "SEC-08 renderer consumes window.MarkalooUtils without a CommonJS fallback",
     utilsBinding && !utilsRequire,
     JSON.stringify({ utilsBinding, utilsRequire }),
   );
   const mermaidConfigBinding =
-    /const\s*\{\s*getMermaidConfig\s*,\s*applyMermaidDarkBoundaries\s*\}\s*=\s*window\.FoliaMermaidConfig\s*;/.test(
+    /const\s*\{\s*getMermaidConfig\s*,\s*applyMermaidDarkBoundaries\s*\}\s*=\s*window\.MarkalooMermaidConfig\s*;/.test(
       rendererSource,
     );
   const mermaidConfigRequire =
@@ -2117,7 +2243,7 @@ async function main() {
     JSON.stringify({ packaged: isPackaged(files, "src/mermaid-config.js") }),
   );
   check(
-    "SEC-08 renderer consumes window.FoliaMermaidConfig without a CommonJS fallback",
+    "SEC-08 renderer consumes window.MarkalooMermaidConfig without a CommonJS fallback",
     mermaidConfigBinding && !mermaidConfigRequire,
     JSON.stringify({ mermaidConfigBinding, mermaidConfigRequire }),
   );
@@ -2127,7 +2253,7 @@ async function main() {
     JSON.stringify({ packaged: isPackaged(files, "src/context-menu-utils.js") }),
   );
   const contextMenuBinding =
-    /const\s*\{\s*positionContextMenu\s*,\s*hideContextMenu\s*:\s*hideContextMenuHelper\s*\}\s*=\s*window\.FoliaContextMenu\s*;/.test(
+    /const\s*\{\s*positionContextMenu\s*,\s*hideContextMenu\s*:\s*hideContextMenuHelper\s*\}\s*=\s*window\.MarkalooContextMenu\s*;/.test(
       rendererSource,
     );
   const contextMenuRequire =
@@ -2135,11 +2261,11 @@ async function main() {
       rendererSource,
     );
   const rendererContextMenuGuard =
-    /if\s*\(\s*!window\.FoliaContextMenu\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']FoliaContextMenu must load before renderer\.js["']\s*\)\s*;\s*\}/.test(
+    /if\s*\(\s*!window\.MarkalooContextMenu\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']MarkalooContextMenu must load before renderer\.js["']\s*\)\s*;\s*\}/.test(
       rendererSource,
     );
   check(
-    "SEC-08 renderer consumes window.FoliaContextMenu and fails loudly without a CommonJS fallback",
+    "SEC-08 renderer consumes window.MarkalooContextMenu and fails loudly without a CommonJS fallback",
     contextMenuBinding && !contextMenuRequire && rendererContextMenuGuard,
     JSON.stringify({ contextMenuBinding, contextMenuRequire, rendererContextMenuGuard }),
   );
@@ -2149,11 +2275,11 @@ async function main() {
   const fileHelpersCorePackaged = isPackaged(files, "src/file-helpers-core.js");
   const fileHelpersAdapterPackaged = isPackaged(files, "src/file-helpers.js");
   const customTabsFileHelpersBinding =
-    /const\s+fileHelpers\s*=\s*window\.FoliaFileHelpers\s*;/.test(customTabsSource);
+    /const\s+fileHelpers\s*=\s*window\.MarkalooFileHelpers\s*;/.test(customTabsSource);
   const customTabsFileHelpersRequire =
     /require\s*\(\s*["'](?:\.\/)?file-helpers(?:\.js)?["']\s*\)/.test(customTabsSource);
   const customTabsFileHelpersGuard =
-    /if\s*\(\s*!window\.FoliaFileHelpers\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']FoliaFileHelpers must load before custom-tabs\.js["']\s*\)\s*;\s*\}/.test(
+    /if\s*\(\s*!window\.MarkalooFileHelpers\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']MarkalooFileHelpers must load before custom-tabs\.js["']\s*\)\s*;\s*\}/.test(
       customTabsSource,
     );
   check(
@@ -2167,7 +2293,7 @@ async function main() {
     JSON.stringify({ fileHelpersAdapterPackaged }),
   );
   check(
-    "SEC-08 custom-tabs consumes window.FoliaFileHelpers and fails loudly without a CommonJS fallback",
+    "SEC-08 custom-tabs consumes window.MarkalooFileHelpers and fails loudly without a CommonJS fallback",
     customTabsFileHelpersBinding &&
       !customTabsFileHelpersRequire &&
       customTabsFileHelpersGuard,
@@ -2206,7 +2332,7 @@ async function main() {
   check(
     "disk adoption consumers use fixed production bridge methods instead of raw protocol IPC",
     ["prepare", "commit", "complete", "abandon"].every((phase) =>
-      rendererSource.includes(`window.folia.${phase}DocumentDiskAdoption(`) &&
+      rendererSource.includes(`window.markaloo.${phase}DocumentDiskAdoption(`) &&
       !new RegExp(
         `ipcRenderer\\.(?:invoke|sendSync|send)\\s*\\(\\s*['"]${phase}-document-disk-adoption['"]`,
       ).test(rendererSource)),
@@ -2219,7 +2345,7 @@ async function main() {
       const verification = customTabsSource.slice(start, end);
       return start >= 0 && end > start &&
         verification.includes("const freshKey = admission?.pathKey;") &&
-        verification.includes("window.folia.checkCommittedDiskAdoption({") &&
+        verification.includes("window.markaloo.checkCommittedDiskAdoption({") &&
         !/\b(?:getDiskVersion|resolveTabPath|tabPathKey)\s*\(/.test(verification) &&
         read("src/main-preload.js").includes('"check-committed-disk-adoption"');
     })(),
@@ -2237,12 +2363,12 @@ async function main() {
       ["reportAdoptionTrackingConflict", "report-adoption-tracking-conflict"],
       ["retireDeletedDocumentOwner", "retire-deleted-document-owner"],
     ].every(([method, channel]) =>
-      rendererSource.includes(`window.folia.${method}(`) &&
+      rendererSource.includes(`window.markaloo.${method}(`) &&
       !new RegExp(`ipcRenderer\\.(?:sendSync|send)\\s*\\(\\s*['"]${channel}['"]`).test(rendererSource)) &&
       !rendererSource.includes("isFileTrackingActive ? 'resume-file-watching' : 'pause-file-watching'"),
   );
   const customTabsContextMenuBinding =
-    /const\s*\{\s*positionContextMenu\s*:\s*positionTabMenu\s*,\s*hideContextMenu\s*:\s*hideTabMenuEl\s*,?\s*\}\s*=\s*window\.FoliaContextMenu\s*;/.test(
+    /const\s*\{\s*positionContextMenu\s*:\s*positionTabMenu\s*,\s*hideContextMenu\s*:\s*hideTabMenuEl\s*,?\s*\}\s*=\s*window\.MarkalooContextMenu\s*;/.test(
       customTabsSource,
     );
   const customTabsContextMenuRequire =
@@ -2250,11 +2376,11 @@ async function main() {
       customTabsSource,
     );
   const customTabsContextMenuGuard =
-    /if\s*\(\s*!window\.FoliaContextMenu\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']FoliaContextMenu must load before custom-tabs\.js["']\s*\)\s*;\s*\}/.test(
+    /if\s*\(\s*!window\.MarkalooContextMenu\s*\)\s*\{\s*throw\s+new\s+Error\s*\(\s*["']MarkalooContextMenu must load before custom-tabs\.js["']\s*\)\s*;\s*\}/.test(
       customTabsSource,
     );
   check(
-    "SEC-08 custom-tabs consumes window.FoliaContextMenu and fails loudly without a CommonJS fallback",
+    "SEC-08 custom-tabs consumes window.MarkalooContextMenu and fails loudly without a CommonJS fallback",
     customTabsContextMenuBinding &&
       !customTabsContextMenuRequire &&
       customTabsContextMenuGuard,
@@ -3076,9 +3202,9 @@ async function main() {
     // docs/BUILD.md prints the publish block as the configuration IN FORCE, and
     // prose is checked by nothing that runs. It drifted, exactly as you would
     // expect: the documented example still named the pre-rebrand repo
-    // "markdown-viewer" long after package.json said "folia", while the
+    // "markdown-viewer" long after package.json said "markaloo", while the
     // paragraph directly beneath it asserted the feed resolves to
-    // lostinsea/folia. The document contradicted itself for releases on end and
+    // lostinsea/markaloo. The document contradicted itself for releases on end and
     // nothing noticed, because the only reader was a human.
     //
     // The block count is asserted rather than assumed: "no example found" would
@@ -3636,6 +3762,11 @@ async function main() {
   {
     const featureCommands = {
       "test:reading-history": "node test/test-reading-history.js",
+      "test:reading-consumers": "node test/test-reading-history-consumers.js",
+      "test:reading-controls": "node test/test-reading-navigation-controls.js",
+      "test:reading-landmarks": "node test/test-reading-landmarks.js",
+      "test:reading-producers": "node test/test-reading-mode-producers.js",
+      "test:reading-mode": "node test/test-reading-mode-integration.js",
       "test:reading-viewport": "node test/test-reading-viewport.js",
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
       "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
@@ -4796,7 +4927,7 @@ async function main() {
   // advisories that implies.
   //
   // The claim SHAPES are rewritten whenever the README is, and three of the
-  // four were invalidated by the Folia rewrite - which the suite reported as
+  // four were invalidated by the Markaloo rewrite - which the suite reported as
   // four named failures rather than silently checking nothing, because a
   // missing match is a failure here and not a skip. That is the property worth
   // preserving: these must be re-pointed by hand at each rewrite.
@@ -5189,7 +5320,7 @@ async function main() {
     );
     check(
       "package name matches the product",
-      pkg.name === "folia",
+      pkg.name === "markaloo",
       `name=${JSON.stringify(pkg.name)}`,
     );
 
@@ -5197,7 +5328,7 @@ async function main() {
     // to name the executable, the Program Files directory and the Add/Remove
     // Programs entry (it resolves build.productName || productName || name).
     // The two are separate keys, so renaming the root one alone produced a
-    // build whose RUNTIME called itself Folia while the INSTALLER still called
+    // build whose RUNTIME called itself Markaloo while the INSTALLER still called
     // itself Markdown Viewer. Pinned explicitly rather than left to the
     // vendor-mark sweep below, which only looks for the vendor's name.
     check(
@@ -5211,7 +5342,7 @@ async function main() {
     // below 780px, and the abbreviation still read "MV" - Markdown Viewer.
     // It survived the rename because a two-letter string in markup is not
     // something anyone greps for, which is the argument for deriving the
-    // assertion from package.json rather than hard-coding "Folia" again here:
+    // assertion from package.json rather than hard-coding "Markaloo" again here:
     // a fourth copy checked against a third copy proves only that two files
     // agree.
     //
@@ -5615,7 +5746,7 @@ async function main() {
     check(
       "appId is this project's own reverse-DNS namespace, not the vendor's",
       typeof (pkg.build && pkg.build.appId) === "string" &&
-        pkg.build.appId === "io.github.lostinsea.folia",
+        pkg.build.appId === "io.github.lostinsea.markaloo",
       `appId=${pkg.build && pkg.build.appId}`,
     );
 
@@ -5635,7 +5766,7 @@ async function main() {
     // the UI, so only a structural assertion catches it.
     const mainSrc = fs.readFileSync(path.join(SRC, "main.js"), "utf8");
     check(
-      "main.js sets an explicit AppUserModelId, so Windows groups and notifies as Folia",
+      "main.js sets an explicit AppUserModelId, so Windows groups and notifies as Markaloo",
       /app\.setAppUserModelId\(/.test(mainSrc),
       "no setAppUserModelId call found in main.js",
     );
@@ -5705,82 +5836,37 @@ async function main() {
     const installerSource = fs.existsSync(legacyInstallerInclude)
       ? fs.readFileSync(legacyInstallerInclude, "utf8")
       : "";
-    const directoryHook =
-      /!macro customPageAfterChangeDir\b([\s\S]*?)!macroend/.exec(
-        installerSource,
-      )?.[1] || "";
     check(
-      "a fresh Windows install defaults to the Markaloo folder, with a directory chooser",
+      "Windows keeps the ordinary Markaloo installer directory chooser",
       pkg.build.nsis.include === "build/installer.nsh" &&
         pkg.build.productName === "Markaloo" &&
         pkg.build.nsis.allowToChangeInstallationDirectory === true &&
         pkg.build.nsis.shortcutName === pkg.productName &&
         fs.existsSync(legacyInstallerInclude) &&
         !/!define\s+APP_FILENAME\b/.test(installerSource) &&
-        /Call instFilesPre/.test(directoryHook),
+        !/!macro customPageAfterChangeDir\b/.test(installerSource),
     );
     check(
-      "a recognized prior installer location stays unchanged on upgrade",
-      /ReadRegStr\s+\$0\s+SHELL_CONTEXT\s+"\$\{INSTALL_REGISTRY_KEY\}"\s+"InstallLocation"\s+ClearErrors\s+\$\{If\}\s+\$0 != ""\s+\$\{AndIf\}\s+\$INSTDIR == \$0\s+Pop \$0\s+Return\s+\$\{EndIf\}/.test(
-        directoryHook,
-      ) &&
-        /!undef MUI_PAGE_CUSTOMFUNCTION_PRE\s*!define MUI_PAGE_CUSTOMFUNCTION_PRE preserveExistingInstallDirectory/.test(
-          directoryHook,
-        ) &&
-        directoryHook.indexOf("Call instFilesPre") >
-          directoryHook.indexOf("Return") &&
-        directoryHook.indexOf("!define MUI_PAGE_CUSTOMFUNCTION_PRE") >
-          directoryHook.indexOf("Call instFilesPre"),
+      "Windows leaves existing-directory selection to electron-builder",
+      !/preserveExistingInstallDirectory|!define MUI_PAGE_CUSTOMFUNCTION_PRE|INSTALL_REGISTRY_KEY/.test(
+        installerSource,
+      ),
     );
 
-    // electron-builder's ordinary macro covers APP_EXECUTABLE_FILENAME
-    // (Markaloo.exe); an upgrade also has to stop Folia.exe when PowerShell is
-    // unavailable. Keep the current executable on the vendor-tested path and
-    // make the legacy path use its FIND_PROCESS/KILL_PROCESS fallback rather
-    // than adding a second, divergent process implementation.
+    // Both stock hook sites must refuse running apps, never force-close them.
     const customRunningCheck =
       /!macro customCheckAppRunning\b[\s\S]*?!macroend/.exec(installerSource)?.[0] || "";
-    const legacyGuardMatch =
-      /\$\{(?:if|AndIf)\}\s+\$\{FileExists\}\s+"\$INSTDIR\\Folia\.exe"/i.exec(
-        customRunningCheck,
-      );
-    const legacyGuardAt = legacyGuardMatch
-      ? legacyGuardMatch.index
-      : -1;
-    const currentRunningCheckAt = customRunningCheck.indexOf(
-      "!insertmacro _CHECK_APP_RUNNING",
+    check(
+      "the NSIS custom check observes the current and legacy executable names",
+      /\$\{nsProcess::FindProcess\} "\$\{APP_EXECUTABLE_FILENAME\}" \$R0/.test(customRunningCheck) &&
+        /\$\{nsProcess::FindProcess\} "Folia\.exe" \$R0/.test(customRunningCheck),
     );
     check(
-      "the NSIS custom running-app check delegates the current Markaloo executable to electron-builder",
-      currentRunningCheckAt >= 0 &&
-        customRunningCheck.indexOf("!macro customCheckAppRunning") === 0,
-      JSON.stringify({ currentRunningCheckAt }),
-    );
-    const legacyFindCount = (
-      customRunningCheck.match(/!insertmacro\s+FIND_PROCESS\s+"Folia\.exe"\s+\$R0/g) || []
-    ).length;
-    const gracefulLegacyKill =
-      /!insertmacro\s+KILL_PROCESS\s+"Folia\.exe"\s+0/.test(customRunningCheck);
-    const forcedLegacyKill =
-      /!insertmacro\s+KILL_PROCESS\s+"Folia\.exe"\s+1/.test(customRunningCheck);
-    check(
-      "the NSIS fallback closes a legacy Folia.exe from the old install folder with the normal prompt and retry path",
-      legacyGuardAt >= 0 &&
-        legacyFindCount >= 3 &&
-        gracefulLegacyKill &&
-        forcedLegacyKill &&
-        /MessageBox\s+MB_OKCANCEL\|MB_ICONEXCLAMATION\s+"\$\(appRunning\)"/.test(
-          customRunningCheck,
-        ) &&
-        /MessageBox\s+MB_RETRYCANCEL\|MB_ICONEXCLAMATION\s+"\$\(appCannotBeClosed\)"/.test(
-          customRunningCheck,
-        ),
-      JSON.stringify({
-        legacyGuardAt,
-        legacyFindCount,
-        gracefulLegacyKill,
-        forcedLegacyKill,
-      }),
+      "the NSIS check refuses busy or unknown states without any process killing",
+      (customRunningCheck.match(/\$\{If\} \$R0 != 603/g) || []).length === 2 &&
+        (customRunningCheck.match(/SetErrorLevel 2/g) || []).length === 2 &&
+        (customRunningCheck.match(/^\s+Quit$/gm) || []).length === 2 &&
+        !/KILL_PROCESS|KillProcess|Stop-Process|taskkill|_CHECK_APP_RUNNING/.test(installerSource),
     );
 
     // release.js spells the expected filenames out in its dry-run listing and
@@ -5990,7 +6076,7 @@ async function main() {
           // __dirname, so a fake root gives the real function a real directory
           // to walk without touching this checkout's dist/.
           const fakeRoot = fs.mkdtempSync(
-            path.join(os.tmpdir(), "folia-release-scan-"),
+            path.join(os.tmpdir(), "markaloo-release-scan-"),
           );
           try {
             fs.mkdirSync(path.join(fakeRoot, "scripts"));
@@ -6077,7 +6163,7 @@ async function main() {
   // ------------------------------------------------------------------
   // Third-party licence compliance.
   //
-  // Folia being MIT does not discharge anything here. MIT, ISC, BSD and
+  // Markaloo being MIT does not discharge anything here. MIT, ISC, BSD and
   // Apache-2.0 each grant redistribution ON CONDITION that their own copyright
   // notice and licence text are reproduced in the distribution. That obligation
   // belongs to each dependency, and `build.files` ships `node_modules/**/*`, so
@@ -6161,7 +6247,7 @@ async function main() {
         check("the committed notices file is not stale", committed === regenerated, noticesDetail);
 
         // This document SHIPS, and its first line tells the reader where
-        // Folia's own licence is. It said `LICENSE` - a file that exists in
+        // Markaloo's own licence is. It said `LICENSE` - a file that exists in
         // the repository and is deliberately NOT in extraResources, because
         // the shipped copy is `LICENSE.txt` (a bare extensionless file is a
         // "how do you want to open this" dialog on Windows). So the one
@@ -6177,7 +6263,7 @@ async function main() {
           /distributed under the MIT licence \(see `([^`]+)`\)/,
         );
         check(
-          "the notices file still states where Folia's own licence is",
+          "the notices file still states where Markaloo's own licence is",
           Boolean(pointer),
           pointer
             ? ""
@@ -6852,7 +6938,7 @@ async function main() {
           }
           const entry = m[1];
           check(
-            `${e.heading}'s entry names the licence Folia elects`,
+            `${e.heading}'s entry names the licence Markaloo elects`,
             entry.includes(`elects **${e.elected}**`),
             entry.split("\n").slice(0, 6).join(" | "),
           );
@@ -7295,7 +7381,7 @@ async function main() {
     // is two vacuous checks agreeing with each other.
     {
       const gen = require("../scripts/generate-notices");
-      const probe = fs.mkdtempSync(path.join(os.tmpdir(), "folia-notice-"));
+      const probe = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-notice-"));
       try {
         const withNotice = path.join(probe, "with");
         const withoutNotice = path.join(probe, "without");
@@ -7322,7 +7408,7 @@ async function main() {
       // A harvester that cannot be shown to harvest is indistinguishable from
       // one that is broken.
       {
-        const probe2 = fs.mkdtempSync(path.join(os.tmpdir(), "folia-readme-"));
+        const probe2 = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-readme-"));
         try {
           const real = path.join(probe2, "real");
           const label = path.join(probe2, "label");
@@ -7866,10 +7952,7 @@ async function main() {
       `skipped: ${skipped.join(", ")} - the release must verify the artefact, not merely fail to contradict it`,
     );
   }
-  console.log(
-    `\n=== ${pass} passed, ${fail} failed${skipped.length ? `, ${skipped.length} SKIPPED: ${skipped.join(", ")}` : ""} ===\n`,
-  );
-  process.exit(fail === 0 ? 0 : 1);
+  reportResult();
 }
 
 main().catch((error) => {

@@ -69,7 +69,7 @@ if (fs.lstatSync(root).isSymbolicLink() || path.relative(root, physicalRoot) !==
   fatal("worktree-root-is-redirected");
 }
 const evidenceRoot = path.join(root, "files", "admission-session-tests");
-const batchRoot = child ? process.env.FOLIA_SESSION_TEST_BATCH
+const batchRoot = child ? process.env.MARKALOO_SESSION_TEST_BATCH
   : path.join(evidenceRoot, `batch-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`);
 if (typeof batchRoot !== "string" || !path.isAbsolute(batchRoot) ||
     path.normalize(batchRoot) !== batchRoot ||
@@ -101,7 +101,7 @@ function ownedDirectory(target, create = false) {
   }
   return fs.realpathSync.native(target);
 }
-const ownerToken = child ? process.env.FOLIA_SESSION_TEST_OWNER
+const ownerToken = child ? process.env.MARKALOO_SESSION_TEST_OWNER
   : crypto.randomBytes(32).toString("hex");
 if (typeof ownerToken !== "string" || !/^[a-f0-9]{64}$/.test(ownerToken)) {
   fatal("invalid-batch-owner-token");
@@ -122,7 +122,7 @@ if (child) {
   fs.writeFileSync(ownerFile, JSON.stringify({ token: ownerToken }), { encoding: "utf8", flag: "wx" });
 }
 const profile = child ? path.join(batchRoot, phase) : null;
-const helperProfile = child ? path.join(profile, "folia-test-userdata", "test-document-session") : null;
+const helperProfile = child ? path.join(profile, "markaloo-test-userdata", "test-document-session") : null;
 if (child) {
   stage = "profile-isolation";
   ownedDirectory(batchRoot);
@@ -161,8 +161,8 @@ if (typeof electron === "string") {
     stage = `child-${phase}`;
     const result = spawnSync(electron, [__filename, phase], {
       cwd: root, encoding: "utf8", timeout: 60000,
-      env: { ...process.env, FOLIA_SESSION_TEST_BATCH: batchRoot,
-        FOLIA_SESSION_TEST_OWNER: ownerToken },
+      env: { ...process.env, MARKALOO_SESSION_TEST_BATCH: batchRoot,
+        MARKALOO_SESSION_TEST_OWNER: ownerToken },
     });
     process.stdout.write(result.stdout || "");
     process.stderr.write(result.stderr || "");
@@ -390,14 +390,14 @@ if (typeof electron === "string") {
     fs.writeFileSync(replayPreload, `
       const { contextBridge, ipcRenderer } = require("electron");
       const argument = process.argv.find(value =>
-        value.startsWith("--folia-session-bootstrap="));
+        value.startsWith("--markaloo-session-bootstrap="));
       if (process.isMainFrame && argument) {
         const payload = Object.freeze({
-          nonce: argument.slice("--folia-session-bootstrap=".length),
+          nonce: argument.slice("--markaloo-session-bootstrap=".length),
           openTabs: ${JSON.stringify(JSON.stringify([{ filePath: forged, scrollPosition: 0, anchor: null }]))},
           activeTabPath: ${JSON.stringify(forged)},
         });
-        contextBridge.exposeInMainWorld("__foliaBootstrapReplayTest", Object.freeze({
+        contextBridge.exposeInMainWorld("__markalooBootstrapReplayTest", Object.freeze({
           replay() {
             return ipcRenderer.sendSync("bootstrap-legacy-document-session", payload);
           },
@@ -469,7 +469,7 @@ if (typeof electron === "string") {
       };
     }
     // Console redaction cannot protect Main's separately opted-in raw file sink.
-    if (process.env.FOLIA_DIAGNOSTIC_LOG === "1") fatal("raw-file-diagnostics-not-supported");
+    if (process.env.MARKALOO_DIAGNOSTIC_LOG === "1") fatal("raw-file-diagnostics-not-supported");
     const modalTripwire = `document-session-unexpected-modal-${crypto.randomBytes(16).toString("hex")}`;
     const modalSelectors = [
       "#appMessageDialog[open]", "#reloadDocumentDialog[open]", "#aboutDialog[open]",
@@ -493,7 +493,7 @@ if (typeof electron === "string") {
     const guardMainPage = (_event, candidate) => {
       const contents = candidate.webContents;
       const bootstrapArgumentPresent = !!contents.getLastWebPreferences().additionalArguments?.some(
-        argument => argument.startsWith("--folia-session-bootstrap="));
+        argument => argument.startsWith("--markaloo-session-bootstrap="));
       guardEvidence.candidateCount++;
       if (guardEvidence.candidates.length < 8) {
         guardEvidence.candidates.push({
@@ -626,7 +626,7 @@ if (typeof electron === "string") {
       let generation;
       try {
         generation = await mainContents.executeJavaScript(
-          "window.folia.getQuitApprovalGeneration()", userGesture);
+          "window.markaloo.getQuitApprovalGeneration()", userGesture);
       } catch (error) {
         requireSameScope();
         fatal("retained-main-owner-bridge-failed", error);
@@ -746,7 +746,7 @@ if (typeof electron === "string") {
         preferences.sandbox === true && await exec(
           "typeof process === 'undefined' && typeof require === 'undefined' && " +
           "typeof window.ipcRenderer === 'undefined' && " +
-          "typeof window.__foliaBootstrapReplayTest?.replay === 'function'"));
+          "typeof window.__markalooBootstrapReplayTest?.replay === 'function'"));
     await exec("window.CustomTabs.__loadSavedTabs()");
     let layoutRefused = false;
     try {
@@ -763,7 +763,7 @@ if (typeof electron === "string") {
     check("migration preserves the exact legacy value without erasing or rewriting it", legacyAfter === legacy,
       JSON.stringify({ expected: fields(expectedSeed), after: fields(storedAfter) }));
     const marker = JSON.parse(fs.readFileSync(path.join(profile, "document-session-import.json"), "utf8"));
-    const result = await exec("window.folia.restoreSession({ filePath: 'caller-path-is-not-an-input' })");
+    const result = await exec("window.markaloo.restoreSession({ filePath: 'caller-path-is-not-an-input' })");
     if (phase === "legacy") {
       const state = JSON.parse(fs.readFileSync(path.join(profile, "document-session.json"), "utf8"));
       const view = await exec(`({
@@ -805,7 +805,7 @@ if (typeof electron === "string") {
     let replay;
     try {
       tracingReplay = true;
-      replay = await exec("window.__foliaBootstrapReplayTest.replay()");
+      replay = await exec("window.__markalooBootstrapReplayTest.replay()");
     } finally {
       tracingReplay = false;
     }
@@ -819,7 +819,7 @@ if (typeof electron === "string") {
     await exec(`localStorage.setItem('openTabs', ${JSON.stringify(JSON.stringify([
       { filePath: forged, scrollPosition: 0, anchor: null },
     ]))}); null`);
-    const afterForgery = await exec("window.folia.restoreSession()");
+    const afterForgery = await exec("window.markaloo.restoreSession()");
     check("post-page localStorage changes never admit the forged fixture",
       !afterForgery.entries.some(entry => entry.filePath === forged));
     if (phase === "corrupt-unmarked") {
@@ -992,7 +992,7 @@ if (typeof electron === "string") {
           preparationHandlers.set(preparationChannel, observedPreparation);
           observedContents.send = observedNativeSend;
           armChooser("initial-admission");
-          await exec("window.folia.openFileDialog(); null;");
+          await exec("window.markaloo.openFileDialog(); null;");
           const outcome = await until(async () => {
             if (observationFailed) fatal("initial-native-observation-failed");
             if (!nativeScopeCurrent()) fatal("initial-native-observer-scope-changed");
@@ -1048,7 +1048,7 @@ if (typeof electron === "string") {
           for (const name of skipped) report(`SKIP ${phase}: ${name}  -> initial native adoption was refused`);
         } else {
           const callsBeforeReopen = chooserCalls;
-          await exec(`window.folia.openApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`);
+          await exec(`window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`);
           const reopened = await until(() => exec(`window.currentFilePath === ${JSON.stringify(first)} &&
             window.CustomTabs.getDocumentDescriptor()?.ref !== ${JSON.stringify(oldRef)} &&
             !!window.CustomTabs.getDocumentDescriptor()?.ref`));
@@ -1069,8 +1069,8 @@ if (typeof electron === "string") {
             };
             try {
               for (const [kind, request] of [
-                ["browser", `window.folia.openApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`],
-                ["native", "window.folia.openFileDialog(); null;"],
+                ["browser", `window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`],
+                ["native", "window.markaloo.openFileDialog(); null;"],
               ]) {
                 stage = `${kind}-delivery-refusal`;
                 if (kind === "native") armChooser("native-delivery-refusal");
@@ -1091,11 +1091,11 @@ if (typeof electron === "string") {
             } finally { win.webContents.send = originalSend; }
           }
           await exec("(async () => { await window.CustomTabs.closeTab(window.CustomTabs.getActiveTabId()); })()");
-          await exec("window.folia.getVersion()");
+          await exec("window.markaloo.getVersion()");
           const beforeRetired = bodyOpens;
-          await exec(`window.folia.openApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`);
-          await exec(`window.folia.revealApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`);
-          await exec("window.folia.getVersion()");
+          await exec(`window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`);
+          await exec(`window.markaloo.revealApprovedDocument({ filePath: ${JSON.stringify(first)} }); null;`);
+          await exec("window.markaloo.getVersion()");
           check("retiring the only native admission removes its browser reopen permission",
             bodyOpens === beforeRetired && reveals.length === 0 &&
               __shutdown.documentSessionState().history === undefined);

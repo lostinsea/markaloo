@@ -47,7 +47,7 @@ function verifyPhase(root, mode) {
   assert.equal(execution.mode, mode);
   assert.equal(execution.commonLockPresentAfterReturn, false, "cleanup did not complete");
   assert.equal(execution.resultSha256, hash(bytes), "native outcome does not match result");
-  assert.equal(fs.existsSync(path.join(os.tmpdir(), "folia-machine-exclusive.lock")), false,
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), "markaloo-machine-exclusive.lock")), false,
     "common lock remains");
   assert.equal(result.complete, true, "phase incomplete: no acceptance");
   assert.equal(result.decision.mode, mode);

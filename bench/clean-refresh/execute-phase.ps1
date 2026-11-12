@@ -29,7 +29,7 @@ $utf8 = [Text.UTF8Encoding]::new($false)
     node = $node
     phaseBudgetMs = $budgetMs
 } | ConvertTo-Json) + "`n"), $utf8)
-$lockPath = & $node -p "require('path').join(require('os').tmpdir(), 'folia-machine-exclusive.lock')"
+$lockPath = & $node -p "require('path').join(require('os').tmpdir(), 'markaloo-machine-exclusive.lock')"
 if ($global:LASTEXITCODE -ne 0) { throw 'Could not determine ordinary common lock path' }
 $global:LASTEXITCODE = $null
 $captureErrors = @()

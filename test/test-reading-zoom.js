@@ -21,7 +21,7 @@ function failPreparation(stage, error) {
 let batch, phaseTempRoot;
 try {
   if (isElectron && !declaredPhases.includes(phase)) throw new Error("Unsupported zoom fixture phase: " + phase);
-  batch = path.resolve(process.env.FOLIA_ZOOM_BATCH || path.join(root, container, randomUUID()));
+  batch = path.resolve(process.env.MARKALOO_ZOOM_BATCH || path.join(root, container, randomUUID()));
   phaseTempRoot = prepareOwnedRestartDirectory(root, container, batch, path.join("isolation", phase));
   const entry = fs.lstatSync(phaseTempRoot);
   console.log("ZOOM_PHASE_DIRECTORY " + JSON.stringify({
@@ -55,7 +55,7 @@ if (!isElectron) {
     sync: ["sync"],
   };
   const phases = perf ? perfPhases :
-    routes[process.env.FOLIA_ZOOM_PROOF] ||
+    routes[process.env.MARKALOO_ZOOM_PROOF] ||
       ["controls", "restart", "reset-restart", "defaults", "startup", "invalid-startup", "sync"];
   const sources = Object.fromEntries(["renderer.js", "main.js", "custom-tabs.js", "main-preload.js"]
     .map(name => [name, hash(path.join(root, "src", name))]));
@@ -71,7 +71,7 @@ if (!isElectron) {
     const started = performance.now();
     const result = spawnSync(electron, [__filename, phase], {
       cwd: root, encoding: "utf8", timeout: 120000,
-      env: { ...process.env, FOLIA_ZOOM_BATCH: batch, FOLIA_ZOOM_LAUNCH_AT: String(Date.now()) },
+      env: { ...process.env, MARKALOO_ZOOM_BATCH: batch, MARKALOO_ZOOM_LAUNCH_AT: String(Date.now()) },
     });
     const elapsedMs = performance.now() - started;
     fs.writeFileSync(path.join(batch, phase + ".stdout.log"), result.stdout || "");
@@ -602,14 +602,14 @@ if (!isElectron) {
       }
       if (!win) throw new Error("No production main reader");
       await wait("production reader ready", "typeof updateZoom==='function'&&typeof window.CustomTabs?.getTabs==='function'&&!loadingScreen.classList.contains('active')");
-      measurement.startupMs = process.env.FOLIA_ZOOM_LAUNCH_AT
-        ? Date.now() - Number(process.env.FOLIA_ZOOM_LAUNCH_AT) : performance.now() - started;
+      measurement.startupMs = process.env.MARKALOO_ZOOM_LAUNCH_AT
+        ? Date.now() - Number(process.env.MARKALOO_ZOOM_LAUNCH_AT) : performance.now() - started;
       if (seed) { seed.destroy(); seed = null; }
       win.setSize(1280, 850);
       sentinel = startErrorSentinel(win, { label: "zoom", trapExternal: false });
       check("zoom uses an isolated production reader and disposable profile",
         app.getPath("userData") === profile && profile.startsWith(batch + path.sep) &&
-        await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)"));
+        await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)"));
       if (perf) await performanceRun();
       else if (phase === "controls") await controls();
       else if (phase === "restart") await restart();

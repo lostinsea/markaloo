@@ -602,7 +602,7 @@ if (!isElectron) {
   async function behavior() {
     const initial = await state();
     check("fresh toolbar uses the isolated production preload and a genuinely empty Welcome",
-      await exec(`typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)&&
+      await exec(`typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)&&
         window.CustomTabs.getTabs().length===0&&!!viewer.querySelector('.welcome')&&localStorage.getItem('readingSidePanel')===null`));
     check("fresh Welcome TOC toolbar starts unpressed unexpanded and with both drawers closed",
       !initial.toc && !initial.notes && agrees(initial), initial);

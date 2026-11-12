@@ -125,7 +125,7 @@ async function run() {
   win.unmaximize();
   win.setBounds({ x: 30, y: 30, width: 1280, height: 980 });
   await waitFor(exec, `document.getElementById('viewer')`, "#viewer");
-  await waitFor(exec, `!!window.foliaThemes`, "custom-theme.js to initialise");
+  await waitFor(exec, `!!window.markalooThemes`, "custom-theme.js to initialise");
   await exec(`renderMarkdown(${JSON.stringify(SAMPLE)}, "full")`);
   await waitFor(
     exec,
@@ -138,7 +138,7 @@ async function run() {
   for (const [id, mode] of SHOTS) {
     await exec(
       `localStorage.setItem('themeMode', ${JSON.stringify(mode)});` +
-        `window.foliaThemes.setScheme(${JSON.stringify(id)});1`,
+        `window.markalooThemes.setScheme(${JSON.stringify(id)});1`,
     );
     const wantAttr = id.startsWith("default-") ? "null" : JSON.stringify(id);
     await waitFor(

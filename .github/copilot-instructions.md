@@ -173,7 +173,44 @@ and file-ownership rules, what each role owns as evidence, and the per-unit gate
 — lives in `docs/PLANNED-WORK.md` under *Model roles and the delivery handoff*.
 Do not restate it here.
 
+## Test-only debugging
+
+- For test-only debugging, this section replaces only the review timing above
+  and in `docs/PLANNED-WORK.md`.
+- For test-only code, harnesses and temporary test setup: reproduce, fix and run
+  the smallest relevant validation. Iterate without code-review round trips
+  between attempts.
+- Once the fix demonstrably works, get independent Sol/Luna review of the final
+  changes.
+- Address valid review findings and rerun affected checks before calling it
+  complete.
+- Production-code review requirements are unchanged. Mixed test/production
+  changes do not use this exception for production code.
+- Keep assertions, isolation and ownership safeguards, and failure evidence
+  intact. Do not manufacture a pass.
+
+## Collect independent failures together
+
+- Collect failures from independent test cases in one run instead of repeatedly
+  stopping at the first failure.
+- After a failure, continue only when a safe reset and the next case's
+  prerequisites are verified.
+- Mark dependent or unexecuted cases **BLOCKED** or **NOT RUN**, never passed.
+- Preserve original errors and stacks. Report cleanup and reset failures
+  separately. Any failure or missing required case keeps the overall run failed.
+- Stop if data or ownership is at risk, preservation is uncertain, or app state
+  is unknown or unsafe.
+
 ## Test discipline — the part that matters
+
+- The goal is reliable verification of required product behaviour, not perfect
+  tests or test tools.
+- Change tooling only when needed for clear, reliable evidence. Stop refining
+  it once that evidence is sufficient.
+- Measure progress by verified product behaviour and remaining risks, not
+  assertion counts or artifact volume.
+- Discuss substantial tooling detours before starting them. Keep meaningful
+  checks and safety safeguards.
 
 The rule this repository is built on: **a test that cannot fail is worse than no
 test**, because it also stops anyone from looking. Assume any new green result
@@ -238,6 +275,47 @@ is coupled to something else.
 Screenshots are verification only if someone looks at them. Capturing a PNG and
 declaring success is another vacuous green. The same applies to launching the
 packaged app: look at what it drew.
+
+### 7. Reader visual qualification
+
+- Controlled inspection in a disposable, owned window is the default Reader
+  visual qualification path for every Markaloo release, not a fallback after
+  another automatic image-matching investigation.
+- Keep logical, Source, DOM, geometry and capture-existence results separate
+  from observed intended text, loading state and TOC selection.
+- Missing automatic frame/content correlation is a test limitation, not a
+  diagnosed product defect.
+- Do not repeat colored-marker/region, fixed-RAF/sleep or generic image-matcher
+  approaches each release. Do not restart the capture-fix/manual-fallback cycle.
+- Reopen automated visual qualification only with concrete new capability or
+  evidence linking the acquired image to the intended Source/position and
+  contemporaneous loading/TOC state, AND explicit user approval for that scope.
+- Follow the single [Reader visual qualification procedure](../docs/CUSTOMIZATIONS.md#reader-visual-qualification).
+  Bounded Windows verification covers 34 logical checks, four controlled
+  endpoints and all six original images. Full Reader, wider matrix, other
+  platforms, performance and release qualification remain open.
+  The separate `--windows-history-keys` scenario has bounded Windows verification:
+  31 logical checks, ten Electron-delivered Alt+Left/Right attempts (four
+  traversals and six guarded or exhausted attempts), four controlled endpoints
+  and all four original images viewed. This does not qualify physical keyboard
+  devices or OS-global routing.
+  The separate `--reading-history-noop` case has bounded Windows verification:
+  Root329/330 ordered 28, one actual Beta TOC completion with `no-observed-travel`
+  and exact unchanged state. Back/Forward preserve the original Alpha/Beta/Gamma
+  branch without a duplicate stop or lost Forward branch. Four controlled
+  endpoints and all four original images were actually viewed. One independent
+  safety snapshot passed; Root confirmed operational closure.
+  Final independent test-slice reviews are a separate gate. Other failed jumps,
+  timelines/lifetime and the wider gates above remain open; pure controls alone
+  are not acceptance.
+  The separate `--reader-branch-replacement` case is source-only/native-pending:
+  Alpha -> TOC Beta -> Back Alpha -> TOC Gamma -> Back Alpha -> Forward Gamma.
+  The successful Gamma request must replace the obsolete Beta Forward branch,
+  not preserve it as the accepted no-op case does. It reuses the four existing
+  checkpoints and bounds; native verification, viewed originals and final
+  independent test-slice reviews remain separate gates.
+  Every new invocation needs a freshly bound owned observer that passes its
+  switch, fresh readiness and separate exact authority. Implementation is not acceptance.
 
 ## Traps in this repository
 

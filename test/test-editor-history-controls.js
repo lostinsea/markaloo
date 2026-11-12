@@ -15,11 +15,11 @@ const scrollSource = read("editor-scroll.js").replace(/\r\n/g, "\n");
 const cellContext = vm.createContext({ window: {} });
 for (const name of ["inline-formatting.js", "table-cell-editor.js"])
   vm.runInContext(read(name), cellContext);
-const cells = cellContext.window.FoliaTableCells;
+const cells = cellContext.window.MarkalooTableCells;
 let passed = 0, failed = 0;
+const cases = [];
 function check(name, run) {
-  try { run(); passed++; output("PASS " + name); }
-  catch (error) { failed++; output("FAIL " + name + "  -> " + JSON.stringify(error.message)); }
+  cases.push([name, run]);
 }
 function between(source, first, last) {
   const start = source.indexOf(first), end = source.indexOf(last, start + first.length);
@@ -36,7 +36,7 @@ function fixture() {
     isEditMode: true, owner: true, frozen: false, permissions: 0, renders: 0,
     ownerToken: { id: 1 }, fileOpenSequence: 1, editorModeRevision: 1,
     editorInteractionRevision: 0, pendingEditorScrollRestore: null,
-    tableCellSession: null, editSessionBaseline: null, FoliaTableCells: cells,
+    tableCellSession: null, editSessionBaseline: null, MarkalooTableCells: cells,
     undoButton: { disabled: true, addEventListener(_name, run) { this.click = run; } },
     redoButton: { disabled: true, addEventListener(_name, run) { this.click = run; } },
     markdownEditor: { value: "after", selectionStart: 5, selectionEnd: 5,
@@ -72,9 +72,13 @@ function fixture() {
   };
   context.frozenForShutdown = () => context.frozen;
   context.currentDocumentActionOwner = () => context.owner ? context.ownerToken : null;
-  context.renderMarkdown = () => {
+  context.renderMarkdown = (_content, _force, viewport) => {
     context.renders++;
-    return { then(done) { renderCompletions.push(done); } };
+    context.readingViewport.invalidate();
+    if (viewport) viewport.permit = context.readingViewport.capturePermit();
+    const completion = new Promise(resolve => { renderCompletions.push(resolve); });
+    if (viewport) viewport.completion = completion;
+    return Promise.resolve();
   };
   context.window = { CustomTabs: {
     snapshotExactEditorContent: () => {
@@ -84,15 +88,24 @@ function fixture() {
     },
     adoptExactEditorContent: source => { context.exactSource = source; return true; },
     noteActiveContentMutation: () => { revisionNotifications.push(context.ownerToken); },
-  }, dispatchEvent(event) { scrollIntents.push(event.type); return true; } };
+  }, dispatchEvent(event) {
+    if (event.type === "editor-scroll-intent") scrollIntents.push(event.type);
+    return true;
+  } };
+  context.window.CustomTabs.getActiveTab = () => context.ownerToken;
   vm.createContext(context);
+  vm.runInContext(read("reading-viewport.js") +
+    between(renderer, "function createReadingViewportLifecycle(", "\nconst readingViewport =") +
+    "\nvar readingViewport = createReadingViewportLifecycle();", context);
+  context.window.readingViewport = context.readingViewport;
   vm.runInContext(read("context-menu-utils.js"), context);
-  context.hideContextMenuHelper = context.window.FoliaContextMenu.hideContextMenu;
+  context.hideContextMenuHelper = context.window.MarkalooContextMenu.hideContextMenu;
   vm.runInContext(between(renderer, "function hideContextMenu(event)", "\n// Show context menu on right-click"), context);
   vm.runInContext(between(renderer, "function hideNotesPanelContextMenu(event)", "\ndocument.addEventListener('click'"), context);
   context.window.hideDocumentContextMenus = context.hideDocumentContextMenus;
   const scroll = vm.runInContext(`(() => {
     let owner = null, pendingSource = false, committed = null, anchors = [], dirty = false, frame = 0;
+    let lastReadingCaptureFailure = null;
     const scrollPoints = { editor: [], preview: [] }, editor = markdownEditor;
     const active = () => isEditMode, frozen = () => frozenForShutdown();
     const identity = () => currentDocumentActionOwner();
@@ -147,7 +160,10 @@ function fixture() {
   }
   return { context, run, seed, input, emit, expire, timers, scroll,
     dirtyUpdates, revisionNotifications, scrollIntents,
-    finishRenders() { while (renderCompletions.length) renderCompletions.shift()(); },
+    async finishRenders() {
+      while (renderCompletions.length) renderCompletions.shift()();
+      await new Promise(setImmediate);
+    },
     flushMicrotasks() { while (microtasks.length) microtasks.shift()(); } };
 }
 
@@ -198,11 +214,31 @@ check("document buttons use the existing history and clear redo on a fresh push"
   assert(!c.undoButton.disabled && c.redoButton.disabled);
 });
 for (const action of ["Undo", "Redo"]) {
+  for (const editing of [true, false]) {
+    check(action + " " + (editing ? "editor" : "Reader") + " continuation yields only viewport work to newer intent", async () => {
+      const f = fixture(), { context: c, run } = f;
+      c.isEditMode = editing;
+      run("historyPush('before')");
+      if (action === "Redo") { run("historyUndo()"); await f.finishRenders(); }
+      const ticket = c.readingViewport.beginIntent();
+      run(action === "Undo" ? "historyUndo()" : "historyRedo()");
+      assert(run("undoRedoRendering"), "The actual render continuation is pending");
+      assert(c.readingViewport.isIntentCurrent(ticket), "A source render is not genuine intent");
+      c.contentWrapper.scrollTop = 67;
+      c.readingViewport.beginIntent();
+      await f.finishRenders();
+      assert.equal(c.contentWrapper.scrollTop, 67);
+      assert(!run("undoRedoRendering"), "Cleanup must not depend on the viewport permit");
+      assert.equal(editing ? c.markdownEditor.value : c.originalMarkdown, action === "Undo" ? "before" : "after");
+      assert.equal(run("undoHistory.length"), action === "Undo" ? 0 : 1);
+      assert.equal(run("redoHistory.length"), action === "Undo" ? 1 : 0);
+    });
+  }
   for (const owner of ["preview", "editor"]) {
-    check(action + " preserves the " + owner + " scroll owner and invalidates source and both geometry maps", () => {
+    check(action + " preserves the " + owner + " scroll owner and invalidates source and both geometry maps", async () => {
       const f = fixture(), { context: c, run, seed, input, scroll } = f;
       seed("before"); input("after");
-      if (action === "Redo") { c.undoButton.click(); f.finishRenders(); }
+      if (action === "Redo") { c.undoButton.click(); await f.finishRenders(); }
       scroll.seed(owner);
       const before = scroll.api.diagnostics();
       assert.equal(before.owner, owner, "The driving pane must already own the current source");
@@ -250,10 +286,10 @@ check("ordinary editor input still claims the editor and invalidates current sou
   assert.strictEqual(f.revisionNotifications.at(-1), c.ownerToken);
 });
 for (const action of ["Undo", "Redo"]) {
-  check("new editor input during " + action + " rendering keeps its newer scroll ownership after completion", () => {
+  check("new editor input during " + action + " rendering keeps its newer scroll ownership after completion", async () => {
     const f = fixture(), { context: c, run, seed, input, scroll } = f;
     seed("before"); input("after");
-    if (action === "Redo") { c.undoButton.click(); f.finishRenders(); }
+    if (action === "Redo") { c.undoButton.click(); await f.finishRenders(); }
     scroll.seed("preview");
     assert.equal(scroll.api.diagnostics().owner, "preview");
     c[action === "Undo" ? "undoButton" : "redoButton"].click();
@@ -264,27 +300,37 @@ for (const action of ["Undo", "Redo"]) {
     assert.equal(scroll.api.diagnostics().owner, "editor");
     assert.equal(f.revisionNotifications.length, revisions + 1);
     assert.equal(f.dirtyUpdates.length, dirtyCount + 1);
-    f.finishRenders();
+    await f.finishRenders();
     assert.equal(run("undoRedoRendering"), false);
     assert.equal(scroll.api.diagnostics().owner, "editor");
     assert.equal(c.exactSource, "newer input");
     assert.equal(c.hasUnsavedChanges, true);
   });
-  check("new preview intent during " + action + " rendering keeps its newer scroll ownership after completion", () => {
+  check("new preview intent during " + action + " rendering keeps its newer scroll ownership after completion", async () => {
     const f = fixture(), { context: c, run, seed, input, scroll } = f;
     seed("before"); input("after");
-    if (action === "Redo") { c.undoButton.click(); f.finishRenders(); }
+    if (action === "Redo") { c.undoButton.click(); await f.finishRenders(); }
     scroll.seed("editor");
     assert.equal(scroll.api.diagnostics().owner, "editor");
     c[action === "Undo" ? "undoButton" : "redoButton"].click();
     assert.equal(run("undoRedoRendering"), true);
     scroll.claim("preview");
     assert.equal(scroll.api.diagnostics().owner, "preview");
-    f.finishRenders();
+    await f.finishRenders();
     assert.equal(run("undoRedoRendering"), false);
     assert.equal(scroll.api.diagnostics().owner, "preview");
   });
 }
+check("source mutation retires viewport writes before deferred preview without minting genuine intent", () => {
+  const f = fixture(), { context: c, seed, input } = f;
+  seed("before");
+  const ticket = c.readingViewport.beginIntent(), permit = c.readingViewport.capturePermit();
+  input("after");
+  assert(!c.readingViewport.isPermitCurrent(permit));
+  assert(c.readingViewport.isIntentCurrent(ticket));
+  assert.equal(c.renders, 0);
+  assert.equal(c.markdownEditor.value, "after");
+});
 check("exact transactions retain source spelling through button Undo and Redo", () => {
   const { context: c, run } = fixture();
   run("historyPushExact('before\\r\\n'); exactSource = 'after\\r\\n'; markdownEditor.value = 'after\\n'");
@@ -553,5 +599,11 @@ check("accepted reload clears old history and seeds the next pre-input source", 
   assert.equal(c.exactSource, "reloaded\r\n");
 });
 
-output(`=== ${passed}/${passed + failed} passed ===`);
-process.exitCode = failed ? 1 : 0;
+(async () => {
+  for (const [name, run] of cases) {
+    try { await run(); passed++; output("PASS " + name); }
+    catch (error) { failed++; output("FAIL " + name + "  -> " + JSON.stringify(error.message)); }
+  }
+  output(`=== ${passed}/${passed + failed} passed ===`);
+  process.exitCode = failed ? 1 : 0;
+})().catch(error => { console.error(error); process.exitCode = 1; });

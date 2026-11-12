@@ -79,7 +79,7 @@ function fixture() {
     originalMarkdown: baseline,
     getReloadRequestSession: () => identity.pageSession,
     getPendingSaveStatus: () => page.pending,
-    folia: { queryDocumentDeletionState: () => page.deletion },
+    markaloo: { queryDocumentDeletionState: () => page.deletion },
     CustomTabs: {
       getTabs: () => page.tabs,
       getActiveTab: () => page.tabs.find(item => item.id === page.activeId),
@@ -179,7 +179,7 @@ test("actual actor parses and keeps the selected ordinary closer", () => {
   const closer = between(source, "async function closeOwnedFixtureTabs(exec, phase,",
     "\nasync function run(win)").trimEnd() + "\n";
   assert.equal(crypto.createHash("sha256").update(closer).digest("hex"),
-    "8771b1324757f3f6cc88e98cfc66cc0cbbf7fc8a70d628a4d91494f6ffa33aef");
+    "25299256f98a6872bbba85a33065b786ed112ab4188918d1283241ff8dc44844");
 });
 test("retirement follows every original measured assertion and producer restoration", () => {
   const call = source.indexOf("  await retireOrderedSaveE();");

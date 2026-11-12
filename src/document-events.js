@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  if (!window.folia) throw new Error("Markaloo preload must load before document-events.js");
+  if (!window.markaloo) throw new Error("Markaloo preload must load before document-events.js");
   const channels = new Map([
     ["file-opened", "onFileOpened"],
     ["file-open-result", "onFileOpenResult"],
@@ -40,10 +40,10 @@
   });
 
   for (const [channel, method] of channels) {
-    if (typeof window.folia[method] !== "function") {
+    if (typeof window.markaloo[method] !== "function") {
       throw new Error(`Markaloo preload is missing ${method}`);
     }
-    unsubscribers.push(window.folia[method](payload => {
+    unsubscribers.push(window.markaloo[method](payload => {
       // ContextBridge can freeze its copy. Tabs annotate and memoize one shared
       // page-local result; cloning per listener would break Save's WeakMap.
       const data = payload && typeof payload === "object" && !Array.isArray(payload)
@@ -54,5 +54,5 @@
   window.addEventListener("unload", () => {
     for (const unsubscribe of unsubscribers) unsubscribe();
   }, { once: true });
-  window.FoliaDocumentEvents = registry;
+  window.MarkalooDocumentEvents = registry;
 })();

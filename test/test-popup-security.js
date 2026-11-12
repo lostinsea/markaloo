@@ -610,7 +610,7 @@ async function openPopup(channel, payload, settleMs = 1800, click = null) {
   if (!methods[channel]) throw new Error("no public fixed popup API: " + channel);
   const request = expectedPopup = { channel, payload, mainScope, received: false, window: null };
   try {
-    await mainEval(click || `window.folia.${methods[channel]}(${JSON.stringify(payload)}); true`);
+    await mainEval(click || `window.markaloo.${methods[channel]}(${JSON.stringify(payload)}); true`);
     assertDocumentScope(mainScope);
     await waitUntil(() => request.received && request.window, "fixed popup IPC and retained window", 8000);
     assertDocumentScope(mainScope);
@@ -757,7 +757,7 @@ function isOwnedPopupPath(url, kind) {
     const file = fileURLToPath(url);
     return path.basename(file) === kind + ".html" &&
       path.dirname(path.dirname(file)) === workRoot &&
-      /^folia-/.test(path.basename(path.dirname(file))) &&
+      /^markaloo-/.test(path.basename(path.dirname(file))) &&
       !fs.lstatSync(path.dirname(file)).isSymbolicLink() &&
       physicalKey(fs.realpathSync.native(path.dirname(file))) === physicalKey(path.dirname(file));
   } catch { return false; }
@@ -1230,10 +1230,10 @@ async function run() {
   const scope = await assertGuard(candidate.wc);
   assertLiveOwnerReads();
   const witness = await bounded(scope.frame.executeJavaScript(`(async () => ({
-    generation: await window.folia.getQuitApprovalGeneration(),
+    generation: await window.markaloo.getQuitApprovalGeneration(),
     pageSession: window.getReloadRequestSession(),
-    bridge:typeof window.folia.openFileDialog==='function'&&
-      ['openImagePopup','openMermaidPopup','openTablePopup'].every(key=>typeof window.folia[key]==='function')
+    bridge:typeof window.markaloo.openFileDialog==='function'&&
+      ['openImagePopup','openMermaidPopup','openTablePopup'].every(key=>typeof window.markaloo[key]==='function')
   }))()`, true), "Main owner generation");
   assertDocumentScope(scope);
   const currentMain = main.__shutdown.state();
@@ -1398,8 +1398,8 @@ async function run() {
   await closeAll();
 
   const popupAPI = await mainEval(`({
-    publicKeys:Object.keys(window.folia),
-    rawIPC:typeof window.folia.send
+    publicKeys:Object.keys(window.markaloo),
+    rawIPC:typeof window.markaloo.send
   })`);
   check(
     "current popup APIs are explicit and expose no arbitrary-send bridge",
@@ -2498,7 +2498,7 @@ async function run() {
   for (const wantDark of [true, false]) {
     const label = wantDark ? "dark" : "light";
     const themeId = wantDark ? "default-dark" : "default-light";
-    await mainEval(`window.foliaThemes.setScheme(${JSON.stringify(themeId)}); true`);
+    await mainEval(`window.markalooThemes.setScheme(${JSON.stringify(themeId)}); true`);
     await waitUntil(() => publishedTheme === themeId, "actual Main theme publication");
     await mainEval("(async () => { await whenMermaidSettled(); return true; })()");
     await waitUntil(async () => (await mainEval(`(() => {
@@ -2518,7 +2518,7 @@ async function run() {
           image: document.querySelectorAll('.img-zoom-btn').length,
           path:currentFilePath, markdown:originalMarkdown,
           descriptor:window.CustomTabs.getDocumentDescriptor(),
-          scheme:window.foliaThemes.schemeFor(window.foliaThemes.storedMode()).id
+          scheme:window.markalooThemes.schemeFor(window.markalooThemes.storedMode()).id
         };
       })()`,
     );

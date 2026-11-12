@@ -1,9 +1,9 @@
 {
-  "name": "folia",
-  "version": "0.12.0",
+  "name": "markaloo",
+  "version": "0.13.0",
   "productName": "Markaloo",
   "description": "Markaloo - a fast, offline markdown viewer with tabs, Mermaid diagrams and live reload",
-  "main": "src/main.js",
+  "main": "src/entry.mjs",
   "scripts": {
     "start": "electron .",
     "postinstall": "node scripts/vendor-libs.js",
@@ -37,6 +37,8 @@
     "test:popups": "node test/test-mermaid-popup-contracts.js --companion && node --check src/main.js && node --check test/test-popup-security.js && electron test/test-popup-security.js",
     "test:packaging": "node test/test-packaging.js",
     "test:profile": "node test/test-dev-profile.js",
+    "test:profile-entry": "node --test test/test-profile-entry.js && node --test test/test-startup-document-receipts.js && node --test test/test-profile-startup-admission.js",
+    "test:legacy-install": "node --experimental-vm-modules --test test/test-install-helper-entry.js test/test-installer-migration.js test/test-legacy-install.js",
     "test:mermaid": "node test/test-mermaid-popup-contracts.js --companion && electron test/test-mermaid-render.js",
     "test:mermaid-source": "node test/test-mermaid-popup-contracts.js",
     "test:visual": "electron test/test-visual-utils-selfcheck.js",
@@ -48,10 +50,16 @@
     "test:reading": "node --check test/test-reading.js && node test/test-reading.js",
     "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     "test:reading-history": "node test/test-reading-history.js",
+    "test:reading-consumers": "node test/test-reading-history-consumers.js",
+    "test:reading-controls": "node test/test-reading-navigation-controls.js",
+    "test:reading-landmarks": "node test/test-reading-landmarks.js",
+    "test:reading-producers": "node test/test-reading-mode-producers.js",
+    "test:reading-mode": "node test/test-reading-mode-integration.js",
     "test:reading-viewport": "node test/test-reading-viewport.js",
     "test:zoom": "node --check test/test-reading-zoom.js && node test/test-reading-zoom.js",
     "test:editor-history": "node test/test-editor-history-controls.js",
-    "test:document-editor": "npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
+    "test:editor-fixtures": "node test/test-document-editor-fixture-controls.js",
+    "test:document-editor": "npm run test:editor-fixtures -- --companion && npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
     "test:editor-scroll": "node test/test-editor-scroll-state.js --companion && node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron test/test-editor-scroll.js",
     "test:editor-scroll-state": "node test/test-editor-scroll-state.js",
     "test:editor-scroll-fractional": "node --check src/editor-scroll.js && node --check test/test-editor-scroll.js && electron --force-device-scale-factor=1.5 test/test-editor-scroll.js",
@@ -60,8 +68,8 @@
     "test:corpus": "node --check bench/run.js && node --check bench/corpus.js && node bench/verify.js",
     "bench": "electron bench/run.js",
     "bench:f22": "node bench/run-f22-shutdown.js",
-    "test:features": "npm run test:reading-history && npm run test:reading-viewport && npm run test:syntax && npm run test:updates && npm run test:toc-toolbar && npm run test:document-editor && npm run test:editor-scroll && npm run test:table-cells && npm run test:reading-panels",
-    "test": "npm run test:actor-contracts && npm run test:packaging && npm run test:profile && npm run test:corpus && npm run test:startup && npm run test:document-session && npm run test:features && npm run test:tabs && npm run test:reload-dialog && npm run test:owned-dialogs && npm run test:dialogs && npm run test:security && npm run test:popups && npm run test:visual && npm run test:search && npm run test:toc && npm run test:reading && npm run test:zoom && npm run test:responsive && npm run test:mermaid && npm run test:patch && npm run test:tables && npm run test:theme",
+    "test:features": "npm run test:reading-history && npm run test:reading-consumers && npm run test:reading-controls && npm run test:reading-landmarks && npm run test:reading-producers && npm run test:reading-mode && npm run test:reading-viewport && npm run test:syntax && npm run test:updates && npm run test:toc-toolbar && npm run test:document-editor && npm run test:editor-scroll && npm run test:table-cells && npm run test:reading-panels",
+    "test": "npm run test:actor-contracts && npm run test:packaging && npm run test:profile && npm run test:profile-entry && npm run test:legacy-install && npm run test:corpus && npm run test:startup && npm run test:document-session && npm run test:features && npm run test:tabs && npm run test:reload-dialog && npm run test:owned-dialogs && npm run test:dialogs && npm run test:security && npm run test:popups && npm run test:visual && npm run test:search && npm run test:toc && npm run test:reading && npm run test:zoom && npm run test:responsive && npm run test:mermaid && npm run test:patch && npm run test:tables && npm run test:theme",
     "test:tables": "node --check test/test-table-display.js && electron test/test-table-display.js",
     "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
     "test:table-cells-ui": "electron test/test-table-cell-editor.js --partition=input && electron test/test-table-cell-editor.js --partition=remaining && electron test/test-table-cell-editor.js --partition=shared",
@@ -103,7 +111,7 @@
     "brace-expansion": "^5.0.9"
   },
   "build": {
-    "appId": "io.github.lostinsea.folia",
+    "appId": "io.github.lostinsea.markaloo",
     "productName": "Markaloo",
     "publish": [
       {
@@ -118,6 +126,14 @@
     "files": [
       "src/index.html",
       "src/main.js",
+      "src/entry.mjs",
+      "src/profile-migration.js",
+      "src/legacy-install.js",
+      "src/profile-startup.js",
+      "src/profile-startup-admission.js",
+      "src/profile-migration-validation.js",
+      "src/profile-migration-probe.js",
+      "src/profile-migration-probe.html",
       "src/main-preload.js",
       "src/app-dialogs.js",
       "src/app-updates.js",
@@ -273,6 +289,10 @@
     },
     "extraResources": [
       {
+        "from": "src/legacy-install.ps1",
+        "to": "legacy-install.ps1"
+      },
+      {
         "from": "README.md",
         "to": "README.md"
       },
@@ -312,7 +332,8 @@
         "en_US"
       ],
       "language": "1033",
-      "perMachine": true,
+      "perMachine": false,
+      "selectPerMachineByDefault": true,
       "deleteAppDataOnUninstall": false,
       "license": "LICENSE.txt"
     }

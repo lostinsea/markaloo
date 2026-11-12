@@ -105,6 +105,6 @@
     module.exports = utils;
   }
   if (typeof window !== 'undefined') {
-    window.FoliaUtils = utils;
+    window.MarkalooUtils = utils;
   }
 })();

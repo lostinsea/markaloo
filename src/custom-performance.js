@@ -41,7 +41,7 @@
     // ---- IPC events from main process ----
     {
       // Window minimised / restored
-      window.folia.onWindowVisibilityChanged((data) => {
+      window.markaloo.onWindowVisibilityChanged((data) => {
         console.log('[CustomPerf] Window visibility:', data.visible);
         isWindowFocused = data.visible;
         if (!data.visible) {

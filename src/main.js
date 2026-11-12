@@ -117,96 +117,14 @@ async function showOwnedMessage(owner, options, emergency = null) {
 // ============================================
 // DEVELOPMENT PROFILE ISOLATION
 // ============================================
-// A development run (`npm start`, i.e. `electron .`) and an installed build
-// share an application name, so Electron hands them the same userData
-// directory - and that directory is not merely storage. MEASURED with two
-// concurrent Electron processes: requestSingleInstanceLock() is keyed on
-// userData (same profile -> the second process is refused and forwards its
-// argv to the first; different profiles -> both are granted). So without this,
-// launching the dev build while the installed build is running does not start
-// a second app at all: it hands the file to the installed one and exits. The
-// two also share the tab session, window bounds, recent files and debug.log,
-// so each overwrites the other's state.
-//
-// The visible Markaloo name must not change the existing Folia profile.
-//
-// ORDERING IS LOAD-BEARING. app.setPath("userData", ...) is silently ignored
-// once the app is ready, and two things below CAPTURE the profile path into
-// module-scope constants - WINDOW_STATE_FILE and logFilePath. This must stay
-// above both of them;
-// (A third module-scope read, the log("User data path:", ...) line, only
-// REPORTS the path rather than capturing it, so it is not part of this
-// invariant. The claim is deliberately about capture, not about reads: "reads"
-// is falsifiable by one grep and would rot the moment another report is added.)
-// test/test-packaging.js asserts that statically because "it did not move" is
-// an absence check and absence checks fail open.
-const DEV_PROFILE_SUFFIX = "-dev";
-const LEGACY_PROFILE_NAME = "Folia";
-
-// Pure, and separated from the application of it on purpose: a decision that is
-// only observable by booting Electron and looking at where files landed can
-// only be tested end to end, whereas this can be driven directly against a stub
-// (test/test-dev-profile.js does exactly that).
-function devProfileDecision(app) {
-  const appData = app.getPath("appData");
-  const name = app.getName();
-  const standard = path.join(appData, name);
-
-  // Something has ALREADY relocated the profile - test/test-userdata-isolation.js
-  // gives every suite its own directory, and Chromium's --user-data-dir switch
-  // does the same from the command line. Overriding that here would silently
-  // undo it, which in the harness's case means eight suites sharing one profile
-  // again: precisely the contamination that module exists to prevent, and it
-  // would not fail - it would just quietly stop being isolated.
-  if (path.resolve(app.getPath("userData")) !== path.resolve(standard)) {
-    return { target: null, reason: "already-relocated" };
-  }
-
-  const target = path.join(
-    appData,
-    LEGACY_PROFILE_NAME + (app.isPackaged ? "" : DEV_PROFILE_SUFFIX),
-  );
-  if (path.resolve(target) === path.resolve(standard)) {
-    return { target: null, reason: "existing-profile" };
-  }
-  return {
-    target,
-    reason: app.isPackaged ? "packaged-compatibility" : "dev",
-  };
-}
-
+const profileStartup = require("./profile-startup");
+let startupContext = null;
 function applyDevProfile() {
-  const decision = devProfileDecision(app);
-  if (!decision.target) return decision;
-
-  // Electron requires setPath's target to exist; a first-time install has no
-  // legacy profile yet, while an upgrade must leave the existing one intact.
-  fs.mkdirSync(decision.target, { recursive: true });
-  app.setPath("userData", decision.target);
-
-  // A shipped build must not silently start with an empty profile: its session
-  // and single-instance lock both depend on using the existing directory.
-  if (path.resolve(app.getPath("userData")) !== path.resolve(decision.target)) {
-    if (app.isPackaged) {
-      throw new Error("Cannot select the existing application profile");
-    }
-    console.warn(
-      "dev profile not applied - userData is still " +
-        app.getPath("userData") +
-        "; a development run will share the installed app's profile.",
-    );
-    return { target: null, reason: "setpath-ignored" };
-  }
-  return decision;
+  // Entry admission precedes Main's captured paths. Existing isolated source
+  // harnesses can host Main directly, but cannot select a default profile.
+  startupContext = profileStartup.getMainStartup(app);
+  return startupContext.profileDecision;
 }
-// MEASURED END TO END, because no suite can do it: every windowed suite
-// relocates userData before requiring this file, so the redirect correctly
-// DECLINES there and its positive half is unobservable from inside the harness.
-// Hand-run once, on the real product invocation (`electron .`), 2026-08-28:
-// <appData>\Folia-dev was created and received window-state.json and debug.log,
-// while <appData>\Folia's mtime did not move at all. So a development run
-// genuinely lands in the sibling and genuinely leaves an installed Markaloo's
-// profile untouched.
 applyDevProfile();
 
 // ============================================
@@ -227,7 +145,7 @@ applyDevProfile();
 // (contextIsolation plus a preload bridge), after which a console in the
 // renderer is no longer a console in Node.
 function devToolsAllowed() {
-  return !app.isPackaged || process.env.FOLIA_DEVTOOLS === "1";
+  return !app.isPackaged || process.env.Markaloo_devtools === "1";
 }
 
 // Electron installs a DEFAULT application menu - File/Edit/View/Window - when
@@ -321,7 +239,7 @@ function makeNonce() {
  * @returns {{dir: string, file: string}} pass to removePopupDocument() on close
  */
 function writePopupDocument(kind, htmlContent) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "folia-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-"));
   const file = path.join(dir, `${kind}.html`);
   fs.writeFileSync(file, htmlContent, {
     encoding: "utf8",
@@ -580,7 +498,7 @@ function getAutoUpdater() {
 const logFilePath = path.join(app.getPath("userData"), "debug.log");
 // Gate opening the sink, not just writes: even an empty file leaks that logging
 // was enabled and opening an existing log must require the same explicit opt-in.
-const diagnosticLoggingEnabled = process.env.FOLIA_DIAGNOSTIC_LOG === "1";
+const diagnosticLoggingEnabled = process.env.MARKALOO_DIAGNOSTIC_LOG === "1";
 const logStream = diagnosticLoggingEnabled
   ? fs.createWriteStream(logFilePath, { flags: "a" })
   : null;
@@ -620,7 +538,6 @@ if (logStream) {
 // APPLICATION STATE
 // ============================================
 let mainWindow = null;
-let fileToOpen = null;
 
 // File watching state
 let fileWatcher = null;
@@ -2531,6 +2448,16 @@ const unavailableSessionEntries = new Set();
 const protectedSessionEntries = new Set();
 const MAX_SESSION_DOCUMENTS = 512;
 const nativeDocumentOpenTickets = new Map();
+const STARTUP_DOCUMENT_DEADLINE_MS = 60000;
+const startupDocuments = {
+  pending: new Map(),
+  completed: new Map(),
+  classified: new WeakMap(),
+  active: null,
+  pumpScheduled: false,
+  deadlineTimer: null,
+  deadlineAt: null,
+};
 let documentSessionManifest = null;
 let documentSessionFailure = null;
 let retiredAdmissionTabFloor = 0;
@@ -2538,23 +2465,344 @@ let retiredAdmissionScope = null;
 let pendingLiveSessionWrite = null;
 let liveSessionWriteRunning = false;
 
-function deliverNativeDocumentIntent(target, filePath, provenance = "native-open") {
+function nativeDocumentNow() {
+  return performance.now();
+}
+
+function startupDocumentBinding(record) {
+  return record && startupDocuments.pending.get(record.requestId) === record &&
+    record.sender && !record.sender.isDestroyed() &&
+    mainWindow && !mainWindow.isDestroyed() &&
+    mainWindow.webContents === record.sender &&
+    record.frame === record.sender.mainFrame &&
+    record.correlation.rendererGeneration === approvalRendererGeneration &&
+    record.correlation.pageSession === approvalRendererPageSession;
+}
+
+function startupDocumentAttemptIsCurrent(attempt) {
+  return !!attempt && startupDocumentBinding(attempt.record) &&
+    attempt.record.correlation === attempt.correlation;
+}
+
+function notifyRetainedStartupDocument(record, reason, deliberateRetry = false) {
+  if (!deliberateRetry && record.reason === reason && record.noticeSent) return;
+  record.reason = reason;
+  record.noticeSent = false;
+  const message = deliberateRetry
+    ? `The result of opening ${safeFileLabel(path.basename(record.filePath))} is still unconfirmed. ` +
+      "It has not been reopened."
+    : `A pending file could not finish opening (${reason}): ` +
+      `${safeFileLabel(path.basename(record.filePath))}. ` +
+      "It is still retained. Use File > Retry retained opens after resolving the problem.";
+  console.error("Markaloo startup open retained:", reason, record.requestId);
+  if (!record.mainNoticeQueued) {
+    queueStartupWarning("document",
+      "Some files could not finish opening. They are still retained. " +
+      "Resolve the problem, then use File > Retry retained opens. " +
+      "Choose Close or Quit again after pending opens finish.");
+    record.mainNoticeQueued = true;
+  }
+  if (mainWindow && !mainWindow.isDestroyed() &&
+      !mainWindow.webContents.isDestroyed() &&
+      !mainWindow.webContents.isLoading()) {
+    try {
+      mainWindow.webContents.send("show-error", message);
+      record.noticeSent = true;
+    } catch (error) {
+      console.error("Retained startup open notice could not be delivered:", error);
+    }
+  }
+}
+
+function retainStartupDocument(record, reason, ambiguous = false) {
+  if (startupDocuments.pending.get(record.requestId) !== record) return;
+  if (record.ticket) nativeDocumentOpenTickets.delete(record.ticket);
+  record.ticket = null;
+  record.deadline = null;
+  if (reason !== "idle-probe-stalled") record.probe = null;
+  record.state = "held";
+  record.ambiguous = ambiguous;
+  if (!ambiguous && startupDocuments.active === record) startupDocuments.active = null;
+  notifyRetainedStartupDocument(record, reason);
+  scheduleNativeDocumentDeadline();
+  scheduleStartupDocumentPump();
+}
+
+function queueStartupDocument(request, filePath) {
+  const completed = startupDocuments.completed.get(request.requestId);
+  if (completed) {
+    if (completed.filePath !== filePath) throw new Error("Completed startup request identity changed");
+    return true;
+  }
+  const existing = startupDocuments.pending.get(request.requestId);
+  if (existing) {
+    if (existing.filePath !== filePath) throw new Error("Startup request identity changed");
+    return true;
+  }
+  if (startupDocuments.pending.size >= MAX_SESSION_DOCUMENTS ||
+      startupDocuments.pending.size + startupDocuments.completed.size >= 1024) return false;
+  startupDocuments.pending.set(request.requestId, {
+    requestId: request.requestId, filePath, provenance: "native-open",
+    state: "queued", attempt: 0, replacementUsed: false,
+    ticket: null, deadline: null, probe: null, reason: null,
+    noticeSent: false, mainNoticeQueued: false,
+    ambiguous: false, correlation: null, sender: null, frame: null,
+  });
+  // An accepted open invalidates an earlier quit even before another close gesture.
+  retireOrdinaryShutdownForStartup();
+  scheduleStartupDocumentPump();
+  return true;
+}
+
+function scheduleStartupDocumentPump() {
+  if (startupDocuments.pumpScheduled) return;
+  startupDocuments.pumpScheduled = true;
+  setImmediate(() => {
+    startupDocuments.pumpScheduled = false;
+    pumpStartupDocuments();
+  });
+}
+
+function pumpStartupDocuments() {
+  if (shutdownCommitIngressBlocked || approvalRendererState !== "ready" ||
+      !approvalRendererPageSession || !mainWindow || mainWindow.isDestroyed() ||
+      mainWindow.webContents.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  for (const record of startupDocuments.pending.values()) {
+    if (record.state === "held" && !record.noticeSent) {
+      notifyRetainedStartupDocument(record, record.reason);
+    }
+  }
+  const active = startupDocuments.active;
+  if (active) {
+    if (active.state === "expired" && !active.probe) {
+      active.probe = crypto.randomBytes(32).toString("hex");
+      active.deadline = nativeDocumentNow() + STARTUP_DOCUMENT_DEADLINE_MS;
+      try {
+        active.sender.send("external-file-open-request", {
+          startupProbe: { ...active.correlation, nonce: active.probe },
+        });
+      } catch (error) {
+        retainStartupDocument(active, "idle-probe-send-failed", true);
+        console.error("Startup idle probe failed:", error);
+      }
+      scheduleNativeDocumentDeadline();
+    }
+    return;
+  }
+  const record = Array.from(startupDocuments.pending.values())
+    .find(candidate => candidate.state === "queued");
+  if (!record || nativeDocumentOpenTickets.size >= MAX_SESSION_DOCUMENTS) return;
+  record.sender = mainWindow.webContents;
+  record.frame = record.sender.mainFrame;
+  record.correlation = Object.freeze({
+    requestId: record.requestId, attempt: ++record.attempt,
+    frameTreeNodeId: record.frame.frameTreeNodeId,
+    rendererGeneration: approvalRendererGeneration,
+    pageSession: approvalRendererPageSession,
+  });
+  record.state = "offered";
+  record.admission = null;
+  record.reason = null;
+  record.noticeSent = false;
+  record.mainNoticeQueued = false;
+  startupDocuments.active = record;
+  if (!deliverNativeDocumentIntent(record.sender, record.filePath,
+    record.provenance, record)) {
+    retainStartupDocument(record, "ticket-delivery-unavailable");
+  }
+}
+
+function expireNativeDocumentTicket(ticket, capability) {
+  if (nativeDocumentOpenTickets.get(ticket) !== capability) return;
+  nativeDocumentOpenTickets.delete(ticket);
+  const record = capability.startup;
+  if (record && record.ticket === ticket && startupDocumentBinding(record)) {
+    record.ticket = null;
+    record.state = "expired";
+    record.deadline = null;
+    notifyRetainedStartupDocument(record, "ticket-expired");
+  }
+  startupContext.drain();
+  scheduleStartupDocumentPump();
+}
+
+function scheduleNativeDocumentDeadline() {
+  let deadline = Infinity;
+  for (const capability of nativeDocumentOpenTickets.values()) {
+    deadline = Math.min(deadline, capability.deadline);
+  }
+  const active = startupDocuments.active;
+  if (active?.deadline !== null && active?.deadline !== undefined) {
+    deadline = Math.min(deadline, active.deadline);
+  }
+  if (startupDocuments.deadlineAt === deadline) return;
+  if (startupDocuments.deadlineTimer !== null) clearTimeout(startupDocuments.deadlineTimer);
+  startupDocuments.deadlineAt = deadline;
+  startupDocuments.deadlineTimer = null;
+  if (!Number.isFinite(deadline)) return;
+  startupDocuments.deadlineTimer = setTimeout(() => {
+    startupDocuments.deadlineTimer = null;
+    startupDocuments.deadlineAt = null;
+    const now = nativeDocumentNow();
+    for (const [ticket, capability] of nativeDocumentOpenTickets) {
+      if (capability.deadline <= now) expireNativeDocumentTicket(ticket, capability);
+    }
+    const current = startupDocuments.active;
+    if (current?.deadline !== null && current?.deadline !== undefined &&
+        current.deadline <= now) {
+      retainStartupDocument(current, current.probe ? "idle-probe-stalled" : "adoption-stalled",
+        true);
+    }
+    scheduleNativeDocumentDeadline();
+  }, Math.max(0, deadline - nativeDocumentNow()));
+  startupDocuments.deadlineTimer.unref?.();
+}
+
+function invalidateStartupDocumentGeneration() {
+  for (const ticket of nativeDocumentOpenTickets.keys()) {
+    nativeDocumentOpenTickets.delete(ticket);
+  }
+  for (const record of startupDocuments.pending.values()) {
+    record.ticket = null;
+    record.probe = null;
+    record.deadline = null;
+    record.correlation = null;
+    record.admission = null;
+    record.sender = null;
+    record.frame = null;
+    // Explicit refusals need Retry; only interrupted in-flight work resumes on a new page.
+    if (record.state !== "held" || record.ambiguous) record.state = "queued";
+    record.ambiguous = false;
+  }
+  startupDocuments.active = null;
+  scheduleNativeDocumentDeadline();
+}
+
+function retryRetainedStartupDocuments() {
+  if (shutdownCommitIngressBlocked) {
+    console.error("Retained startup opens cannot retry during updater/shutdown handoff");
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("show-error",
+      "Pending file opens are retained while closing or installing an update. Retry afterward.");
+    return;
+  }
+  for (const record of startupDocuments.pending.values()) {
+    if (record.state !== "held" || record.ambiguous) continue;
+    record.replacementUsed = false;
+    record.correlation = null;
+    record.admission = null;
+    record.sender = null;
+    record.frame = null;
+    record.state = "queued";
+    record.reason = null;
+    record.noticeSent = false;
+    record.mainNoticeQueued = false;
+  }
+  scheduleStartupDocumentPump();
+  const active = startupDocuments.active;
+  if (active?.state === "held" && active.ambiguous) {
+    notifyRetainedStartupDocument(active, active.reason, true);
+  }
+}
+
+function sameStartupDocumentCorrelation(left, right) {
+  return !!left && !!right &&
+    ["requestId", "attempt", "frameTreeNodeId", "rendererGeneration", "pageSession"]
+      .every(key => left[key] === right[key]);
+}
+
+function reportStartupDocumentOpen(event, data) {
+  if (!isApprovalSender(event) || approvalRendererState !== "ready" ||
+      !data || !["idle", "adopted", "retained"].includes(data.kind) ||
+      !sameStartupDocumentCorrelation(data.startup, {
+        ...data.startup, frameTreeNodeId: event.senderFrame.frameTreeNodeId,
+        rendererGeneration: approvalRendererGeneration, pageSession: approvalRendererPageSession,
+      })) return false;
+  const completed = startupDocuments.completed.get(data.startup.requestId);
+  if (completed) {
+    return data.kind === "adopted" &&
+      sameStartupDocumentCorrelation(completed.correlation, data.startup) &&
+      documentOwnerKey(completed.owner) ===
+        documentOwnerKey(normaliseDocumentOwner(data.owner, data.filePath)) &&
+      data.owner.documentRef === completed.owner.documentRef;
+  }
+  const record = startupDocuments.pending.get(data.startup.requestId);
+  if (!startupDocumentBinding(record) ||
+      !sameStartupDocumentCorrelation(record.correlation, data.startup)) return false;
+  if (data.kind === "idle") {
+    if (!record.probe || data.nonce !== record.probe ||
+        !["expired", "held"].includes(record.state)) return false;
+    record.deadline = null;
+    record.probe = null;
+    if (record.replacementUsed) {
+      retainStartupDocument(record, "automatic-retry-exhausted");
+    } else {
+      record.replacementUsed = true;
+      record.state = "queued";
+      record.ambiguous = false;
+      startupDocuments.active = null;
+      scheduleNativeDocumentDeadline();
+      scheduleStartupDocumentPump();
+    }
+    return true;
+  }
+  if (data.kind === "retained") {
+    if (!["consent-declined", "renderer-busy", "tracking-refused", "open-failed",
+      "mutation-blocked"].includes(data.reason)) return false;
+    retainStartupDocument(record, data.reason);
+    return true;
+  }
+  if (!["awaiting-receipt", "held"].includes(record.state) || !record.admission) return false;
+  const owner = normaliseDocumentOwner(data.owner, data.filePath);
+  const admission = owner &&
+    admittedDocumentReference(owner.documentRef, owner, data.filePath);
+  const known = owner && knownDocumentOwners.get(documentOwnerKey(owner));
+  if (!owner || !admission || !known || known.documentRef !== owner.documentRef ||
+      !sameDocumentOwner(owner, known) ||
+      owner.pathKey !== record.admission.pathKey ||
+      (normaliseFilePath(data.filePath)?.resolved !== record.filePath &&
+        admission.descriptor.pathKey !== record.admission.pathKey)) return false;
+  startupDocuments.completed.set(record.requestId, {
+    correlation: record.correlation, owner, filePath: record.filePath,
+  });
+  startupDocuments.pending.delete(record.requestId);
+  if (startupDocuments.active === record) startupDocuments.active = null;
+  record.deadline = null;
+  scheduleNativeDocumentDeadline();
+  startupContext.drain();
+  scheduleStartupDocumentPump();
+  return true;
+}
+
+ipcMain.handle("report-startup-document-open", reportStartupDocumentOpen);
+
+function deliverNativeDocumentIntent(target, filePath, provenance = "native-open", startup = null) {
   if (!target || target.isDestroyed()) return false;
   for (const [ticket, record] of nativeDocumentOpenTickets) {
     if (record.sender.isDestroyed() || record.generation !== approvalRendererGeneration ||
-        Date.now() - record.createdAt > 60000) nativeDocumentOpenTickets.delete(ticket);
+        record.deadline <= nativeDocumentNow()) expireNativeDocumentTicket(ticket, record);
   }
   if (nativeDocumentOpenTickets.size >= MAX_SESSION_DOCUMENTS) return false;
   const ticket = crypto.randomBytes(32).toString("hex");
   nativeDocumentOpenTickets.set(ticket, {
     sender: target, frameTreeNodeId: target.mainFrame.frameTreeNodeId,
     generation: approvalRendererGeneration, filePath, provenance,
-    createdAt: Date.now(),
+    deadline: nativeDocumentNow() + STARTUP_DOCUMENT_DEADLINE_MS,
+    startup,
     pageSession: approvalRendererPageSession,
     delivered: approvalRendererState === "ready",
   });
+  if (startup) startup.ticket = ticket;
+  scheduleNativeDocumentDeadline();
   if (approvalRendererState === "ready") {
-    target.send("external-file-open-request", { filePath, documentOpenTicket: ticket });
+    try {
+      target.send("external-file-open-request", { filePath, documentOpenTicket: ticket,
+        ...(startup ? { startup: startup.correlation } : {}) });
+    } catch (error) {
+      nativeDocumentOpenTickets.delete(ticket);
+      scheduleNativeDocumentDeadline();
+      console.error("Native document ticket delivery failed:", error);
+      return false;
+    }
   }
   return true;
 }
@@ -2565,24 +2813,48 @@ function takeNativeDocumentTicket(event, ticket) {
   if (!record || record.sender !== event.sender ||
       record.frameTreeNodeId !== event.senderFrame.frameTreeNodeId ||
       record.generation !== approvalRendererGeneration ||
-      (record.pageSession !== null && record.pageSession !== approvalRendererPageSession) ||
-      Date.now() - record.createdAt > 60000) return null;
+      (record.pageSession !== null && record.pageSession !== approvalRendererPageSession)) return null;
+  if (shutdownCommitIngressBlocked) {
+    if (record.startup) notifyRetainedStartupDocument(record.startup, "shutdown-handoff-blocked");
+    return null;
+  }
+  if (record.deadline <= nativeDocumentNow()) {
+    expireNativeDocumentTicket(ticket, record);
+    scheduleNativeDocumentDeadline();
+    return null;
+  }
   nativeDocumentOpenTickets.delete(ticket);
+  if (record.startup) record.startup.ticket = null;
+  scheduleNativeDocumentDeadline();
+  startupContext.drain();
   return record;
 }
 
 ipcMain.handle("accept-native-document-ticket", (event, data) => {
   const record = takeNativeDocumentTicket(event, data?.ticket);
   if (!record) return false;
+  if (record.startup) {
+    if (!startupDocumentBinding(record.startup) || record.startup.state !== "offered") return false;
+    record.startup.state = "opening";
+    record.startup.deadline = nativeDocumentNow() + STARTUP_DOCUMENT_DEADLINE_MS;
+    scheduleNativeDocumentDeadline();
+  }
   openFile(record.filePath, {
     sender: event.sender, rendererGeneration: record.generation,
     provenance: record.provenance,
+    ...(record.startup ? { startupAttempt: {
+      record: record.startup, correlation: record.startup.correlation,
+    } } : {}),
   });
   return true;
 });
 
-ipcMain.handle("cancel-native-document-ticket", (event, data) =>
-  !!takeNativeDocumentTicket(event, data?.ticket));
+ipcMain.handle("cancel-native-document-ticket", (event, data) => {
+  const record = takeNativeDocumentTicket(event, data?.ticket);
+  if (!record) return false;
+  if (record.startup) retainStartupDocument(record.startup, "consent-declined");
+  return true;
+});
 
 ipcMain.handle("open-admitted-readme", (event) => {
   if (!isApprovalSender(event) || approvalRendererState !== "ready") return false;
@@ -3311,11 +3583,31 @@ async function markdownSnapshotPromise(filePath, expectedTarget = null) {
 
 let testPreloadRegistered = false;
 
+function attachReadingHistoryCommands(win) {
+  if (process.platform !== "win32" && process.platform !== "linux") return;
+  const contents = win.webContents;
+  const onCommand = (_event, command) => {
+    const direction = command === "browser-backward" ? -1
+      : command === "browser-forward" ? 1 : null;
+    if (direction === null || mainWindow !== win ||
+        win.isDestroyed() || contents.isDestroyed()) return;
+    contents.send("reading-history-command", direction);
+  };
+  const dispose = () => {
+    win.removeListener("app-command", onCommand);
+    win.removeListener("closed", dispose);
+    contents.removeListener("destroyed", dispose);
+  };
+  win.on("app-command", onCommand);
+  win.once("closed", dispose);
+  contents.once("destroyed", dispose);
+}
+
 function createWindow() {
   const privateBootstrapNonce = crypto.randomBytes(32).toString("hex");
   const savedState = loadWindowState();
   const testPreloadPreferences =
-    !app.isPackaged && process.argv.includes("--folia-test-preload")
+    !app.isPackaged && process.argv.includes("--markaloo-test-preload")
       ? { preload: path.join(__dirname, "../test/test-preload.js") }
       : {};
   if (
@@ -3348,9 +3640,9 @@ function createWindow() {
       sandbox: true,
       preload: path.join(__dirname, "main-preload.js"),
       additionalArguments: [
-        `--folia-session-bootstrap=${privateBootstrapNonce}`,
-        ...(testPreloadPreferences.preload ? ["--folia-test-pdf-restore"] : []),
-        ...(!app.isPackaged ? ["--folia-newline-alignment-diagnostics"] : []),
+        `--markaloo-session-bootstrap=${privateBootstrapNonce}`,
+        ...(testPreloadPreferences.preload ? ["--markaloo-test-pdf-restore"] : []),
+        ...(!app.isPackaged ? ["--markaloo-newline-alignment-diagnostics"] : []),
       ],
       backgroundThrottling: true, // Throttle background renderers to save CPU
     },
@@ -3359,6 +3651,7 @@ function createWindow() {
   privateSessionBootstraps.set(mainWindow.webContents, {
     nonce: privateBootstrapNonce, used: false,
   });
+  attachReadingHistoryCommands(mainWindow);
 
   // The main window runs with nodeIntegration: true, so a navigation away from
   // index.html hands `require` to whatever loads next. Nothing in the app ever
@@ -3459,6 +3752,12 @@ function createWindow() {
   // unaccounted for. (F22)
   attachShutdownGuards(mainWindow);
 
+  // Loading can pause either the outer activation or an already handed-off file.
+  mainWindow.webContents.on("did-stop-loading", () => {
+    startupContext.drain();
+    scheduleStartupDocumentPump();
+  });
+
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 
   // Hide the menu bar.
@@ -3517,18 +3816,8 @@ function createWindow() {
       });
   });
 
-  // Load file from command line after window loads
   mainWindow.webContents.on("did-finish-load", () => {
-    log("Window finished loading. fileToOpen:", fileToOpen);
-
-    if (fileToOpen) {
-      openFile(fileToOpen, {
-        sender: mainWindow.webContents,
-        rendererGeneration: approvalRendererGeneration,
-        provenance: "native-open",
-      });
-      fileToOpen = null;
-    }
+    startupContext.drain();
   });
 
   // Open DevTools in development (F12 to toggle)
@@ -4590,7 +4879,16 @@ function sendFileOpenFailure(
   reason,
   message,
   rendererGeneration = null,
+  startupAttempt = null,
 ) {
+  if (startupAttempt) {
+    if (!startupDocumentAttemptIsCurrent(startupAttempt)) return;
+    retainStartupDocument(startupAttempt.record, reason);
+    safeSendFileOpen(target, "file-open-result", {
+      success: false, path: filePath, reason, message,
+      startup: startupAttempt.correlation,
+    }, rendererGeneration);
+  }
   // Only tokenized navigation owns this result channel. A legacy failure is
   // intentionally uncorrelated and must not be allowed to retire a newer
   // pending navigation request in the renderer.
@@ -4660,6 +4958,8 @@ ipcMain.handle("read-dialog-extra", (event, data) => {
 });
 
 function openFile(filePath, options = {}) {
+  const startupAttempt = options.startupAttempt || null;
+  if (startupAttempt && !startupDocumentAttemptIsCurrent(startupAttempt)) return;
   // Native CLI paths may be relative. Only Main resolves from its CWD; the
   // event spelling must match the absolute logical admission in the browser.
   if (typeof filePath === "string" && filePath.length > 0) {
@@ -4695,6 +4995,7 @@ function openFile(filePath, options = {}) {
       "file-not-found",
       openRequest ? `File not found: ${filePath}` : null,
       rendererGeneration,
+      startupAttempt,
     );
     return;
   }
@@ -4713,11 +5014,14 @@ function openFile(filePath, options = {}) {
       "window-unavailable",
       null,
       rendererGeneration,
+      startupAttempt,
     );
     return;
   }
   const target = requestedSender || mainWindow.webContents;
   const delivery = captureFileOpenDelivery(target, deliveryEpoch);
+  const currentDelivery = () => delivery.current() &&
+    (!startupAttempt || startupDocumentAttemptIsCurrent(startupAttempt));
 
   // Own the continuation: readMarkdownSnapshot's legacy callback does not
   // consume promises returned by an async callback.
@@ -4727,10 +5031,10 @@ function openFile(filePath, options = {}) {
         !approvedBrowserPermissionIsCurrent(options.approvedBrowserPermission)) {
       log("Approved document open lost its owner or permission before read completion.");
       sendFileOpenFailure(target, filePath, openRequest, "approved-open-superseded",
-        null, rendererGeneration);
+        null, rendererGeneration, startupAttempt);
       return;
     }
-    if (!delivery.current()) {
+    if (!currentDelivery()) {
       sendFileOpenFailure(
         target,
         filePath,
@@ -4738,11 +5042,12 @@ function openFile(filePath, options = {}) {
         "superseded-open",
         null,
         rendererGeneration,
+        startupAttempt,
       );
       return;
     }
     log("File read successfully, sending to renderer");
-    const confirmation = confirmLargeDocument(data, filePath, delivery.owner, delivery.current);
+    const confirmation = confirmLargeDocument(data, filePath, delivery.owner, currentDelivery);
     const approved = confirmation === true || await confirmation;
     if (!approved) {
       sendFileOpenFailure(
@@ -4752,20 +5057,21 @@ function openFile(filePath, options = {}) {
         "large-declined",
         null,
         rendererGeneration,
+        startupAttempt,
       );
       return;
     }
-    if (!delivery.current() ||
+    if (!currentDelivery() ||
         (confirmation !== true && !fileOpenSnapshotIsCurrent(filePath, diskVersion, physical))) {
       sendFileOpenFailure(target, filePath, openRequest, "superseded-open",
-        null, rendererGeneration);
+        null, rendererGeneration, startupAttempt);
       return;
     }
     if (options.approvedBrowserPermission &&
         !approvedBrowserPermissionIsCurrent(options.approvedBrowserPermission)) {
       log("Approved document open lost its owner or permission during confirmation.");
       sendFileOpenFailure(target, filePath, openRequest, "approved-open-superseded",
-        null, rendererGeneration);
+        null, rendererGeneration, startupAttempt);
       return;
     }
     rememberDocumentModifiedTime(filePath, modifiedTime, { replace: false });
@@ -4776,9 +5082,15 @@ function openFile(filePath, options = {}) {
           physical, options.provenance);
       } catch (error) {
         sendFileOpenFailure(target, filePath, openRequest, "admission-refused",
-          error.message, rendererGeneration);
+          error.message, rendererGeneration, startupAttempt);
         return;
       }
+    }
+    if (startupAttempt) {
+      startupAttempt.record.admission = document;
+      startupAttempt.record.state = "awaiting-receipt";
+      startupAttempt.record.deadline = nativeDocumentNow() + STARTUP_DOCUMENT_DEADLINE_MS;
+      scheduleNativeDocumentDeadline();
     }
     const sent = safeSendFileOpen(
       target,
@@ -4791,18 +5103,21 @@ function openFile(filePath, options = {}) {
         modifiedTime,
         diskVersion,
         ...(document ? { document } : {}),
+        ...(startupAttempt ? { startup: startupAttempt.correlation } : {}),
       },
       rendererGeneration,
     );
     if (!sent) {
       if (document) documentAdmissions.delete(document.ref);
+      if (startupAttempt) sendFileOpenFailure(target, filePath, openRequest,
+        "delivery-refused", null, rendererGeneration, startupAttempt);
       return;
     }
     activeDialogExtraBatch = null;
   }).catch(err => {
     log("ERROR: Error reading file:", err);
     sendFileOpenFailure(target, filePath, openRequest, "read-failed",
-      `Error reading file: ${err.message}`, rendererGeneration);
+      `Error reading file: ${err.message}`, rendererGeneration, startupAttempt);
   });
 }
 
@@ -10597,7 +10912,43 @@ ipcMain.on("open-table-popup", (event, data) => {
 // COMMAND LINE HANDLING
 // ============================================
 
-function handleFileArgument(argv) {
+const startupClosingState = {
+  ordinaryGeneration: 0,
+  held: false,
+  invocations: [],
+};
+
+const startupWarnings = { active: null, pending: new Map() };
+
+function queueStartupWarning(kind, message) {
+  if (startupWarnings.active?.kind === kind &&
+      startupWarnings.active.message === message) return;
+  // Only the latest document and context notices wait behind the active warning.
+  startupWarnings.pending.set(kind, message);
+  void showNextStartupWarning();
+}
+
+async function showNextStartupWarning() {
+  if (startupWarnings.active || !startupWarnings.pending.size) return;
+  const [kind, message] = startupWarnings.pending.entries().next().value;
+  startupWarnings.pending.delete(kind);
+  startupWarnings.active = { kind, message };
+  try {
+    await app.whenReady();
+    // No document parent: a missing or unresponsive renderer cannot hide this.
+    await dialog.showMessageBox({
+      type: "warning", title: "Markaloo file opening",
+      message, buttons: ["OK"], defaultId: 0, cancelId: 0, noLink: true,
+    });
+  } catch (error) {
+    console.error("Markaloo could not display its startup warning:", error);
+  } finally {
+    startupWarnings.active = null;
+    void showNextStartupWarning();
+  }
+}
+
+function handleFileArgument(argv, workingDirectory) {
   log("handleFileArgument called with argv:", argv);
   log("app.isPackaged:", app.isPackaged);
 
@@ -10616,11 +10967,12 @@ function handleFileArgument(argv) {
       continue;
     }
     // Check if it's a file path
-    if (fs.existsSync(arg)) {
-      const ext = path.extname(arg).toLowerCase();
+    const candidate = path.resolve(workingDirectory, arg);
+    if (fs.existsSync(candidate)) {
+      const ext = path.extname(candidate).toLowerCase();
       // .ow remains a CLI/link-only legacy format, not a trusted-drop format.
-      if (isMarkdownFile(arg) || ext === ".ow") {
-        filePath = arg;
+      if (isMarkdownFile(candidate) || ext === ".ow") {
+        filePath = candidate;
         break;
       }
     }
@@ -10631,44 +10983,120 @@ function handleFileArgument(argv) {
   if (filePath) {
     const ext = path.extname(filePath).toLowerCase();
     log("File extension:", ext);
-    fileToOpen = filePath;
-    log("Valid markdown file, setting fileToOpen:", fileToOpen);
-    return true;
+    return filePath;
   } else {
     log("No valid markdown file found in arguments");
   }
-  return false;
+  return null;
 }
 
-// Check for file argument on first launch
-log("Initial process.argv:", process.argv);
-handleFileArgument(process.argv);
-
-// macOS: handle file open via Finder / double-click / "Open With"
-// Must be registered before app is ready so early open-file events are caught.
-app.on("open-file", (event, filePath) => {
-  event.preventDefault();
-  log("open-file event received:", filePath);
-  if (!filePath) return;
-
-  if (mainWindow && mainWindow.webContents) {
-    // App already running — send directly to renderer (respects unsaved-changes check)
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-    if (mainWindow.webContents.isLoading()) {
-      mainWindow.webContents.once("did-finish-load", () => {
-        deliverNativeDocumentIntent(mainWindow.webContents, filePath);
-      });
-    } else {
-      deliverNativeDocumentIntent(mainWindow.webContents, filePath);
-    }
-  } else {
-    // App not ready yet — store for did-finish-load
-    fileToOpen = filePath;
+startupContext.setConsumer(request => {
+  if (!startupDocuments.classified.has(request)) {
+    startupDocuments.classified.set(request, handleFileArgument(request.args, request.cwd));
   }
+  const filePath = startupDocuments.classified.get(request);
+  if (filePath && !queueStartupDocument(request, filePath)) return false;
+  if (!mainWindow || mainWindow.isDestroyed() ||
+      mainWindow.webContents.isLoading()) return !!filePath;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+  return true;
+}, () => startupDocuments.pending.size > 0 || nativeDocumentOpenTickets.size > 0);
+
+startupContext.setErrorHandler(message => {
+  queueStartupWarning("context", message);
+  if (mainWindow && !mainWindow.isDestroyed() &&
+      !mainWindow.webContents.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    try {
+      mainWindow.webContents.send("show-error", message);
+    } catch (error) {
+      console.error("Startup notice could not reach the document renderer:", error);
+    }
+  }
+  return true;
 });
 
+function isCurrentOrdinaryShutdownIntent(intent) {
+  return !!intent && (isUpdaterShutdownReason(intent.reason) ||
+    intent.ordinaryGeneration === startupClosingState.ordinaryGeneration);
+}
+
+function currentShutdownIntents(intents) {
+  return intents.filter(intent => {
+    if (isCurrentOrdinaryShutdownIntent(intent)) return true;
+    declineIntent(intent, "accepted-opens-pending");
+    return false;
+  });
+}
+
+function retireOrdinaryShutdownForStartup() {
+  if (!startupClosingState.held) {
+    startupClosingState.ordinaryGeneration++;
+    startupClosingState.held = true;
+  }
+  revokeShutdownAuthorization();
+  for (const invocation of startupClosingState.invocations) invocation.held = true;
+  const record = pendingShutdown && !isUpdaterShutdownReason(pendingShutdown.reason)
+    ? pendingShutdown : null;
+  if (record) pendingShutdown = null;
+  const queued = queuedShutdown && !isUpdaterShutdownReason(queuedShutdown.reason)
+    ? queuedShutdown : null;
+  if (queued) queuedShutdown = null;
+  const absorbed = absorbedUserShutdown;
+  absorbedUserShutdown = null;
+  if (absorbed) absorbed.replayScheduled = false;
+  const attempt = pendingShutdownCommit;
+  const retired = attempt
+    ? attempt.continuations.filter(intent => !isUpdaterShutdownReason(intent.reason)) : [];
+  if (attempt) {
+    attempt.continuations = attempt.continuations.filter(intent =>
+      isUpdaterShutdownReason(intent.reason));
+    if (!attempt.continuations.length) {
+      pendingShutdownCommit = null;
+      attempt.settled = true;
+      if (attempt.deadlineTimer !== null) clearTimeout(attempt.deadlineTimer);
+      attempt.deadlineTimer = null;
+      completeShutdownTiming(attempt.id);
+    }
+  }
+  // Release only this freeze, before abort/decline callbacks can start another.
+  releaseShutdownFreeze();
+  // Detach every ordinary slot before abort/decline callbacks can re-enter Main.
+  for (const intent of [record, queued, absorbed, ...retired]) {
+    if (!intent) continue;
+    declineIntent(intent, "accepted-opens-pending");
+    intent.continuation = null;
+  }
+  if (record) {
+    completeShutdownTiming(record.id);
+    const controller = record.dialogAbortController;
+    record.dialogAbortController = null;
+    controller?.abort();
+    if (queuedShutdown) {
+      const updater = queuedShutdown;
+      queuedShutdown = null;
+      requestShutdown(updater.reason, updater.continuation, {
+        forceFresh: true, onDeclined: updater.onDeclined,
+      });
+    }
+  }
+}
+
+function holdStartupClosing(event = null) {
+  if (!startupContext.holdClosing()) return false;
+  event?.preventDefault();
+  retireOrdinaryShutdownForStartup();
+  if (!shutdownCommitIngressBlocked) startupContext.drain();
+  return true;
+}
+
 ipcMain.on("request-open-file", requestApprovedBrowserDocument);
+ipcMain.handle("retry-retained-startup-opens", (event, data) => {
+  if (!isApprovalSender(event) || data?.pageSession !== approvalRendererPageSession ||
+      data?.rendererGeneration !== approvalRendererGeneration) return false;
+  retryRetainedStartupDocuments();
+  return !shutdownCommitIngressBlocked;
+});
 
 // ============================================
 // SINGLE INSTANCE LOCK & APP LIFECYCLE
@@ -10695,42 +11123,11 @@ if (process.platform === "win32") {
   }
 }
 
-const gotTheLock = app.requestSingleInstanceLock();
+const gotTheLock = startupContext.gotTheLock;
 
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on("second-instance", (event, commandLine, workingDirectory) => {
-    // User opened a file while app is running
-    log("Second instance detected, commandLine:", commandLine);
-
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-
-      // Handle the file from second instance - send to renderer for unsaved changes check
-      if (handleFileArgument(commandLine)) {
-        log("File to open from second instance:", fileToOpen);
-
-        // Ensure webContents is ready before sending IPC
-        if (mainWindow.webContents.isLoading()) {
-          log("WebContents is loading, waiting for did-finish-load");
-          mainWindow.webContents.once("did-finish-load", () => {
-            log("Sending external-file-open-request after load");
-            deliverNativeDocumentIntent(mainWindow.webContents, fileToOpen);
-            fileToOpen = null;
-          });
-        } else {
-          log("Sending external-file-open-request immediately");
-          deliverNativeDocumentIntent(mainWindow.webContents, fileToOpen);
-          fileToOpen = null;
-        }
-      } else {
-        log("No valid file found in command line arguments");
-      }
-    }
-  });
-
   app.whenReady().then(() => {
     // Before any window exists, so no window can ever see the default menu.
     suppressDefaultApplicationMenu();
@@ -11200,6 +11597,8 @@ function recordUpdaterInstallAttemptState(attempt) {
 
 function finishFailedUpdaterInstallAttempt(attempt) {
   if (!attempt || attempt.retired) return false;
+  // A generic updater error cannot prove that our launcher never started.
+  if (attempt.launchOwner === "markaloo" && !attempt.retrySafe) return false;
   if (attempt.poisonExpiry !== null && attempt.poisonExpiry !== undefined) {
     clearImmediate(attempt.poisonExpiry);
     attempt.poisonExpiry = null;
@@ -11226,6 +11625,9 @@ function finishFailedUpdaterInstallAttempt(attempt) {
   }
   if (activeUpdaterInstallAttempt === attempt) {
     activeUpdaterInstallAttempt = null;
+  }
+  if (attempt.admissionPause) {
+    startupContext.resumeAfterUpdate(attempt.admissionPause);
   }
   if (owned) {
     updateInstallStarted = false;
@@ -11562,12 +11964,12 @@ function isUpdaterShutdownReason(reason) {
   return !NO_WINDOW_APPROVABLE.has(reason);
 }
 
-function isFoliaInstalledUpdateLaunchPending() {
+function isMarkalooInstalledUpdateLaunchPending() {
   const attempt = activeUpdaterInstallAttempt;
   return !!(
     attempt &&
     !attempt.retired &&
-    attempt.launchOwner === "folia" &&
+    attempt.launchOwner === "markaloo" &&
     !attempt.positiveLaunchObserved &&
     (attempt.launchPhase === "starting-installer" ||
       attempt.launchPhase === "starting-elevation-helper" ||
@@ -11577,7 +11979,7 @@ function isFoliaInstalledUpdateLaunchPending() {
 
 function quitAfterFrozenUpdaterDocumentLoss(why) {
   const attempt = activeUpdaterInstallAttempt;
-  if (!foliaUpdaterAttemptRetainsFreeze() || !attempt) return false;
+  if (!markalooUpdaterAttemptRetainsFreeze() || !attempt) return false;
   attempt.committed = true;
   attempt.launchPhase = "quitting-after-document-loss";
   attempt.failureWhy = why;
@@ -11633,6 +12035,10 @@ function replayAbsorbedUserShutdownAfterUpdaterCancel(why) {
     if (absorbedUserShutdown !== intent || !intent.replayScheduled) return;
     intent.replayScheduled = false;
     absorbedUserShutdown = null;
+    if (!isCurrentOrdinaryShutdownIntent(intent)) {
+      declineIntent(intent, "accepted-opens-pending");
+      return;
+    }
     const owner = shutdownOwnerWindow();
     if (!owner || owner.webContents.id !== intent.ownerId) {
       declineIntent(intent, "window-gone");
@@ -11646,6 +12052,7 @@ function replayAbsorbedUserShutdownAfterUpdaterCancel(why) {
       forceFresh: true,
       onDeclined: intent.onDeclined,
       absorbedUserIntent: intent,
+      ordinaryGeneration: intent.ordinaryGeneration,
     });
   });
   return true;
@@ -11857,8 +12264,22 @@ function requestShutdown(reason, continuation, options = {}) {
     typeof options.fallbackCause === "string" ? options.fallbackCause : null;
   const onDeclined =
     typeof options.onDeclined === "function" ? options.onDeclined : null;
+  const ordinaryGeneration = options.ordinaryGeneration ??
+    startupClosingState.ordinaryGeneration;
+  const intent = { reason, continuation, forceFresh, onDeclined, ordinaryGeneration };
+  if (!isCurrentOrdinaryShutdownIntent(intent)) {
+    declineIntent(intent, "accepted-opens-pending");
+    return;
+  }
+  if (!isUpdaterShutdownReason(reason)) {
+    if (holdStartupClosing()) {
+      declineIntent(intent, "accepted-opens-pending");
+      return;
+    }
+    startupClosingState.held = false;
+  }
   if (
-    isFoliaInstalledUpdateLaunchPending() &&
+    isMarkalooInstalledUpdateLaunchPending() &&
     !isUpdaterShutdownReason(reason)
   ) {
     holdAbsorbedUserShutdown({
@@ -11866,6 +12287,7 @@ function requestShutdown(reason, continuation, options = {}) {
       continuation,
       forceFresh,
       onDeclined,
+      ordinaryGeneration,
     });
     return;
   }
@@ -11875,7 +12297,6 @@ function requestShutdown(reason, continuation, options = {}) {
     options.absorbedUserIntent !== absorbedUserShutdown
   ) {
     const replayWasScheduled = absorbedUserShutdown.replayScheduled;
-    const intent = { reason, continuation, forceFresh, onDeclined };
     holdAbsorbedUserShutdown(intent);
     if (replayWasScheduled && absorbedUserShutdown === intent) {
       replayAbsorbedUserShutdownAfterUpdaterCancel(
@@ -11904,7 +12325,7 @@ function requestShutdown(reason, continuation, options = {}) {
     // what keeps Ctrl+Q from becoming a silent no-op if the close it follows
     // did not complete.
     runApprovedContinuations(
-      [{ reason, continuation, onDeclined }],
+      [intent],
       0,
       shutdownDocumentSession(),
     );
@@ -11918,6 +12339,7 @@ function requestShutdown(reason, continuation, options = {}) {
       forceFresh,
       onDeclined,
       options.absorbedUserIntent || null,
+      ordinaryGeneration,
     );
     return;
   }
@@ -11926,6 +12348,7 @@ function requestShutdown(reason, continuation, options = {}) {
     reason,
     continuation,
     onDeclined,
+    ordinaryGeneration,
     absorbedUserIntentId: options.absorbedUserIntent
       ? options.absorbedUserIntent.absorbedId
       : 0,
@@ -11988,12 +12411,14 @@ function queueShutdown(
   forceFresh = false,
   onDeclined = null,
   absorbedUserIntent = null,
+  ordinaryGeneration = startupClosingState.ordinaryGeneration,
 ) {
   const intent = absorbedUserIntent || {
     reason,
     continuation,
     forceFresh,
     onDeclined,
+    ordinaryGeneration,
   };
   intent.reason = reason;
   intent.continuation = continuation;
@@ -12061,7 +12486,7 @@ function dispatchShutdownRequest(record) {
         id: record.id,
         reason: record.reason,
         gen: generation,
-        retainFreeze: foliaUpdaterAttemptRetainsFreeze(),
+        retainFreeze: markalooUpdaterAttemptRetainsFreeze(),
       });
     } catch (error) {
       if (pendingShutdown !== record) return;
@@ -12190,6 +12615,17 @@ function settleShutdown(record, approved, why) {
   record.continuation = null; // release: the record must outlive nothing
   const queued = queuedShutdown;
   queuedShutdown = null;
+  if (!isCurrentOrdinaryShutdownIntent(record)) {
+    declineIntent(record, "accepted-opens-pending");
+    completeShutdownTiming(record.id);
+    if (queued && isCurrentOrdinaryShutdownIntent(queued)) {
+      requestShutdown(queued.reason, queued.continuation, {
+        forceFresh: true, onDeclined: queued.onDeclined,
+        ordinaryGeneration: queued.ordinaryGeneration,
+      });
+    } else declineIntent(queued, "accepted-opens-pending");
+    return;
+  }
   if (!approved) {
     completeShutdownTiming(record.id);
     log(`Shutdown approval #${record.id} declined (${why})`);
@@ -12207,6 +12643,7 @@ function settleShutdown(record, approved, why) {
       requestShutdown(queued.reason, queued.continuation, {
         forceFresh: queued.forceFresh,
         onDeclined: queued.onDeclined,
+        ordinaryGeneration: queued.ordinaryGeneration,
       });
     }
     if (isUpdaterShutdownReason(record.reason)) {
@@ -12224,11 +12661,13 @@ function settleShutdown(record, approved, why) {
     requestShutdown(queued.reason, queued.continuation, {
       forceFresh: true,
       onDeclined: queued.onDeclined,
+      ordinaryGeneration: queued.ordinaryGeneration,
     });
     return;
   }
   const continuations = [
-    { reason: record.reason, continuation, onDeclined: record.onDeclined },
+    { reason: record.reason, continuation, onDeclined: record.onDeclined,
+      ordinaryGeneration: record.ordinaryGeneration },
   ];
   if (queued) continuations.push(queued);
   commitThenRun(record, continuations, shutdownDocumentSession());
@@ -12251,6 +12690,11 @@ function settleShutdown(record, approved, why) {
 // have no renderer to ask, and there is correspondingly nothing left to lose -
 // those run directly, as before.
 function commitThenRun(record, continuations, approvedSession) {
+  continuations = currentShutdownIntents(continuations);
+  if (!continuations.length) {
+    completeShutdownTiming(record.id);
+    return;
+  }
   // CAPTURED AT COMMIT START AND NEVER RECOMPUTED. The epoch that authorises
   // these continuations is the one in force when the commit began, not the one
   // in force when it happens to finish - reading it later means a request that
@@ -12284,6 +12728,7 @@ function commitThenRun(record, continuations, approvedSession) {
       requestShutdown(intent.reason, intent.continuation, {
         forceFresh: true,
         onDeclined: intent.onDeclined,
+        ordinaryGeneration: intent.ordinaryGeneration,
       });
     }
     return;
@@ -12385,6 +12830,11 @@ function finishShutdownCommit(attempt, committed, why, options = {}) {
     attempt.deadlineTimer = null;
   }
   if (pendingShutdownCommit === attempt) pendingShutdownCommit = null;
+  attempt.continuations = currentShutdownIntents(attempt.continuations);
+  if (!attempt.continuations.length) {
+    completeShutdownTiming(attempt.id);
+    return;
+  }
   // A NEWER INTENT INVALIDATES A CONFIRMED COMMIT TOO. The renderer may have
   // said yes about a document state the reader has since been asked about
   // again; acting on it now would run an old answer alongside a new question.
@@ -12430,16 +12880,17 @@ function finishShutdownCommit(attempt, committed, why, options = {}) {
       forceFresh: true,
       onDeclined: intent.onDeclined,
       fallbackCause: options.fallbackCause,
+      ordinaryGeneration: intent.ordinaryGeneration,
     });
   }
 }
 
-function foliaUpdaterAttemptRetainsFreeze() {
+function markalooUpdaterAttemptRetainsFreeze() {
   const attempt = activeUpdaterInstallAttempt;
   return !!(
     attempt &&
     !attempt.retired &&
-    attempt.launchOwner === "folia" &&
+    attempt.launchOwner === "markaloo" &&
     !attempt.retrySafe
   );
 }
@@ -12450,8 +12901,9 @@ function foliaUpdaterAttemptRetainsFreeze() {
 // Generic cancellation/navigation paths cannot thaw it. Only a retry-safe
 // launcher failure retires the attempt first, or the test seam forces reset.
 function releaseShutdownFreeze(options = {}) {
-  if (!options.force && foliaUpdaterAttemptRetainsFreeze()) return;
+  if (!options.force && markalooUpdaterAttemptRetainsFreeze()) return;
   shutdownCommitIngressBlocked = false;
+  scheduleStartupDocumentPump();
   const win = shutdownOwnerWindow();
   const wc = win ? win.webContents : null;
   // WebContents survives a renderer crash; send() then reports disposal from
@@ -12628,6 +13080,10 @@ function runApprovedContinuations(
 ) {
   setImmediate(() => {
     for (const intent of continuations) {
+      if (!isCurrentOrdinaryShutdownIntent(intent)) {
+        declineIntent(intent, "accepted-opens-pending");
+        continue;
+      }
       const continuation = intent && intent.continuation;
       if (typeof continuation !== "function") {
         declineIntent(intent, "no-continuation");
@@ -12642,6 +13098,7 @@ function runApprovedContinuations(
         requestShutdown(intent.reason, continuation, {
           forceFresh: true,
           onDeclined: intent.onDeclined,
+          ordinaryGeneration: intent.ordinaryGeneration,
         });
         continue;
       }
@@ -12682,6 +13139,7 @@ function runApprovedContinuations(
         requestShutdown(intent.reason, continuation, {
           forceFresh: true,
           onDeclined: intent.onDeclined,
+          ordinaryGeneration: intent.ordinaryGeneration,
         });
         continue;
       }
@@ -12705,6 +13163,7 @@ function runApprovedContinuations(
         requestShutdown(intent.reason, continuation, {
           forceFresh: true,
           onDeclined: intent.onDeclined,
+          ordinaryGeneration: intent.ordinaryGeneration,
         });
         continue;
       }
@@ -12722,6 +13181,7 @@ function runApprovedContinuations(
           );
         }
       }
+      if (!isCurrentOrdinaryShutdownIntent(intent)) continue;
       if (started === SHUTDOWN_CONTINUATION_PENDING) {
         shutdownPendingContinuationCount += 1;
         revokeShutdownAuthorization();
@@ -13003,6 +13463,8 @@ ipcMain.on(QUIT_APPROVAL_READY, (event, data) => {
   }
   approvalRendererPageSession = data.pageSession;
   approvalRendererState = "ready";
+  startupContext.drain();
+  scheduleStartupDocumentPump();
   for (const [ticket, record] of nativeDocumentOpenTickets) {
     if (!record.delivered && record.sender === event.sender &&
         record.generation === generation &&
@@ -13011,6 +13473,7 @@ ipcMain.on(QUIT_APPROVAL_READY, (event, data) => {
       record.pageSession = data.pageSession;
       event.sender.send("external-file-open-request", {
         filePath: record.filePath, documentOpenTicket: ticket,
+        ...(record.startup ? { startup: record.startup.correlation } : {}),
       });
     }
   }
@@ -13206,8 +13669,14 @@ ipcMain.on(QUIT_APPROVAL_RETRY, (event, data) => {
 });
 
 function quitApprovedApp() {
-  app.quit();
-  return true;
+  const invocation = { held: false };
+  startupClosingState.invocations.push(invocation);
+  try {
+    app.quit();
+    return !invocation.held;
+  } finally {
+    startupClosingState.invocations.pop();
+  }
 }
 
 function quitApprovedUpdateApp() {
@@ -13218,8 +13687,14 @@ function quitApprovedUpdateApp() {
 
 function closeApprovedWindow(win) {
   if (!win || win.isDestroyed()) return false;
-  win.close();
-  return true;
+  const invocation = { held: false };
+  startupClosingState.invocations.push(invocation);
+  try {
+    win.close();
+    return !invocation.held;
+  } finally {
+    startupClosingState.invocations.pop();
+  }
 }
 
 function restartPendingShutdownAfterNavigation(record) {
@@ -13251,18 +13726,17 @@ function restartPendingShutdownAfterNavigation(record) {
   requestShutdown(record.reason, continuation, {
     forceFresh: true,
     onDeclined: record.onDeclined,
+    ordinaryGeneration: record.ordinaryGeneration,
   });
 
-  // Preserve a distinct stronger intent rather than folding it into the old
-  // consent token. queueShutdown applies the same ranking and exactly-once
-  // decline rules it used before the navigation.
+  // A held replacement may have no question. Dispatch with the saved generation
+  // so stale ordinary work declines and updater work keeps its normal ranking.
   if (queued) {
-    queueShutdown(
-      queued.reason,
-      queued.continuation,
-      queued.forceFresh,
-      queued.onDeclined,
-    );
+    requestShutdown(queued.reason, queued.continuation, {
+      forceFresh: queued.forceFresh,
+      onDeclined: queued.onDeclined,
+      ordinaryGeneration: queued.ordinaryGeneration,
+    });
   }
 }
 
@@ -13292,6 +13766,7 @@ function attachShutdownGuards(win) {
   approvalRendererState = "loading";
   approvalRendererGeneration += 1;
   approvalRendererPageSession = null;
+  invalidateStartupDocumentGeneration();
   knownDocumentOwners.clear();
   latestAcceptedSaveSequenceByDocument.clear();
   latestWatcherSelectionGeneration = 0;
@@ -13325,6 +13800,7 @@ function attachShutdownGuards(win) {
     approvalRendererState = "loading";
     approvalRendererGeneration += 1;
     approvalRendererPageSession = null;
+    invalidateStartupDocumentGeneration();
     knownDocumentOwners.clear();
     latestAcceptedSaveSequenceByDocument.clear();
     latestWatcherSelectionGeneration = 0;
@@ -13413,12 +13889,17 @@ function attachShutdownGuards(win) {
     log("Renderer unresponsive with a shutdown question outstanding");
     askFallbackApproval(pendingShutdown, "unresponsive");
   });
+  win.on("responsive", () => {
+    startupContext.drain();
+    scheduleStartupDocumentPump();
+  });
 
   // The guard. preventDefault holds the window open while the question is
   // outstanding; the approved continuation calls close() again, and this
   // handler lets that second close through exactly once rather than starting
   // over.
   win.on("close", (event) => {
+    if (holdStartupClosing(event)) return;
     if (hasCurrentShutdownAuthorization()) return;
     event.preventDefault();
     requestShutdown("window-close", () => closeApprovedWindow(win));
@@ -13522,6 +14003,7 @@ app.on("before-quit", (event) => {
     }
     return;
   }
+  if (holdStartupClosing(event)) return;
   if (hasCurrentShutdownAuthorization()) return;
   if (!shutdownOwnerWindow()) return; // no document window: nothing to lose
   event.preventDefault();
@@ -13756,7 +14238,7 @@ function configureAutoUpdater(autoUpdater) {
       isCheckError ||
       updaterDownloadInFlight ||
       !installAttempt ||
-      installAttempt.launchOwner === "folia"
+      installAttempt.launchOwner === "markaloo"
     ) {
       return;
     }
@@ -13859,22 +14341,50 @@ ipcMain.on("install-update", (event) => {
     log("Install update requested while an install attempt is already active");
     return;
   }
+  let admissionPause = null;
+  if (!isPortable && process.platform === "win32") {
+    try {
+      windowsInstalledUpdateLaunchPlan(updater);
+      admissionPause = startupContext.pauseForUpdate();
+      if (startupContext.hasPendingRequests()) {
+        startupContext.resumeAfterUpdate(admissionPause);
+        holdStartupClosing();
+        updateState.fail(new Error(
+          "Some file opens are still pending. Finish opening them, then choose Install again.",
+        ));
+        return;
+      }
+    } catch (error) {
+      if (admissionPause) startupContext.resumeAfterUpdate(admissionPause);
+      log("Installed update admission preflight failed:", error.message);
+      updateState.fail(new Error(
+        "The update could not start: " + error.message,
+      ));
+      return;
+    }
+  }
   updateSchedule.beginManualAction();
   updateInstallApprovalPending = true;
   updateState.beginInstall();
-  const releaseApproval = () => {
+  let approvalReleased = false;
+  const releaseApproval = (restoreAdmission = true) => {
+    if (approvalReleased) return;
+    approvalReleased = true;
+    if (restoreAdmission && admissionPause) {
+      startupContext.resumeAfterUpdate(admissionPause);
+    }
     updateInstallApprovalPending = false;
     updateState.publish();
   };
   requestShutdown("update-install", () => {
     try {
-      return performUpdateInstall(updater);
+      return performUpdateInstall(updater, admissionPause);
     } finally {
-      releaseApproval();
+      releaseApproval(!markalooUpdaterAttemptRetainsFreeze());
     }
   }, {
     forceFresh: true,
-    onDeclined: releaseApproval,
+    onDeclined: () => releaseApproval(),
   });
 });
 
@@ -13901,11 +14411,17 @@ function windowsInstalledUpdateLaunchPlan(updater) {
   ) {
     throw new Error("the updater duplicate-install latch is unavailable");
   }
+  if (updater.quitAndInstallCalled) {
+    throw new Error("the updater already has an install attempt");
+  }
   const helper = updater && updater.downloadedUpdateHelper;
   const downloadedFileInfo = helper && helper.downloadedFileInfo;
   const installerPath = updater && updater.installerPath;
   if (!helper || !downloadedFileInfo) {
     throw new Error("verified updater download metadata is unavailable");
+  }
+  if (downloadedFileInfo.isAdminRightsRequired === true) {
+    throw new Error("this update requires an unsupported elevated launcher");
   }
   if (!isExistingRegularFile(installerPath)) {
     throw new Error("the downloaded installer is missing");
@@ -13915,9 +14431,7 @@ function windowsInstalledUpdateLaunchPlan(updater) {
   if (updater.autoRunAppAfterInstall) args.push("--force-run");
   if (typeof updater.installDirectory === "string" && updater.installDirectory) {
     // NSIS requires /D= to be the final, unquoted command-line token.
-    // Node's normal argv quoting cannot express that invariant for every path,
-    // and elevate.exe 1.3.0 forwards the raw command-line remainder. Do not
-    // leave a latent malformed install-directory path in the verified route.
+    // Node's normal argv quoting cannot express that invariant for every path.
     throw new Error(
       "custom NSIS install directories are unsupported by the verified launcher",
     );
@@ -13932,8 +14446,6 @@ function windowsInstalledUpdateLaunchPlan(updater) {
   return {
     installerPath,
     args,
-    requiresElevation: downloadedFileInfo.isAdminRightsRequired === true,
-    elevatePath: path.join(process.resourcesPath, "elevate.exe"),
   };
 }
 
@@ -14030,101 +14542,14 @@ function commitWindowsInstalledUpdateLaunch(attempt, child, method) {
   quitApprovedUpdateApp();
 }
 
-function spawnElevatedWindowsInstaller(attempt, plan) {
-  if (
-    !attempt ||
-    attempt.retired ||
-    activeUpdaterInstallAttempt !== attempt
-  ) {
-    return false;
+function assertWindowsUpdateAdmission(admissionPause) {
+  if (!startupContext.isUpdatePauseCurrent(admissionPause) ||
+      startupContext.hasPendingRequests()) {
+    throw new Error("Startup admission changed or accepted file opens are still pending");
   }
-  if (!isExistingRegularFile(plan.elevatePath)) {
-    reportInstalledUpdateLaunchFailure(
-      attempt,
-      "the packaged elevation helper is missing",
-      true,
-    );
-    return false;
-  }
-
-  attempt.launchMethod = "elevated";
-  attempt.launchPhase = "starting-elevation-helper";
-  recordUpdaterInstallAttemptState(attempt);
-  let child;
-  try {
-    const { spawn } = require("child_process");
-    child = spawn(
-      plan.elevatePath,
-      [plan.installerPath, ...plan.args],
-      {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      },
-    );
-  } catch (err) {
-    reportInstalledUpdateLaunchFailure(
-      attempt,
-      "elevation helper threw before start: " + err.message,
-      true,
-    );
-    return false;
-  }
-
-  let settled = false;
-  let helperStarted = false;
-  child.once("spawn", () => {
-    if (
-      attempt.retired ||
-      attempt.committed ||
-      activeUpdaterInstallAttempt !== attempt
-    ) {
-      return;
-    }
-    helperStarted = true;
-    attempt.launchPhase = "awaiting-elevation-result";
-    recordUpdaterInstallAttemptState(attempt);
-  });
-  child.once("error", (err) => {
-    if (settled) return;
-    settled = true;
-    reportInstalledUpdateLaunchFailure(
-      attempt,
-      "elevation helper could not start: " + err.message,
-      !helperStarted,
-    );
-  });
-  child.once("close", (code, signal) => {
-    if (settled) return;
-    settled = true;
-    // electron-builder's bundled elevate.exe returns zero only after
-    // ShellExecuteEx supplied a real process handle. A normal nonzero exit is
-    // therefore proof that UAC/launch failed before the installer existed.
-    if (signal === null && code === 0) {
-      commitWindowsInstalledUpdateLaunch(attempt, child, "elevated");
-      return;
-    }
-    reportInstalledUpdateLaunchFailure(
-      attempt,
-      signal
-        ? `elevation helper ended by signal ${signal}`
-        : `elevation helper exited with code ${code}`,
-      signal === null && Number.isInteger(code),
-    );
-  });
-  // Detached is not enough: a referenced ChildProcess object still contributes
-  // its handle to Electron's event loop. Listeners are installed first so the
-  // UAC result remains observable while the app is alive; unref then ensures a
-  // prompt or helper that never exits cannot hold an already-approved teardown
-  // open. The attempt/latches remain in JS state and still block duplicates if
-  // the application continues running.
-  child.unref();
-  attempt.launchChildUnrefed = true;
-  recordUpdaterInstallAttemptState(attempt);
-  return true;
 }
 
-function performWindowsInstalledUpdate(updater) {
+function performWindowsInstalledUpdate(updater, admissionPause) {
   if (updater.quitAndInstallCalled === true) {
     log("Installed update: updater already has an install attempt");
     replayAbsorbedUserShutdownAfterUpdaterCancel(
@@ -14136,9 +14561,11 @@ function performWindowsInstalledUpdate(updater) {
   let plan;
   try {
     plan = windowsInstalledUpdateLaunchPlan(updater);
+    assertWindowsUpdateAdmission(admissionPause);
   } catch (err) {
     log("Installed update preflight failed:", err.message);
-    updateState.fail(new Error("The downloaded update is incomplete. Download it again."));
+    updateState.fail(new Error("The update could not start: " + err.message));
+    holdStartupClosing();
     replayAbsorbedUserShutdownAfterUpdaterCancel(
       "installed-update-preflight-failed",
     );
@@ -14146,7 +14573,9 @@ function performWindowsInstalledUpdate(updater) {
   }
 
   const attempt = watchUpdaterInstallCommit(updater);
-  attempt.launchOwner = "folia";
+  attempt.launchOwner = "markaloo";
+  attempt.admissionPause = admissionPause;
+  attempt.retrySafe = true;
   attempt.launchPhase = "starting-installer";
   attempt.finalApprovalCommitted = true;
   recordUpdaterInstallAttemptState(attempt);
@@ -14162,16 +14591,14 @@ function performWindowsInstalledUpdate(updater) {
     attempt.ownsUpdaterQuitLatch = true;
   }
 
-  if (plan.requiresElevation) {
-    if (!spawnElevatedWindowsInstaller(attempt, plan)) return false;
-    return SHUTDOWN_CONTINUATION_PENDING;
-  }
-
   attempt.launchMethod = "direct";
   recordUpdaterInstallAttemptState(attempt);
   let child;
   try {
     const { spawn } = require("child_process");
+    assertWindowsUpdateAdmission(admissionPause);
+    // No accepted work can enter between this check and the synchronous spawn.
+    attempt.retrySafe = false;
     child = spawn(plan.installerPath, plan.args, {
       detached: true,
       stdio: "ignore",
@@ -14183,6 +14610,7 @@ function performWindowsInstalledUpdate(updater) {
       "installer launch threw before start: " + err.message,
       true,
     );
+    holdStartupClosing();
     return false;
   }
 
@@ -14197,10 +14625,6 @@ function performWindowsInstalledUpdate(updater) {
   child.once("error", (err) => {
     if (settled) return;
     settled = true;
-    if (err && (err.code === "EACCES" || err.code === "UNKNOWN")) {
-      spawnElevatedWindowsInstaller(attempt, plan);
-      return;
-    }
     reportInstalledUpdateLaunchFailure(
       attempt,
       "installer could not start: " + err.message,
@@ -14218,9 +14642,7 @@ function performWindowsInstalledUpdate(updater) {
       false,
     );
   });
-  // Keep direct and elevated detached launchers consistent. Positive hand-off
-  // still requires the spawn event; unref only removes the child handle as a
-  // reason for the parent process to stay alive.
+  // A child handle alone is not launch proof; only its spawn event can quit.
   child.unref();
   attempt.launchChildUnrefed = true;
   recordUpdaterInstallAttemptState(attempt);
@@ -14232,11 +14654,10 @@ function performWindowsInstalledUpdate(updater) {
  *   false when nothing started; SHUTDOWN_CONTINUATION_PENDING when the final
  *   approval is committed and an asynchronous Windows hand-off owns its freeze.
  *
- * Windows NSIS uses Markaloo's own launcher and treats only a child `spawn` event,
- * or elevate.exe's successful ShellExecuteEx result, as positive hand-off
- * proof. Other BaseUpdater platforms retain their public lifecycle boundary.
+ * Windows NSIS starts unelevated and treats only a child `spawn` event as
+ * positive hand-off proof. Other BaseUpdater platforms keep their own boundary.
  */
-function performUpdateInstall(updater) {
+function performUpdateInstall(updater, admissionPause = null) {
   // Re-entry. Either the installer is already going (in which case the process
   // is about to end and the answer does not matter) or the first attempt
   // failed (in which case the honest answer is "nothing started").
@@ -14274,7 +14695,7 @@ function performUpdateInstall(updater) {
       // written and then executed - a local process that wins that race gets
       // code execution as the user. mkdtempSync gives an unpredictable 0700
       // directory, and "wx" refuses to write if anything is already there.
-      batchDir = fs.mkdtempSync(path.join(os.tmpdir(), "folia-update-"));
+      batchDir = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-update-"));
       const batchPath = path.join(batchDir, "update.bat");
       const releasePath = path.join(batchDir, "release");
       const cancelPath = path.join(batchDir, "cancel");
@@ -14319,20 +14740,20 @@ function performUpdateInstall(updater) {
           "@echo off",
           // Seeded to a value no size can equal, so the first poll always
           // registers as a beat rather than as a miss.
-          'set "FOLIA_HB=x"',
-          'set "FOLIA_LAST=x"',
-          "set FOLIA_MISS=0",
+          'set "MARKALOO_HB=x"',
+          'set "MARKALOO_LAST=x"',
+          "set MARKALOO_MISS=0",
           ":wait_for_release",
           `if exist "${cancelPath}" goto cleanup`,
           `if exist "${releasePath}" goto install`,
-          `for %%F in ("${leasePath}") do set "FOLIA_HB=%%~zF"`,
-          'if not "%FOLIA_HB%"=="%FOLIA_LAST%" goto beat',
-          "set /a FOLIA_MISS=FOLIA_MISS+1",
-          `if %FOLIA_MISS% GEQ ${PORTABLE_LEASE_STALE_POLLS} goto orphaned`,
+          `for %%F in ("${leasePath}") do set "MARKALOO_HB=%%~zF"`,
+          'if not "%MARKALOO_HB%"=="%MARKALOO_LAST%" goto beat',
+          "set /a MARKALOO_MISS=MARKALOO_MISS+1",
+          `if %MARKALOO_MISS% GEQ ${PORTABLE_LEASE_STALE_POLLS} goto orphaned`,
           "goto parent_check",
           ":beat",
-          'set "FOLIA_LAST=%FOLIA_HB%"',
-          "set FOLIA_MISS=0",
+          'set "MARKALOO_LAST=%MARKALOO_HB%"',
+          "set MARKALOO_MISS=0",
           ":parent_check",
           // The app that would release this gate is gone, so the gate will
           // never open. Clean up rather than spin forever.
@@ -14785,7 +15206,7 @@ function performUpdateInstall(updater) {
   }
 
   if (process.platform === "win32") {
-    return performWindowsInstalledUpdate(updater);
+    return performWindowsInstalledUpdate(updater, admissionPause);
   }
 
   // electron-updater's MacUpdater does not use BaseUpdater's synchronous
@@ -15041,7 +15462,7 @@ module.exports = {
               updaterInvalidatedContinuationCount,
               updaterShutdownCancelWhy: lastUpdaterShutdownCancelWhy,
               shutdownPendingContinuationCount,
-              updaterFreezeRetained: foliaUpdaterAttemptRetainsFreeze(),
+              updaterFreezeRetained: markalooUpdaterAttemptRetainsFreeze(),
               reloadRequestEpoch,
               reloadRequestSession: lastReloadRequestSession,
               backgroundReloadWatcherBaselineSkipCount,

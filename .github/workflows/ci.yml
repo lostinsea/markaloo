@@ -1,4 +1,4 @@
-# Continuous integration for Folia.
+# Continuous integration for Markaloo.
 #
 # WHY THIS EXISTS: until it did, this repository had no CI on ordinary pushes
 # at all. `release.yml` triggers only on a `v*` tag push or a manual dispatch,
@@ -38,7 +38,7 @@ permissions:
 
 jobs:
   test:
-    # Windows only, deliberately. Folia is a Windows-only fork - the packaging
+    # Windows only, deliberately. Markaloo is a Windows-only fork - the packaging
     # suite pins the build targets and the docs say so - and the windowed suites
     # drive real BrowserWindows. Running them on ubuntu would need xvfb to say
     # anything at all, and would be testing a platform this fork does not ship.
@@ -330,7 +330,7 @@ jobs:
       - name: Run and qualify the sole AA attempt
         shell: pwsh
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'folia-sec08-ci-results'
+          $root = Join-Path $env:RUNNER_TEMP 'markaloo-sec08-ci-results'
           & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -NonInteractive -File (Join-Path $root 'invoke-phase.ps1') -Mode aa
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node (Join-Path $root 'verify-phase.js') aa
@@ -338,7 +338,7 @@ jobs:
       - name: Run and verify the sole eligible AB attempt
         shell: pwsh
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'folia-sec08-ci-results'
+          $root = Join-Path $env:RUNNER_TEMP 'markaloo-sec08-ci-results'
           & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -NonInteractive -File (Join-Path $root 'invoke-phase.ps1') -Mode ab
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node (Join-Path $root 'verify-phase.js') ab
@@ -349,6 +349,6 @@ jobs:
         with:
           name: clean-refresh-comparison
           path: |
-            ${{ runner.temp }}/folia-sec08-ci-results/*
-            !${{ runner.temp }}/folia-sec08-ci-results/**/app/**
+            ${{ runner.temp }}/markaloo-sec08-ci-results/*
+            !${{ runner.temp }}/markaloo-sec08-ci-results/**/app/**
           if-no-files-found: error

@@ -46,6 +46,7 @@ const EDITOR_SCROLL = path.join(SRC, "editor-scroll.js");
 const TABS = path.join(SRC, "custom-tabs.js");
 const COLLAPSE = path.join(SRC, "custom-collapse.js");
 const MAIN = path.join(SRC, "main.js");
+const PROFILE_STARTUP = path.join(SRC, "profile-startup.js");
 const OWNED_DIALOGS = path.join(SRC, "owned-dialogs.js");
 const APP_DIALOGS = path.join(SRC, "app-dialogs.js");
 const POPUP_THEME = path.join(SRC, "popup-theme.js");
@@ -187,7 +188,7 @@ const VIRTUAL_SUITES = Object.freeze({
     "test:table-cells-" + group, Object.freeze({
       npmScript: ["selection", "rows", "splice", "inline"].includes(group)
         ? "test:table-cells-source" : "test:table-cells-ui",
-      environment: Object.freeze({ FOLIA_CELL_PROOF: group }),
+      environment: Object.freeze({ MARKALOO_CELL_PROOF: group }),
     }),
   ])),
   ...Object.fromEntries(SYNTAX_COMPONENT_REVERTS.map(([, language]) => [
@@ -270,91 +271,91 @@ const VIRTUAL_SUITES = Object.freeze({
   }),
   "test:editor-scroll-core": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "core" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "core" }),
   }),
   "test:editor-scroll-empty": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "empty" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "empty" }),
   }),
   "test:editor-scroll-mirror": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "mirror" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "mirror" }),
   }),
   "test:editor-scroll-blocks": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "blocks" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "blocks" }),
   }),
   "test:editor-scroll-edits": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "edits" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "edits" }),
   }),
   "test:editor-scroll-layout": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "layout" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "layout" }),
   }),
   "test:editor-scroll-cost": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "cost" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "cost" }),
   }),
   "test:editor-scroll-transitions": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "transitions" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "transitions" }),
   }),
   "test:editor-scroll-save": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "save" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "save" }),
   }),
   "test:editor-scroll-html": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "html" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "html" }),
   }),
   "test:editor-scroll-mapping": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "mapping" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "mapping" }),
   }),
   "test:editor-scroll-input": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "input" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "input" }),
   }),
   "test:editor-scroll-native-edge": Object.freeze({
     npmScript: "test:editor-scroll-fractional",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "input" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "input" }),
   }),
   "test:editor-scroll-rich": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "rich" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "rich" }),
   }),
   "test:editor-scroll-bounds": Object.freeze({
     npmScript: "test:editor-scroll",
-    environment: Object.freeze({ FOLIA_SCROLL_PROOF: "bounds" }),
+    environment: Object.freeze({ MARKALOO_SCROLL_PROOF: "bounds" }),
   }),
   "test:reading-panels": Object.freeze({
     npmScript: "test:reading",
-    environment: Object.freeze({ FOLIA_READING_PANELS: "1" }),
+    environment: Object.freeze({ MARKALOO_READING_PANELS: "1" }),
   }),
   "test:reading-zoom-restore": Object.freeze({
     npmScript: "test:zoom",
-    environment: Object.freeze({ FOLIA_ZOOM_PROOF: "restore" }),
+    environment: Object.freeze({ MARKALOO_ZOOM_PROOF: "restore" }),
   }),
   "test:reading-zoom-persist": Object.freeze({
     npmScript: "test:zoom",
-    environment: Object.freeze({ FOLIA_ZOOM_PROOF: "persist" }),
+    environment: Object.freeze({ MARKALOO_ZOOM_PROOF: "persist" }),
   }),
   "test:reading-zoom-validate": Object.freeze({
     npmScript: "test:zoom",
-    environment: Object.freeze({ FOLIA_ZOOM_PROOF: "validate" }),
+    environment: Object.freeze({ MARKALOO_ZOOM_PROOF: "validate" }),
   }),
   "test:reading-zoom-startup": Object.freeze({
     npmScript: "test:zoom",
-    environment: Object.freeze({ FOLIA_ZOOM_PROOF: "startup" }),
+    environment: Object.freeze({ MARKALOO_ZOOM_PROOF: "startup" }),
   }),
   "test:reading-zoom-sync": Object.freeze({
     npmScript: "test:zoom",
-    environment: Object.freeze({ FOLIA_ZOOM_PROOF: "sync" }),
+    environment: Object.freeze({ MARKALOO_ZOOM_PROOF: "sync" }),
   }),
   "test:reading-mermaid-evidence": Object.freeze({
     npmScript: "test:reading",
-    environment: Object.freeze({ FOLIA_READING_BORDERS: "1" }),
+    environment: Object.freeze({ MARKALOO_READING_BORDERS: "1" }),
   }),
   "test:sec08-browser-isolation-evidence": Object.freeze({
     npmScript: "test:tabs",
@@ -892,9 +893,1284 @@ const READING_VIEWPORT_CONTROLS = [
   /^ownership never certifies arrival, travel or a history commit$/,
   /^the classic browser export matches the CommonJS factory contract$/,
 ];
+// The retained native cancellation probes must undo the new logical protection
+// too; removing only an older compatibility event now leaves the same guarantee
+// independently enforced. Keep their exact assertions and health rules intact.
+const READING_RESTORE_COMPAT_BYPASS = [
+  {
+    from: "  window.addEventListener('reading-viewport-invalidated', () => {\n    if (cancelActiveRestore) cancelActiveRestore();\n  });",
+    to: "",
+  },
+  {
+    from: "  function restorePosition(anchor, viewportPermit) {\n    if (!window.readingViewport.isPermitCurrent(viewportPermit)) return;",
+    to: "  function restorePosition(anchor, viewportPermit) {",
+  },
+  {
+    from: "      if (cancelled) return;\n      if (!window.readingViewport.isPermitCurrent(viewportPermit)) return;",
+    to: "      if (cancelled) return;",
+  },
+  {
+    from: "      if (scroller && top !== null && window.readingViewport.isPermitCurrent(viewportPermit)) {",
+    to: "      if (scroller && top !== null) {",
+  },
+].map(edit => ({ file: TABS, ...edit }));
+const READING_LIFECYCLE_REVERTS = [
+  {
+    id: "R1385", what: "identify renderer reading ownership by window alone instead of actual tab lifetime",
+    from: "    readIntent: identity, readViewport: identity,",
+    to: "    readIntent: () => [windowLifetime, live], readViewport: () => [windowLifetime, live],",
+    expect: [/^equal-path actual tab objects cannot share intent or viewport authority$/,
+      /^instant tab supersession cannot record or clean up over its successor$/],
+  },
+  {
+    id: "R1386", what: "leave a retired tab object eligible for renewed reading authority",
+    from: "      lifetimes.get(tab).live = false;",
+    to: "",
+    expect: [/^background retirement leaves the active lifetime intact and cannot be re-registered$/,
+      /^committed active retirement and page lifetime fence every old permit$/,
+      /^unactivated removal retires exactly the removed object and preserves the active permit$/,
+      /^committed close retires the active lifetime before actual removal and not on a missing object$/],
+  },
+  {
+    id: "R1387", what: "allow reading work to restart after page lifetime retirement",
+    from: "      live = false;",
+    to: "",
+    expect: [/^committed active retirement and page lifetime fence every old permit$/,
+      /^committed pagehide uses the actual production window retirement binding$/],
+  },
+  {
+    id: "R1388", what: "treat unrelated Notes list input as document viewport input",
+    from: "  if (!editor && !root && !reading) return;",
+    to: "",
+    expect: [/^Notes list wheel does not fabricate document input authority$/,
+      /^unrelated Notes scrolling does not cancel a valid observer restore$/],
+  },
+  {
+    id: "R1389", what: "miss horizontal genuine input when the outer reading pane does not travel",
+    from: "  if (event.type === 'wheel' && !event.deltaX && !event.deltaY) return;",
+    to: "  if (event.type === 'wheel' && !event.deltaY) return;",
+    expect: [/^horizontal nested wheel retires delayed writes synchronously without outer travel$/,
+      /^reading background retires delayed writes synchronously without outer travel$/,
+      /^old restore and observer retry yield to new input even with unchanged geometry$/],
+  },
+  {
+    id: "R1390", what: "keep old viewport authority alive after genuine scoped input",
+    from: "  const admission = readingViewport.beginChange(true);",
+    to: "  const admission = null;",
+    expect: [
+      "horizontal nested wheel", "vertical contained wheel", "nested pointer", "nested touch",
+      "root scrollbar", "reading background", "workspace background", "container background",
+      "horizontal reading key", "editor boundary key", "editor typing", "editor composition start",
+    ].map(label => new RegExp("^" + label + " retires delayed writes synchronously without outer travel$"))
+      .concat([/^old restore and observer retry yield to new input even with unchanged geometry$/,
+        /^modified Ctrl Home on reading cancels the real queued restore without travel$/,
+        /^modified Ctrl Home on root cancels the real queued restore without travel$/,
+        /^modified Ctrl End on reading cancels the real queued restore without travel$/,
+        /^modified Ctrl End on root cancels the real queued restore without travel$/,
+        /^modified Meta Home on reading cancels the real queued restore without travel$/,
+        /^modified Meta Home on root cancels the real queued restore without travel$/,
+        /^modified Meta End on reading cancels the real queued restore without travel$/,
+        /^modified Meta End on root cancels the real queued restore without travel$/,
+        /^ordinary no-travel wheel retires a pending real zoom correction synchronously$/,
+        /^bounded zoom no-travel wheel retires a pending real zoom correction synchronously$/,
+        /^reading input cancels before one owned typed admission without requiring movement$/,
+        /^source-only reentry during input admission cannot lend a fresh permit$/]),
+  },
+  {
+    id: "R1391", what: "wait until after large confirmation before invalidating outgoing viewport work",
+    file: TABS,
+    from: "    window.readingViewport.beginIntent();\n    const largeDecision =",
+    to: "    const largeDecision =",
+    expect: [/^validated switch retires old permits before calling large confirmation and accepted snapshot$/],
+  },
+  {
+    id: "R1392", what: "let the accepted tab handoff enter snapshot and disk work with old viewport authority",
+    file: TABS,
+    from: "    // Admission has accepted this switch. Retire outgoing writes before even\n    // the snapshot/disk path can await, without retiring either tab's lifetime.\n    window.readingViewport.beginIntent();",
+    to: "",
+    expect: [/^validated switch retires old permits before calling large confirmation and accepted snapshot$/],
+  },
+  {
+    id: "R1393", what: "read incoming open state before logical ownership invalidation",
+    from: "  readingViewport.beginIntent();\n  tableColumnSizing.reset();",
+    to: "  tableColumnSizing.reset();",
+    expect: [/^beginFileOpen invalidates after permission and before incoming reads or rollbackable sequence$/],
+  },
+  {
+    id: "R1394", what: "keep viewport writes valid while a source edit waits for its deferred preview",
+    from: "  readingViewport.invalidate();\n  // History changes the source, not which pane the reader chose to drive it.",
+    to: "  // History changes the source, not which pane the reader chose to drive it.",
+    suite: "test:editor-history",
+    expect: [/^source mutation retires viewport writes before deferred preview without minting genuine intent$/],
+  },
+  {
+    id: "R1395", what: "adopt accepted reload source before invalidating old viewport execution",
+    from: "    hideDocumentContextMenus();\n    readingViewport.invalidate();\n    originalMarkdown = data.content;",
+    to: "    hideDocumentContextMenus();\n    originalMarkdown = data.content;",
+    expect: [/^accepted reload invalidates before source adoption while disk refusal preserves prior authority$/],
+  },
+  {
+    id: "R1396", what: "start editor mapping and a render await without invalidating old viewport work",
+    from: "  let generation, rendered;\n  try {\n    readingViewport.invalidate();",
+    to: "  let generation, rendered;\n  try {",
+    expect: [/^render start invalidates before editor mapping and full reset yields across its held await$/],
+  },
+  {
+    id: "R1397", what: "let a delayed full render reset a newer viewport to the top",
+    from: "    if (!undoRedoRendering && readingViewport.isPermitCurrent(viewportPermit)) viewer.parentElement.scrollTop = 0;",
+    to: "    if (!undoRedoRendering) viewer.parentElement.scrollTop = 0;",
+    expect: [/^render start invalidates before editor mapping and full reset yields across its held await$/,
+      /^view edit and Notes delegation keep source dirty history and autosave when scrolling is superseded$/,
+      /^Discard keeps baseline history dirty state and cleanup while its delayed restore yields$/,
+      /^actual tab render continuation retains its pre-await permit instead of capturing fresh authority$/,
+      /^renderer fallback passes the actual open context through render and suppresses only stale completion scrolling$/],
+  },
+  ...[
+    ["R1398", "Undo", "editor", "prevContent", "    clearTimeout(previewDebounceTimer);"],
+    ["R1399", "Undo", "Reader", "prevContent", "    noteActiveContentMutation({ preserveScrollOwner: true });"],
+    ["R1400", "Redo", "editor", "nextContent", "    clearTimeout(previewDebounceTimer);"],
+    ["R1401", "Redo", "Reader", "nextContent", "    noteActiveContentMutation({ preserveScrollOwner: true });"],
+  ].map(([id, action, mode, content, prefix]) => ({
+    id, what: "let the " + mode + " " + action + " continuation overwrite newer viewport intent",
+    from: prefix + "\n    const initial = renderMarkdown(" + content + ", null, viewport);\n    Promise.all([initial, viewport.completion]).then(() => {\n      if (readingViewport.isPermitCurrent(viewport.permit)) contentWrapper.scrollTop = scrollPos;",
+    to: prefix + "\n    const initial = renderMarkdown(" + content + ", null, viewport);\n    Promise.all([initial, viewport.completion]).then(() => {\n      contentWrapper.scrollTop = scrollPos;",
+    suite: "test:editor-history",
+    expect: [new RegExp("^" + action + " " + mode + " continuation yields only viewport work to newer intent$")],
+  })),
+  {
+    id: "R1402", what: "let view edit and delegated Notes completion overwrite a newer viewport",
+    from: "    if (readingViewport.isPermitCurrent(viewport.permit)) contentWrapper.scrollTop = scrollPosition;",
+    to: "    contentWrapper.scrollTop = scrollPosition;",
+    expect: [/^view edit and Notes delegation keep source dirty history and autosave when scrolling is superseded$/],
+  },
+  {
+    id: "R1403", what: "restore Discard scroll after newer genuine input without changing its cleanup",
+    from: "          mayMutateRendererDocument('editor-discard-scroll-restore') &&\n          readingViewport.isPermitCurrent(viewport.permit)) {",
+    to: "          mayMutateRendererDocument('editor-discard-scroll-restore')) {",
+    expect: [/^Discard keeps baseline history dirty state and cleanup while its delayed restore yields$/],
+  },
+  {
+    id: "R1404", what: "restore delayed incoming editor coordinates after newer reading input",
+    from: "        context.editorInteraction === editorInteractionRevision &&\n        readingViewport.isPermitCurrent(context.viewport?.permit)) {",
+    to: "        context.editorInteraction === editorInteractionRevision) {",
+    expect: [/^file-open top completion suppresses stale scrolling but keeps completion cleanup$/,
+      /^file-open caller completion suppresses stale scrolling but keeps completion cleanup$/],
+  },
+  {
+    id: "R1405", what: "let file-open top completion overwrite a newer viewport",
+    from: "      if (readingViewport.isPermitCurrent(context.viewport?.permit)) contentWrapper.scrollTop = 0;",
+    to: "      contentWrapper.scrollTop = 0;",
+    expect: [/^file-open top completion suppresses stale scrolling but keeps completion cleanup$/,
+      /^renderer fallback passes the actual open context through render and suppresses only stale completion scrolling$/],
+  },
+  {
+    id: "R1406", what: "let the delayed file-history restore reuse a stale open permit",
+    from: "          !mayMutateRendererDocument('file-opened-scroll-restore') ||\n          !readingViewport.isPermitCurrent(context.viewport?.permit)",
+    to: "          !mayMutateRendererDocument('file-opened-scroll-restore')",
+    expect: [/^file-open restore completion suppresses stale scrolling but keeps completion cleanup$/],
+  },
+  {
+    id: "R1407", what: "invoke caller viewport restoration after the open permit was superseded",
+    from: "      typeof visualCompletion === 'function' &&\n      readingViewport.isPermitCurrent(context.viewport?.permit)",
+    to: "      typeof visualCompletion === 'function'",
+    expect: [/^file-open caller completion suppresses stale scrolling but keeps completion cleanup$/,
+      /^file-open checks authority again between editor axes and before its caller$/],
+  },
+  {
+    id: "R1408", what: "recapture fresh authority inside a delayed tab restore instead of retaining the render permit",
+    file: TABS,
+    from: "            restorePosition(position, viewport.permit);",
+    to: "            restorePosition(position, window.readingViewport.capturePermit());",
+    // The production open caller gate independently prevents this invocation.
+    also: { file: RENDERER,
+      from: "      typeof visualCompletion === 'function' &&\n      readingViewport.isPermitCurrent(context.viewport?.permit)",
+      to: "      typeof visualCompletion === 'function'" },
+    expect: [/^file-open caller completion suppresses stale scrolling but keeps completion cleanup$/,
+      /^file-open checks authority again between editor axes and before its caller$/,
+      /^actual tab render continuation retains its pre-await permit instead of capturing fresh authority$/],
+  },
+  {
+    id: "R1409", what: "recapture fresh authority after a delayed reload instead of retaining its render permit",
+    file: TABS,
+    from: "          restorePosition(anchor, viewport.permit);",
+    to: "          restorePosition(anchor, window.readingViewport.capturePermit());",
+    expect: [/^actual reload continuation preserves non-viewport effects while its old restore yields$/],
+  },
+  {
+    id: "R1410", what: "let a stale restore invocation cancel a newer active restore",
+    file: TABS,
+    from: "  function restorePosition(anchor, viewportPermit) {\n    if (!window.readingViewport.isPermitCurrent(viewportPermit)) return;",
+    to: "  function restorePosition(anchor, viewportPermit) {",
+    expect: [/^old restore and observer retry yield to new input even with unchanged geometry$/,
+      /^actual reload continuation preserves non-viewport effects while its old restore yields$/],
+  },
+  {
+    id: "R1411", what: "write restore coordinates after geometry resolution invalidates their permit",
+    file: TABS,
+    from: "      if (scroller && top !== null && window.readingViewport.isPermitCurrent(viewportPermit)) {",
+    to: "      if (scroller && top !== null) {",
+    expect: [/^restore rechecks its permit after resolving geometry before the actual assignment$/],
+  },
+  {
+    id: "R1412", what: "apply a pending zoom correction after a genuine no-travel successor",
+    from: "  if (zoomAnchorSuperseded(anchor)) return;\n  if (!readingViewport.isPermitCurrent(anchor.permit)) return;",
+    to: "  if (zoomAnchorSuperseded(anchor)) return;",
+    also: {
+      from: "  if (!(Math.abs(correction) >= 0.5)) return;\n  if (!readingViewport.isPermitCurrent(anchor.permit)) return;",
+      to: "  if (!(Math.abs(correction) >= 0.5)) return;",
+    },
+    expect: [/^zoom correction yields to a no-travel successor without relying on scroll differences$/,
+      /^ordinary no-travel wheel retires a pending real zoom correction synchronously$/,
+      /^bounded zoom no-travel wheel retires a pending real zoom correction synchronously$/],
+  },
+  {
+    id: "R1413", what: "let an old debounced search callback consume the current request",
+    from: "  if (!expected || expected !== pendingSearchRequest || pendingSearchTerm === null) return;",
+    to: "  if (!expected || pendingSearchTerm === null) return;",
+    expect: [/^search captures genuine intent before debounce and old callbacks cannot consume newer requests$/],
+  },
+  {
+    id: "R1414", what: "defer search input without capturing its originating genuine intent",
+    from: "searchInput.addEventListener('input', (e) => {\n  const intent = readingViewport.beginIntent();",
+    to: "searchInput.addEventListener('input', (e) => {\n  const intent = null;",
+    expect: [/^search captures genuine intent before debounce and old callbacks cannot consume newer requests$/,
+      /^same-tab search repair retains only its genuine pending query across source invalidation$/],
+  },
+  {
+    id: "R1415", what: "mint a fresh genuine ticket from passive render repair",
+    from: "      ? retained.intent : null;",
+    to: "      ? retained.intent : readingViewport.beginIntent();",
+    expect: [/^passive search repair uses only the originating render permit and cannot mint or borrow intent$/],
+  },
+  {
+    id: "R1416", what: "let passive search repair enter the programmatic jump route without a genuine request",
+    from: "  if (request?.navigate !== false && request?.intent && readingViewport.isIntentCurrent(request.intent)) {\n    void readingHistory.jump(match, 'center', request.intent, { segment: request.segment || null })\n      .catch(reportReadingHistoryError);\n  }",
+    to: "  scrollElementIntoView(match, 'center', request?.intent || null);",
+    expect: [/^passive search repair uses only the originating render permit and cannot mint or borrow intent$/],
+  },
+  {
+    id: "R1417", what: "allow an obsolete navigation ticket to enter the shared instant helper",
+    from: "  if (intent !== null && !readingViewport.isIntentCurrent(intent)) return;",
+    to: "",
+    expect: [/^shared instant helper keeps its request options and programmatic calls cannot mint genuine intent$/],
+  },
+  {
+    id: "R1418", what: "remove an active tab before retiring its reading lifetime",
+    file: TABS,
+    from: "      window.readingViewport.retireTab(tab);\n      const closingLastActive =",
+    to: "      const closingLastActive =",
+    expect: [/^committed close retires the active lifetime before actual removal and not on a missing object$/],
+  },
+  {
+    id: "R1419", what: "remove an unactivated tab without retiring its actual reading lifetime",
+    file: TABS,
+    from: "    window.readingViewport.retireTab(tab);\n    tabs.splice(index, 1);",
+    to: "    tabs.splice(index, 1);",
+    expect: [/^unactivated removal retires exactly the removed object and preserves the active permit$/],
+  },
+  {
+    id: "R1420", what: "leave logical reading ownership live after committed pagehide",
+    from: "window.addEventListener('pagehide', () => readingViewport.retireWindow());",
+    to: "window.addEventListener('pagehide', () => {});",
+    expect: [/^committed pagehide uses the actual production window retirement binding$/],
+  },
+  {
+    id: "R1421", what: "pretend the unsupported production native stop is a successful no-op",
+    from: "    stopMotion() { throw new Error('Reading viewport native cancellation is not bound'); },",
+    to: "    stopMotion() {},",
+    expect: [/^production native tracking stays unavailable and its unbound stop fails closed$/],
+  },
+  {
+    id: "R1422", what: "let programmatic document navigation retain older delayed viewport writers",
+    from: "  const permit = readingViewport.beginRequest();",
+    to: "  const permit = readingViewport.capturePermit();",
+    expect: [/^shared instant helper keeps its request options and programmatic calls cannot mint genuine intent$/,
+      /^programmatic jump cannot borrow an intent admitted by its invalidation listener$/],
+  },
+  {
+    id: "R1423", what: "change editor presentation before invalidating delayed viewport writes",
+    from: "function setEditorPresentation(open, enabled = true) {\n  readingViewport.invalidate();",
+    to: "function setEditorPresentation(open, enabled = true) {",
+    expect: [/^presentation and splitter geometry invalidate before their writes without renewing genuine intent$/],
+  },
+  {
+    id: "R1424", what: "write splitter geometry before invalidating delayed viewport writes",
+    from: "  const clamped = Math.max(SPLITTER_MIN_RATIO, Math.min(SPLITTER_MAX_RATIO, ratio));\n  readingViewport.invalidate();",
+    to: "  const clamped = Math.max(SPLITTER_MIN_RATIO, Math.min(SPLITTER_MAX_RATIO, ratio));",
+    expect: [/^presentation and splitter geometry invalidate before their writes without renewing genuine intent$/],
+  },
+  {
+    id: "R1425", what: "admit a zoom presentation change without retiring old viewport authority",
+    from: "  const current = readingViewport.beginChange(persist);",
+    to: "  const current = { intent: null, permit: readingViewport.capturePermit() };",
+    expect: [/^zoom admission invalidates before writes and renews only its current burst$/,
+      /^Ctrl zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Ctrl zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^a new genuine action prevents a later zoom wheel from renewing the old burst anchor$/,
+      /^a zoom wheel whose captured intent authority retired cannot change zoom$/,
+      /^a zoom wheel whose captured source authority retired cannot change zoom$/,
+      /^ordinary no-travel wheel retires a pending real zoom correction synchronously$/,
+      /^bounded zoom no-travel wheel retires a pending real zoom correction synchronously$/,
+      /^source reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^source reentry within programmatic zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within programmatic zoom admission cannot renew or write the retired burst$/],
+  },
+  {
+    id: "R1426", what: "renew a pending zoom anchor another genuine action already retired",
+    from: "  const ownAnchor = pendingZoomAnchor && readingViewport.isPermitCurrent(pendingZoomAnchor.permit)\n    ? pendingZoomAnchor : null;",
+    to: "  const ownAnchor = pendingZoomAnchor;",
+    expect: [/^zoom admission invalidates before writes and renews only its current burst$/,
+      /^a new genuine action prevents a later zoom wheel from renewing the old burst anchor$/],
+  },
+  {
+    id: "R1427", what: "write the second editor axis after a successor retired the open permission",
+    from: "      if (readingViewport.isPermitCurrent(context.viewport?.permit)) markdownEditor.scrollLeft = context.editorScroll.left;",
+    to: "      markdownEditor.scrollLeft = context.editorScroll.left;",
+    expect: [/^file-open checks authority again between editor axes and before its caller$/],
+  },
+  {
+    id: "R1428", what: "change side-panel presentation before invalidating delayed viewport writes",
+    from: "  readingViewport.invalidate();\n  if (!restoring) captureZoomAnchor();",
+    to: "  if (!restoring) captureZoomAnchor();",
+    expect: [/^side-panel layout invalidates before presentation writes without fabricating intent$/],
+  },
+  {
+    id: "R1429", what: "restore animated behavior on the request-local instant document-jump routes",
+    from: "    request = el.scrollIntoView({ behavior: 'instant', block, inline: 'nearest' });",
+    to: "    request = el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });",
+    expect: [/^shared instant helper keeps its request options and programmatic calls cannot mint genuine intent$/,
+      /^instant completion follows the exact held native Promise after its synchronous offset writes$/,
+      /^search Enter rebuilds highlights and issues only its final-index instant request under its own ticket$/],
+  },
+  {
+    id: "R1430", what: "assimilate absent or arbitrary thenable returns as native completion",
+    from: "    completion = Promise.prototype.then.call(request, result => {",
+    to: "    completion = Promise.resolve(request).then(result => {",
+    expect: [/^missing native undefined completion refuses only the record and still jumps$/,
+      /^missing native thenable completion refuses only the record and still jumps$/],
+  },
+  {
+    id: "R1431", what: "accept native completion without interrupted being strictly false",
+    from: "        if (!result || result.interrupted !== false) return refused('native-interrupted-or-malformed');",
+    to: "        if (result && result.interrupted) return refused('native-interrupted-or-malformed');",
+    expect: [/^native missing result cannot certify request completion$/,
+      /^native nonboolean result cannot certify request completion$/,
+      /^native undefined result cannot certify request completion$/],
+  },
+  {
+    id: "R1432", what: "let an old instant result bypass its receipt's ownership checks",
+    from: "        if (retired || !readingViewport.isPermitCurrent(permit) ||\n            (intent !== null && !readingViewport.isIntentCurrent(intent))) return refused('superseded');",
+    to: "",
+    also: { from: "        if (!readingViewport.isPermitCurrent(permit)) return refused('superseded');",
+      to: "" },
+    expect: ["input", "source", "tab", "retirement"].map(boundary =>
+      new RegExp("^instant " + boundary + " supersession cannot record or clean up over its successor$")),
+  },
+  {
+    id: "R1433", what: "accept an instant record after its layout or exact target text changes",
+    from: "  if (!sameLayout(before, after) || !sameLayout(after, final) ||\n      !equal(after.root, final.root)",
+    to: "  if (!equal(after.root, final.root)",
+    expect: [/^instant completion refuses changed layout despite an uninterrupted native result$/,
+      /^instant completion refuses changed text despite an uninterrupted native result$/],
+  },
+  {
+    id: "R1434", what: "ignore root offsets changed independently after the native instant call",
+    from: "      !equal(after.root, final.root) || after.elements.some((item, i) =>",
+    to: "      after.elements.some((item, i) =>",
+    expect: [/^instant completion refuses changed visual-offset despite an uninterrupted native result$/],
+  },
+  {
+    id: "R1435", what: "ignore element offsets changed independently after the native instant call",
+    from: "        !equal(item.offset, final.elements[i].offset) || !equal(item.shape, final.elements[i].shape)) ||",
+    to: "        !equal(item.shape, final.elements[i].shape)) ||",
+    expect: [/^instant completion refuses changed offset despite an uninterrupted native result$/],
+  },
+  {
+    id: "R1436", what: "record a native-completed target without proving its full-chain clip exposure",
+    from: "  if (!final.witness.some(box => box[2] > box[0] && box[3] > box[1] &&",
+    to: "  if (false && final.witness.some(box => box[2] > box[0] && box[3] > box[1] &&",
+    expect: [/^a clipping-only ancestor refuses the instant record without disabling the native jump$/,
+      /^paint containment remains a clipping ancestor even with visible overflow$/,
+      /^a descendant Range cannot substitute for exposure of the exact target fragment$/],
+  },
+  {
+    id: "R1437", what: "omit paint containment from an instant target's clipping chain",
+    from: "    const paintClip = /(^| )(paint|strict|content)( |$)/.test(style.contain);",
+    to: "    const paintClip = false;",
+    expect: [/^paint containment remains a clipping ancestor even with visible overflow$/],
+  },
+  {
+    id: "R1438", what: "silently suppress the underlying jump when root recording is unavailable",
+    from: "  let request;\n  try {\n    // Instant finishes",
+    to: "  if (unavailable === 'unobservable-root') { dispose(); return; }\n  let request;\n  try {\n    // Instant finishes",
+    expect: [/^unobservable clips and root capability never silently disable an instant jump class$/],
+  },
+  {
+    id: "R1439", what: "classify root-visual-only travel as a no-travel instant request",
+    from: "  const traveled = !equal(before.root, after.root) ||\n    before.elements.some((item, i) => !equal(item.offset, after.elements[i].offset));",
+    to: "  const traveled = before.elements.some((item, i) => !equal(item.offset, after.elements[i].offset));",
+    expect: [/^instant request observes root-visual travel without inferring an aggregate stop$/],
+  },
+  {
+    id: "R1440", what: "classify inner-only element travel as a no-travel instant request",
+    from: "  const traveled = !equal(before.root, after.root) ||\n    before.elements.some((item, i) => !equal(item.offset, after.elements[i].offset));",
+    to: "  const traveled = !equal(before.root, after.root);",
+    expect: [/^instant completion follows the exact held native Promise after its synchronous offset writes$/,
+      /^instant request observes inner-horizontal travel without inferring an aggregate stop$/,
+      /^instant request observes hidden-horizontal travel without inferring an aggregate stop$/],
+  },
+  {
+    id: "R1441", what: "retain old request observers until their stale native Promise finishes",
+    from: "  const retire = () => { retired = true; dispose(); };",
+    to: "  const retire = () => { retired = true; };",
+    expect: ["input", "source", "retirement"].map(boundary =>
+      new RegExp("^instant " + boundary + " supersession cannot record or clean up over its successor$")),
+  },
+  {
+    id: "R1442", what: "admit a detached target as a new document-jump request",
+    from: "  if (!el || !el.isConnected || !viewer.contains(el)) return;",
+    to: "  if (!el) return;",
+    expect: [/^a detached document target cannot issue or take over a current instant request$/],
+  },
+  {
+    id: "R1443", what: "substitute descendant Range boxes for the exact target's clipping witness",
+    from: "  const witness = [...target.getClientRects()].map(rect);",
+    to: "  const range = document.createRange(); range.selectNodeContents(target);\n  const witness = [...range.getClientRects()].map(rect);",
+    expect: [/^a descendant Range cannot substitute for exposure of the exact target fragment$/],
+  },
+  {
+    id: "R1444", what: "let an older programmatic jump borrow its invalidation listener's successor",
+    from: "      return previousChange === prior && owner.isPermitCurrent(permit) ? permit : null;",
+    to: "      return owner.isPermitCurrent(permit) ? permit : null;",
+    expect: [/^programmatic jump cannot borrow an intent admitted by its invalidation listener$/],
+  },
+  {
+    id: "R1445", what: "let an older navigation notification override its successor's follower claim",
+    from: "  window.dispatchEvent(new Event('preview-navigation-intent'));\n  if (!readingViewport.isPermitCurrent(permit)) return;",
+    to: "  window.dispatchEvent(new Event('preview-navigation-intent'));",
+    expect: [/^navigation notification cannot give an older jump its successor's follower claim$/],
+  },
+  {
+    id: "R1446", what: "capture a handled zoom wheel as unrelated input before its actual wheel handler",
+    from: "    readingZoomWheelIntents.set(event, beginReadingZoomChange(true));",
+    to: "    readingViewport.beginIntent();",
+    expect: [/^Ctrl zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Ctrl zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^a zoom wheel whose captured intent authority retired cannot change zoom$/,
+      /^a zoom wheel whose captured source authority retired cannot change zoom$/,
+      /^source reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^source reentry within programmatic zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within programmatic zoom admission cannot renew or write the retired burst$/],
+  },
+  {
+    id: "R1447", what: "let a stale captured zoom event change the level before refusing its presentation",
+    from: "    if (captured && (!admission || !readingViewport.isPermitCurrent(admission.permit) ||\n        !readingViewport.isIntentCurrent(admission.intent))) return;",
+    to: "",
+    expect: [/^a zoom wheel whose captured intent authority retired cannot change zoom$/,
+      /^a zoom wheel whose captured source authority retired cannot change zoom$/,
+      /^source reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within genuine zoom admission cannot renew or write the retired burst$/],
+  },
+  {
+    id: "R1448", what: "mint a second zoom intent instead of consuming the exact capture admission",
+    from: "        zoomLevel += ZOOM_CONFIG.step;\n        updateZoom({ admission });",
+    to: "        zoomLevel += ZOOM_CONFIG.step;\n        updateZoom();",
+    also: { file: RENDERER,
+      from: "        zoomLevel -= ZOOM_CONFIG.step;\n        updateZoom({ admission });",
+      to: "        zoomLevel -= ZOOM_CONFIG.step;\n        updateZoom();" },
+    expect: [/^Ctrl zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Ctrl zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^source reentry within programmatic zoom admission cannot renew or write the retired burst$/],
+  },
+  {
+    id: "R1449", what: "ignore genuine modified Home and End intent at reading and root boundaries",
+    from: "(!editor && (event.ctrlKey || event.metaKey) && !['Home', 'End'].includes(event.key))",
+    to: "(!editor && (event.ctrlKey || event.metaKey))",
+    expect: [/^modified Ctrl Home on reading cancels the real queued restore without travel$/,
+      /^modified Ctrl Home on root cancels the real queued restore without travel$/,
+      /^modified Ctrl End on reading cancels the real queued restore without travel$/,
+      /^modified Ctrl End on root cancels the real queued restore without travel$/,
+      /^modified Meta Home on reading cancels the real queued restore without travel$/,
+      /^modified Meta Home on root cancels the real queued restore without travel$/,
+      /^modified Meta End on reading cancels the real queued restore without travel$/,
+      /^modified Meta End on root cancels the real queued restore without travel$/],
+  },
+  {
+    id: "R1450", what: "treat unrelated modified reading shortcuts as document navigation",
+    from: "(!editor && (event.ctrlKey || event.metaKey) && !['Home', 'End'].includes(event.key))",
+    to: "false",
+    expect: [/^unrelated Ctrl PageUp on reading preserves the real queued restore$/,
+      /^unrelated Ctrl PageUp on root preserves the real queued restore$/],
+  },
+  {
+    id: "R1451", what: "let native controls accept a native destination different from the helper target",
+    file: path.join(ROOT, "test", "reading-jump-native-controls.js"),
+    from: "call.target !== jump.target || jump.native !== call ||",
+    to: "jump.native !== call ||",
+    expect: [/^actual native fixture predicate rejects wrong native target$/],
+  },
+  {
+    id: "R1452", what: "let native controls accept a helper destination other than the route's declared target",
+    file: path.join(ROOT, "test", "reading-jump-native-controls.js"),
+    from: "!expected.targets[index] || jump.target !== expected.targets[index] ||",
+    to: "!expected.targets[index] ||",
+    expect: [/^actual native fixture predicate rejects wrong expected document target$/],
+  },
+  {
+    id: "R1453", what: "let native controls accept a different native or declared alignment",
+    file: path.join(ROOT, "test", "reading-jump-native-controls.js"),
+    from: "call.options.block !== expected.block ||",
+    to: "",
+    expect: [/^actual native fixture predicate rejects wrong native block$/,
+      /^actual native fixture predicate rejects wrong declared block$/],
+  },
+  {
+    id: "R1454", what: "let native controls overlook extra native requests outside the route's exact count",
+    file: path.join(ROOT, "test", "reading-jump-native-controls.js"),
+    from: "expected.targets.length !== expected.count || jumps.length !== expected.count ||\n      calls.length !== expected.count || outcomes.length !== expected.count",
+    to: "false",
+    expect: [/^actual native fixture predicate rejects extra native request$/],
+  },
+  {
+    id: "R1455", what: "accept any refusal for a transformed Notes pulse instead of its specific conservative guard",
+    file: path.join(ROOT, "test", "reading-jump-native-controls.js"),
+    from: 'return outcome.status === "unrecordable" && outcome.reason === "unsupported-clip";',
+    to: 'return outcome.status === "unrecordable";',
+    expect: [/^actual Notes fixture predicate rejects an arbitrary refusal$/],
+  },
+  {
+    id: "R1456", what: "keep an unrelated stale zoom anchor instead of capturing the new reading point",
+    from: "  if (pendingZoomAnchor && !readingViewport.isPermitCurrent(pendingZoomAnchor.permit)) pendingZoomAnchor = null;",
+    to: "",
+    expect: [/^a new genuine action prevents a later zoom wheel from renewing the old burst anchor$/],
+  },
+].map(record => ({
+  file: RENDERER, suite: "test:reading-viewport",
+  ...record,
+  mustPass: record.suite === "test:editor-history"
+    ? [/^paint is observational and stack pushes update availability synchronously$/,
+      /^composition retains one burst and blocks history until final input settles$/]
+    : READING_VIEWPORT_CONTROLS,
+  requireMustPassAssertions: true, requireExactFailures: true,
+}));
+
+const READING_CONSUMER_REVERTS = [
+  {
+    id: "R1461", what: "jump from TOC without recording its successful reading destination",
+    from: "        void readingHistory.jump(header, 'start', intent, { before: () => expandToHeader(header.id) })\n          .catch(reportReadingHistoryError);",
+    to: "        expandToHeader(header.id);\n        scrollElementIntoView(header, 'start', intent);",
+    expect: [/^actual TOC jump and toolbar Back\/Forward share live history, availability and instant requests$/,
+      /^assembled history restores a source-backed nested origin on both axes with one permit$/],
+  },
+  {
+    id: "R1462", what: "jump from an in-document fragment without recording its destination",
+    from: "        void readingHistory.jump(targetElement, 'start', readingViewport.beginIntent()).catch(reportReadingHistoryError);",
+    to: "        scrollElementIntoView(targetElement, 'start', readingViewport.beginIntent());",
+    expect: [/^actual fragment handler records its resolved document target then toolbar Back and Forward restore it$/],
+  },
+  {
+    id: "R1463", what: "traverse from the cached location instead of the actual manually scrolled departure",
+    from: "    const from = checkpoint ? null : departure(state);\n    if (!checkpoint && !from) return false;",
+    to: "    const snapshot = state.model.snapshot();\n    const from = checkpoint ? null : snapshot.entries[snapshot.index]?.location || departure(state);\n    if (!checkpoint && !from) return false;",
+    expect: [/^Forward remains ordinary traversal from the actual manually scrolled departure$/,
+      /^confirmed checkpoint returns from no-visible-text without a departure receipt or Forward mutation$/,
+      /^assembled history restores a source-backed nested origin on both axes with one permit$/,
+      /^programmatic movement and layout invalidation alone do not arm manual checkpoint return$/,
+      /^movement before admission and synthetic scroll alone do not prove a manual departure$/,
+      /^unproved input retired by layout source or mode cannot borrow later scroll movement$/],
+    mustPass: [/^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/,
+      /^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+  },
+  {
+    id: "R1464", what: "borrow current source permission after a completed jump lost its own permit",
+    from: "      (!operation.permit || ports.isPermitCurrent(operation.permit));",
+    to: "      true;",
+    expect: [/^late source invalidation between record and consumer commit cannot borrow a fresh permit$/],
+  },
+  {
+    id: "R1465", what: "let late history cleanup cancel a successor's staged operation",
+    from: "  function finish(state, operation) {\n    if (state.operation !== operation) return;",
+    to: "  function finish(state, operation) {",
+    expect: [/^an old request finishing cannot clear its successor operation or staged history$/],
+  },
+  {
+    id: "R1466", what: "append each typing preview instead of replacing its one owned destination",
+    from: "      receipt = segment?.entryId ? state.model.stageReplace(segment.entryId) : state.model.stageJump(origin);",
+    to: "      receipt = state.model.stageJump(origin);",
+    expect: [/^typing keeps one owned destination and its first pre-preview origin$/,
+      /^actual Search input captures origin before debounce, coalesces typing and makes Next one explicit jump$/,
+      /^explicit navigation and closing\/clearing end a segment without erasing pending recovery$/],
+  },
+  {
+    id: "R1467", what: "delay the first Search origin capture until the preview rather than genuine input",
+    from: "    const segment = { active: true, origin: departure(state), entryId: null, previewed: false };",
+    to: "    const segment = { active: true, origin: null, entryId: null, previewed: false };",
+    expect: [/^actual Search input captures origin before debounce, coalesces typing and makes Next one explicit jump$/,
+      /^first-debounce toolbar Back cancels Search without consuming older history or Forward$/,
+      /^first-debounce Back is available without older history and no-travel recovery creates no entry$/,
+      /^blocked first-debounce Back keeps its query and cancels only after modal or freeze guards clear$/,
+      /^synchronous first-debounce availability subscriber cancels the exact admitted query$/],
+  },
+  {
+    id: "R1468", what: "let repeated traversal supersede its own unsettled successful return",
+    from: "    if (!eligible(state) || ['traverse', 'checkpoint'].includes(state.operation?.kind)) {",
+    to: "    if (!eligible(state) || state.operation?.kind === 'checkpoint') {",
+    expect: [/^held traversal refuses overlapping Back or Forward without superseding its own pending receipt$/],
+  },
+  {
+    id: "R1469", what: "resume an old typing segment after leaving and returning to its actual tab",
+    from: "      cancel(previous);\n      endSegment(previous);",
+    to: "      cancel(previous);",
+    expect: [/^tab changes end coalescing even when the returning tab owns the same current entry$/],
+  },
+  {
+    id: "R1470", what: "leave history values live after committed retirement of their actual tab",
+    from: "      window.dispatchEvent(Object.assign(new Event('reading-history-tab-retired'), { tab }));",
+    to: "",
+    expect: [/^real lifetime retirement clears only the retired tab; canceled close has no retirement$/],
+  },
+  {
+    id: "R1471", what: "allow synchronous modal or freeze reentry to move the viewport after history admission",
+    from: "      if (ports.tab() !== state.tab || state.operation !== operation ||\n          !ports.allowed() || !ports.isIntentCurrent(intent)) return false;\n      before?.();\n      if (ports.tab() !== state.tab || state.operation !== operation ||\n          !ports.allowed() || !ports.isIntentCurrent(intent)) return false;",
+    to: "      if (ports.tab() !== state.tab || state.operation !== operation || !ports.isIntentCurrent(intent)) return false;\n      before?.();\n      if (ports.tab() !== state.tab || state.operation !== operation || !ports.isIntentCurrent(intent)) return false;",
+    expect: [/^forced jumps and synchronous guard reentry cannot move a modal or frozen document$/],
+  },
+  {
+    id: "R1472", what: "commit failed or no-travel reading jumps and consume their Forward branch",
+    from: "      if (!receipt || !moved(record) || !isCurrent(state, operation)) return false;",
+    to: "      if (!receipt || !isCurrent(state, operation)) return false;",
+    expect: [/^failed and no-travel jumps retain index and Forward until a successful branch$/,
+      /^no-travel first preview does not leave a fake provisional Back action$/],
+  },
+  {
+    id: "R1496", what: "consume committed history when Back cancels Search before its first debounce",
+    from: "    return segment?.active && !segment.previewed && segment.entryId === null ? segment.origin : null;",
+    to: "    return null;",
+    expect: [/^first-debounce toolbar Back cancels Search without consuming older history or Forward$/,
+      /^first-debounce Back is available without older history and no-travel recovery creates no entry$/,
+      /^blocked first-debounce Back keeps its query and cancels only after modal or freeze guards clear$/,
+      /^synchronous first-debounce availability subscriber cancels the exact admitted query$/],
+    mustPass: [/^first pending preview provides recoverable Back without committing or truncating Forward$/,
+      /^no-travel first preview does not leave a fake provisional Back action$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/],
+  },
+  {
+    id: "R1502", what: "forget the current saved checkpoint when owned input really moves the reading viewport",
+    from: "      state.manualReturn = { entry: arm.entry };",
+    to: "      state.manualReturn = null;",
+    expect: [
+      /^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/,
+      /^manual departure after a new jump restores its saved destination on both axes before Back$/,
+      /^oldest committed checkpoint enables manual return without creating empty-tab history$/,
+      /^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^confirmed movement survives later layout and no-motion input without losing the saved checkpoint$/,
+      /^nested horizontal movement promotes once and later scroll events do not resample$/,
+      /^a settled committed Search replacement supports manual checkpoint return like any destination$/,
+      /^same-ID replacement after checkpoint completion refuses same-Back fallback under obsolete model authority$/,
+      /^malformed checkpoint travel never consumes an older history entry$/,
+      /^interrupted checkpoint return retains its target and an old completion cannot clear the successor$/,
+      /^checkpoint completion respects source invalidation, tab switches and lifetime retirement$/,
+      /^confirmed checkpoint returns from no-visible-text without a departure receipt or Forward mutation$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/,
+      /^real editor wheel travel schedules fresh following after an owner handoff$/,
+      /^real editor keydown travel schedules fresh following after an owner handoff$/,
+    ],
+    mustPass: [/^programmatic movement and layout invalidation alone do not arm manual checkpoint return$/,
+      /^deliberate new jumps still sample the manual departure and truncate Forward only on success$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/,
+      /^interrupted later preview preserves last reached destination for Forward, not its excursion$/],
+  },
+  {
+    id: "R1503", what: "consume Back on a no-motion checkpoint input instead of continuing its ordinary traversal",
+    from: "        if (moved(record)) {\n          state.manualReturn = null;\n          return true;\n        }",
+    to: "        state.manualReturn = null;\n        return true;",
+    expect: [/^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+    mustPass: [/^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/,
+      /^first-debounce Back is available without older history and no-travel recovery creates no entry$/],
+  },
+  {
+    id: "R1504", what: "admit overlapping history actions during a checkpoint restoration",
+    from: "    if (!eligible(state) || ['traverse', 'checkpoint'].includes(state.operation?.kind)) {",
+    to: "    if (!eligible(state) || state.operation?.kind === 'traverse') {",
+    expect: [/^interrupted checkpoint return retains its target and an old completion cannot clear the successor$/],
+    mustPass: [/^held traversal refuses overlapping Back or Forward without superseding its own pending receipt$/,
+      /^repeated recovery Back cannot accidentally traverse older committed history$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/],
+  },
+  {
+    id: "R1505", what: "treat an invalid checkpoint completion classification as a successful no-motion return",
+    from: "        if (!moved(record) && record.travel !== 'no-observed-travel') return false;",
+    to: "",
+    expect: [/^malformed checkpoint travel never consumes an older history entry$/],
+    mustPass: [/^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/,
+      /^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/],
+  },
+  {
+    id: "R1506", what: "admit an old input after its cancellation listener has already installed a successor",
+    suite: "test:reading-viewport",
+    from: "  if (!readingViewport.isPermitCurrent(previous)) return;",
+    to: "",
+    expect: [/^pre-cancel successor input cannot borrow a later admission$/],
+    mustPass: [/^reading input cancels before one owned typed admission without requiring movement$/,
+      /^source-only reentry during input admission cannot lend a fresh permit$/,
+      /^filtered synthetic and zoom input never publish a manual history admission$/],
+  },
+  {
+    id: "R1507", what: "borrow a source-reentrant permit instead of retaining the atomic input admission",
+    suite: "test:reading-viewport",
+    from: "  const admission = readingViewport.beginChange(true);",
+    to: "  const intent = readingViewport.beginIntent();\n  const admission = { intent, permit: readingViewport.capturePermit() };",
+    expect: [/^source-only reentry during input admission cannot lend a fresh permit$/],
+    mustPass: [/^reading input cancels before one owned typed admission without requiring movement$/,
+      /^pre-cancel successor input cannot borrow a later admission$/,
+      /^filtered synthetic and zoom input never publish a manual history admission$/],
+  },
+  {
+    id: "R1508", what: "keep unproved input alive after the existing layout observer reports ambiguity",
+    from: "    window.dispatchEvent(Object.assign(new Event('reading-history-presentation-invalidated'), { kind: 'geometry' }));",
+    to: "",
+    expect: [/^unproved input retired by layout source or mode cannot borrow later scroll movement$/],
+    mustPass: [/^confirmed movement survives later layout and no-motion input without losing the saved checkpoint$/,
+      /^movement before admission and synthetic scroll alone do not prove a manual departure$/,
+      /^nested horizontal movement promotes once and later scroll events do not resample$/],
+  },
+  {
+    id: "R1509", what: "continue a checkpoint fallback after a same-ID replacement retires its actual model authority",
+    from: "            snapshot.revision === checkpointRevision && snapshot.entries[snapshot.index] === checkpoint;",
+    to: "            true;",
+    expect: [/^same-ID replacement after checkpoint completion refuses same-Back fallback under obsolete model authority$/],
+    mustPass: [/^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^same-ID replacement retires the exact prior entry witness even when its input permit survives$/,
+      /^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/],
+  },
+  {
+    id: "R1510", what: "unlock checkpoint confirmation and recursively mint another action for its no-travel fallback",
+    from: "        const physicalDeparture = departure(state);\n        if (!physicalDeparture || !checkpointCurrent()) return false;\n        state.manualReturn = null;\n        receipt = state.model.stageTraverse(direction, physicalDeparture);",
+    to: "        state.manualReturn = null;\n        state.operation = null;\n        return navigate(direction);",
+    expect: [/^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+    mustPass: [/^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/,
+      /^same-ID replacement after checkpoint completion refuses same-Back fallback under obsolete model authority$/,
+      /^no-motion user input does not consume Back as a checkpoint return$/],
+  },
+  {
+    id: "R1511", what: "require visible departure text before returning to an already confirmed checkpoint",
+    from: "    const from = checkpoint ? null : departure(state);\n    if (!checkpoint && !from) return false;",
+    to: "    const from = departure(state);\n    if (!from) return false;",
+    expect: [/^confirmed checkpoint returns from no-visible-text without a departure receipt or Forward mutation$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+    mustPass: [/^manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/,
+      /^interrupted later preview preserves last reached destination for Forward, not its excursion$/],
+  },
+  {
+    id: "R1512", what: "borrow the saved checkpoint as departure when a no-motion return cannot capture the current viewport",
+    from: "        const physicalDeparture = departure(state);\n        if (!physicalDeparture || !checkpointCurrent()) return false;",
+    to: "        const physicalDeparture = checkpoint.location;\n        if (!checkpointCurrent()) return false;",
+    expect: [/^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+    mustPass: [/^confirmed checkpoint returns from no-visible-text without a departure receipt or Forward mutation$/,
+      /^confirmed departure already back at its checkpoint continues ordinary traversal in the same Back$/,
+      /^Forward remains ordinary traversal from the actual manually scrolled departure$/],
+  },
+  {
+    id: "R1513", what: "retarget the previous split-view driver's queued frame on a no-motion ownership change",
+    file: path.join(SRC, "editor-scroll.js"),
+    from: "    if (owner !== side && frame) {\n      cancelAnimationFrame(frame);\n      frame = 0;\n    }",
+    to: "",
+    expect: [/^a no-motion editor owner handoff cannot retarget a queued preview follower or confirm departure$/,
+      /^real editor wheel travel schedules fresh following after an owner handoff$/,
+      /^real editor keydown travel schedules fresh following after an owner handoff$/],
+    mustPass: [/^explicit preview navigation queues fresh following and keeps an already preview-owned frame$/,
+      /^confirmed checkpoint returns from no-visible-text without a departure receipt or Forward mutation$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+  },
+  {
+    id: "R1497", what: "leave first-debounce Back unavailable until after the pending query can already run",
+    from: "  scheduleSearch(e.target.value, intent, null, segment);\n" +
+      "  // Publish only after the exact pending request exists, including for synchronous Back.\n" +
+      "  readingHistory.sync();",
+    to: "  scheduleSearch(e.target.value, intent, null, segment);",
+    expect: [/^first-debounce Back is available without older history and no-travel recovery creates no entry$/,
+      /^synchronous first-debounce availability subscriber cancels the exact admitted query$/],
+    mustPass: [/^first-debounce toolbar Back cancels Search without consuming older history or Forward$/,
+      /^blocked first-debounce Back keeps its query and cancels only after modal or freeze guards clear$/,
+      /^no-travel first preview does not leave a fake provisional Back action$/],
+  },
+].map(revert => ({
+  file: RENDERER, suite: "test:reading-consumers", requireExactFailures: true,
+  requireMustPassAssertions: true, expectedFailureCount: revert.expect.length,
+  mustPass: [/^unavailable optional capture leaves the actual document jump usable$/,
+    /^invalid directions reject; subscriber cleanup is real and idempotent$/],
+  ...revert,
+}));
+
+const READING_CONTROL_REVERTS = [
+  {
+    id: "R1473", what: "let recognized blocked reading-history chords fall through to minus zoom",
+    file: RENDERER,
+    from: "  if (handleReadingHistoryShortcut(e)) return;",
+    to: "  handleReadingHistoryShortcut(e);",
+    expect: [/^plain arrows remain file history and macOS Command-minus remains zoom$/,
+      /^composition, AltGraph and already-handled chords never fall through to zoom$/,
+      /^the actual broad keyboard route preserves nonconflicting zoom but never zooms an exhausted history chord$/],
+    mustPass: [/^nearby modifier combinations are not reading history$/,
+      /^isolated preload accepts only the two reading commands and never exposes the IPC event$/],
+  },
+  {
+    id: "R1474", what: "let an old window dispatch reading history to the current document",
+    file: MAIN,
+    from: "direction === null || mainWindow !== win ||",
+    to: "direction === null ||",
+    expect: [/^win32 Main drops stale owners and removes its window listener$/,
+      /^linux Main drops stale owners and removes its window listener$/],
+    mustPass: [/^win32 Main maps only standard browser app commands$/,
+      /^linux Main maps only standard browser app commands$/,
+      /^macOS does not register a mouse-command promise$/],
+  },
+  {
+    id: "R1475", what: "let the isolated history subscription accept an invalid scalar command",
+    file: path.join(SRC, "main-preload.js"),
+    from: "subscribed && (direction === -1 || direction === 1)",
+    to: "subscribed",
+    expect: [/^isolated preload accepts only the two reading commands and never exposes the IPC event$/],
+    mustPass: [/^preload refuses invalid callbacks and subframe subscriptions$/,
+      /^toolbar, shortcuts and native commands dispatch the same guarded core traversal$/],
+  },
+  {
+    id: "R1476", what: "leave a retired isolated history IPC listener registered",
+    file: path.join(SRC, "main-preload.js"),
+    from: '    ipcRenderer.removeListener("reading-history-command", listener);',
+    to: "    // Test revert: leave the old listener registered.",
+    expect: [/^preload unsubscribe and pagehide retire only their owned subscriptions$/],
+    mustPass: [/^preload refuses invalid callbacks and subframe subscriptions$/,
+      /^current-tab availability wins over old notifications and old async completions$/],
+  },
+  {
+    id: "R1514", what: "drop the Windows DOM side-button request while leaving its browser defaults owned",
+    file: RENDERER,
+    from: "    requestReadingHistoryNavigation(event.button === 3 ? -1 : 1, event);",
+    to: "",
+    expect: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^trusted DOM mouse Forward reaches guarded history without native IPC$/,
+      /^Windows DOM ownership ignores native commands before during and after a mouse gesture$/,
+      /^Windows release never retries after completion and an unmatched release only cancels default$/,
+      /^Windows mouse has no held-button latch after a release is missed$/,
+      /^Windows mouse listeners are nonpassive once-only and removed with their page owner$/,
+      /^Windows mouse reports traversal failures and still owns both browser defaults$/],
+    mustPass: [/^Windows mouse ownership preserves toolbar and Alt-arrow reading commands$/,
+      /^linux keeps native reading commands without adding a DOM mouse ingress$/,
+      /^Windows side-button phases cancel browser defaults even when navigation is blocked$/],
+  },
+  {
+    id: "R1515", what: "let a mouse event outside the focused editor bypass its editability guard",
+    file: RENDERER,
+    from: "  if (event.type === 'mousedown' && !readingHistoryEditableTarget(document.activeElement)) {",
+    to: "  if (event.type === 'mousedown') {",
+    expect: [/^Windows mouse respects both editable targets and independently focused editors$/],
+    mustPass: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^Windows side-button phases cancel browser defaults even when navigation is blocked$/,
+      /^all routes refuse modal, editable, composition, frozen and exhausted navigation$/],
+  },
+  {
+    id: "R1516", what: "retry Windows reading history on mouse release",
+    file: RENDERER,
+    from: "  if (event.type === 'mousedown' && !readingHistoryEditableTarget(document.activeElement)) {",
+    to: "  if (!readingHistoryEditableTarget(document.activeElement)) {",
+    expect: [/^Windows DOM ownership ignores native commands before during and after a mouse gesture$/,
+      /^Windows release never retries after completion and an unmatched release only cancels default$/,
+      /^Windows mouse reports traversal failures and still owns both browser defaults$/],
+    mustPass: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^Windows mouse has no held-button latch after a release is missed$/,
+      /^Windows side-button adapter leaves synthetic and ordinary mouse events unchanged$/],
+  },
+  {
+    id: "R1517", what: "release Windows browser-history default ownership on mouseup",
+    file: RENDERER,
+    from: "  event.preventDefault();\n}\n\nfunction readingHistoryShortcutDirection(event)",
+    to: "  if (event.type === 'mousedown') event.preventDefault();\n}\n\nfunction readingHistoryShortcutDirection(event)",
+    expect: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^trusted DOM mouse Forward reaches guarded history without native IPC$/,
+      /^Windows side-button phases cancel browser defaults even when navigation is blocked$/,
+      /^Windows mouse respects both editable targets and independently focused editors$/,
+      /^Windows release never retries after completion and an unmatched release only cancels default$/,
+      /^Windows mouse reports traversal failures and still owns both browser defaults$/],
+    mustPass: [/^Windows DOM ownership ignores native commands before during and after a mouse gesture$/,
+      /^Windows mouse ownership preserves toolbar and Alt-arrow reading commands$/,
+      /^Windows side-button adapter leaves synthetic and ordinary mouse events unchanged$/],
+  },
+  {
+    id: "R1518", what: "enable a second direction-only native reading ingress on Windows",
+    file: RENDERER,
+    from: "  if (platform === 'win32') {\n    for (const type of ['mousedown', 'mouseup']) {",
+    to: "  if (platform === 'win32') {\n" +
+      "    cleanups.push(window.markaloo.onReadingHistoryCommand(direction => requestReadingHistoryNavigation(direction)));\n" +
+      "    for (const type of ['mousedown', 'mouseup']) {",
+    expect: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^trusted DOM mouse Forward reaches guarded history without native IPC$/,
+      /^Windows DOM ownership ignores native commands before during and after a mouse gesture$/,
+      /^Windows mouse ownership preserves toolbar and Alt-arrow reading commands$/],
+    mustPass: [/^linux keeps native reading commands without adding a DOM mouse ingress$/,
+      /^darwin keeps native reading commands without adding a DOM mouse ingress$/,
+      /^Windows mouse listeners are nonpassive once-only and removed with their page owner$/],
+  },
+  {
+    id: "R1519", what: "silently select a native reading route for an unavailable or unsupported platform",
+    file: RENDERER,
+    from: "  if (!['win32', 'linux', 'darwin'].includes(platform)) {\n" +
+      "    throw new Error('Reading history platform is unavailable or unsupported');\n  }",
+    to: "",
+    expect: [/^reading controls reject an unavailable or unsupported authoritative platform$/],
+    mustPass: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^linux keeps native reading commands without adding a DOM mouse ingress$/,
+      /^darwin keeps native reading commands without adding a DOM mouse ingress$/],
+  },
+  {
+    id: "R1520", what: "accept synthetic Windows side-button events as physical reading commands",
+    file: RENDERER,
+    from: "  if (!event.isTrusted || (event.button !== 3 && event.button !== 4)) return;",
+    to: "  if (event.button !== 3 && event.button !== 4) return;",
+    expect: [/^Windows side-button adapter leaves synthetic and ordinary mouse events unchanged$/],
+    mustPass: [/^trusted DOM mouse Back reaches guarded history without native IPC$/,
+      /^trusted DOM mouse Forward reaches guarded history without native IPC$/,
+      /^Windows side-button phases cancel browser defaults even when navigation is blocked$/],
+  },
+].map(revert => ({
+  suite: "test:reading-controls", requireExactFailures: true, requireMustPassAssertions: true,
+  expectedFailureCount: revert.expect.length, ...revert,
+}));
+
+// Candidate sensitivities for the assembled producer/location unit. These
+// records still require the integration owner's serialized execution.
+const READING_LOCATION_REVERTS = [
+  {
+    id: "R1481", what: "replace a same-content reading label during a cache installation",
+    from: "state.readingKey = key || (unchanged && state.readingKey) ||",
+    to: "state.readingKey = key ||",
+    expect: [/^actual initialization and every content writer maintain labels and fresh installation witnesses$/,
+      /^every same-content installation gets a fresh witness but keeps its label$/],
+    mustPass: [/^cache admission normalizes only at the boundary and returns the current label$/,
+      /^real adoption rollback restores X label with a fresh witness$/],
+  },
+  {
+    id: "R1482", what: "reuse an old reading installation witness even for a same-content write",
+    from: "    state.readingWitness = Object.freeze({});",
+    to: "",
+    expect: [/^actual initialization and every content writer maintain labels and fresh installation witnesses$/,
+      /^every same-content installation gets a fresh witness but keeps its label$/,
+      /^real adoption rollback restores X label with a fresh witness$/],
+    mustPass: [/^intervening Z refuses the whole rollback including metadata$/,
+      /^closed and replacement lifetimes cannot restore their old operation$/],
+  },
+  {
+    id: "R1483", what: "restore disk-adoption bytes and metadata into a closed or replacement lifetime",
+    from: "!tabs.includes(tab) || state !== prior.state ||",
+    to: "",
+    expect: [/^closed and replacement lifetimes cannot restore their old operation$/],
+    mustPass: [/^real adoption rollback restores X label with a fresh witness$/,
+      /^intervening Z refuses the whole rollback including metadata$/],
+  },
+  {
+    id: "R1484", what: "let an intervening installation borrow an old disk-adoption rollback",
+    from: "        state.readingAdoption !== prior.operation ||\n" +
+      "        state.readingWitness !== (prior.installed || prior.readingWitness) ||\n",
+    to: "",
+    expect: [/^intervening Z refuses the whole rollback including metadata$/],
+    mustPass: [/^real adoption rollback restores X label with a fresh witness$/,
+      /^live mutation without cache installation still refuses post-adoption rollback$/,
+      /^closed and replacement lifetimes cannot restore their old operation$/],
+  },
+  {
+    id: "R1485", what: "undo a later live mutation merely because the cache installation witness still matches",
+    from: "state.readingWitness !== (prior.installed || prior.readingWitness) ||\n" +
+      "        (prior.installed && state.mutationRevision !== prior.installedRevision)",
+    to: "state.readingWitness !== (prior.installed || prior.readingWitness)",
+    expect: [/^live mutation without cache installation still refuses post-adoption rollback$/],
+    mustPass: [/^real adoption rollback restores X label with a fresh witness$/,
+      /^intervening Z refuses the whole rollback including metadata$/],
+  },
+  {
+    id: "R1486", what: "publish generated Source owners without their exact patcher target association",
+    file: RENDERER,
+    from: "      // The exact canonical/body association is retained by the patcher, not\n" +
+      "      // rediscovered from a class, text, table number or current selection.\n" +
+      "      const target = targets.get(node);",
+    to: "      // The exact canonical/body association is retained by the patcher, not\n" +
+      "      // rediscovered from a class, text, table number or current selection.\n" +
+      "      const target = null;",
+    expect: [/^final publication uses exact patcher associations, never an undefined target map$/],
+    mustPass: [/^displayed Source lookup is independent of pending cache\/editor text$/,
+      /^every same-content installation gets a fresh witness but keeps its label$/],
+  },
+  {
+    id: "R1522", what: "delay initial content completion until deferred highlighting has already finished",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "    initialReady?.();\n    if (textReady) await textReady;",
+    to: "    if (textReady) await textReady;",
+    expect: [
+      /^initial content resolves before actual deferred finalization, stale=false$/,
+      /^initial content resolves before actual deferred finalization, stale=true$/,
+      /^escaping deferred failures remain rejected and observed after initial completion$/,
+    ],
+    mustPass: [
+      /^nonpending and light renders settle both owned phases$/,
+      /^actual deferred error handling settles finalization without publishing failure DOM$/,
+      /^synchronous setup failures remain observed rejected Promises$/,
+    ],
+  },
+  {
+    id: "R1523", what: "decorate or error-paint a retired owner when no newer render has started",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "  const isCurrentRender = () => generation === renderGeneration && (!admission ||\n" +
+      "    (admission.selection === fileOpenSequence && window.CustomTabs?.getActiveTab() === admission.tab));",
+    to: "  const isCurrentRender = () => generation === renderGeneration;",
+    expect: [
+      /^same-generation tab retirement suppresses deferred decoration$/,
+      /^same-generation tab retirement suppresses deferred error paint$/,
+      /^same-generation selection retirement suppresses deferred decoration$/,
+      /^same-generation selection retirement suppresses deferred error paint$/,
+    ],
+    mustPass: [
+      /^initial content resolves before actual deferred finalization, stale=false$/,
+      /^actual deferred error handling settles finalization without publishing failure DOM$/,
+      /^bare renders without tab admission still complete both phases$/,
+    ],
+  },
+  {
+    id: "R1487", what: "replace post-write geometry with a fresh receipt after the native completion",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "!editorScroll.isTextLocationCurrent(postWrite.receipt)",
+    to: "editorScroll.resolveVisibleText(location.text, scroller, readingPresentationContext()).status !== 'resolved'",
+    expect: [/^native completion cannot replace a moved target with a newly valid receipt$/,
+      /^outer completion checks previously restored inner offsets too$/],
+    mustPass: [/^actual adapter restores inner-only travel and both horizontal axes$/,
+      /^actual adapter refuses native completion\/currentness failure: interrupted$/],
+  },
+  {
+    id: "R1488", what: "enter Split without restoring the actual Source text landmark after rewrap",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "    await restoreModePosition();\n  } else {\n    try {\n    // Exit edit mode",
+    to: "  } else {\n    try {\n    // Exit edit mode",
+    expect: [/^actual enter\/leave modes restore a text landmark across Reader\/Split rewrap$/],
+    mustPass: [/^actual adapter restores inner-only travel and both horizontal axes$/,
+      /^mode exit captures after both the save wait and discard confirmation$/],
+  },
+  {
+    id: "R1489", what: "hide new dirty input behind an initially clean mode exit's held render",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "      (!open && hasUnsavedChanges && !exitConsent) ||\n",
+    to: "",
+    expect: [/^typing during a clean exit's render wait keeps the dirty editor open$/],
+    mustPass: [/^actual enter\/leave modes restore a text landmark across Reader\/Split rewrap$/,
+      /^pending render cannot outlive exact exit approval: consent$/,
+      /^pending render cannot outlive exact exit approval: save$/],
+  },
+  {
+    id: "R1498", what: "keep a replacement nested owner's initial horizontal offset during Discard",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "createModeReadingHandoff(capturedPosition, modeIntent, modeCurrent, true)",
+    to: "createModeReadingHandoff(capturedPosition, modeIntent, modeCurrent)",
+    expect: [
+      /^later Discard maps displayed code Source, pending textarea=false$/,
+      /^later Discard maps displayed code Source, pending textarea=true$/,
+      /^later Discard maps displayed table Source, pending textarea=false$/,
+      /^later Discard maps displayed table Source, pending textarea=true$/,
+      ...["intent", "interrupted", "malformed", "owner-chain"].map(failure =>
+        new RegExp("^Discard nested restoration stops before outer writes after " + failure + "$")),
+    ],
+    mustPass: [/^layout-only mode changes keep the current nested horizontal offset$/,
+      /^saved clean exit flushes a pending light preview with a private insertion correspondence$/,
+      /^a refused multiple-edit table mode handoff never retries the public changed-source resolver$/],
+  },
+  {
+    id: "R1499", what: "discard the existing atom geometry gate's bounded failure detail",
+    file: EDITOR_SCROLL, suite: "test:reading-landmarks",
+    from: "        lastReadingCaptureFailure = Object.freeze(failure);",
+    to: "        lastReadingCaptureFailure = null;",
+    expect: [/^ordinary rounded PRE captures padded text but refuses an actually clipped corner$/,
+      /^review: a transformed atom with competing line fragments refuses consistently$/],
+    mustPass: [/^review: visible unsupported geometry still refuses before a supported survivor$/,
+      /^review: a hidden preceding branch cannot mask later verified visible text$/],
+  },
+  {
+    id: "R1500", what: "position the native code fixture through a clipped line instead of its measured gap",
+    file: path.join(ROOT, "test", "test-document-editor.js"), suite: "test:reading-landmarks",
+    from: "  const requestedTop = target.scrollTop + (lower + (upper - lower) / 2) / before.scale;",
+    to: "  const requestedTop = 120;",
+    expect: [1, 1.25, 2].map(zoom =>
+      new RegExp("^native code fixture positions an exact interline gap at scale " + String(zoom).replace(".", "\\.") + "$")),
+    mustPass: [/^ordinary rounded PRE captures padded text but refuses an actually clipped corner$/,
+      /^native code fixture refuses unsupported setup without retry: no-gap$/,
+      /^native code fixture refuses unsupported setup without retry: radius$/],
+  },
+  {
+    id: "R1501", what: "hide the existing restoration failure site from the diagnostic facade",
+    file: RENDERER, suite: "test:reading-mode",
+    from: "window.getEditorScrollDiagnostics = () => ({ ...editorScroll.diagnostics(), lastReadingRestoreFailure });",
+    to: "window.getEditorScrollDiagnostics = () => editorScroll.diagnostics();",
+    expect: [
+      ...["pre-write", "post-write-completion", "final"].map(phase =>
+        new RegExp("^restore diagnostics retain the existing failed guard without reevaluation: " + phase + "$")),
+      /^restore diagnostic preserves the rectangle guard's short circuit$/,
+      /^outer completion checks previously restored inner offsets too$/,
+    ],
+    mustPass: [/^native completion cannot replace a moved target with a newly valid receipt$/,
+      /^layout-only mode changes keep the current nested horizontal offset$/,
+      /^actual adapter restores inner-only travel and both horizontal axes$/],
+  },
+].map(revert => ({
+  file: TABS, suite: "test:reading-producers", requireExactFailures: true,
+  requireMustPassAssertions: true, expectedFailureCount: revert.expect.length, ...revert,
+}));
 
 const REVERTS = [
+  ...READING_CONSUMER_REVERTS,
+  ...READING_CONTROL_REVERTS,
+  ...READING_LOCATION_REVERTS,
+  ...[
+    ["R1490", "test:reading-landmarks", "test-reading-landmarks.js"],
+    ["R1491", "test:reading-producers", "test-reading-mode-producers.js"],
+    ["R1492", "test:reading-mode", "test-reading-mode-integration.js"],
+  ].map(([id, suite, runner]) => ({
+    id, what: `route ${suite} acceptance away from its actual Source or producer suite`,
+    file: PKG, suite: "test:packaging",
+    from: `"${suite}": "node test/${runner}",`,
+    to: `"${suite}": "node test/test-reading-history.js",`,
+    expect: [/^the feature aggregate contains each accepted behavioral suite exactly once$/],
+    mustPass: [/^feature reachability oracle rejects omitted duplicate reordered and cyclic routes$/,
+      /^reading history foundation loads exactly once before renderer and tabs$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  })),
+  ...[
+    ["R1493", "test:reading-landmarks"],
+    ["R1494", "test:reading-producers"],
+    ["R1495", "test:reading-mode"],
+  ].map(([id, suite]) => ({
+    id, what: `omit ${suite} from the complete feature gate`,
+    file: PKG, suite: "test:packaging", from: `npm run ${suite} && `, to: "",
+    expect: [/^the feature aggregate contains each accepted behavioral suite exactly once$/,
+      /^npm test executes the complete feature gate before legacy tabs and retains full reading later$/,
+      /^ordinary CI executes the complete feature gate before legacy tabs$/],
+    mustPass: [/^feature reachability oracle rejects omitted duplicate reordered and cyclic routes$/,
+      /^reading history foundation loads exactly once before renderer and tabs$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+  })),
+  ...[
+    ["R1477", "test:reading-consumers", "test-reading-history-consumers.js"],
+    ["R1478", "test:reading-controls", "test-reading-navigation-controls.js"],
+  ].map(([id, suite, runner]) => ({
+    id, what: `route ${suite} acceptance to the pure model instead of its actual consumers`,
+    file: PKG, suite: "test:packaging",
+    from: `"${suite}": "node test/${runner}",`,
+    to: `"${suite}": "node test/test-reading-history.js",`,
+    expect: [/^the feature aggregate contains each accepted behavioral suite exactly once$/],
+    mustPass: [/^feature reachability oracle rejects omitted duplicate reordered and cyclic routes$/,
+      /^reading history foundation loads exactly once before renderer and tabs$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  })),
+  ...[
+    ["R1479", "test:reading-consumers"],
+    ["R1480", "test:reading-controls"],
+  ].map(([id, suite]) => ({
+    id, what: `omit ${suite} from the complete feature gate`,
+    file: PKG, suite: "test:packaging",
+    from: `npm run ${suite} && `, to: "",
+    expect: [/^the feature aggregate contains each accepted behavioral suite exactly once$/,
+      /^npm test executes the complete feature gate before legacy tabs and retains full reading later$/,
+      /^ordinary CI executes the complete feature gate before legacy tabs$/],
+    mustPass: [/^feature reachability oracle rejects omitted duplicate reordered and cyclic routes$/,
+      /^reading history foundation loads exactly once before renderer and tabs$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+  })),
   ...DAILY_UPDATE_REVERTS,
+  ...READING_LIFECYCLE_REVERTS,
+  {
+    id: "R1457", what: "load default-save VM actors without their real shared reading lifecycle binding",
+    file: path.join(ROOT, "test", "test-default-save-contracts.js"),
+    from: '  vm.runInContext(fs.readFileSync(path.join(producerRoot, "reading-viewport.js"), "utf8") + "\\n" +\n' +
+      '    between(renderer, "function createReadingViewportLifecycle()", "\\nconst readingZoomWheelIntents"), context);',
+    to: '  vm.runInContext(fs.readFileSync(path.join(producerRoot, "reading-viewport.js"), "utf8"), context);',
+    suite: "test:packaging",
+    expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
+    mustPass: [/^reading history foundation is included in application package files$/,
+      /^SEC-08 browser product scripts have no Node imports exports raw IPC or filesystem fallback$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1458", what: "borrow an intervening notification's viewport epoch when admitting a zoom change",
+    file: RENDERER,
+    from: "      if (previousChange !== prior || !owner.isPermitCurrent(permit) ||",
+    to: "      if (!owner.isPermitCurrent(permit) ||",
+    suite: "test:reading-viewport",
+    expect: [/^source reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^source reentry within programmatic zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within programmatic zoom admission cannot renew or write the retired burst$/],
+    mustPass: [...READING_VIEWPORT_CONTROLS,
+      /^genuine reentry within genuine zoom admission cannot renew or write the retired burst$/,
+      /^zoom admission invalidates before writes and renews only its current burst$/,
+      /^Ctrl zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Ctrl zoom-out wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom wheel capture and handler keep one owned burst before RAF$/,
+      /^Meta zoom-out wheel capture and handler keep one owned burst before RAF$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1459", what: "expect the Search witness in an adjacent paragraph instead of the real production section",
+    file: path.join(ROOT, "test", "reading-jump-native-controls.js"),
+    from: 'function expectedSearchTarget(viewer) {\n' +
+      '  const heading = viewer.querySelector("#instant-focus-target");\n' +
+      '  const section = heading?.nextElementSibling;\n' +
+      '  if (!section?.classList.contains("collapsible-section") ||\n' +
+      '      section.dataset.mvCollapsible !== "1" || section.dataset.forHeader !== heading.id) return null;\n' +
+      '  const matches = section.querySelectorAll(".search-highlight");\n' +
+      '  if (matches.length !== 1 || viewer.querySelectorAll(".search-highlight").length !== 1) return null;\n' +
+      '  const target = matches[0];\n' +
+      '  return target.parentElement?.tagName === "P" && target.textContent === "instantuniquewitness" ? target : null;\n' +
+      '}',
+    to: 'function expectedSearchTarget(viewer) {\n' +
+      '  const adjacent = viewer.querySelector("#instant-focus-target")?.nextElementSibling;\n' +
+      '  return adjacent?.tagName === "P" ? adjacent.querySelector(".search-highlight") : null;\n' +
+      '}',
+    suite: "test:reading-viewport",
+    expect: [/^actual Search fixture resolves its exact unique target after production heading wrapping and highlighting$/,
+      /^actual wrapped Search target resolver rejects wrong section association$/,
+      /^actual wrapped Search target resolver rejects missing production section marker$/,
+      /^actual wrapped Search target resolver rejects wrong exact witness$/,
+      /^actual wrapped Search target resolver rejects duplicate matching highlight$/],
+    mustPass: [...READING_VIEWPORT_CONTROLS,
+      /^actual native fixture predicate rejects wrong native target$/,
+      /^actual native fixture predicate rejects wrong expected document target$/,
+      /^actual native fixture predicate rejects wrong native block$/,
+      /^actual native fixture predicate rejects wrong declared block$/,
+      /^actual native fixture predicate requires both Search requests and only the final completion$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
+  {
+    id: "R1460", what: "leave the production-wrapped Search VM without its real shared jump binding",
+    file: path.join(ROOT, "test", "reading-viewport-lifecycle-controls.js"),
+    from: '    loadSharedJump(f);\n    const headers = viewer.querySelectorAll("h1, h2, h3, h4, h5, h6");',
+    to: '    const headers = viewer.querySelectorAll("h1, h2, h3, h4, h5, h6");',
+    suite: "test:reading-viewport",
+    expect: [/^wrapped Search fixture binds the real shared jump and preserves successor ownership after its native invocation$/],
+    mustPass: [...READING_VIEWPORT_CONTROLS,
+      /^actual Search fixture resolves its exact unique target after production heading wrapping and highlighting$/,
+      /^actual wrapped Search target resolver rejects wrong section association$/,
+      /^actual wrapped Search target resolver rejects missing production section marker$/,
+      /^actual wrapped Search target resolver rejects wrong exact witness$/,
+      /^actual wrapped Search target resolver rejects duplicate matching highlight$/],
+    requireMustPassAssertions: true, requireExactFailures: true,
+  },
   {
     id: "R1368", what: "borrow current cancellation authority when the caller supplied no receipt",
     file: path.join(SRC, "reading-viewport.js"),
@@ -938,7 +2214,17 @@ const REVERTS = [
     expect: [/^movement supersedes restoration even without an arrival or travel sample$/,
       /^a source rebuild retires execution and viewport permits but retains genuine intent$/,
       /^a stale outer track cannot replace a same-intent successor$/,
-      /^identity collection cannot make an invalidated permit look current$/],
+      /^identity collection cannot make an invalidated permit look current$/,
+      /^same-tab source invalidation retains genuine intent but retires viewport permits$/,
+      /^render start invalidates before editor mapping and full reset yields across its held await$/,
+      /^accepted reload invalidates before source adoption while disk refusal preserves prior authority$/,
+      /^presentation and splitter geometry invalidate before their writes without renewing genuine intent$/,
+      /^zoom admission invalidates before writes and renews only its current burst$/,
+      /^a zoom wheel whose captured source authority retired cannot change zoom$/,
+      /^side-panel layout invalidates before presentation writes without fabricating intent$/,
+      /^source reentry within programmatic zoom admission cannot renew or write the retired burst$/,
+      /^genuine reentry within programmatic zoom admission cannot renew or write the retired burst$/,
+      /^shared instant helper keeps its request options and programmatic calls cannot mint genuine intent$/],
     mustPass: READING_VIEWPORT_CONTROLS,
     requireMustPassAssertions: true, requireExactFailures: true,
   },
@@ -1591,8 +2877,8 @@ const REVERTS = [
     id: "R1223",
     what: "read the S10 expensive fixture through the nonexistent sandbox filesystem",
     file: path.join(ROOT, "test", "test-tab-refresh.js"),
-    from: "      bigIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(bigBody)}).large,",
-    to: "      bigIsLarge: window.FoliaFileHelpers.isLargeDocument(window.fs.readFileSync(${JSON.stringify(fileBig)}, 'utf8')).large,",
+    from: "      bigIsLarge: window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(bigBody)}).large,",
+    to: "      bigIsLarge: window.MarkalooFileHelpers.isLargeDocument(window.fs.readFileSync(${JSON.stringify(fileBig)}, 'utf8')).large,",
     suite: "test:packaging",
     expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
     mustPass: [
@@ -2840,7 +4126,7 @@ const REVERTS = [
     id: "R1291",
     what: "credit an unrelated generic-error publisher as the original NSIS preflight catch",
     file: path.join(ROOT, "test", "test-tab-refresh.js"),
-    from: "          item.state.lastRequestId === id && /[\\\\/]src[\\\\/]main\\.js:14141:\\d+/.test(item.stack) &&",
+    from: "          item.state.lastRequestId === id && preflightCallsite(item.stack) &&",
     to: "          item.state.lastRequestId === id &&",
     suite: "test:packaging",
     expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
@@ -2858,7 +4144,7 @@ const REVERTS = [
     file: path.join(ROOT, "test", "test-tab-refresh.js"),
     from:
       '      if (!cleanup && !resetting && kind === "send:return" && data.channel === "quit-approval-thaw" &&\n' +
-      "          /[\\\\/]src[\\\\/]main\\.js:12736:\\d+/.test(record.stack)) {",
+      "          thawCallsite(record.stack)) {",
     to: '      if (!cleanup && !resetting && kind === "send:return" && data.channel === "quit-approval-thaw") {',
     suite: "test:packaging",
     expect: [/^default fixture source controls preserve SPLIT admission and original failure evidence$/],
@@ -4756,6 +6042,7 @@ const REVERTS = [
     file: TABS,
     from: "  window.addEventListener('preview-navigation-intent', () => {\n    if (cancelActiveRestore) cancelActiveRestore();\n  });",
     to: "",
+    also: READING_RESTORE_COMPAT_BYPASS,
     suite: "test:editor-scroll-transitions",
     expect: [/^explicit TOC navigation immediately retires the old tab restoration$/,
       /^a real resize after completed TOC navigation cannot restore the old reading position$/,
@@ -4767,8 +6054,9 @@ const REVERTS = [
   {
     id: "R1112", what: "omit saved-restore cancellation from the shared preview navigation helper",
     file: RENDERER,
-    from: "  window.dispatchEvent(new Event('preview-navigation-intent'));\n",
-    to: "",
+    from: "  // Explicit navigation supersedes the saved tab anchor, including resize retries.\n  window.dispatchEvent(new Event('preview-navigation-intent'));\n",
+    to: "  // Explicit navigation supersedes the saved tab anchor, including resize retries.\n",
+    also: READING_RESTORE_COMPAT_BYPASS,
     suite: "test:editor-scroll-transitions",
     expect: [/^explicit TOC navigation immediately retires the old tab restoration$/,
       /^a real resize after completed TOC navigation cannot restore the old reading position$/,
@@ -4780,8 +6068,9 @@ const REVERTS = [
   {
     id: "R1113", what: "bypass shared restore cancellation when navigating a document search match",
     file: RENDERER,
-    from: "  scrollElementIntoView(match, 'center');",
-    to: "  editorScroll.previewNavigation();\n  match.scrollIntoView({ behavior: 'smooth', block: 'center' });",
+    from: "  // Explicit navigation supersedes the saved tab anchor, including resize retries.\n  window.dispatchEvent(new Event('preview-navigation-intent'));\n",
+    to: "  // Explicit navigation supersedes the saved tab anchor, including resize retries.\n  if (!searchMatches.includes(el)) window.dispatchEvent(new Event('preview-navigation-intent'));\n",
+    also: READING_RESTORE_COMPAT_BYPASS,
     suite: "test:editor-scroll-transitions",
     expect: [/^explicit search navigation immediately retires the old tab restoration$/,
       /^a real resize after completed search navigation cannot restore the old reading position$/],
@@ -4925,8 +6214,8 @@ const REVERTS = [
     // the call has moved out of addTableMaximizeButtons() and into both
     // pipelines. Neutralising the function itself covers every call site,
     // present and future, and cannot rot when a call site moves again.
-    from: "function applyTableBreakout() {\n",
-    to: "function applyTableBreakout() {\n  if (true) return; /* reverted for proof */\n",
+    from: "function applyTableBreakout(publishReading = true) {\n",
+    to: "function applyTableBreakout(publishReading = true) {\n  if (true) return; /* reverted for proof */\n",
     expect: [/table too wide for the reading column is widened/],
   },
   {
@@ -5209,8 +6498,8 @@ const REVERTS = [
     id: "R68",
     what: "skip normal preview layout while an owned visual Create is rendering",
     file: RENDERER,
-    from: "function applyWideContentLayout(onlyContainer = null) {",
-    to: "function applyWideContentLayout(onlyContainer = null) {\n" +
+    from: "function applyWideContentLayout(onlyContainer = null, publishReading = true) {",
+    to: "function applyWideContentLayout(onlyContainer = null, publishReading = true) {\n" +
       "  if (tableCellSession?.submitting && tableCellSession.applied &&\n" +
       "      tableCellSession.mode === TableCellMode.INSERT &&\n" +
       "      currentDocumentActionOwner() === tableCellSession.selection.tab) return;",
@@ -5230,7 +6519,7 @@ const REVERTS = [
     id: "R69",
     what: "expanding a section never re-measures (collapse at one window size, expand at another, and the width is stale)",
     file: RENDERER,
-    from: "  applyTableBreakout(); // heading toggle changes what can be measured",
+    from: "  applyTableBreakout(false);",
     to: "  /* applyTableBreakout() reverted for proof */",
     expect: [/expanding after the window grew re-measures/],
   },
@@ -5283,9 +6572,9 @@ const REVERTS = [
     id: "R73",
     suite: "test:patch",
     what: "key Collapse All by the raw header id again (writes land in a key space nothing reads, so it unwinds on the next re-render)",
-    file: COLLAPSE,
-    from: "        collapsedHeaders.set(_collapseKey(header.id), true);",
-    to: "        collapsedHeaders.set(header.id, true);",
+    file: RENDERER,
+    from: "    collapsedHeaders.set(_collapseKey(header.id), collapsed);",
+    to: "    collapsedHeaders.set(collapsed ? header.id : _collapseKey(header.id), collapsed);",
     // The DOM classes are set either way, so the defect is only visible after a
     // re-render - which is exactly what the second assertion observes.
     expect: [
@@ -5297,9 +6586,9 @@ const REVERTS = [
     id: "R73b",
     suite: "test:patch",
     what: "key Expand All by the raw header id again (the inverse of R73: an expand recorded in the wrong key space lets the collapse come back on re-render)",
-    file: COLLAPSE,
-    from: "        collapsedHeaders.set(_collapseKey(header.id), false);",
-    to: "        collapsedHeaders.set(header.id, false);",
+    file: RENDERER,
+    from: "    collapsedHeaders.set(_collapseKey(header.id), collapsed);",
+    to: "    collapsedHeaders.set(collapsed ? _collapseKey(header.id) : header.id, collapsed);",
     expect: [/Expand All likewise survives a re-render/],
   },
   {
@@ -5307,13 +6596,13 @@ const REVERTS = [
     suite: "test:patch",
     what: "hard-code contentWrapper as the scroll target for in-view navigation (a silent no-op in split view, where contentWrapper is overflow:hidden)",
     file: RENDERER,
-    from: "  el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });",
+    from: "    request = el.scrollIntoView({ behavior: 'instant', block, inline: 'nearest' });",
     to:
       "  const scroller = contentWrapper;\n" +
       "  const r = scroller.getBoundingClientRect();\n" +
       "  const t = el.getBoundingClientRect();\n" +
       "  const off = block === 'center' ? r.height / 2 : 20;\n" +
-      "  scroller.scrollTo({ top: t.top - r.top + scroller.scrollTop - off, behavior: 'smooth' });",
+      "  request = scroller.scrollTo({ top: t.top - r.top + scroller.scrollTop - off, behavior: 'instant' });",
     // Only the split-view legs may fail: .content-wrapper genuinely is the
     // scroller in normal view, so the normal-view legs must stay green or the
     // assertion is measuring something other than the defect.
@@ -5440,13 +6729,13 @@ const REVERTS = [
     suite: "test:patch",
     what: "compute the scroll destination by hand again (correct scroller, but a viewport-pixel rect delta added to a scrollTop in the zoomed subtree's own pixels)",
     file: RENDERER,
-    from: "  el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });",
+    from: "    request = el.scrollIntoView({ behavior: 'instant', block, inline: 'nearest' });",
     to:
       "  const scroller = getViewerScroller();\n" +
       "  const r = scroller.getBoundingClientRect();\n" +
       "  const t = el.getBoundingClientRect();\n" +
       "  const off = block === 'center' ? r.height / 2 : 20;\n" +
-      "  scroller.scrollTo({ top: t.top - r.top + scroller.scrollTop - off, behavior: 'smooth' });",
+      "  request = scroller.scrollTo({ top: t.top - r.top + scroller.scrollTop - off, behavior: 'instant' });",
     // Deliberately narrow: only the zoomed split-view leg may fail. If the
     // 100% legs fail too, the assertion is catching the scroller choice (R74's
     // job) rather than the coordinate-space error this entry exists to pin.
@@ -6051,7 +7340,7 @@ const REVERTS = [
   },
 
   // ----------------------------------------------------------------------
-  // Folia rebrand + review findings. Not table work, but this is the
+  // Markaloo rebrand + review findings. Not table work, but this is the
   // project's only permanent revert harness and a proof that lives in a
   // throwaway script is a proof that expires the moment the script is
   // deleted - which is precisely how these fixes could be reintroduced
@@ -6270,7 +7559,7 @@ const REVERTS = [
     // the upstream line with the fork's own is exactly the rebrand mistake
     // being guarded against, and it leaves no Omnicore attribution at all.
     from: "Copyright (c) 2025-2026 Omnicore",
-    to: "Copyright (c) 2026 Folia contributors",
+    to: "Copyright (c) 2026 Markaloo contributors",
     expect: [
       /LICENSE retains the upstream copyright/,
       /LICENSE and LICENSE\.txt have not drifted apart/,
@@ -6425,7 +7714,7 @@ const REVERTS = [
       /committed notices file is not stale/,
     ],
     mustPass: [
-      /dompurify's entry names the licence Folia elects/,
+      /dompurify's entry names the licence Markaloo elects/,
       // A SECOND package's election used to be listed here (jszip's
       // `(MIT OR GPL-3.0-or-later)`), so the proof could show this revert was
       // scoped to dompurify's marker rather than breaking election handling
@@ -7685,7 +8974,7 @@ const REVERTS = [
     // and short-circuiting keeps the function syntactically intact so the
     // failure is a wrong ANSWER rather than a parse error.
     what: "drop the already-relocated guard from the dev-profile decision",
-    file: MAIN,
+    file: PROFILE_STARTUP,
     from: '  if (path.resolve(app.getPath("userData")) !== path.resolve(standard)) {',
     to: "  if (false) {",
     suite: "test:profile",
@@ -7714,7 +9003,7 @@ const REVERTS = [
     // project a whole day - and doing it silently, because nothing downstream
     // checks whose profile it received.
     what: "drop the already-relocated guard and let main.js relocate an isolated test profile",
-    file: MAIN,
+    file: PROFILE_STARTUP,
     from: '  if (path.resolve(app.getPath("userData")) !== path.resolve(standard)) {',
     to: "  if (false) {",
     suite: "test:startup",
@@ -7804,7 +9093,7 @@ const REVERTS = [
     // Erring toward "already relocated, do nothing" is the safe direction, so
     // the comparison is exact on purpose.
     what: "lowercase the profile comparison, so a case-differing relocation reads as the default",
-    file: MAIN,
+    file: PROFILE_STARTUP,
     from: '  if (path.resolve(app.getPath("userData")) !== path.resolve(standard)) {',
     to:
       '  if (path.resolve(app.getPath("userData")).toLowerCase() !== ' +
@@ -7822,41 +9111,40 @@ const REVERTS = [
   },
   {
     id: "R475",
-    // The display name changes, but the existing development profile must not.
-    what: "derive the profile name from new branding and strand the old dev profile",
-    file: MAIN,
-    from: "    LEGACY_PROFILE_NAME + (app.isPackaged ? \"\" : DEV_PROFILE_SUFFIX),",
+    what: "derive the active profile from a previous application name instead of Markaloo",
+    file: PROFILE_STARTUP,
+    from: "    ACTIVE_PROFILE_NAME + (app.isPackaged ? \"\" : DEV_PROFILE_SUFFIX),",
     to: "    name + (app.isPackaged ? \"\" : DEV_PROFILE_SUFFIX),",
     suite: "test:profile",
     expect: [
-      /^the renamed development build keeps the original isolated profile$/,
-      /^a renamed packaged build keeps the installed profile and single-instance lock$/,
-      /^the packaged rebrand actually selects the existing profile before startup$/,
-      /^a first-time install creates the legacy profile before Electron sets its path$/,
+      /^a development run is redirected to a profile of its own$/,
+      /^an old default application name selects Markaloo, not Folia$/,
+      /^the packaged rebrand selects Markaloo before startup$/,
+      /^a redirected first-time install creates Markaloo before Electron sets its path$/,
       /^an upgrade keeps existing profile data$/,
       /^a packaged rebrand refuses an ignored profile redirect instead of losing tabs$/,
     ],
     mustPass: [
-      /^a development run is redirected to a profile of its own$/,
+      /^the renamed development build selects the Markaloo development profile$/,
       /^the development profile is a SIBLING of the standard one, not inside it$/,
     ],
   },
   {
     id: "R944",
     suite: "test:profile",
-    what: "send a renamed packaged app to a new profile and split its lock",
-    file: MAIN,
-    from: '    LEGACY_PROFILE_NAME + (app.isPackaged ? "" : DEV_PROFILE_SUFFIX),',
-    to: '    LEGACY_PROFILE_NAME + DEV_PROFILE_SUFFIX,',
+    what: "send a packaged app to the development profile",
+    file: PROFILE_STARTUP,
+    from: '    ACTIVE_PROFILE_NAME + (app.isPackaged ? "" : DEV_PROFILE_SUFFIX),',
+    to: '    ACTIVE_PROFILE_NAME + DEV_PROFILE_SUFFIX,',
     expect: [
-      /^a packaged build is never redirected$/,
-      /^a renamed packaged build keeps the installed profile and single-instance lock$/,
-      /^the packaged rebrand actually selects the existing profile before startup$/,
-      /^a first-time install creates the legacy profile before Electron sets its path$/,
+      /^an old default application name selects Markaloo, not Folia$/,
+      /^a packaged Markaloo build keeps its own default profile$/,
+      /^the packaged rebrand selects Markaloo before startup$/,
+      /^a redirected first-time install creates Markaloo before Electron sets its path$/,
       /^an upgrade keeps existing profile data$/,
     ],
     mustPass: [
-      /^the renamed development build keeps the original isolated profile$/,
+      /^the renamed development build selects the Markaloo development profile$/,
       /^a renamed packaged build preserves an explicitly relocated profile$/,
     ],
   },
@@ -7864,14 +9152,14 @@ const REVERTS = [
     id: "R945",
     suite: "test:profile",
     what: "continue with a new empty profile when the packaged redirect is ignored",
-    file: MAIN,
+    file: PROFILE_STARTUP,
     from: '      throw new Error("Cannot select the existing application profile");',
     to: '      return { target: null, reason: "setpath-ignored" };',
     expect: [
       /^a packaged rebrand refuses an ignored profile redirect instead of losing tabs$/,
     ],
     mustPass: [
-      /^the packaged rebrand actually selects the existing profile before startup$/,
+      /^the packaged rebrand selects Markaloo before startup$/,
     ],
   },
   {
@@ -7927,7 +9215,7 @@ const REVERTS = [
     id: "R947",
     suite: "test:profile",
     what: "omit the profile directory on first install before Electron selects it",
-    file: MAIN,
+    file: PROFILE_STARTUP,
     from: "  fs.mkdirSync(decision.target, { recursive: true });",
     to: "  // Missing fresh-install profile creation.",
     expect: [
@@ -9067,12 +10355,12 @@ const REVERTS = [
     id: "R510",
     // THE DRIFT THAT WAS ACTUALLY FOUND, reproduced exactly. docs/BUILD.md
     // printed the pre-rebrand repo as the configuration in force while
-    // package.json said "folia", and the paragraph directly beneath the example
-    // asserted the feed resolves to lostinsea/folia. The document contradicted
+    // package.json said "markaloo", and the paragraph directly beneath the example
+    // asserted the feed resolves to lostinsea/markaloo. The document contradicted
     // itself across several releases and nothing noticed, because its only
     // reader was a human. Prose that states a value the build depends on is
     // worth pinning to the value itself.
-    what: "document the pre-rebrand publish repo while package.json says folia",
+    what: "document the pre-rebrand publish repo while package.json says markaloo",
     file: BUILD_DOC,
     from: '"repo": "markaloo" }]',
     to: '"repo": "markdown-viewer" }]',
@@ -9334,7 +10622,7 @@ const REVERTS = [
     // A pointer, in a shipped document, at a file that does not ship.
     //
     // THIRD-PARTY-NOTICES.md installs into resources/ and opens by telling the
-    // reader where Folia's own licence is. It said `LICENSE`. The repository
+    // reader where Markaloo's own licence is. It said `LICENSE`. The repository
     // has both `LICENSE` and `LICENSE.txt` - deliberately, and the packaging
     // suite already pins them byte-identical - but extraResources ships only
     // `LICENSE.txt`, because a bare extensionless file is a "how do you want to
@@ -9368,7 +10656,7 @@ const REVERTS = [
     ],
     mustPass: [
       /^the committed notices file is not stale$/,
-      /^the notices file still states where Folia's own licence is$/,
+      /^the notices file still states where Markaloo's own licence is$/,
       /^every relative README link points at a file that ships beside it$/,
       /^LICENSE and LICENSE\.txt have not drifted apart$/,
     ],
@@ -9414,6 +10702,26 @@ const REVERTS = [
       /^the DevTools gate is defined and reads app\.isPackaged$/,
       /^the main window drops its menu bar, which suppresses the DevTools accelerator$/,
     ],
+  },
+  {
+    id: "R1521",
+    suite: "test:profile",
+    what: "replace the user-selected DevTools environment spelling with conventional uppercase",
+    file: MAIN,
+    from: '  return !app.isPackaged || process.env.Markaloo_devtools === "1";',
+    to: '  return !app.isPackaged || process.env.MARKALOO_DEVTOOLS === "1";',
+    expect: [
+      /^DevTools opt-in \(packaged, "1"\) uses the exact Markaloo_devtools switch$/,
+    ],
+    mustPass: [
+      /^the shipped DevTools opt-in function was located uniquely$/,
+      /^DevTools opt-in \(packaged, missing\) uses the exact Markaloo_devtools switch$/,
+      /^DevTools opt-in \(packaged, "0"\) uses the exact Markaloo_devtools switch$/,
+      /^DevTools opt-in \(development, missing\) uses the exact Markaloo_devtools switch$/,
+    ],
+    requireExactFailures: true,
+    requireMustPassAssertions: true,
+    expectedFailureCount: 1,
   },
   {
     id: "R517",
@@ -9624,7 +10932,7 @@ const REVERTS = [
     file: path.join(ROOT, "package.json"),
     // ROTTED ONCE, SILENTLY, AND THAT IS THE LESSON. The original anchor
     // quoted this block as a single line naming `"repo": "markdown-viewer"`.
-    // Renaming the fork to Folia changed the repo name AND reformatted the
+    // Renaming the fork to Markaloo changed the repo name AND reformatted the
     // block across seven lines, so this revert had been reporting
     // SETUP-FAILED - i.e. proving nothing - from the rename onward, and would
     // have gone on doing so until the next multi-hour full run. Found in one
@@ -11240,7 +12548,7 @@ const REVERTS = [
     suite: "test:packaging",
     // The shipped README claimed the installer registers all seven supported
     // extensions. It registers three. A reader who believes it right-clicks a
-    // .markdown file, finds no Folia entry under Open with, and concludes the
+    // .markdown file, finds no Markaloo entry under Open with, and concludes the
     // install is broken. Measured against package.json's own fileAssociations,
     // so the sentence cannot drift from the build again in either direction.
     what: "claim an extension the installer does not actually register",
@@ -12910,7 +14218,7 @@ const REVERTS = [
     // A SCHEME THAT CANNOT REACH A GLOW is 10c's stranded-accent defect in a
     // state no screenshot of a resting page can show: abyss keeps its blue
     // page and its blue buttons, and the halo under a hovered button stays
-    // Folia's default teal. Deleting one line from one scheme block is exactly
+    // Markaloo's default teal. Deleting one line from one scheme block is exactly
     // how the Open File button was stranded in the first place.
     // DECLARED-BUT-DEFAULT, not deleted, and the difference is the proof.
     // Deleting the line strands abyss on the inherited :root value - which is
@@ -13550,7 +14858,7 @@ const REVERTS = [
       "function resolveStoredMode() {\n" +
       "  return localStorage.getItem('themeMode') || 'desktop';\n" +
       "}\n" +
-      "function __foliaUnusedLegacyResolveStoredMode() {\n",
+      "function __markalooUnusedLegacyResolveStoredMode() {\n",
     suite: "test:theme",
     expect: [
       /10k: the overlay's stored-mode helper honours the legacy darkMode key/,
@@ -13613,7 +14921,7 @@ const REVERTS = [
     file: CUSTOM_CSS,
     from: "/* ============================================\n   CUSTOM: Compact Header\n",
     to:
-      "body.dark-mode .folia-revert-r330-probe {\n" +
+      "body.dark-mode .markaloo-revert-r330-probe {\n" +
       "  box-shadow: 0 2px 8px #279ea7;\n" +
       "}\n\n" +
       "/* ============================================\n   CUSTOM: Compact Header\n",
@@ -13666,8 +14974,8 @@ const REVERTS = [
     file: CUSTOM_CSS,
     from: "/* ============================================\n   CUSTOM: Compact Header\n",
     to:
-      ".folia-revert-r332-probe {\n" +
-      "  color: var(--folia-unset-r332, #279EA7);\n" +
+      ".markaloo-revert-r332-probe {\n" +
+      "  color: var(--markaloo-unset-r332, #279EA7);\n" +
       "}\n\n" +
       "/* ============================================\n   CUSTOM: Compact Header\n",
     suite: "test:theme",
@@ -13729,7 +15037,7 @@ const REVERTS = [
     file: CUSTOM_CSS,
     from: "/* ============================================\n   CUSTOM: Compact Header\n",
     to:
-      "@keyframes foliaRevertR334Pulse {\n" +
+      "@keyframes markalooRevertR334Pulse {\n" +
       "  50% {\n" +
       "    box-shadow: 0 0 8px rgba(39, 158, 167, 0.3);\n" +
       "  }\n" +
@@ -13756,8 +15064,8 @@ const REVERTS = [
     file: CUSTOM_CSS,
     from: "/* ============================================\n   CUSTOM: Compact Header\n",
     to:
-      ".folia-revert-r335-probe {\n" +
-      "  border: 1.5px solid var(--folia-unset-r335, rgb(59, 191, 204));\n" +
+      ".markaloo-revert-r335-probe {\n" +
+      "  border: 1.5px solid var(--markaloo-unset-r335, rgb(59, 191, 204));\n" +
       "}\n\n" +
       "/* ============================================\n   CUSTOM: Compact Header\n",
     suite: "test:theme",
@@ -14032,12 +15340,12 @@ const REVERTS = [
     file: RENDERER,
     from:
       "      const isDarkMode = document.body.classList.contains('dark-mode');\n" +
-      "      window.folia.openTablePopup({ tableData, isDarkMode });\n",
+      "      window.markaloo.openTablePopup({ tableData, isDarkMode });\n",
     to:
       "      const isDarkMode =\n" +
       "        document.body.classList.contains('dark-mode') ||\n" +
       "        document.body.getAttribute('data-theme') === 'parchment';\n" +
-      "      window.folia.openTablePopup({ tableData, isDarkMode });\n",
+      "      window.markaloo.openTablePopup({ tableData, isDarkMode });\n",
     suite: "test:theme",
     expect: [
       /10i: the payload a popup really receives is the same in every scheme but for the mode boolean/,
@@ -14054,8 +15362,8 @@ const REVERTS = [
     // leaving runtime delivery intact; the absence checks cannot notice it.
     what: "use an unreviewed computed image-popup call shape, so one live surface leaves the parsed subject set",
     file: RENDERER,
-    from: "      window.folia.openImagePopup({\n",
-    to: '      window.folia["openImagePopup"]({\n',
+    from: "      window.markaloo.openImagePopup({\n",
+    to: '      window.markaloo["openImagePopup"]({\n',
     suite: "test:theme",
     expect: [
       /10i: every popup-open payload in the renderer was really parsed \(positive control\)/,
@@ -14542,12 +15850,12 @@ const REVERTS = [
     what: "add an unreviewed sixth popup send site",
     file: RENDERER,
     from:
-      "      window.folia.openTablePopup({ tableData, isDarkMode });\n" +
+      "      window.markaloo.openTablePopup({ tableData, isDarkMode });\n" +
       "    });",
     to:
-      "      window.folia.openTablePopup({ tableData, isDarkMode });\n" +
-      "      if (window.__foliaR360NeverTrue) {\n" +
-      "        window.folia.openTablePopup({ tableData, isDarkMode });\n" +
+      "      window.markaloo.openTablePopup({ tableData, isDarkMode });\n" +
+      "      if (window.__markalooR360NeverTrue) {\n" +
+      "        window.markaloo.openTablePopup({ tableData, isDarkMode });\n" +
       "      }\n" +
       "    });",
     suite: "test:theme",
@@ -15237,7 +16545,7 @@ const REVERTS = [
     // the fix.
     what: "stop the renderer telling main.js the page is ready to print",
     file: RENDERER,
-    from: "window.folia.pdfExportReady()",
+    from: "window.markaloo.pdfExportReady()",
     to: "void 0",
     suite: "test:theme",
     expect: [
@@ -15265,8 +16573,8 @@ const REVERTS = [
     // still charged to the state that produced it.
     what: "send the print-ready signal twice",
     file: RENDERER,
-    from: "window.folia.pdfExportReady()",
-    to: "(window.folia.pdfExportReady(), window.folia.pdfExportReady())",
+    from: "window.markaloo.pdfExportReady()",
+    to: "(window.markaloo.pdfExportReady(), window.markaloo.pdfExportReady())",
     suite: "test:theme",
     expect: [/the page is already settled the instant the export reports ready/],
   },
@@ -15916,7 +17224,7 @@ const REVERTS = [
     what: "add a sixth display:none rule under @media print",
     file: CSS,
     from: "  .code-copy-btn,\n  .mermaid-maximize-btn,",
-    to: "  .folia-revert-r397-probe {\n    display: none;\n  }\n\n  .code-copy-btn,\n  .mermaid-maximize-btn,",
+    to: "  .markaloo-revert-r397-probe {\n    display: none;\n  }\n\n  .code-copy-btn,\n  .mermaid-maximize-btn,",
     suite: "test:theme",
     expect: [
       /10i: the print-hidden exclusion is derived from the print stylesheet and is the pinned measured size/,
@@ -16109,7 +17417,7 @@ const REVERTS = [
     what: "declare a var()-valued custom property at :root inside @media",
     file: CSS,
     from: "  --toggle-on-bg: #4fc3f7;\n}",
-    to: "  --toggle-on-bg: #4fc3f7;\n}\n\n@media screen {\n  :root {\n    --folia-revert-r404-probe: var(--primary-color);\n  }\n}",
+    to: "  --toggle-on-bg: #4fc3f7;\n}\n\n@media screen {\n  :root {\n    --markaloo-revert-r404-probe: var(--primary-color);\n  }\n}",
     suite: "test:theme",
     expect: [
       /^every custom property whose value contains var\(\) is declared where <body> can reach it, never on :root$/,
@@ -16516,7 +17824,7 @@ const REVERTS = [
     // correction computed before it existed. That is not a theoretical race: it
     // was measured breaking five live assertions in test:patch section 3c, and
     // the product path is worse than the test one, because
-    // scrollElementIntoView() smooth-scrolls and a zoom taken mid-flight aborts
+    // the then-smooth scrollElementIntoView() let a zoom taken mid-flight abort
     // it half way. The two reviewers DISAGREED about this - one called it
     // acceptable, one called it a defect - and the measurement settled it.
     // This revert is the permanent record of who was right.
@@ -16525,8 +17833,12 @@ const REVERTS = [
     // see this, and 3c is the suite that reproduces the real interleaving.
     what: "let a pending zoom anchor overwrite a newer, deliberate scroll",
     file: RENDERER,
-    from: "  if (zoomAnchorSuperseded(anchor)) return;\n",
+    from: "  if (zoomAnchorSuperseded(anchor)) return;\n  if (!readingViewport.isPermitCurrent(anchor.permit)) return;\n",
     to: "",
+    also: [
+      { from: "  if (!(Math.abs(correction) >= 0.5)) return;\n  if (!readingViewport.isPermitCurrent(anchor.permit)) return;",
+        to: "  if (!(Math.abs(correction) >= 0.5)) return;" },
+    ],
     suite: "test:patch",
     expect: [
       /^clicking an All Notes entry centres the note in normal view at 100%$/,
@@ -17073,7 +18385,7 @@ const REVERTS = [
     // on, and that is a different bug from the one being trapped here.
     expect: [
       /^the reading-position walk finds the first block reaching the aim even when children are out of flow$/,
-      /^the reading-position walk holds inside a Folia block wrapper, whose own button inverts the child order$/,
+      /^the reading-position walk holds inside a Markaloo block wrapper, whose own button inverts the child order$/,
       /^the reading-position walk holds inside the product's own wrapper once a third child makes the list skippable$/,
     ],
     mustPass: [
@@ -17501,9 +18813,14 @@ const REVERTS = [
           file: RENDERER,
           from:
             "        zoomLevel += ZOOM_CONFIG.step;\n" +
-            "        updateZoom();",
+            "        updateZoom({ admission });",
+          // Keep the shared admission for S9's uncaptured synthetic wheel;
+          // the deliberate defect is lost anchoring, not stale ownership.
           to:
             "        zoomLevel += ZOOM_CONFIG.step;\n" +
+            "        const current = admission || beginReadingZoomChange(true);\n" +
+            "        if (!current || !readingViewport.isPermitCurrent(current.permit) ||\n" +
+            "            (current.intent !== null && !readingViewport.isIntentCurrent(current.intent))) return;\n" +
             "        viewer.style.zoom = zoomLevel / 100;\n" +
             "        zoomResetBtn.textContent = zoomLevel + '%';",
           suite: "test:tables",
@@ -17622,7 +18939,7 @@ const REVERTS = [
           // therefore before the registry's own hook, can distinguish them.
           what: "never wrap app.exit, leaving suites that terminate inside the ready dispatch with no sweep at all",
           file: VISUAL,
-          from: '  if (app && typeof app.exit === "function" && !app.__foliaTempSweepWrapped) {',
+          from: '  if (app && typeof app.exit === "function" && !app.__markalooTempSweepWrapped) {',
           to: "  if (false) {",
           suite: "test:visual",
           expect: [
@@ -17921,8 +19238,8 @@ const REVERTS = [
           what: "stop restoring the mermaid source attribute on the light-format path",
           file: RENDERER,
           from:
-            "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html, scrollSource);\n  restoreMermaidSourceAttributes();",
-          to: "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html, scrollSource);",
+            "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html, scrollSource, viewportPermit, admission, modeReading);\n  restoreMermaidSourceAttributes();",
+          to: "  if (generation !== renderGeneration) return;\n\n  patchViewerDOM(html, scrollSource, viewportPermit, admission, modeReading);",
           suite: "test:security",
           expect: [
             /^N18 a flowchart arrow diagram still carries its source after render \(light-format\)$/,
@@ -17998,9 +19315,9 @@ const REVERTS = [
           what: "stop restoring the mermaid source attribute on the full path",
           file: RENDERER,
           from:
-            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html, scrollSource);\n  restoreMermaidSourceAttributes();",
+            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html, scrollSource, viewportPermit, admission, modeReading);\n  restoreMermaidSourceAttributes();",
           to:
-            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html, scrollSource);",
+            "  if (generation !== renderGeneration) { hideLoadingScreenFor(generation); return; }\n  patchViewerDOM(html, scrollSource, viewportPermit, admission, modeReading);",
           suite: "test:security",
           expect: [
             /^N18 a flowchart arrow diagram still carries its source after render \(full\)$/,
@@ -18958,10 +20275,12 @@ const REVERTS = [
     file: MAIN,
     from:
       '  win.on("close", (event) => {\n' +
+      "    if (holdStartupClosing(event)) return;\n" +
       "    if (hasCurrentShutdownAuthorization()) return;\n" +
       "    event.preventDefault();",
     to:
       '  win.on("close", (event) => {\n' +
+      "    if (holdStartupClosing(event)) return;\n" +
       "    if (hasCurrentShutdownAuthorization()) return;\n" +
       "    if (pendingShutdown) return; /* reverted for proof */\n" +
       "    event.preventDefault();",
@@ -19195,11 +20514,13 @@ const REVERTS = [
     file: MAIN,
     from:
       '  win.on("close", (event) => {\n' +
+      "    if (holdStartupClosing(event)) return;\n" +
       "    if (hasCurrentShutdownAuthorization()) return;\n" +
       "    event.preventDefault();\n" +
       '    requestShutdown("window-close", () => closeApprovedWindow(win));',
     to:
       '  win.on("close", (event) => {\n' +
+      "    if (holdStartupClosing(event)) return;\n" +
       "    if (hasCurrentShutdownAuthorization()) {\n" +
       "      revokeShutdownAuthorization(); /* reverted for proof: one-shot */\n" +
       "      return;\n" +
@@ -19514,7 +20835,7 @@ const REVERTS = [
     from:
       "    const cached = shutdownResponses.get(id);\n" +
       "    if (cached) {\n" +
-      "      window.folia.respondToQuitApproval(cached);\n" +
+      "      window.markaloo.respondToQuitApproval(cached);\n" +
       "      return;\n" +
       "    }",
     to: "    const cached = null; /* reverted for proof: duplicate answer is recomputed */",
@@ -20615,7 +21936,7 @@ const REVERTS = [
       "installer script polling in the user's temp directory indefinitely",
     file: MAIN,
     from:
-      "          `if %FOLIA_MISS% GEQ ${PORTABLE_LEASE_STALE_POLLS} goto orphaned`,",
+      "          `if %MARKALOO_MISS% GEQ ${PORTABLE_LEASE_STALE_POLLS} goto orphaned`,",
     to: '          "rem reverted for proof: an unchanging lease never expires",',
     expect: [
       /^a parked portable batch stands itself down when its parent stops extending the lease$/,
@@ -20970,7 +22291,7 @@ const REVERTS = [
   {
     id: "R637",
     suite: "test:tabs",
-    what: "re-enable electron-updater's ordinary Windows quit hook, bypassing Folia's NSIS launch proof",
+    what: "re-enable electron-updater's ordinary Windows quit hook, bypassing Markaloo's NSIS launch proof",
     file: MAIN,
     from: "  autoUpdater.autoInstallOnAppQuit = false;",
     to: "  autoUpdater.autoInstallOnAppQuit = !isPortable; /* reverted for proof */",
@@ -21793,7 +23114,7 @@ const REVERTS = [
           what: "enable the test-only preload for every launch instead of only unpackaged marked tests",
           file: MAIN,
           from:
-            '!app.isPackaged && process.argv.includes("--folia-test-preload")',
+            '!app.isPackaged && process.argv.includes("--markaloo-test-preload")',
           to: "true",
           suite: "test:packaging",
           expect: [
@@ -21813,8 +23134,8 @@ const REVERTS = [
           // controls remain green.
           what: "remove the marked PDF-restore bridge while leaving the product export handshake intact",
           file: TEST_PRELOAD,
-          from: '  const capability = "__foliaTestPdfRestore";',
-          to: '  const capability = "__foliaTestPdfRestoreUnavailable";',
+          from: '  const capability = "__markalooTestPdfRestore";',
+          to: '  const capability = "__markalooTestPdfRestoreUnavailable";',
           suite: "test:mermaid",
           expect: [
             /^the marked test-only PDF restore preload exposes its PDF restore capability$/,
@@ -21887,7 +23208,7 @@ const REVERTS = [
           to: "if (typeof window !== 'undefined' && typeof process !== 'undefined') {",
           suite: SEC08_LOADER_EVIDENCE_SUITE,
           expect: [
-            /^SEC-08 classic utils script publishes representative FoliaUtils behavior$/,
+            /^SEC-08 classic utils script publishes representative MarkalooUtils behavior$/,
           ],
           mustPass: [
             /^SEC-08 utils preserves its CommonJS API$/,
@@ -21901,7 +23222,7 @@ const REVERTS = [
         },
         {
           id: "R681",
-          what: "load renderer.js before its FoliaUtils classic-script dependency",
+          what: "load renderer.js before its MarkalooUtils classic-script dependency",
           file: HTML,
           from:
             '    <script src="emoji-map.js"></script>\n' +
@@ -21938,27 +23259,27 @@ const REVERTS = [
           ],
           mustPass: [
             /^SEC-08 utils\.js is packaged for its classic-script consumer$/,
-            /^SEC-08 renderer consumes window\.FoliaUtils without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooUtils without a CommonJS fallback$/,
             /^SEC-08 mermaid-config\.js is packaged for its classic-script consumer$/,
-            /^SEC-08 renderer consumes window\.FoliaMermaidConfig without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooMermaidConfig without a CommonJS fallback$/,
             /^SEC-08 context-menu-utils\.js is packaged for its classic-script consumers$/,
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
         },
         {
           id: "R682",
-          what: "restore renderer's CommonJS fallback instead of consuming the FoliaUtils global",
+          what: "restore renderer's CommonJS fallback instead of consuming the MarkalooUtils global",
           file: RENDERER,
           from:
-            "const { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = window.FoliaUtils;",
+            "const { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = window.MarkalooUtils;",
           to:
             "const { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = require('./utils');",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 renderer consumes window\.FoliaUtils without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooUtils without a CommonJS fallback$/,
             /^SEC-08 browser product scripts have no Node imports exports raw IPC or filesystem fallback$/,
           ],
           mustPass: [
@@ -21970,13 +23291,13 @@ const REVERTS = [
         },
         {
           id: "R683",
-          what: "withhold FoliaMermaidConfig from the no-Node classic-script loader",
+          what: "withhold MarkalooMermaidConfig from the no-Node classic-script loader",
           file: MERMAID_CFG,
           from: "if (typeof window !== 'undefined') {",
           to: "if (typeof window !== 'undefined' && typeof process !== 'undefined') {",
           suite: SEC08_LOADER_EVIDENCE_SUITE,
           expect: [
-            /^SEC-08 classic mermaid-config script publishes representative FoliaMermaidConfig behavior$/,
+            /^SEC-08 classic mermaid-config script publishes representative MarkalooMermaidConfig behavior$/,
           ],
           mustPass: [
             /^SEC-08 mermaid-config preserves its CommonJS API$/,
@@ -21990,7 +23311,7 @@ const REVERTS = [
         },
         {
           id: "R684",
-          what: "load renderer.js before its FoliaMermaidConfig classic-script dependency",
+          what: "load renderer.js before its MarkalooMermaidConfig classic-script dependency",
           file: HTML,
           from:
             '    <script src="emoji-map.js"></script>\n' +
@@ -22026,23 +23347,23 @@ const REVERTS = [
           ],
           mustPass: [
             /^SEC-08 mermaid-config\.js is packaged for its classic-script consumer$/,
-            /^SEC-08 renderer consumes window\.FoliaMermaidConfig without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooMermaidConfig without a CommonJS fallback$/,
             /^SEC-08 context-menu-utils\.js is packaged for its classic-script consumers$/,
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
         },
         {
           id: "R685",
-          what: "restore renderer's CommonJS fallback instead of consuming the FoliaMermaidConfig global",
+          what: "restore renderer's CommonJS fallback instead of consuming the MarkalooMermaidConfig global",
           file: RENDERER,
-          from: "const { getMermaidConfig, applyMermaidDarkBoundaries } = window.FoliaMermaidConfig;",
+          from: "const { getMermaidConfig, applyMermaidDarkBoundaries } = window.MarkalooMermaidConfig;",
           to: "const { getMermaidConfig, applyMermaidDarkBoundaries } = require('./mermaid-config');",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 renderer consumes window\.FoliaMermaidConfig without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooMermaidConfig without a CommonJS fallback$/,
             /^SEC-08 browser product scripts have no Node imports exports raw IPC or filesystem fallback$/,
           ],
           mustPass: [
@@ -22066,14 +23387,14 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 mermaid-config\.js loads exactly once between utils\.js and renderer\.js$/,
             /^SEC-08 mermaid-config\.js is packaged for its classic-script consumer$/,
-            /^SEC-08 renderer consumes window\.FoliaMermaidConfig without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooMermaidConfig without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
         },
         {
           id: "R687",
-          what: "withhold FoliaContextMenu from the no-Node classic-script loader",
+          what: "withhold MarkalooContextMenu from the no-Node classic-script loader",
           file: CONTEXT_MENU_UTILS,
           from: "if (typeof window !== 'undefined') {",
           to: "if (typeof window !== 'undefined' && typeof process !== 'undefined') {",
@@ -22129,28 +23450,28 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 mermaid-config\.js loads exactly once between utils\.js and renderer\.js$/,
             /^SEC-08 context-menu-utils\.js is packaged for its classic-script consumers$/,
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
         },
         {
           id: "R689",
-          what: "remove renderer's fail-loud missing FoliaContextMenu guard",
+          what: "remove renderer's fail-loud missing MarkalooContextMenu guard",
           file: RENDERER,
           from:
-            "if (!window.FoliaContextMenu) {\n" +
-            "  throw new Error('FoliaContextMenu must load before renderer.js');\n" +
+            "if (!window.MarkalooContextMenu) {\n" +
+            "  throw new Error('MarkalooContextMenu must load before renderer.js');\n" +
             "}\n",
           to: "",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           mustPass: [
             /^SEC-08 context-menu-utils\.js loads exactly once after mermaid-config\.js and before both consumers$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22160,16 +23481,16 @@ const REVERTS = [
           what: "restore custom-tabs' CommonJS context-menu helper fallback",
           file: TABS,
           from:
-            "  } = window.FoliaContextMenu;",
+            "  } = window.MarkalooContextMenu;",
           to:
             "  } = require(\"./context-menu-utils\");",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           mustPass: [
             /^SEC-08 context-menu-utils\.js loads exactly once after mermaid-config\.js and before both consumers$/,
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22187,8 +23508,8 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 context-menu-utils\.js loads exactly once after mermaid-config\.js and before both consumers$/,
             /^SEC-08 context-menu-utils\.js is packaged for its classic-script consumers$/,
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22206,21 +23527,21 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 context-menu-utils\.js loads exactly once after mermaid-config\.js and before both consumers$/,
             /^SEC-08 context-menu-utils\.js is packaged for its classic-script consumers$/,
-            /^SEC-08 renderer consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooContextMenu and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
         },
         {
           id: "R693",
-          what: "publish FoliaEmojiMap only when a renderer still has Node",
+          what: "publish MarkalooEmojiMap only when a renderer still has Node",
           file: EMOJI_MAP,
           from: "if (typeof window !== 'undefined') {",
           to: "if (typeof window !== 'undefined' && typeof process !== 'undefined') {",
           suite: SEC08_LOADER_EVIDENCE_SUITE,
           expect: [
-            /^SEC-08 classic emoji scripts publish FoliaEmojiMap and FoliaEmoji$/,
+            /^SEC-08 classic emoji scripts publish MarkalooEmojiMap and MarkalooEmoji$/,
             /^SEC-08 classic emoji parser converts known shortcodes and preserves unknown shortcodes$/,
             /^SEC-08 emoji loader fixture emits no unexpected errors$/,
           ],
@@ -22238,17 +23559,17 @@ const REVERTS = [
           what: "restore the parser's unconditional Node require instead of its browser map selection",
           file: EMOJI_PARSER,
           from:
-            "const emojiMap = typeof window !== 'undefined' ? window.FoliaEmojiMap : require('./emoji-map');",
+            "const emojiMap = typeof window !== 'undefined' ? window.MarkalooEmojiMap : require('./emoji-map');",
           to: "const emojiMap = require('./emoji-map');",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 emoji parser uses FoliaEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
+            /^SEC-08 emoji parser uses MarkalooEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
           ],
           mustPass: [
             /^SEC-08 emoji-map\.js and emoji-parser\.js load exactly once in map-to-parser-to-renderer order$/,
             /^SEC-08 emoji-map\.js is packaged for its classic-script parser$/,
             /^SEC-08 emoji-parser\.js is packaged for its classic-script renderer$/,
-            /^SEC-08 renderer consumes window\.FoliaEmoji and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooEmoji and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22259,7 +23580,7 @@ const REVERTS = [
           file: EMOJI_PARSER,
           from:
             "if (!emojiMap) {\n" +
-            "  throw new Error('FoliaEmojiMap must load before emoji-parser.js');\n" +
+            "  throw new Error('MarkalooEmojiMap must load before emoji-parser.js');\n" +
             "}\n",
           to: "",
           suite: SEC08_LOADER_EVIDENCE_SUITE,
@@ -22270,7 +23591,7 @@ const REVERTS = [
             /^SEC-08 emoji map and parser preserve their CommonJS behavior$/,
             /^SEC-08 classic emoji scripts run without Node globals$/,
             /^SEC-08 emoji loader document reaches its terminal DOM marker$/,
-            /^SEC-08 classic emoji scripts publish FoliaEmojiMap and FoliaEmoji$/,
+            /^SEC-08 classic emoji scripts publish MarkalooEmojiMap and MarkalooEmoji$/,
             /^SEC-08 classic emoji parser converts known shortcodes and preserves unknown shortcodes$/,
             /^SEC-08 emoji missing-map probe removes and restores the browser map around a fresh parser load$/,
             /^SEC-08 emoji loader error sentinel was demonstrably watching both channels$/,
@@ -22281,7 +23602,7 @@ const REVERTS = [
         },
         {
           id: "R696",
-          what: "load emoji-parser.js before its FoliaEmojiMap classic-script dependency",
+          what: "load emoji-parser.js before its MarkalooEmojiMap classic-script dependency",
           file: HTML,
           from:
             '    <script src="emoji-map.js"></script>\n' +
@@ -22298,8 +23619,8 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 emoji-map\.js is packaged for its classic-script parser$/,
             /^SEC-08 emoji-parser\.js is packaged for its classic-script renderer$/,
-            /^SEC-08 emoji parser uses FoliaEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
-            /^SEC-08 renderer consumes window\.FoliaEmoji and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 emoji parser uses MarkalooEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
+            /^SEC-08 renderer consumes window\.MarkalooEmoji and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22324,25 +23645,25 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 emoji-map\.js is packaged for its classic-script parser$/,
             /^SEC-08 emoji-parser\.js is packaged for its classic-script renderer$/,
-            /^SEC-08 emoji parser uses FoliaEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
-            /^SEC-08 renderer consumes window\.FoliaEmoji and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 emoji parser uses MarkalooEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
+            /^SEC-08 renderer consumes window\.MarkalooEmoji and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
         },
         {
           id: "R698",
-          what: "restore renderer's CommonJS emoji-parser fallback instead of consuming FoliaEmoji",
+          what: "restore renderer's CommonJS emoji-parser fallback instead of consuming MarkalooEmoji",
           file: RENDERER,
-          from: "const { parseEmojis } = window.FoliaEmoji;",
+          from: "const { parseEmojis } = window.MarkalooEmoji;",
           to: "const { parseEmojis } = require('./emoji-parser');",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 renderer consumes window\.FoliaEmoji and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooEmoji and fails loudly without a CommonJS fallback$/,
           ],
           mustPass: [
             /^SEC-08 emoji-map\.js and emoji-parser\.js load exactly once in map-to-parser-to-renderer order$/,
-            /^SEC-08 emoji parser uses FoliaEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
+            /^SEC-08 emoji parser uses MarkalooEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
             /^SEC-08 emoji-parser\.js is packaged for its classic-script renderer$/,
           ],
           requireMustPassAssertions: true,
@@ -22350,20 +23671,20 @@ const REVERTS = [
         },
         {
           id: "R699",
-          what: "remove renderer's fail-loud missing FoliaEmoji guard",
+          what: "remove renderer's fail-loud missing MarkalooEmoji guard",
           file: RENDERER,
           from:
-            "if (!window.FoliaEmoji) {\n" +
-            "  throw new Error('FoliaEmoji must load before renderer.js');\n" +
+            "if (!window.MarkalooEmoji) {\n" +
+            "  throw new Error('MarkalooEmoji must load before renderer.js');\n" +
             "}\n",
           to: "",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 renderer consumes window\.FoliaEmoji and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooEmoji and fails loudly without a CommonJS fallback$/,
           ],
           mustPass: [
             /^SEC-08 emoji-map\.js and emoji-parser\.js load exactly once in map-to-parser-to-renderer order$/,
-            /^SEC-08 emoji parser uses FoliaEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
+            /^SEC-08 emoji parser uses MarkalooEmojiMap in browsers, retains Node CommonJS, and fails loudly without the map$/,
             /^SEC-08 emoji-parser\.js is packaged for its classic-script renderer$/,
           ],
           requireMustPassAssertions: true,
@@ -22383,7 +23704,7 @@ const REVERTS = [
             /^SEC-08 emoji-map\.js and emoji-parser\.js load exactly once in map-to-parser-to-renderer order$/,
             /^SEC-08 emoji-map\.js is packaged for its classic-script parser$/,
             /^SEC-08 emoji-parser\.js is packaged for its classic-script renderer$/,
-            /^SEC-08 renderer consumes window\.FoliaEmoji and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 renderer consumes window\.MarkalooEmoji and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22410,7 +23731,7 @@ const REVERTS = [
         },
         {
           id: "R702",
-          what: "withhold FoliaFileHelpers from the no-Node classic-script loader",
+          what: "withhold MarkalooFileHelpers from the no-Node classic-script loader",
           file: FILE_HELPERS_CORE,
           from: "if (typeof window !== 'undefined') {",
           to: "if (typeof window !== 'undefined' && typeof process !== 'undefined') {",
@@ -22461,7 +23782,7 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 file-helpers-core\.js is packaged for its classic-script consumers$/,
             /^SEC-08 file-helpers\.js is packaged for its main-process consumer$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaFileHelpers and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooFileHelpers and fails loudly without a CommonJS fallback$/,
             /^SEC-08 file-helpers\.js remains a Node adapter over the browser core$/,
           ],
           requireMustPassAssertions: true,
@@ -22471,11 +23792,11 @@ const REVERTS = [
           id: "R704",
           what: "restore custom-tabs' CommonJS file-helper fallback",
           file: TABS,
-          from: "const fileHelpers = window.FoliaFileHelpers;",
+          from: "const fileHelpers = window.MarkalooFileHelpers;",
           to: "const fileHelpers = require(\"./file-helpers\");",
           suite: "test:packaging",
           expect: [
-            /^SEC-08 custom-tabs consumes window\.FoliaFileHelpers and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooFileHelpers and fails loudly without a CommonJS fallback$/,
           ],
           mustPass: [
             /^SEC-08 file-helpers-core\.js loads exactly once after context-menu-utils\.js and before both consumers$/,
@@ -22486,11 +23807,11 @@ const REVERTS = [
         },
         {
           id: "R705",
-          what: "remove custom-tabs' fail-loud missing FoliaFileHelpers guard",
+          what: "remove custom-tabs' fail-loud missing MarkalooFileHelpers guard",
           file: TABS,
           from:
-            "if (!window.FoliaFileHelpers) {\n" +
-            "    throw new Error(\"FoliaFileHelpers must load before custom-tabs.js\");\n" +
+            "if (!window.MarkalooFileHelpers) {\n" +
+            "    throw new Error(\"MarkalooFileHelpers must load before custom-tabs.js\");\n" +
             "  }\n",
           to: "",
           suite: SEC08_FILE_HELPERS_MISSING_GLOBAL_EVIDENCE_SUITE,
@@ -22518,7 +23839,7 @@ const REVERTS = [
           ],
           mustPass: [
             /^SEC-08 file-helpers-core\.js loads exactly once after context-menu-utils\.js and before both consumers$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaFileHelpers and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooFileHelpers and fails loudly without a CommonJS fallback$/,
           ],
           requireMustPassAssertions: true,
           requireExactFailures: true,
@@ -22557,7 +23878,7 @@ const REVERTS = [
           ],
           mustPass: [
             /^SEC-08 file-helpers-core\.js loads exactly once after context-menu-utils\.js and before both consumers$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaFileHelpers and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooFileHelpers and fails loudly without a CommonJS fallback$/,
             /^SEC-08 file-helpers\.js is packaged for its main-process consumer$/,
             /^SEC-08 file-helpers\.js remains a Node adapter over the browser core$/,
           ],
@@ -22579,7 +23900,7 @@ const REVERTS = [
           mustPass: [
             /^SEC-08 file-helpers-core\.js loads exactly once after context-menu-utils\.js and before both consumers$/,
             /^SEC-08 file-helpers\.js is packaged for its main-process consumer$/,
-            /^SEC-08 custom-tabs consumes window\.FoliaFileHelpers and fails loudly without a CommonJS fallback$/,
+            /^SEC-08 custom-tabs consumes window\.MarkalooFileHelpers and fails loudly without a CommonJS fallback$/,
             /^SEC-08 file-helpers\.js remains a Node adapter over the browser core$/,
             /^post-upstream-merge\.sh preserves file-helpers loader recovery guards$/,
           ],
@@ -22612,7 +23933,7 @@ const REVERTS = [
           what: "perform a renderer disk read before consuming a dialog extra grant",
           file: TABS,
           from:
-            "            const snapshot = await window.folia.readDialogExtra({\n" +
+            "            const snapshot = await window.markaloo.readDialogExtra({\n" +
             "              grant: extraReadGrants[index],\n" +
             "              pageSession: window.getReloadRequestSession(),\n" +
             "              rendererGeneration: approvalRendererGeneration,\n" +
@@ -22623,7 +23944,7 @@ const REVERTS = [
             "              ...readStableDiskSnapshot(extraPath),\n" +
             "            };\n" +
             "            void directSnapshot;\n" +
-            "            const snapshot = await window.folia.readDialogExtra({\n" +
+            "            const snapshot = await window.markaloo.readDialogExtra({\n" +
             "              grant: extraReadGrants[index],\n" +
             "              pageSession: window.getReloadRequestSession(),\n" +
             "              rendererGeneration: approvalRendererGeneration,\n" +
@@ -22669,7 +23990,7 @@ const REVERTS = [
           what: "introduce a forbidden page-filesystem dependency before the owner-bound refresh request (source-architecture proof)",
           file: TABS,
           from:
-            '      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({\n' +
+            '      snapshot = await window.markaloo.refreshOwnedTabDiskSnapshot({\n' +
             "        filePath,\n" +
             "        pageSession: session,\n" +
             "        rendererGeneration: identity.rendererGeneration,\n" +
@@ -22678,7 +23999,7 @@ const REVERTS = [
             "      });",
           to:
             '      void window.fs.readFileSync(filePath, "utf8");\n' +
-            '      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({\n' +
+            '      snapshot = await window.markaloo.refreshOwnedTabDiskSnapshot({\n' +
             "        filePath,\n" +
             "        pageSession: session,\n" +
             "        rendererGeneration: identity.rendererGeneration,\n" +
@@ -22851,7 +24172,7 @@ const REVERTS = [
           id: "R719",
           what: "restore unconditional diagnostic file logging for every default profile",
           file: MAIN,
-          from: 'const diagnosticLoggingEnabled = process.env.FOLIA_DIAGNOSTIC_LOG === "1";',
+          from: 'const diagnosticLoggingEnabled = process.env.MARKALOO_DIAGNOSTIC_LOG === "1";',
           to: "const diagnosticLoggingEnabled = true;",
           suite: "test:profile",
           expect: [
@@ -22873,8 +24194,8 @@ const REVERTS = [
           id: "R720",
           what: "treat any nonempty diagnostic environment value as an opt-in",
           file: MAIN,
-          from: 'const diagnosticLoggingEnabled = process.env.FOLIA_DIAGNOSTIC_LOG === "1";',
-          to: "const diagnosticLoggingEnabled = Boolean(process.env.FOLIA_DIAGNOSTIC_LOG);",
+          from: 'const diagnosticLoggingEnabled = process.env.MARKALOO_DIAGNOSTIC_LOG === "1";',
+          to: "const diagnosticLoggingEnabled = Boolean(process.env.MARKALOO_DIAGNOSTIC_LOG);",
           suite: "test:profile",
           expect: [
             /^disabled diagnostic logging \(packaged-(?:zero|unrecognized|leading-zero|whitespace)-fresh\) opens no sink$/,
@@ -22894,7 +24215,7 @@ const REVERTS = [
           id: "R721",
           what: "disable the diagnostic sink even when support logging is explicitly requested",
           file: MAIN,
-          from: 'const diagnosticLoggingEnabled = process.env.FOLIA_DIAGNOSTIC_LOG === "1";',
+          from: 'const diagnosticLoggingEnabled = process.env.MARKALOO_DIAGNOSTIC_LOG === "1";',
           to: "const diagnosticLoggingEnabled = false;",
           suite: "test:profile",
           expect: [
@@ -23204,7 +24525,7 @@ const REVERTS = [
           id: "R737",
           what: "bypass the production bridge in the changed clean-tab read caller",
           file: TABS,
-          from: "      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({",
+          from: "      snapshot = await window.markaloo.refreshOwnedTabDiskSnapshot({",
           to: '      snapshot = await tabIpc.invoke("refresh-owned-tab-disk-snapshot", {',
           suite: "test:packaging",
           expect: [
@@ -23260,7 +24581,7 @@ const REVERTS = [
           id: "R740",
           what: "bypass the production bridge when reading main-issued dialog extras",
           file: TABS,
-          from: "            const snapshot = await window.folia.readDialogExtra({",
+          from: "            const snapshot = await window.markaloo.readDialogExtra({",
           to: '            const snapshot = await tabIpc.invoke("read-dialog-extra", {',
           suite: "test:packaging",
           expect: [
@@ -23404,8 +24725,8 @@ const REVERTS = [
           id: "R744",
           what: "restore a Node crypto import in the actual renderer consumer",
           file: RENDERER,
-          from: "const { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = window.FoliaUtils;",
-          to: "const crypto = require('crypto');\nconst { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = window.FoliaUtils;",
+          from: "const { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = window.MarkalooUtils;",
+          to: "const crypto = require('crypto');\nconst { removeBOM, getFileName, getDirectory, normaliseDocumentPath, escapeRegex, formatBytes } = window.MarkalooUtils;",
           suite: "test:packaging",
           expect: [
             /^SEC-08 renderer crypto and tab byte consumers use browser primitives without Node crypto or Buffer$/,
@@ -23481,22 +24802,22 @@ const REVERTS = [
           id: "R748",
           what: "bypass the fixed production bridge in the complete renderer adoption protocol",
           file: RENDERER,
-          from: "    const result = await window.folia.prepareDocumentDiskAdoption(request);",
+          from: "    const result = await window.markaloo.prepareDocumentDiskAdoption(request);",
           to: "    const result = await ipcRenderer.invoke('prepare-document-disk-adoption', request);",
           also: [
             {
               file: RENDERER,
-              from: "    const result = window.folia.commitDocumentDiskAdoption(request);",
+              from: "    const result = window.markaloo.commitDocumentDiskAdoption(request);",
               to: "    const result = ipcRenderer.sendSync('commit-document-disk-adoption', request);",
             },
             {
               file: RENDERER,
-              from: "    const result = window.folia.completeDocumentDiskAdoption(request);",
+              from: "    const result = window.markaloo.completeDocumentDiskAdoption(request);",
               to: "    const result = ipcRenderer.sendSync('complete-document-disk-adoption', request);",
             },
             {
               file: RENDERER,
-              from: "    window.folia.abandonDocumentDiskAdoption({",
+              from: "    window.markaloo.abandonDocumentDiskAdoption({",
               to: "    ipcRenderer.send('abandon-document-disk-adoption', {",
             },
           ],
@@ -23671,51 +24992,51 @@ const REVERTS = [
           id: "R755",
           what: "bypass the fixed bridge throughout the renderer document control plane",
           file: RENDERER,
-          from: "    window.folia.registerDocumentOwner({",
+          from: "    window.markaloo.registerDocumentOwner({",
           to: "    ipcRenderer.send('register-document-owner', {",
           also: [
             {
-              from: "      const decision = window.folia.selectFileTracking(selection);",
+              from: "      const decision = window.markaloo.selectFileTracking(selection);",
               to: "      const decision = ipcRenderer.sendSync('select-file-tracking', selection);",
             },
             {
-              from: "    window.folia.setActiveFile(selection);\n    sentAny = true;\n    window.folia.resumeFileWatching(envelope);",
+              from: "    window.markaloo.setActiveFile(selection);\n    sentAny = true;\n    window.markaloo.resumeFileWatching(envelope);",
               to: "    ipcRenderer.send('set-active-file', selection);\n    sentAny = true;\n    ipcRenderer.send('resume-file-watching', envelope);",
             },
             {
-              from: "      window.folia.pauseFileWatching(envelope);\n      sentAny = true;\n    }\n    window.folia.setActiveFile(selection);",
+              from: "      window.markaloo.pauseFileWatching(envelope);\n      sentAny = true;\n    }\n    window.markaloo.setActiveFile(selection);",
               to: "      ipcRenderer.send('pause-file-watching', envelope);\n      sentAny = true;\n    }\n    ipcRenderer.send('set-active-file', selection);",
             },
             {
-              from: "    if (isFileTrackingActive) window.folia.resumeFileWatching(envelope);\n    else window.folia.pauseFileWatching(envelope);",
+              from: "    if (isFileTrackingActive) window.markaloo.resumeFileWatching(envelope);\n    else window.markaloo.pauseFileWatching(envelope);",
               to: "    ipcRenderer.send(isFileTrackingActive ? 'resume-file-watching' : 'pause-file-watching', envelope);",
             },
             {
-              from: "    reply = window.folia.quarantineSelectedFileTracking({",
+              from: "    reply = window.markaloo.quarantineSelectedFileTracking({",
               to: "    reply = ipcRenderer.sendSync('quarantine-selected-file-tracking', {",
             },
             {
-              from: "    const reply = window.folia.quarantineSelectedFileTracking({",
+              from: "    const reply = window.markaloo.quarantineSelectedFileTracking({",
               to: "    const reply = ipcRenderer.sendSync('quarantine-selected-file-tracking', {",
             },
             {
-              from: "  window.folia.stopFileWatching(envelope);",
+              from: "  window.markaloo.stopFileWatching(envelope);",
               to: "  ipcRenderer.send('stop-file-watching', envelope);",
             },
             {
-              from: "    const state = window.folia.queryDocumentDeletionState({",
+              from: "    const state = window.markaloo.queryDocumentDeletionState({",
               to: "    const state = ipcRenderer.sendSync('query-document-deletion-state', {",
             },
             {
-              from: "    const state = window.folia.queryDocumentDiskAdoptionState({",
+              from: "    const state = window.markaloo.queryDocumentDiskAdoptionState({",
               to: "    const state = ipcRenderer.sendSync('query-document-disk-adoption-state', {",
             },
             {
-              from: "    window.folia.reportAdoptionTrackingConflict({",
+              from: "    window.markaloo.reportAdoptionTrackingConflict({",
               to: "    ipcRenderer.send('report-adoption-tracking-conflict', {",
             },
             {
-              from: "    const outcome = window.folia.retireDeletedDocumentOwner({",
+              from: "    const outcome = window.markaloo.retireDeletedDocumentOwner({",
               to: "    const outcome = ipcRenderer.sendSync('retire-deleted-document-owner', {",
             },
           ],
@@ -23792,8 +25113,8 @@ const REVERTS = [
           id: "R759",
           what: "erase retained legacy session keys after private capture",
           file: path.join(SRC, "main-preload.js"),
-          from: '  const nonce = bootstrapArgument.slice("--folia-session-bootstrap=".length);',
-          to: '  localStorage.removeItem("openTabs");\n  localStorage.removeItem("activeTabPath");\n  const nonce = bootstrapArgument.slice("--folia-session-bootstrap=".length);',
+          from: '  const nonce = bootstrapArgument.slice("--markaloo-session-bootstrap=".length);',
+          to: '  localStorage.removeItem("openTabs");\n  localStorage.removeItem("activeTabPath");\n  const nonce = bootstrapArgument.slice("--markaloo-session-bootstrap=".length);',
           suite: "test:document-session",
           expect: [/^(legacy|empty|corrupt-state|missing-state|corrupt-legacy|oversized-legacy|corrupt-unmarked): migration preserves the exact legacy value without erasing or rewriting it$/],
           mustPass: [
@@ -23996,7 +25317,12 @@ const REVERTS = [
           id: "R774",
           what: "silently ignore a resolved-false native document ticket acceptance",
           file: RENDERER,
-          from: "      .then(accepted => {\n        if (!accepted) {\n          showNotification(\n            'The file open request expired or is no longer available. Retry opening the file.',\n            6000,\n          );\n        }\n      })\n",
+          from: "      if (!accepted) showNotification(\n" +
+            "        data.startup\n" +
+            "          ? 'The file open request expired. Its pending startup open is still retained.'\n" +
+            "          : 'The file open request expired or is no longer available. Retry opening the file.',\n" +
+            "        6000,\n" +
+            "      );\n",
           to: "",
           suite: "test:sec08-dialog-extra-evidence",
           expect: [/^SEC-08 the actual refused native-ticket consumer notifies without raw fallback or any document read$/],
@@ -24116,7 +25442,7 @@ const REVERTS = [
           id: "R781",
           what: "bypass the actual fixed Save port and its synchronous delivery-failure boundary",
           file: RENDERER,
-          from: "    window.folia.saveMarkdown({",
+          from: "    window.markaloo.saveMarkdown({",
           to: "    ipcRenderer.send('save-markdown-file', {",
           suite: F22_QUEUE_EVIDENCE_SUITE,
           expect: [
@@ -24149,7 +25475,7 @@ const REVERTS = [
           id: "R783",
           what: "acknowledge actual Save results through raw IPC instead of the fixed port",
           file: RENDERER,
-          from: "  window.folia\n    .acknowledgeSaveResult({",
+          from: "  window.markaloo\n    .acknowledgeSaveResult({",
           to: "  ipcRenderer\n    .invoke('save-markdown-result-ack', {",
           suite: F22_QUEUE_EVIDENCE_SUITE,
           expect: [
@@ -24398,7 +25724,7 @@ const REVERTS = [
           id: `R${798 + index}`,
           what: `restore ${consumer}'s raw document IPC binding`,
           file: consumer === "renderer" ? RENDERER : TABS,
-          from: "const documentEvents = window.FoliaDocumentEvents;",
+          from: "const documentEvents = window.MarkalooDocumentEvents;",
           to: `const documentEvents = ${consumer === "renderer" ? "ipcRenderer" : "tabIpc"};`,
           suite: "test:packaging",
           expect: [
@@ -24579,7 +25905,7 @@ const REVERTS = [
           id: "R810",
           what: "restore a native file-chooser caller's raw renderer IPC dependency",
           file: RENDERER,
-          from: "  cancelPendingNavigation('superseded-by-open-dialog');\n  window.folia.openFileDialog();",
+          from: "  cancelPendingNavigation('superseded-by-open-dialog');\n  window.markaloo.openFileDialog();",
           to: "  cancelPendingNavigation('superseded-by-open-dialog');\n  ipcRenderer.send('open-file-dialog');",
           suite: "test:packaging",
           expect: [
@@ -24697,7 +26023,7 @@ const REVERTS = [
           id: "R817",
           what: "restore renderer Electron access for deletion acknowledgement",
           file: RENDERER,
-          from: "  window.folia.acknowledgeFileDeletion({",
+          from: "  window.markaloo.acknowledgeFileDeletion({",
           to: "  ipcRenderer.send('file-deleted-ack', {",
           suite: "test:packaging",
           expect: [
@@ -24831,7 +26157,7 @@ const REVERTS = [
           id: "R824",
           what: "restore raw Electron IPC in the actual tab size-confirmation caller",
           file: TABS,
-          from: "      const decision = window.folia.confirmLargeRender({",
+          from: "      const decision = window.markaloo.confirmLargeRender({",
           to: '      const decision = tabIpc.sendSync("confirm-large-render", {',
           suite: "test:packaging",
           expect: [/^SEC-08 tab size confirmation uses only the fixed production port$/],
@@ -24981,11 +26307,9 @@ const REVERTS = [
           id: "R832",
           what: "retain undelivered open-result admissions after their only native tab closes",
           file: MAIN,
-          from: "    if (!sent) {\n" +
-            "      if (document) documentAdmissions.delete(document.ref);\n" +
-            "      return;\n" +
-            "    }\n    activeDialogExtraBatch = null;",
-          to: "    if (!sent) return;\n    activeDialogExtraBatch = null;",
+          from: "      if (document) documentAdmissions.delete(document.ref);\n" +
+            "      if (startupAttempt) sendFileOpenFailure(target, filePath, openRequest,",
+          to: "      if (startupAttempt) sendFileOpenFailure(target, filePath, openRequest,",
           also: [{
             file: MAIN,
             from: "        if (sent) activeDialogExtraBatch = batch;\n" +
@@ -25468,11 +26792,11 @@ const REVERTS = [
             '                !/^[a-f0-9]{64}$/.test(data.document.openTicket)) {\n' +
             '              throw new Error("Reopening after Save requires a current native open ticket");\n' +
             '            }\n' +
-            '            const settledSnapshot = await window.folia.readOpenTicketSnapshot({\n' +
+            '            const settledSnapshot = await window.markaloo.readOpenTicketSnapshot({\n' +
             '              openTicket: data.document.openTicket,\n' +
             '            });',
           to: '            const settledSnapshot = data.document\n' +
-            '              ? await window.folia.readOpenTicketSnapshot({\n' +
+            '              ? await window.markaloo.readOpenTicketSnapshot({\n' +
             '                  openTicket: data.document.openTicket,\n' +
             '                })\n' +
             '              : readStableDiskSnapshot(data.path);',
@@ -25499,7 +26823,7 @@ const REVERTS = [
           id: "R859",
           what: "restore the forbidden stable disk helper in the production settled reopen consumer",
           file: TABS,
-          from: '            const settledSnapshot = await window.folia.readOpenTicketSnapshot({\n' +
+          from: '            const settledSnapshot = await window.markaloo.readOpenTicketSnapshot({\n' +
             '              openTicket: data.document.openTicket,\n' +
             '            });',
           to: '            const settledSnapshot = readStableDiskSnapshot(data.path);',
@@ -25747,7 +27071,7 @@ const REVERTS = [
           id: "R871",
           what: "restore raw renderer IPC in the approved post-render metadata consumer",
           file: RENDERER,
-          from: '        const checked = window.folia.checkOwnedTabDiskSnapshot({',
+          from: '        const checked = window.markaloo.checkOwnedTabDiskSnapshot({',
           to: '        const checked = ipcRenderer.sendSync("check-owned-tab-disk-snapshot", {',
           suite: "test:packaging",
           expect: [/^post-render approved metadata uses the actual retained owner and fixed Main port between local completion fences$/],
@@ -25975,7 +27299,7 @@ const REVERTS = [
           id: "R882",
           what: "restore raw committed-check IPC at the approved open consumer",
           file: RENDERER,
-          from: "          const checked = window.folia.checkCommittedDiskAdoption({",
+          from: "          const checked = window.markaloo.checkCommittedDiskAdoption({",
           to: "          const checked = ipcRenderer.sendSync('check-committed-disk-adoption', {",
           suite: "test:packaging",
           expect: [/^approved open verifies committed authority and lexical owner source before selection or alias seeding without renderer disk probes$/],
@@ -25990,18 +27314,21 @@ const REVERTS = [
           id: "R883",
           what: "restore raw owned-metadata IPC in the shared renderer reload helper",
           file: RENDERER,
-          from: "    const checked = window.folia.checkOwnedTabDiskSnapshot({\n" +
+          from: "    const checked = window.markaloo.checkOwnedTabDiskSnapshot({\n" +
             "      filePath, sourcePath, owner,",
           to: "    const checked = ipcRenderer.sendSync('check-owned-tab-disk-snapshot', {\n" +
             "      filePath, sourcePath, owner,",
           suite: "test:packaging",
-          expect: [/^delegated reload verifies actual retained owner source and version through one fixed metadata helper on both sides of display$/],
+          expect: [
+            /^delegated reload verifies actual retained owner source and version through one fixed metadata helper on both sides of display$/,
+            /^SEC-08 browser product scripts have no Node imports exports raw IPC or filesystem fallback$/,
+          ],
           mustPass: [
             /^approved open verifies committed authority and lexical owner source before selection or alias seeding without renderer disk probes$/,
             /^approved open uses the actual selected owner after capability consumption and keeps native baseline aliases on freshness refusal$/,
             /^post-render approved metadata uses the actual retained owner and fixed Main port between local completion fences$/,
           ],
-          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+          requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
         },
         {
           id: "R884",
@@ -26641,11 +27968,11 @@ const REVERTS = [
         {
           id: "R921", what: "query development-only diagnostics from the packaged production preload",
           file: path.join(SRC, "main-preload.js"),
-          from: '    if (!process.argv.includes("--folia-newline-alignment-diagnostics")) return false;\n',
+          from: '    if (!process.argv.includes("--markaloo-newline-alignment-diagnostics")) return false;\n',
           to: "",
           also: [{
             file: MAIN,
-            from: '        ...(!app.isPackaged ? ["--folia-newline-alignment-diagnostics"] : []),\n',
+            from: '        ...(!app.isPackaged ? ["--markaloo-newline-alignment-diagnostics"] : []),\n',
             to: "",
           }],
           suite: "test:packaging",
@@ -27394,9 +28721,9 @@ const REVERTS = [
           to: "          (pageSession === approvalRendererPageSession ||\n" +
             '            (startup && approvalRendererState === "ready"));',
           also: {
-            from: "    if (!delivery.current() ||\n" +
+            from: "    if (!currentDelivery() ||\n" +
               "        (confirmation !== true && !fileOpenSnapshotIsCurrent(filePath, diskVersion, physical))) {",
-            to: "    if (!delivery.current()) {",
+            to: "    if (!currentDelivery()) {",
           },
           suite: "test:owned-dialogs",
           expect: [
@@ -27808,6 +29135,7 @@ const REVERTS = [
           file: TABS,
           from: "  window.addEventListener('editor-scroll-intent', () => {\n    if (cancelActiveRestore) cancelActiveRestore();\n  });",
           to: "",
+          also: READING_RESTORE_COMPAT_BYPASS,
           suite: "test:editor-scroll-transitions",
           expect: [/^editor wheel retires the outstanding tab restore immediately$/],
           mustPass: [/^tab return really has an armed bounded restore before editor input$/,
@@ -29878,10 +31206,11 @@ function proveCompanionTranscriptRoles() {
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
       .join(",") ===
+        "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
         "R1329," +
         "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1243,R1244,R1245,R1246,R1247,R1248,R1249,R1250,R1251,R1252,R1253,R1254,R1255,R1256,R1257,R1258,R1259,R1260,R1261,R1262,R1263,R1264,R1265,R1266,R1267,R1268,R1269,R1270,R1271,R1272,R1273,R1274,R1275,R1276,R1277,R1278,R1279,R1280,R1281,R1282,R1283,R1284,R1285,R1286,R1287,R1288,R1289,R1290,R1291,R1292,R1293,R1294,R1295,R1296,R1297,R1298,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +
         "R1136,R1137,R1138,R1139,R1140,R1141,R1116,R1117,R1118,R1119,R1120,R1121,R1122,R1123,R1124,R1125,R1115,R1111,R1112,R1113," +
-        "R68,R72,R449,R451,R452,R454,R455,R456,R457,R458,R459,R460,R467,R504,R450,R185," +
+        "R68,R72,R449,R451,R452,R454,R455,R456,R457,R458,R459,R460,R467,R504,R1521,R450,R185," +
         "R319,R320,R434,R445,R530,R659,R685,R709,R710,R711,R712,R714,R715,R716,R717,R718,R719,R720,R721,R722,R723,R724,R725,R726,R727,R728,R729,R730,R731,R732,R735,R736,R737,R738,R739,R740,R741,R742,R743,R744,R745,R746,R747,R748,R749,R750,R751,R752,R753,R754,R755,R756,R759,R760,R820,R821,R831,R840,R841,R845,R849,R853,R858,R860,R871,R876,R877,R878,R879,R880,R881,R882,R883,R884,R885,R886,R887,R888,R889,R890,R891,R892,R893,R894,R895,R896,R897,R898,R899,R900,R901,R902,R903,R904,R905,R906,R907,R908,R909,R910,R911,R912,R913,R914,R915,R916,R917,R918,R919,R920,R921,R922,R923,R924,R925,R926,R927,R928,R929,R930,R931,R932,R933,R934,R935,R936,R937,R938,R939,R940,R941,R942,R943,R948,R949,R950,R951,R954,R955,R956,R957,R958,R959,R960,R961,R962,R963,R964,R965,R966,R967,R968,R969,R970,R971,R972,R973,R974,R975,R976,R977,R978,R979,R980,R981,R982,R983,R984,R1000,R1001,R1002,R1003,R1004,R1005,R1006,R1007,R1008,R1009,R1010,R1011,R1012,R1013,R1014,R1015,R1016,R1017,R1018,R1019,R1020,R1021,R1022,R1023,R1024,R1025,R1026,R1027,R1028,R1029,R1030,R1031,R1032,R1033,R1034,R1035,R1036,R1037,R1038,R1039,R1040,R1041,R1042,R1043,R1044,R1045,R1046,R1047,R1048,R1049,R1050,R1051,R1052,R1053";
   const toolbarAllowanceIsRecordScoped =
     REVERTS.filter((r) =>

@@ -106,7 +106,7 @@ function fixture(options = {}) {
       count: options.pending ? 1 : 0,
       pending: Object.hasOwn(options, "pendingValue") ? options.pendingValue : !!options.pending,
     }),
-    folia: {
+    markaloo: {
       getVersion: () => "CONTROL_ONLY",
       queryDocumentDeletionState: () => ({
         known: !options.unknownOwner, unresolved: !!options.deleted,

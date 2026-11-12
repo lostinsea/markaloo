@@ -1269,6 +1269,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = emojiMap;
 }
 if (typeof window !== 'undefined') {
-  window.FoliaEmojiMap = emojiMap;
+  window.MarkalooEmojiMap = emojiMap;
 }
 })();

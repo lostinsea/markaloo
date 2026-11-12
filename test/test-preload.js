@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 if (process.isMainFrame &&
-    process.argv.includes("--folia-test-pdf-restore")) {
+    process.argv.includes("--markaloo-test-pdf-restore")) {
   const phases = new Set([
     "reload-start", "reload-helper-enter", "reload-helper-exit",
     "reload-source-positive", "reload-release", "rollback-throw", "rollback-replay",
@@ -15,11 +15,11 @@ if (process.isMainFrame &&
     },
   });
   if (process.contextIsolated) {
-    contextBridge.exposeInMainWorld("__foliaTestDocumentControl", diagnostics);
+    contextBridge.exposeInMainWorld("__markalooTestDocumentControl", diagnostics);
   } else {
-    globalThis.__foliaTestDocumentControl = diagnostics;
+    globalThis.__markalooTestDocumentControl = diagnostics;
   }
-  const capability = "__foliaTestPdfRestore";
+  const capability = "__markalooTestPdfRestore";
   const api = Object.freeze({
     signal(token) {
       if (typeof token !== "string") return false;

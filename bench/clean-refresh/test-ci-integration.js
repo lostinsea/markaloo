@@ -12,7 +12,7 @@ const { verifyPhase } = require("./verify-phase");
 // Every timing, runtime and native-outcome field below is synthetic DATA.
 // These controls test admission logic, not app behavior or native capture.
 function fixture(t) {
-  const ownedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "folia-sec08-ci-data-"));
+  const ownedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-sec08-ci-data-"));
   t.after(() => fs.rmSync(ownedRoot, { recursive: true, force: true }));
   const root = path.join(ownedRoot, "results");
   const declaration = prepare(path.resolve(__dirname, "..", ".."), root, { runId: "DATA" });

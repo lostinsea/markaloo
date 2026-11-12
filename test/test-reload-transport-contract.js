@@ -31,7 +31,7 @@ function run(report = (name, ok, detail) => {
       return {
         ipcRenderer: transport,
         contextBridge: { exposeInMainWorld(name, api) {
-          if (name !== "folia" || Object.hasOwn(page, name) || !Object.isFrozen(api)) {
+          if (name !== "markaloo" || Object.hasOwn(page, name) || !Object.isFrozen(api)) {
             throw new Error("Contract requires one actual frozen preload API");
           }
           Object.defineProperty(page, name, { value: api, enumerable: true });
@@ -110,19 +110,19 @@ function run(report = (name, ok, detail) => {
       return Reflect.apply(original.value, this, [channel, payload]);
     };
     transport.send = replacement;
-    const create = suppliedState => window.FoliaReloadRequest.create({
+    const create = suppliedState => window.MarkalooReloadRequest.create({
       state: suppliedState, session, document,
       readSnapshot: () => document.getElementById('markdownEditor').value,
-      requestReload: request => window.folia.requestReload(request),
+      requestReload: request => window.markaloo.requestReload(request),
       i18n: key => {
         if (key !== 'notif.reloadFailed') throw new Error('Unexpected translation');
         return 'Reload failed: ';
       },
       console: logger, setTimeout: (callback, duration) => timers.push({ callback, duration }),
     });
-    const descriptor = Object.getOwnPropertyDescriptor(window, 'folia');
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'markaloo');
     verify('RELOAD contract uses one immutable actual preload API',
-      Object.isFrozen(window.folia) && descriptor.writable === false && descriptor.configurable === false);
+      Object.isFrozen(window.markaloo) && descriptor.writable === false && descriptor.configurable === false);
     controller = create(state);
     try {
       const sent = controller.dispatch(input), prior = state.sequence;
@@ -194,7 +194,7 @@ function run(report = (name, ok, detail) => {
       state.latestByPath.get(input.requestPath) === state.sequence &&
       state.sequence > nestedSequence);
     verify('RELOAD contract frozen API is unchanged after transport restoration',
-      window.folia === descriptor.value && Object.isFrozen(window.folia));
+      window.markaloo === descriptor.value && Object.isFrozen(window.markaloo));
   `, context, { filename: __filename, timeout: 1000 });
   if (failures.length) throw new Error(failures.join("\n"));
   return count;

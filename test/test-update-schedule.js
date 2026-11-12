@@ -79,7 +79,8 @@ function fixture(settings = {}, initial = dayAt("2026-11-03"), zone = "UTC", pla
     canJoinCheck: state.canJoinCheck,
     startup: () => state.startup(),
     hasWindow: () => e.hasWindow,
-    canPresent: origin => e.visible && !e.mainDialog && (origin === "manual" || !e.modal),
+    canPresent: origin => e.canPresent ? e.canPresent(origin) :
+      e.visible && !e.mainDialog && (origin === "manual" || !e.modal),
     publish: value => e.published.push(value),
     log: (...args) => e.logs.push(args),
     setTimer: (callback, delay) => {
@@ -506,7 +507,7 @@ async function run() {
     !Object.hasOwn(projected, "arbitraryUrl") && !Object.hasOwn(projected, "localDay") &&
     Object.isFrozen(api) && refused &&
     sent.some(args => args[0] === "dismiss-update-notice" && args[1] === projected.presentationId));
-  privateSurface();
+  await privateSurface();
   nativeControllerBindings();
 }
 
@@ -541,7 +542,7 @@ function nativeControllerBindings() {
     context.fixtureBindings?.daily === "function" && context.fixtureBindings.combined === "function");
 }
 
-function mainPorts() {
+function mainSurfacePorts(f) {
   const { pathToFileURL } = require("url");
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
   const between = (start, end) => {
@@ -551,7 +552,6 @@ function mainPorts() {
   };
   const ports = new EventEmitter(), handles = new Map();
   ports.handle = (name, callback) => handles.set(name, callback);
-  const f = fixture(cached()); f.start();
   const frame = { frameTreeNodeId: 7, parent: null, isDestroyed: () => false,
     url: pathToFileURL(path.join(__dirname, "..", "src", "index.html")).href };
   const sender = Object.assign(new EventEmitter(), { id: 11, mainFrame: frame, isDestroyed: () => false });
@@ -565,6 +565,14 @@ function mainPorts() {
   vm.runInContext(between("function isApprovalSender(event) {", "\nfunction addDiagnosticCount") +
     "\n" + between("function bindUpdateWindow(win) {", "// Called once by getAutoUpdater()"), context);
   context.bindUpdateWindow(win);
+  vm.runInContext("globalThis.actualCanPresent = ({" +
+    between("  canPresent: origin => {", "\n  publish: state => {") + "}).canPresent;", context);
+  return { ports, handles, context, frame, sender, between };
+}
+
+function mainPorts() {
+  const f = fixture(cached()); f.start();
+  const { ports, handles, context, frame, sender, between } = mainSurfacePorts(f);
   const id = f.owner.snapshot().presentationId, event = { sender, senderFrame: frame };
   ports.emit("dismiss-update-notice", { sender, senderFrame: null }, id);
   ports.emit("dismiss-update-notice", { sender: { ...sender, id: 12 }, senderFrame: frame }, id);
@@ -582,8 +590,6 @@ function mainPorts() {
   check("actual Main authenticated ports share the current presentation and bounded modal observation",
     state.presentationId === id && state.presentationDismissed &&
     context.updateSurface.frame === frame && context.updateSurface.modal);
-  vm.runInContext("globalThis.actualCanPresent = ({" +
-    between("  canPresent: origin => {", "\n  publish: state => {") + "}).canPresent;", context);
   const sameMainFrame = { ...frame };
   ports.emit("update-surface-state", { sender, senderFrame: sameMainFrame },
     { modal: false, mainDialog: false });
@@ -615,40 +621,189 @@ function mainPorts() {
   });
 }
 
-function privateSurface() {
+async function privateSurface() {
   const events = new EventEmitter(), sent = [], documentEvents = new Map(), windowEvents = new Map();
-  let mutation, disconnected = false, modal = false;
-  events.send = (...args) => sent.push(args);
+  const observations = [], nodes = new Map(), body = { children: [] }, documentElement = {};
+  const f = fixture(cached()), main = mainSurfacePorts(f);
+  f.e.canPresent = origin => main.context.actualCanPresent(origin);
+  const event = { sender: main.sender, senderFrame: main.frame };
+  let mutation, disconnected = false, deliveries = 0, coalescing = false;
+  const nativeDialogs = [];
+  events.send = (...args) => {
+    sent.push(args);
+    if (args[0] === "update-surface-state") main.ports.emit(args[0], event, args[1]);
+  };
   events.sendSync = () => ({});
-  const document = { readyState: "loading", documentElement: {},
+  const notify = (target, attributeName) => {
+    if (coalescing || disconnected || !observations.some(({ node, options }) => options.attributes &&
+      options.attributeFilter.includes(attributeName) &&
+      (node === target || node === documentElement && options.subtree))) return;
+    deliveries++;
+    mutation([{ type: "attributes", target, attributeName }]);
+  };
+  const element = (id, names, parentElement = body) => {
+    const classes = new Set(names.split(" "));
+    const node = { id, parentElement, classList: {
+      contains: name => classes.has(name),
+      add(name) { classes.add(name); notify(node, "class"); },
+      remove(name) { classes.delete(name); notify(node, "class"); },
+    } };
+    nodes.set(id, node);
+    if (parentElement === body) body.children.push(node);
+    return node;
+  };
+  const html = fs.readFileSync(path.join(__dirname, "..", "src", "index.html"), "utf8");
+  const overlays = [...html.matchAll(/<div id="([^"]+)" class="note-dialog-overlay">/g)]
+    .map(match => element(match[1], "note-dialog-overlay"));
+  check("custom modal setup uses the actual shell overlays and not an empty selector result",
+    overlays.map(node => node.id).sort().join(",") ===
+      "editTextOverlay,findNoteOverlay,mermaidTemplateOverlay,noteDialogOverlay");
+  const nonmodal = element("searchPanel", "search-panel");
+  const authored = element("findNoteOverlay", "note-dialog-overlay", {});
+  const nativeDialog = id => {
+    const node = { id, tagName: "DIALOG", open: false, modal: false,
+      showModal() { this.open = true; this.modal = true; notify(this, "open"); },
+      close() { this.open = false; this.modal = false; notify(this, "open"); } };
+    nativeDialogs.push(node);
+    return node;
+  };
+  if (!/<dialog id="tableCellDialog"/.test(html)) throw new Error("Missing actual initial table-cell dialog");
+  const initialTableDialog = nativeDialog("tableCellDialog");
+  const document = { readyState: "loading", documentElement, body,
     addEventListener: (name, callback) => documentEvents.set(name, callback),
-    querySelector: () => modal ? {} : null };
+    getElementById: id => nodes.get(id) || null,
+    querySelector(selector) {
+      if (selector === "dialog[open]") return nativeDialogs.find(node => node.open) || null;
+      if (selector === "dialog:modal") return nativeDialogs.find(node => node.modal) || null;
+      throw new Error("Unmodeled surface selector: " + selector);
+    },
+  };
   const window = { addEventListener(name, callback) {
     if (!windowEvents.has(name)) windowEvents.set(name, []);
     windowEvents.get(name).push(callback);
   } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "src", "main-preload.js"), "utf8"), {
-    process: { isMainFrame: true, argv: ["--folia-session-bootstrap=" + "a".repeat(64)] },
+    process: { isMainFrame: true, argv: ["--markaloo-session-bootstrap=" + "a".repeat(64)] },
     document, window, localStorage: { getItem: () => null },
     MutationObserver: class {
       constructor(callback) { mutation = callback; }
-      observe() {}
+      observe(node, options) { observations.push({ node, options }); }
       disconnect() { disconnected = true; }
     },
     require: () => ({ ipcRenderer: events, contextBridge: { exposeInMainWorld() {} } }),
     console,
   });
   documentEvents.get("DOMContentLoaded")();
-  modal = true; mutation();
+  const authoredDialog = nativeDialog("authored-dialog");
+  authoredDialog.open = true;
+  notify(authoredDialog, "open");
+  check("authored nonmodal dialog open markup never blocks an automatic reminder",
+    !main.context.updateSurface.modal && main.context.actualCanPresent("automatic"));
+  const renderer = fs.readFileSync(path.join(__dirname, "..", "src", "renderer.js"), "utf8");
+  const first = renderer.indexOf("function openFindNoteDialog() {");
+  const last = renderer.indexOf("ctxFindNote.addEventListener(", first);
+  if (first < 0 || last < first) throw new Error("Missing actual Find Note producers");
+  const find = { findNoteOverlay: overlays.find(node => node.id === "findNoteOverlay"),
+    findNoteInput: { value: "previous", focus() {} } };
+  vm.runInNewContext(renderer.slice(first, last), find);
+  const before = deliveries;
+  find.openFindNoteDialog();
+  f.start();
+  await settle();
+  check("actual class-only Find Note producer defers automatic reminder before reservation",
+    find.findNoteInput.value === "" && find.findNoteOverlay.classList.contains("visible") &&
+    deliveries === before + 1 && main.context.updateSurface.modal &&
+    !main.context.actualCanPresent("automatic") &&
+    !f.e.settings.updateReminder && !f.owner.snapshot().presentationId);
+  for (const overlay of overlays.filter(node => node !== find.findNoteOverlay)) overlay.classList.add("visible");
+  find.closeFindNoteDialog();
+  await settle();
+  check("closing Find Note does not release a reminder while other real overlays remain open",
+    main.context.updateSurface.modal && !f.e.settings.updateReminder);
+  for (const overlay of overlays.filter(node => node !== find.findNoteOverlay)) {
+    overlay.classList.remove("visible");
+    await settle();
+    const remaining = overlays.some(node => node.classList.contains("visible"));
+    check("actual shell overlay " + overlay.id + " releases only the last modal",
+      main.context.updateSurface.modal === remaining &&
+      (remaining ? !f.e.settings.updateReminder : !!f.e.settings.updateReminder));
+  }
+  const presentation = f.owner.snapshot().presentationId;
+  f.owner.changed(); f.owner.changed(); await settle();
+  check("last custom modal closure permits exactly one reserved automatic presentation",
+    !!presentation && f.owner.snapshot().canShowUpdate &&
+    f.e.writes.filter(patch => patch.updateReminder).length === 1 &&
+    f.owner.snapshot().presentationId === presentation && f.e.checks === 0 && f.e.downloads === 0);
+  const unaffected = deliveries;
+  authored.classList.add("visible"); nonmodal.classList.add("visible"); await settle();
+  check("authored duplicate overlay and visible nonmodal search never acquire shell modal authority",
+    deliveries === unaffected && !main.context.updateSurface.modal &&
+    main.context.actualCanPresent("automatic") && f.owner.snapshot().presentationId === presentation);
+  const appSource = fs.readFileSync(path.join(__dirname, "..", "src", "app-dialogs.js"), "utf8");
+  const appOpen = appSource.match(/^\s+dialog\.showModal\(\);$/m)?.[0];
+  const tableOpen = renderer.match(/if \(!tableCellDialog\.open\) tableCellDialog\.showModal\(\);/)?.[0];
+  if (!appOpen || !tableOpen) throw new Error("Missing actual application native-modal producer calls");
+  const dynamicDialog = nativeDialog("dynamic-app-dialog"), tableDialog = initialTableDialog;
+  vm.runInNewContext(appOpen, { dialog: dynamicDialog });
+  check("actual dynamic application showModal call blocks after preload startup",
+    dynamicDialog.open && dynamicDialog.modal && main.context.updateSurface.modal &&
+    !main.context.actualCanPresent("automatic"));
+  vm.runInNewContext(tableOpen, { tableCellDialog: tableDialog });
+  dynamicDialog.close();
+  check("actual initial table-cell showModal call remains a blocker after another native modal closes",
+    tableDialog.open && tableDialog.modal && main.context.updateSurface.modal &&
+    !main.context.actualCanPresent("automatic"));
+  tableDialog.close();
+  check("last genuine native modal closing releases while authored dialog stays open",
+    authoredDialog.open && !authoredDialog.modal && !main.context.updateSurface.modal &&
+    main.context.actualCanPresent("automatic") &&
+    f.e.writes.filter(patch => patch.updateReminder).length === 1);
+  dynamicDialog.showModal();
+  coalescing = true;
+  dynamicDialog.close(); dynamicDialog.showModal();
+  coalescing = false; notify(dynamicDialog, "open");
+  check("coalesced native close and reopen reports current modality rather than releasing",
+    dynamicDialog.open && dynamicDialog.modal && main.context.updateSurface.modal &&
+    !main.context.actualCanPresent("automatic"));
+  dynamicDialog.close();
+  dynamicDialog.showModal();
+  check("native dialog open attribute still defers automatic presentation",
+    main.context.updateSurface.modal && !main.context.actualCanPresent("automatic"));
+  find.openFindNoteDialog();
+  dynamicDialog.close();
+  check("closing a genuine native modal never releases an overlapping actual custom modal",
+    main.context.updateSurface.modal && !main.context.actualCanPresent("automatic"));
+  find.closeFindNoteDialog();
+  await settle();
+  check("last actual custom modal closing releases once despite authored dialog open markup",
+    authoredDialog.open && !main.context.updateSurface.modal &&
+    f.e.writes.filter(patch => patch.updateReminder).length === 1 &&
+    f.owner.snapshot().presentationId === presentation);
   events.emit("main-dialog-visibility", {}, true);
-  mutation();
+  check("Main dialog transport remains an independent presentation gate",
+    main.context.updateSurface.mainDialog && !main.context.actualCanPresent("automatic"));
+  events.emit("main-dialog-visibility", {}, false);
+  await settle();
   const observed = sent.filter(args => args[0] === "update-surface-state");
   check("production isolated preload observes application and Main dialogs without exposing target authority",
-    observed.length === 3 && observed.map(args => `${args[1].modal}:${args[1].mainDialog}`).join(",") ===
-      "false:false,true:false,true:true" &&
+    observed.map(args => `${args[1].modal}:${args[1].mainDialog}`).join(",") ===
+      "false:false,true:false,false:false,true:false,false:false,true:false,false:false,true:false,false:false,false:true,false:false" &&
     observed.every(args => Object.keys(args[1]).sort().join(",") === "mainDialog,modal"));
+  for (const key of ["pendingShutdown", "pendingShutdownCommit", "updateMainDialogDepth"]) {
+    main.context[key] = 1;
+    check("custom modal fix preserves actual Main " + key + " refusal", !main.context.actualCanPresent("automatic"));
+    main.context[key] = 0;
+  }
+  main.context.ownedDialogs = { owners: new Set([{}]) };
+  check("custom modal fix preserves actual owned-dialog refusal", !main.context.actualCanPresent("automatic"));
+  main.context.ownedDialogs = null;
+  const surface = main.context.updateSurface;
+  main.ports.emit("update-surface-state", { ...event, senderFrame: { ...main.frame, parent: main.frame } },
+    { modal: true, mainDialog: false });
+  check("custom modal report still rejects child-frame transport", main.context.updateSurface === surface);
   for (const callback of windowEvents.get("pagehide") || []) callback();
-  events.emit("main-dialog-visibility", {}, false);
+  events.emit("main-dialog-visibility", {}, true);
+  find.openFindNoteDialog();
   check("production isolated preload retires modal observation on renderer pagehide",
     disconnected && sent.filter(args => args[0] === "update-surface-state").length === observed.length);
 }
@@ -672,7 +827,7 @@ function toastFixture(initial) {
   };
   let received, dismissed;
   const window = {
-    folia: {
+    markaloo: {
       onUpdateStatus(callback) { received = callback; return () => {}; },
       getUpdateState() { return Promise.resolve(initial); },
       dismissUpdateNotice(id) { dismissed = id; },

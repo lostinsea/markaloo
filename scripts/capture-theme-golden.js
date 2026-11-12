@@ -33,7 +33,7 @@ const {
 } = require("../test/theme-census");
 
 // PROVENANCE IS MEASURED, NOT DECLARED. This used to read
-// `process.env.FOLIA_GOLDEN_COMMIT || "unknown"`, which had two failures at
+// `process.env.MARKALOO_GOLDEN_COMMIT || "unknown"`, which had two failures at
 // once: the documented command above sets no such variable, so it wrote
 // "unknown" and produced a golden the suite rejects; and because the value was
 // self-declared, a golden regenerated from the CHANGED tree could be stamped

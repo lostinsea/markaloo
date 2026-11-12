@@ -24,7 +24,7 @@ function run(report = (name, ok, detail) => {
       return {
         ipcRenderer: transport,
         contextBridge: { exposeInMainWorld(name, api) {
-          if (name !== "folia" || Object.hasOwn(page, name) || !Object.isFrozen(api)) {
+          if (name !== "markaloo" || Object.hasOwn(page, name) || !Object.isFrozen(api)) {
             throw new Error("Owned contract requires one actual frozen preload API");
           }
           Object.defineProperty(page, name, { value: api, enumerable: true });
@@ -40,10 +40,10 @@ function run(report = (name, ok, detail) => {
       name: 'METADATA contract ' + name, ok: !!ok, detail: String(detail),
     });
     (async () => {
-      const api = window.folia;
+      const api = window.markaloo;
       verify('publishes the whole production preload as one frozen API',
         Object.isFrozen(api) && typeof api.refreshOwnedTabDiskSnapshot === 'function' &&
-        Object.getOwnPropertyDescriptor(window, 'folia').writable === false);
+        Object.getOwnPropertyDescriptor(window, 'markaloo').writable === false);
       const owner = {
         pageSession: 'metadata-contract-page', rendererGeneration: 2,
         tabId: 7, documentGeneration: 3, pathKey: 'metadata-contract-key',

@@ -10,7 +10,7 @@ const ROOT = path.resolve(__dirname, "..");
 const perfOnly = process.argv.includes("--perf");
 const baseline = process.argv.includes("--baseline");
 const dirtyOpenProbe = process.argv.includes("--probe-dirty-open");
-const proof = process.env.FOLIA_CELL_PROOF;
+const proof = process.env.MARKALOO_CELL_PROOF;
 const groups = ["selection", "rows", "splice", "inline", "menus", "provenance",
   "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "formatting", "many", "shared"];
 const uiGroups = groups.slice(4);
@@ -50,7 +50,7 @@ if (detailPresentation && (detailArgs.length !== 1 || detailArgs[0] !== "--detai
 }
 const expectedUiGroups = detailPresentation ? ["detail"] : openingPresentation ? ["opening"] : coreFunction ? ["noop", "shared"] :
   partition ? uiPartitions[partition] : proof ? uiGroups.filter(name => name === proof) : uiGroups;
-if (proof && !groups.includes(proof)) throw new Error("Unknown FOLIA_CELL_PROOF: " + proof);
+if (proof && !groups.includes(proof)) throw new Error("Unknown MARKALOO_CELL_PROOF: " + proof);
 if (ownedHidden && (sourceOnly || perfOnly || baseline || dirtyOpenProbe ||
     partition !== "shared" && (!ownedGroup || focusedFunction))) {
   throw new Error("--owned-hidden requires the shared UI partition or one existing owned UI group");
@@ -118,7 +118,7 @@ async function sourceTests(core = false) {
   const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "inline-formatting.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
-  const cells = context.window.FoliaTableCells;
+  const cells = context.window.MarkalooTableCells;
   if (sourceOnly && !proof) {
     await sharedNativeSetupSourceTests();
     sharedOpeningOracleSourceTests();
@@ -168,10 +168,10 @@ async function sourceTests(core = false) {
   }
   if (proof === "inline") return;
   const { parseEmojis } = require("../src/emoji-parser");
-  const observedEmojis = [], emojiSource = "😀 :star: :unknown-folia-emoji:";
+  const observedEmojis = [], emojiSource = "😀 :star: :unknown-markaloo-emoji:";
   const observedOutput = parseEmojis(emojiSource, (alias, glyph, offset) => observedEmojis.push({ alias, glyph, offset }));
   check("emoji observation preserves existing rendering and reports original UTF16 replacement offsets only",
-    observedOutput === parseEmojis(emojiSource) && observedOutput === "😀 ⭐ :unknown-folia-emoji:" &&
+    observedOutput === parseEmojis(emojiSource) && observedOutput === "😀 ⭐ :unknown-markaloo-emoji:" &&
     JSON.stringify(observedEmojis) === JSON.stringify([{ alias: ":star:", glyph: "⭐", offset: 3 }]), observedEmojis);
   const vendor = path.join(ROOT, "libs", "vendor", "marked.min.js");
   if (!fs.existsSync(vendor)) {
@@ -190,7 +190,7 @@ async function sourceTests(core = false) {
     await rowRemovalSessionSourceTests(cells);
     return;
   }
-  const shared = context.window.FoliaInlineFormatting;
+  const shared = context.window.MarkalooInlineFormatting;
   const caretSource = shared.attachInlineEditor.toString();
   const nativeInputHandlers = caretSource.slice(caretSource.indexOf("listen(element, 'beforeinput'"),
     caretSource.indexOf("listen(element, 'compositionstart'"));
@@ -982,7 +982,7 @@ async function rowRemovalSessionSourceTests(cells) {
     tableCellGrid: grid, tableCellDialog: modal, tableCellUpdate: updateButton,
     tableCellInsertAbove: above, tableCellInsertBelow: below, tableCellRemoveAdded: remove,
     tableCellInsertLeft: left, tableCellInsertRight: right, tableCellDeleteColumn: deleteColumn, tableCellCounts: {},
-    tableCellColumnScope: {}, TableCellMode: cells.Mode, FoliaTableCells: cells,
+    tableCellColumnScope: {}, TableCellMode: cells.Mode, MarkalooTableCells: cells,
     tableCellError: { textContent: "" },
     i18n: (key, params) => {
       translations.push({ key, params });
@@ -1411,7 +1411,7 @@ async function rowRemovalSessionSourceTests(cells) {
     marked: {}, protectTableSource() {},
     markdownEditor: { value: "snapshot" }, editorModeRevision: 0, fileOpenSequence: 0,
     currentDocumentActionOwner: () => owner, editorScroll: { isCurrentSource: () => true },
-    FoliaTableCells: {
+    MarkalooTableCells: {
       ...cells,
       normalise: value => value,
       replaceRows(target, edits, order, parser, protect, deleted) {
@@ -1452,7 +1452,7 @@ async function rowRemovalSessionSourceTests(cells) {
     let calls = 0, adoptions = 0;
     const candidate = "column candidate " + label, priorHistory = history.length;
     context.markdownEditor.value = exact;
-    context.FoliaTableCells = { ...cells, normalise: value => value,
+    context.MarkalooTableCells = { ...cells, normalise: value => value,
       replaceStructure(target, edits, order, columns, parser, protection, deletedRows, deletedColumns) {
         calls++;
         check("shipping column Update forwards complete original-coordinate deletion accounting " + label,
@@ -1782,7 +1782,7 @@ async function columnSizingSourceTests(cells) {
     cancel() {}, refresh() {}, isComposing: () => sizing.isComposing(),
   } };
   const guards = vm.createContext({ tableCellSession: guardedSession,
-    FoliaTableCells: cells, TableCellMode: cells.Mode,
+    MarkalooTableCells: cells, TableCellMode: cells.Mode,
     showTableCellError: error => compositionErrors.push(error.message), refreshTableCellRowActions() {},
     mayMutateRendererDocument: () => { guardedMutations++; return true; },
     window: { CustomTabs: { snapshotExactEditorContent() { guardedMutations++; } } } });
@@ -2442,7 +2442,7 @@ async function columnSizingSourceTests(cells) {
   related.appendChild(anchor); endpointScroller.appendChild(endpoint);
   const menuContext = vm.createContext({ window: menuWindow, module: { exports: {} } });
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "context-menu-utils.js"), "utf8"), menuContext);
-  const menuUtils = menuWindow.FoliaContextMenu;
+  const menuUtils = menuWindow.MarkalooContextMenu;
   check("menu presentation retains the exact browser and CommonJS helper surface",
     menuContext.module.exports === menuUtils &&
     Object.keys(menuUtils).sort().join(",") === "hideContextMenu,positionContextMenu");
@@ -2504,7 +2504,7 @@ async function columnSizingSourceTests(cells) {
   const capturedSelection = {}, capturedRange = {}, clicked = anchor;
   let documentOwner = {};
   const menuScope = vm.createContext({
-    window: menuWindow, currentDocumentActionOwner: () => documentOwner,
+    window: menuWindow, Event, currentDocumentActionOwner: () => documentOwner,
     currentFilePath: "one.md", fileOpenSequence: 7, editorModeRevision: 2,
     editorInteractionRevision: 3, isEditMode: true, originalMarkdown: "disk",
     markdownEditor: editor, contextMenu: menu, notesPanelContextMenu: noteMenu,
@@ -2543,7 +2543,12 @@ async function columnSizingSourceTests(cells) {
     menuScope.tableMenuSelection === capturedSelection && menuScope.savedRange === capturedRange &&
     menuScope.rightClickTarget === clicked);
   let mutations = 0, scrollChanges = 0;
-  menuWindow.CustomTabs = { noteActiveContentMutation() { mutations++; } };
+  menuWindow.CustomTabs = { noteActiveContentMutation() { mutations++; }, getActiveTab: () => documentOwner };
+  menuWindow.dispatchEvent = event => { menuWindow.emit(event.type, event); return true; };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "reading-viewport.js"), "utf8") +
+    extract("function createReadingViewportLifecycle(", "\nconst readingViewport =") +
+    "\nvar readingViewport = createReadingViewportLifecycle();", menuScope);
+  menuWindow.readingViewport = menuScope.readingViewport;
   menuScope.editorScroll = { changed() { scrollChanges++; } };
   vm.runInContext(extract("function noteActiveContentMutation(", "\nfunction withFileTrackingResumeHeld("), menuScope);
   openMenu(presentation); menuUtils.positionContextMenu(noteMenu, 40, 60);
@@ -2656,6 +2661,7 @@ async function columnSizingSourceTests(cells) {
     extract("function completeFileOpen(", "\n// Upstream fallback"), menuScope);
   const pendingOpen = (top = 37, left = 9) => Object.freeze({
     sequence: menuScope.fileOpenSequence, editorInteraction: menuScope.editorInteractionRevision,
+    viewport: { permit: menuScope.readingViewport.capturePermit() },
     editorScroll: menuScope.prepareEditorScrollRestore({ open: true, scrollTop: top, scrollLeft: left }),
     postRenderScroll: { type: "caller" }, path: "one.md",
   });
@@ -2749,7 +2755,7 @@ async function columnSizingSourceTests(cells) {
   check("a thawed duplicate cannot revive the ticket consumed by freeze refusal",
     menuScope.completeFileOpen(frozenOpen) && editor.scrollTop === 15);
   const mismatchOpen = pendingOpen();
-  menuWindow.folia = { checkOwnedTabDiskSnapshot: () => ({ matches: false }) };
+  menuWindow.markaloo = { checkOwnedTabDiskSnapshot: () => ({ matches: false }) };
   check("approved-snapshot refusal retires its own pending completion ticket",
     !menuScope.completeFileOpen({ ...mismatchOpen, approvedPathKey: "owner",
       approvedOwner: { pathKey: "owner" } }) &&
@@ -3315,9 +3321,9 @@ if (sourceOnly) {
   sourceTests().catch(error => check("cell source suite completed", false, error.stack))
     .finally(() => {
       process.exitCode = summary();
-      const evidence = path.resolve(ROOT, process.env.FOLIA_CELL_EVIDENCE || path.join("screenshots", "table-cell-editor"));
+      const evidence = path.resolve(ROOT, process.env.MARKALOO_CELL_EVIDENCE || path.join("screenshots", "table-cell-editor"));
       if (evidence !== ROOT && !evidence.startsWith(ROOT + path.sep)) {
-        throw new Error("FOLIA_CELL_EVIDENCE must stay inside this worktree");
+        throw new Error("MARKALOO_CELL_EVIDENCE must stay inside this worktree");
       }
       fs.mkdirSync(evidence, { recursive: true });
       const label = "source" + (proof ? "-" + proof : "");
@@ -3670,10 +3676,10 @@ function startElectron() {
 require("./test-userdata-isolation");
   const { captureScreenshot, proveSentinelAlive, startErrorSentinel } = require("./test-visual-utils");
   const directory = path.join(ROOT, "screenshots", "table-cell-editor");
-  const evidenceBase = path.resolve(ROOT, process.env.FOLIA_CELL_EVIDENCE || path.join("screenshots", "table-cell-editor"));
+  const evidenceBase = path.resolve(ROOT, process.env.MARKALOO_CELL_EVIDENCE || path.join("screenshots", "table-cell-editor"));
   const evidence = partition ? path.join(evidenceBase, partition) : evidenceBase;
   if (evidence !== ROOT && !evidence.startsWith(ROOT + path.sep)) {
-    throw new Error("FOLIA_CELL_EVIDENCE must stay inside this worktree; preserve it as a session artifact after the run");
+    throw new Error("MARKALOO_CELL_EVIDENCE must stay inside this worktree; preserve it as a session artifact after the run");
   }
   fs.mkdirSync(directory, { recursive: true });
   fs.mkdirSync(evidence, { recursive: true });
@@ -4403,11 +4409,11 @@ require("./test-userdata-isolation");
         return this.rightClick(table.rows[first || 0].cells[0]);
       },
       action(mode) {
-        FoliaTableCells.validateMode(mode);
+        MarkalooTableCells.validateMode(mode);
         const buttons = {
-          [FoliaTableCells.Mode.INSERT]: "ctxInsertTable",
-          [FoliaTableCells.Mode.UPDATE_TABLE]: "ctxEditTable",
-          [FoliaTableCells.Mode.UPDATE_ROWS]: "ctxEditSelectedRows",
+          [MarkalooTableCells.Mode.INSERT]: "ctxInsertTable",
+          [MarkalooTableCells.Mode.UPDATE_TABLE]: "ctxEditTable",
+          [MarkalooTableCells.Mode.UPDATE_ROWS]: "ctxEditSelectedRows",
         };
         const button = document.getElementById(buttons[mode]);
         const visible = button.getClientRects().length > 0 && getComputedStyle(button).display !== "none";
@@ -4600,8 +4606,8 @@ require("./test-userdata-isolation");
       const table=viewer.querySelectorAll('table')[${JSON.stringify(index)}];
       if(!table?.isConnected)throw Error('Missing core table');
       const exact=window.CustomTabs.snapshotExactEditorContent(),descriptor=editorScroll.tableSource(table);
-      const model=FoliaTableCells.index(exact,marked,protectTableSource);
-      const expected=FoliaTableCells.resolvePreviewTable(model,table,viewer,node=>editorScroll.tableSource(node),FoliaTableCells.Mode.UPDATE_TABLE);
+      const model=MarkalooTableCells.index(exact,marked,protectTableSource);
+      const expected=MarkalooTableCells.resolvePreviewTable(model,table,viewer,node=>editorScroll.tableSource(node),MarkalooTableCells.Mode.UPDATE_TABLE);
       window.__coreInput={table,exact,descriptor,owner:currentDocumentActionOwner(),
         source:markdownEditor.value,path:currentFilePath,expected};
       return {edit:isEditMode,mapped:!!descriptor,rows:expected.rows.length,columns:expected.table.rows[0].cells.length};
@@ -4641,7 +4647,7 @@ require("./test-userdata-isolation");
         const b=__coreInput,s=tableCellSession;
         return {opened:tableCellDialog.open,modal:tableCellDialog.matches(':modal'),
           error:tableCellError.textContent,notification:document.getElementById('notificationMessage').textContent,
-          mode:s?.mode===FoliaTableCells.Mode.UPDATE_TABLE,owner:s?.selection.tab===b.owner,
+          mode:s?.mode===MarkalooTableCells.Mode.UPDATE_TABLE,owner:s?.selection.tab===b.owner,
           selection:s?.selection===b.selection,table:s?.selection.tableNode===b.table,
           exact:s?.exact===b.exact&&s?.model.source===b.expected.model.source,
           target:s?.target.table.start===b.expected.table.start&&s?.target.table.end===b.expected.table.end&&
@@ -4710,7 +4716,7 @@ require("./test-userdata-isolation");
       check("cell screenshot waits for enabled settled readable Cancel colors for " + name, readiness.ready, readiness);
       if (!readiness.ready) throw new Error("Cell dialog capture is not ready: " + JSON.stringify(readiness));
     }
-    const captureName = process.env.FOLIA_CELL_EVIDENCE
+    const captureName = process.env.MARKALOO_CELL_EVIDENCE
       ? path.relative(ROOT, evidence) + "-" + name : "table-cell-editor-" + name;
     const file = ownedHidden
       ? await bounded("owned hidden Chromium screenshot", captureScreenshot(win, captureName, true))
@@ -5148,7 +5154,7 @@ require("./test-userdata-isolation");
           copy.innerHTML=sanitizeTableHtml(marked.Parser.parseInline(lexer.inlineTokens(serial.replaceAll(String.fromCharCode(92)+'|','|'))));
           return serializeSafeTableCell(input)===serial&&copy.textContent===input.textContent&&
             copy.querySelectorAll('code').length===input.querySelectorAll('code').length&&
-            !serial.includes('data-folia-cell-');
+            !serial.includes('data-markaloo-cell-');
         })};
     })()`);
     if (isolated) await detailCapture("detail-rich-grid", { rich, layout:await cellLayout() });
@@ -5263,7 +5269,7 @@ require("./test-userdata-isolation");
       check(origin + " unrelated tab-strip scrolling preserves the valid table menu and captured selection",
         retained.before && retained.current && retained.distinct && retained.open &&
         retained.same && retained.delivered, retained);
-      const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+      const opened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
       check(origin + " retained menu still opens its exact owning table",
         opened.visible && opened.opened && opened.count === 12, opened);
       await cancel();
@@ -5290,7 +5296,7 @@ require("./test-userdata-isolation");
         wheel.before && wheel.currentBefore && wheel.currentAfter && wheel.same && wheel.unchanged &&
         wheel.noScroll && wheel.delivered && wheel.open === (origin === "preview"), wheel);
       if (origin === "preview") {
-        const wheelOpened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+        const wheelOpened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
         check("preview menu retained after textarea wheel still opens its exact owning table",
           wheelOpened.visible && wheelOpened.opened && wheelOpened.count === 12, wheelOpened);
         await cancel();
@@ -5322,7 +5328,7 @@ require("./test-userdata-isolation");
     const invalid = await page((from, to) => {
       const out = [];
       for (const range of [[from + 4, from + 4], [0, 3], [0, to]]) {
-        __cells.source(...range); const opened = __cells.action(FoliaTableCells.Mode.UPDATE_ROWS);
+        __cells.source(...range); const opened = __cells.action(MarkalooTableCells.Mode.UPDATE_ROWS);
         out.push(opened); if (opened.opened) tableCellCancel.click();
       }
       return out;
@@ -5333,7 +5339,7 @@ require("./test-userdata-isolation");
         : "Select a table or its rows first. The selection must contain exactly one table.")), invalid);
     const delimiter = lf(original.slice(0, secondOffset)).length + lf(table).indexOf("| :---");
     const separator = await page((from, to) => {
-      __cells.source(from, to); return __cells.action(FoliaTableCells.Mode.UPDATE_ROWS);
+      __cells.source(from, to); return __cells.action(MarkalooTableCells.Mode.UPDATE_ROWS);
     }, delimiter, delimiter + "| :--- | ---: | :---: |".length);
     check("textarea delimiter-only menu reports the exact missing-row error", !separator.opened &&
       separator.error === "Select at least one header or data row, not only the separator line.", separator);
@@ -5341,10 +5347,10 @@ require("./test-userdata-isolation");
       const tables=viewer.querySelectorAll('table'),range=document.createRange(),selection=getSelection(),out=[];
       range.selectNodeContents(tables[0].rows[2].cells[0]);range.collapse(true);
       selection.removeAllRanges();selection.addRange(range);
-      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(FoliaTableCells.Mode.UPDATE_ROWS));
+      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS));
       range.setStartBefore(tables[0]);range.setEndAfter(tables[1]);
       selection.removeAllRanges();selection.addRange(range);
-      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(FoliaTableCells.Mode.UPDATE_ROWS));
+      __cells.rightClick(tables[1].rows[2].cells[0]);out.push(__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS));
       return out;
     })()`);
     check("preview selected-row caret and multi-table ranges refuse rather than falling back to the clicked duplicate",
@@ -5359,15 +5365,15 @@ require("./test-userdata-isolation");
       await fresh("unsupported-" + label, "# Unsupported\n\n" + source);
       const refused = await page(() => {
         __cells.source("# Unsupported\n\n".length, markdownEditor.value.length);
-        return __cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
+        return __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE);
       });
       check("actual textarea menu rejects unsupported " + label + " structure", !refused.opened &&
         refused.error === "This table cannot be edited as cells. Use a regular Markdown table with the same number of cells in every row.", refused);
     }
     const commented = await page(table => {
       const source="<!-- <table><tr><td>not actual HTML</td></tr></table> -->\n\n"+table;
-      const model=FoliaTableCells.index(source,marked,protectTableSource);
-      const resolved=FoliaTableCells.resolveSource(model,0,source.length,FoliaTableCells.Mode.UPDATE_TABLE);
+      const model=MarkalooTableCells.index(source,marked,protectTableSource);
+      const resolved=MarkalooTableCells.resolveSource(model,0,source.length,MarkalooTableCells.Mode.UPDATE_TABLE);
       return {others:model.otherTables.length,tables:model.tables.length,rows:resolved.rows.length};
     }, lf(table));
     check("commented HTML table text does not count as another actual table",
@@ -5388,7 +5394,7 @@ require("./test-userdata-isolation");
       const setup=range.intersectsNode(table)&&range.intersectsNode(rule)&&
         !!range.cloneContents().querySelector('hr');
       __cells.rightClick(table.rows[1].cells[0]);
-      return {setup,tableCount:viewer.querySelectorAll('table').length,action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
+      return {setup,tableCount:viewer.querySelectorAll('table').length,action:__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS)};
     })()`);
     check("mixed preview fixture selects an actual table and nontext horizontal-rule sibling",
       selected.setup && selected.tableCount === 1 && selected.action.visible, selected);
@@ -5416,7 +5422,7 @@ require("./test-userdata-isolation");
     await page((from, to, at) => __cells.source(from, to, at),
       lf(leading.slice(0, leading.indexOf("Leading prose"))).length,
       lf(leading + table + trailing).length, lf(leading).length);
-    const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+    const opened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
     check("source click selects the exact regular table independently of the preserved prose selection",
       opened.opened && opened.count === 12, opened);
     if (!opened.opened) return;
@@ -5446,7 +5452,7 @@ require("./test-userdata-isolation");
       setup.count === 2 && setup.first && setup.second === "Name" && setup.split, setup);
     const action = await page((from, to) => {
       __cells.source(from, to);
-      return __cells.action(FoliaTableCells.Mode.UPDATE_ROWS);
+      return __cells.action(MarkalooTableCells.Mode.UPDATE_ROWS);
     }, opening.length, opening.length + rows.length + lf(table).length);
     check("source selection inside a split raw table through a Markdown table cannot silently admit only the latter",
       action.visible && !action.opened &&
@@ -5540,7 +5546,7 @@ require("./test-userdata-isolation");
       const table=viewer.querySelectorAll('table')[1], body=table.innerHTML;
       table.rows[1].cells[0].textContent='forged visual value';
       const noReceipt=editorScroll.tableSource(table)===null;
-      __cells.preview(1); const opened=__cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
+      __cells.preview(1); const opened=__cells.action(MarkalooTableCells.Mode.UPDATE_TABLE);
       if(opened.opened)tableCellCancel.click();
       table.innerHTML=body;
       return {noReceipt,opened};
@@ -5552,7 +5558,7 @@ require("./test-userdata-isolation");
     await wait("restored table provenance", "!!editorScroll.tableSource(viewer.querySelectorAll('table')[1])");
     const clone = await exec(`(() => {
       const original=viewer.querySelectorAll('table')[1], clone=original.cloneNode(true);
-      original.replaceWith(clone); __cells.preview(1); const result=__cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
+      original.replaceWith(clone); __cells.preview(1); const result=__cells.action(MarkalooTableCells.Mode.UPDATE_TABLE);
       if(result.opened)tableCellCancel.click(); clone.replaceWith(original); return result;
     })()`);
     check("text-identical cloned table has no edit authority from text or ordinal", !clone.opened &&
@@ -5732,12 +5738,12 @@ require("./test-userdata-isolation");
     const fixture = await fresh("trusted-plain-cell");
     const before = await state(), beforeSaves = saves.length;
     const prepared = await exec(`(() => {
-      const model=FoliaTableCells.index(window.CustomTabs.snapshotExactEditorContent(),marked,protectTableSource);
+      const model=MarkalooTableCells.index(window.CustomTabs.snapshotExactEditorContent(),marked,protectTableSource);
       return model.tables[1].rows.flatMap(row=>row.cells).map(cell=>{
         const input=document.createElement('div');
         try {
           const raw=model.source.slice(model.view.offsets[cell.start],model.view.offsets[cell.end]);
-          const provenance=FoliaTableCells.prepareCell(input,cell.text,raw,marked,model.links,parseEmojis,sanitizeTableHtml);
+          const provenance=MarkalooTableCells.prepareCell(input,cell.text,raw,marked,model.links,parseEmojis,sanitizeTableHtml);
           return {text:cell.text,serialized:serializeSafeTableCell(input,provenance)};
         } catch(error) {
           return {text:cell.text,html:input.innerHTML,error:error.stack};
@@ -5864,14 +5870,14 @@ require("./test-userdata-isolation");
         const authority = await exec(`(() => {
           const input=__cells.inputs()[8],code=input.querySelector('code');
           const provenance=tableCellSession.cells.find(cell=>cell.input===input).provenance;
-          const fragment=provenance.fragments.get(code.getAttribute('data-folia-cell-part'));
+          const fragment=provenance.fragments.get(code.getAttribute('data-markaloo-cell-part'));
           input.focus();
           const range=document.createRange(),walker=document.createTreeWalker(code,NodeFilter.SHOW_TEXT);
           range.setStart(walker.nextNode(),1);range.collapse(true);
           const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
           return {kind:fragment.kind,generated:!!fragment.generatedCode,
             opening:fragment.opening,closing:fragment.closing,
-            source:FoliaTableCells.serializeCell(input,provenance),html:input.innerHTML};
+            source:MarkalooTableCells.serializeCell(input,provenance),html:input.innerHTML};
         })()`);
         check("reopened approved CODE exception takes authority from its existing HTML source, not historical metadata",
           authority.kind === "html" && !authority.generated && authority.opening === "<code>" &&
@@ -5954,7 +5960,7 @@ require("./test-userdata-isolation");
       const projection = await exec(`(() => {
         const cell=tableCellSession.cells.find(cell=>cell.input===__cells.inputs()[8]),range=document.createRange();
         range.selectNodeContents(cell.input);range.collapse(false);
-        return FoliaTableCells.codeDelimiters(cell.input,cell.provenance,range);
+        return MarkalooTableCells.codeDelimiters(cell.input,cell.provenance,range);
       })()`);
       const masked = projection.literalTicks.map(tick => tick.index);
       check(scenario.name + " projects only owned literal ticks at unchanged UTF16 positions",
@@ -6358,8 +6364,8 @@ require("./test-userdata-isolation");
       if (scenario.atom || scenario.at !== undefined || scenario.remove) {
         const setup = await page(scenario => {
           const cell=tableCellSession.cells[8],input=cell.input;
-          const captured=[...input.querySelectorAll('[data-folia-cell-part]')].find(node=>
-            cell.provenance.fragments.get(node.getAttribute('data-folia-cell-part'))?.kind===scenario.atom);
+          const captured=[...input.querySelectorAll('[data-markaloo-cell-part]')].find(node=>
+            cell.provenance.fragments.get(node.getAttribute('data-markaloo-cell-part'))?.kind===scenario.atom);
           const node=scenario.atom?captured?.firstChild:document.createTreeWalker(input,NodeFilter.SHOW_TEXT).nextNode();
           if(!node||node.nodeType!==Node.TEXT_NODE)throw new Error('No actual captured text node for caret setup');
           input.focus();const range=document.createRange();
@@ -6390,8 +6396,8 @@ require("./test-userdata-isolation");
       }
       const atomSnapshot = () => page(raw => {
         const cell=tableCellSession.cells[8],input=cell.input;
-        return {text:input.textContent,atoms:[...input.querySelectorAll('[data-folia-cell-part]')].flatMap(node=>{
-          const id=node.getAttribute('data-folia-cell-part'),fragment=cell.provenance.fragments.get(id);
+        return {text:input.textContent,atoms:[...input.querySelectorAll('[data-markaloo-cell-part]')].flatMap(node=>{
+          const id=node.getAttribute('data-markaloo-cell-part'),fragment=cell.provenance.fragments.get(id);
           return fragment?.kind==='escape'&&fragment.raw===raw?
             [{id,text:node.textContent,retained:node.textContent===fragment.initialText}]:[];
         }),links:[...input.querySelectorAll('a')].map(node=>({text:node.textContent,href:node.getAttribute('href')}))};
@@ -6699,20 +6705,20 @@ require("./test-userdata-isolation");
       JSON.stringify(freshCode.codes) === '["⭐"]' && freshCode.text === "⭐" &&
       JSON.stringify(await state()) === JSON.stringify(freshCodeBefore), freshCode);
     await cancel();
-    const authored = '<span data-folia-cell-part="author">authored</span> ' +
-      '<span DATA-FOLIA-CELL-PART=\'upper\'>case</span> ' +
-      '<strong data-folia-cell-part="replacement">bold</strong> ' +
-      '<span style="color: red" data-folia-cell-code="history-author">styled</span> ' +
+    const authored = '<span data-markaloo-cell-part="author">authored</span> ' +
+      '<span DATA-MARKALOO-CELL-PART=\'upper\'>case</span> ' +
+      '<strong data-markaloo-cell-part="replacement">bold</strong> ' +
+      '<span style="color: red" data-markaloo-cell-code="history-author">styled</span> ' +
       '\\`literal\\` <span class="noted-text" data-note-id="73" data-note-title="Title &amp; value" ' +
       'data-note-content="keep" data-note-color="#c0ffee">noted</span> ' +
-      '<code data-folia-cell-part="code-author" data-folia-cell-code="source-code">loaded</code> end';
+      '<code data-markaloo-cell-part="code-author" data-markaloo-cell-code="source-code">loaded</code> end';
     const authoredBody = replacePlain(authored), authoredFixture = await fresh("authored-inline", authoredBody);
     const authoredBefore = await state(), authoredSaves = saves.length;
     const authoredCapture = await exec(`(() => {
-      const model=FoliaTableCells.index(window.CustomTabs.snapshotExactEditorContent(),marked,protectTableSource);
+      const model=MarkalooTableCells.index(window.CustomTabs.snapshotExactEditorContent(),marked,protectTableSource);
       const cell=model.tables[1].rows[2].cells[2],input=document.createElement('div');
       try {
-        const provenance=FoliaTableCells.prepareCell(input,cell.text,${JSON.stringify(authored)},marked,model.links,parseEmojis,sanitizeTableHtml);
+        const provenance=MarkalooTableCells.prepareCell(input,cell.text,${JSON.stringify(authored)},marked,model.links,parseEmojis,sanitizeTableHtml);
         const refused=operation=>{
           try {operation();return false;}
           catch(error){if(error.message!=='tableCells.cellType')throw error;return true;}
@@ -6724,8 +6730,8 @@ require("./test-userdata-isolation");
         duplicate.lastElementChild.textContent='again';
         return {html:input.innerHTML,serialized:serializeSafeTableCell(input,provenance),
           privatePart:provenance.partAttribute,privateCode:provenance.codeAttribute,
-          authored:input.querySelector('[data-folia-cell-part="author"]')?.textContent,
-          upper:input.querySelector('[data-folia-cell-part="upper"]')?.textContent,
+          authored:input.querySelector('[data-markaloo-cell-part="author"]')?.textContent,
+          upper:input.querySelector('[data-markaloo-cell-part="upper"]')?.textContent,
           unknownRefused:refused(()=>serializeSafeTableCell(unknown,provenance)),
           duplicateSource,editedRepeat:serializeSafeTableCell(duplicate,provenance)};
       } catch(error) {return {html:input.innerHTML,error:error.stack};}
@@ -6735,11 +6741,11 @@ require("./test-userdata-isolation");
     if (authoredCapture.error) throw new Error("Authored cell capture failed: " + JSON.stringify(authoredCapture));
     check("authored marker-like attributes and repeated intact source remain exact while unknown capture IDs refuse",
       authoredCapture.serialized === authored && authoredCapture.authored === "authored" &&
-      authoredCapture.upper === "case" && authoredCapture.privatePart !== "data-folia-cell-part" &&
-      authoredCapture.privateCode !== "data-folia-cell-code" &&
+      authoredCapture.upper === "case" && authoredCapture.privatePart !== "data-markaloo-cell-part" &&
+      authoredCapture.privateCode !== "data-markaloo-cell-code" &&
       authoredCapture.unknownRefused &&
-      authoredCapture.duplicateSource === authored + '<span data-folia-cell-part="author">authored</span>' &&
-      authoredCapture.editedRepeat === authored + '<span data-folia-cell-part="author">again</span>', authoredCapture);
+      authoredCapture.duplicateSource === authored + '<span data-markaloo-cell-part="author">authored</span>' &&
+      authoredCapture.editedRepeat === authored + '<span data-markaloo-cell-part="author">again</span>', authoredCapture);
     await openGrid();
     const neighbor = (await typeTrustedCell([" tail"], 8)).at(-1);
     check("real neighbor typing leaves authored spans notes and escaped literal backticks intact",
@@ -6856,7 +6862,7 @@ require("./test-userdata-isolation");
         range.selectNode(scope==='table'?table:table.rows[1]);
         getSelection().removeAllRanges();getSelection().addRange(range);
         __cells.rightClick(table.rows[1].cells[0]);
-        return {collapsed:range.collapsed,text:range.toString(),action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
+        return {collapsed:range.collapsed,text:range.toString(),action:__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS)};
       }, scope);
       check(scope + " empty-text selected-rows setup has a real noncollapsed range without selected text",
         !selected.collapsed && !selected.text.trim(), selected);
@@ -6870,7 +6876,7 @@ require("./test-userdata-isolation");
     const sourceWhitespace = await page(() => {
       const start=markdownEditor.value.lastIndexOf('| | |')+1;
       __cells.source(start,start+1);
-      return {text:markdownEditor.value.slice(start,start+1),action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
+      return {text:markdownEditor.value.slice(start,start+1),action:__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS)};
     });
     check("Markdown whitespace selection really selects a nonempty blank inside the table row",
       sourceWhitespace.text === " ", sourceWhitespace);
@@ -6881,7 +6887,7 @@ require("./test-userdata-isolation");
     const sourceSyntax = await page(() => {
       const start=markdownEditor.value.lastIndexOf('| | |'),end=start+'| | |'.length;
       __cells.source(start,end);
-      return {text:markdownEditor.value.slice(start,end),action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
+      return {text:markdownEditor.value.slice(start,end),action:__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS)};
     });
     check("Markdown syntax-only row selection really contains pipes without any cell text",
       sourceSyntax.text === "| | |" && sourceSyntax.text.trim().length > 0, sourceSyntax);
@@ -6897,7 +6903,7 @@ require("./test-userdata-isolation");
       getSelection().removeAllRanges();getSelection().addRange(range);
       __cells.rightClick(table.rows[1].cells[0]);
       return {collapsed:range.collapsed,text:range.toString(),images:range.cloneContents().querySelectorAll('img').length,
-        action:__cells.action(FoliaTableCells.Mode.UPDATE_ROWS)};
+        action:__cells.action(MarkalooTableCells.Mode.UPDATE_ROWS)};
     });
     check("image-only selected-rows setup selects a real image without text",
       !imageSelection.collapsed && !imageSelection.text.trim() && imageSelection.images === 1, imageSelection);
@@ -6940,7 +6946,7 @@ require("./test-userdata-isolation");
         check(origin + " " + selectionKind + " click actor reaches the independently located second table",
           setup.hit && (origin !== "markdown" || setup.mapped?.start === second), setup);
         await nativeClick(setup.point);
-        const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+        const opened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
         check(origin + " " + selectionKind + " Edit table uses the actual clicked table without manufacturing a selection",
           opened.opened && opened.count === 4 &&
           await exec("__cells.inputs()[0].textContent==='C'&&__cells.inputs()[1].textContent==='D'") &&
@@ -6963,7 +6969,7 @@ require("./test-userdata-isolation");
         if(origin==='markdown')__cells.source(0,markdownEditor.value.length,0);
         else {const range=document.createRange();range.selectNode(table);selection.addRange(range);
           __cells.rightClick(viewer.querySelector('h1'));}
-        return __cells.action(FoliaTableCells.Mode.UPDATE_TABLE);
+        return __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE);
       }, origin);
       check(origin + " outside-table click never falls back to an unrelated table selection",
         !outside.opened && outside.error === "Right-click inside a table to edit it.", outside);
@@ -6978,7 +6984,7 @@ require("./test-userdata-isolation");
         return {x:Math.round(rect.left+8),y:Math.round(rect.top+rect.height/2)};
       }, origin);
       await nativeClick(missingPoint);
-      const missingRows = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_ROWS));
+      const missingRows = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_ROWS));
       check(origin + " Edit selected rows still requires a real nonempty text selection",
         !missingRows.opened && missingRows.error === "Select a table or its rows first. The selection must contain exactly one table.",
         missingRows);
@@ -7030,7 +7036,7 @@ require("./test-userdata-isolation");
         (scenario.name !== "wrapped scrolled row" || setup.scroll > 0), setup);
       try {
         await nativeClick(setup.point);
-        const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+        const opened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
         check(scenario.name + " opens its exact table by native right click without a selection",
           opened.opened && opened.count === 4 && await exec("__cells.inputs()[0].textContent==='A'") &&
           JSON.stringify(await state()) === JSON.stringify(before), opened);
@@ -7056,7 +7062,7 @@ require("./test-userdata-isolation");
     const before = await state(), beforeSaves = saves.length;
     const sourceStart = lf(original.slice(0, secondOffset - between.length + 2)).length;
     await page((from, to, at) => __cells.source(from, to, at), sourceStart, lf(original).length, lf(original.slice(0, secondOffset)).length);
-    const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+    const opened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
     check("cell transaction setup resolves prose plus just the second duplicate through the textarea menu",
       opened.opened && opened.count === 12 && before.exact === original && before.value === lf(original), opened);
     await exec("__cells.inputs()[7].innerHTML='<strong>changed &amp; safe</strong><em> rich</em>';true");
@@ -7917,7 +7923,7 @@ require("./test-userdata-isolation");
       const menu = await page(() => __cells.preview(1));
       await mark("menu");
       await mark("opening-grid");
-      const opened = await page(() => __cells.action(FoliaTableCells.Mode.UPDATE_TABLE));
+      const opened = await page(() => __cells.action(MarkalooTableCells.Mode.UPDATE_TABLE));
       await mark("open");
       check("cell dialog setup has a real selected table and visible menu action", menu && opened.visible && opened.opened, opened);
       await mark("untouched-cell-Undo");
@@ -8138,7 +8144,7 @@ require("./test-userdata-isolation");
       const unownedRefused=refused(()=>{unownedSource=serializeSafeTableCell(unowned,provenance);});
       const wrongOwners=['**value**','<span title="keep">value</span>'].map(source=>{
         const container=document.createElement('div');
-        const captured=FoliaTableCells.prepareCell(container,source,source,marked,{},parseEmojis,sanitizeTableHtml);
+        const captured=MarkalooTableCells.prepareCell(container,source,source,marked,{},parseEmojis,sanitizeTableHtml);
         const original=container.firstElementChild,part=original.getAttribute(captured.partAttribute);
         const fragment=captured.fragments.get(part),setup=serializeSafeTableCell(container,captured);
         const replacement=document.createElement('code');
@@ -8146,31 +8152,31 @@ require("./test-userdata-isolation");
         replacement.append(...original.childNodes);
         original.replaceWith(replacement);
         return {source,setup,kind:fragment.kind,tag:fragment.tag,
-          refused:refused(()=>FoliaTableCells.serializeCell(container,captured))};
+          refused:refused(()=>MarkalooTableCells.serializeCell(container,captured))};
       });
       structural.querySelector('code').replaceChildren('aLEFT',document.createElement('br'),'RIGHTb');
       withAttribute.querySelector('code').textContent='ordinary';
       withAttribute.querySelector('code').className='browser-generated';
       empty.querySelector('code').replaceChildren();
       const comparison=structural.cloneNode(true);
-      comparison.querySelectorAll('[data-folia-cell-part]').forEach(node=>node.removeAttribute('data-folia-cell-part'));
+      comparison.querySelectorAll('[data-markaloo-cell-part]').forEach(node=>node.removeAttribute('data-markaloo-cell-part'));
       const generated=document.createElement('div'),authored=document.createElement('div');
       const source='<code title="keep">a<br>b</code>';
-      const authoredProvenance=FoliaTableCells.prepareCell(authored,source,source,marked,{},parseEmojis,sanitizeTableHtml);
+      const authoredProvenance=MarkalooTableCells.prepareCell(authored,source,source,marked,{},parseEmojis,sanitizeTableHtml);
       const generatedSource='<code>&#58;star:</code>';
-      const generatedProvenance=FoliaTableCells.prepareCell(generated,generatedSource,generatedSource,marked,{},parseEmojis,sanitizeTableHtml);
+      const generatedProvenance=MarkalooTableCells.prepareCell(generated,generatedSource,generatedSource,marked,{},parseEmojis,sanitizeTableHtml);
       const generatedCode=generated.querySelector('code');
-      generatedProvenance.fragments.get(generatedCode.getAttribute('data-folia-cell-part')).generatedCode=true;
+      generatedProvenance.fragments.get(generatedCode.getAttribute('data-markaloo-cell-part')).generatedCode=true;
       generatedCode.append(document.createElement('br'));
       return {unownedRefused,unownedSource,wrongOwners,unownedPart:unowned.querySelector('code').getAttribute(provenance.partAttribute),
         validCellProvenance:provenance.fragments instanceof Map&&provenance.fragments.size>0,
-        structural:FoliaTableCells.codeSources(structural.querySelector('code'),provenance),
-        empty:FoliaTableCells.codeSources(empty.querySelector('code'),provenance),
+        structural:MarkalooTableCells.codeSources(structural.querySelector('code'),provenance),
+        empty:MarkalooTableCells.codeSources(empty.querySelector('code'),provenance),
         attributesRefused:refused(()=>serializeSafeTableCell(withAttribute,provenance)),
         emptyRefused:refused(()=>serializeSafeTableCell(empty,provenance)),
         missingAuthorityRefused:refused(()=>serializeSafeTableCell(comparison)),
         generatedExceptionRefused:refused(()=>serializeSafeTableCell(generated,generatedProvenance)),
-        comparison:FoliaTableCells.serializeCell(comparison),authored:serializeSafeTableCell(authored,authoredProvenance)};
+        comparison:MarkalooTableCells.serializeCell(comparison),authored:serializeSafeTableCell(authored,authoredProvenance)};
     })()`);
     check("CODE without captured ownership refuses even with valid whole-cell provenance",
       dispatch.unownedRefused && dispatch.unownedPart === null && dispatch.validCellProvenance, dispatch);
@@ -8220,9 +8226,9 @@ require("./test-userdata-isolation");
       { name: "authored-code-multiline-paste", source: '<code title="keep">ab</code>',
         paste: "LEFT\r\n\r\nRIGHT", text: "aLEFTRIGHTb", breaks: 2,
         expected: '<code title="keep">aLEFT<br><br>RIGHTb</code>' },
-      { name: "authored-code-colliding-metadata", source: '<code DATA-FOLIA-CELL-PART="author" data-folia-cell-code="history">ab</code>',
+      { name: "authored-code-colliding-metadata", source: '<code DATA-MARKALOO-CELL-PART="author" data-markaloo-cell-code="history">ab</code>',
         paste: "LEFT\nRIGHT", text: "aLEFTRIGHTb", breaks: 1,
-        expected: '<code DATA-FOLIA-CELL-PART="author" data-folia-cell-code="history">aLEFT<br>RIGHTb</code>' },
+        expected: '<code DATA-MARKALOO-CELL-PART="author" data-markaloo-cell-code="history">aLEFT<br>RIGHTb</code>' },
     ]) {
       const body = original.slice(0, codeOffset) + scenario.source + original.slice(codeOffset + "plain".length);
       const fixture = await fresh(scenario.name, body), before = await state(), saveCount = saves.length;
@@ -8582,10 +8588,10 @@ require("./test-userdata-isolation");
       (await state()).exact === createDocumentSource, await state());
     await page(() => {
       __cells.source(markdownEditor.value.length, markdownEditor.value.length);
-      return __cells.action(FoliaTableCells.Mode.INSERT);
+      return __cells.action(MarkalooTableCells.Mode.INSERT);
     });
     check("Create opens the one visual popup with honest defaults and no legacy Markdown UI",
-      await exec(`tableCellSession.mode===FoliaTableCells.Mode.INSERT&&!tableCellSession.ready&&
+      await exec(`tableCellSession.mode===MarkalooTableCells.Mode.INSERT&&!tableCellSession.ready&&
         tableCellColumns.value==='3'&&tableCellDataRows.value==='2'&&tableCellDataRows.min==='0'&&
         !tableCellSetup.hidden&&!document.getElementById('tableInsertOverlay')&&
         !document.getElementById('tableInsertMarkdown')&&undoHistory.length===0`));
@@ -8665,7 +8671,7 @@ require("./test-userdata-isolation");
     const wholeFixture = await fresh("shared-whole");
     await open();
     check("Update Table has live counts and whole-table-only column permission",
-      await exec(`tableCellSession.mode===FoliaTableCells.Mode.UPDATE_TABLE&&tableCellSetup.hidden&&
+      await exec(`tableCellSession.mode===MarkalooTableCells.Mode.UPDATE_TABLE&&tableCellSetup.hidden&&
         tableCellCounts.textContent.includes('Data rows: 3')&&tableCellCounts.textContent.includes('Columns: 3')&&
         tableCellColumnScope.hidden&&!tableCellInsertLeft.disabled&&!tableCellInsertRight.disabled`));
     await noSelection("Update Table initial autofocus", ["tableCellInsertLeft", "tableCellInsertRight", "tableCellInsertBelow"]);
@@ -8694,7 +8700,7 @@ require("./test-userdata-isolation");
     const selectedFixture = await fresh("shared-selected");
     await open(1, tableModes.UPDATE_ROWS, 2, 2);
     check("Update Rows exposes only its selected data count and explains unavailable columns",
-      await exec(`tableCellSession.mode===FoliaTableCells.Mode.UPDATE_ROWS&&
+      await exec(`tableCellSession.mode===MarkalooTableCells.Mode.UPDATE_ROWS&&
         tableCellCounts.textContent.includes('Data rows: 1')&&!tableCellColumnScope.hidden&&
         tableCellInsertLeft.disabled&&tableCellInsertRight.disabled&&
         tableCellSession.rows[0].header&&!tableCellSession.rows[0].editable`));
@@ -8886,11 +8892,11 @@ require("./test-userdata-isolation");
       await fresh("shared-column-create", createDeletionSource);
       await page(() => {
         __cells.source(markdownEditor.value.length, markdownEditor.value.length);
-        return __cells.action(FoliaTableCells.Mode.INSERT);
+        return __cells.action(MarkalooTableCells.Mode.INSERT);
       });
       await exec("tableCellColumns.value='2';tableCellDataRows.value='0';tableCellStart.click();true");
       check("Create deletion has a real editable header without data rows or an autofocus deletion selection",
-        await exec(`tableCellSession.mode===FoliaTableCells.Mode.INSERT&&tableCellSession.rows.length===1&&
+        await exec(`tableCellSession.mode===MarkalooTableCells.Mode.INSERT&&tableCellSession.rows.length===1&&
           tableCellSession.rows[0].header&&tableCellSession.rows[0].editable&&
           tableCellSession.columns===2&&tableCellDeleteColumn.disabled&&tableCellSession.selectedCell===null`));
       const createDeletionBefore = await page(() => {
@@ -8951,7 +8957,7 @@ require("./test-userdata-isolation");
     await fresh("shared-refusal", "# Shared refusal\n\nOrdinary prose remains unchanged.");
     await page(() => {
       __cells.source(markdownEditor.value.indexOf("prose"), markdownEditor.value.indexOf("prose"));
-      return __cells.action(FoliaTableCells.Mode.INSERT);
+      return __cells.action(MarkalooTableCells.Mode.INSERT);
     });
     await exec("tableCellStart.click();true");
     const refusedBefore = await draft();
@@ -9167,7 +9173,7 @@ require("./test-userdata-isolation");
         (details, callback) => { network.push(details.url); callback({ cancel: true }); });
       ipcMain.prependListener("save-markdown-file", saveListener);
       await bounded("actual Main bootstrap", awaitMainReady(), 10000);
-      tableModes = await exec("FoliaTableCells.Mode");
+      tableModes = await exec("MarkalooTableCells.Mode");
       if (ownedHidden) await bounded("owned renderer focus emulation",
         win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }));
       receipt("ready", { watchdogMs: 180000, appRoot });
@@ -9182,7 +9188,7 @@ require("./test-userdata-isolation");
       network.length = 0;
       sentinel = startErrorSentinel(win, { trapExternal: false });
       if (!perfOnly) {
-        const boot = await exec(`typeof window.FoliaTableCells?.index==='function'&&
+        const boot = await exec(`typeof window.MarkalooTableCells?.index==='function'&&
           typeof window.CustomTabs?.snapshotExactEditorContent==='function'&&
           typeof window.CustomTabs?.adoptExactEditorContent==='function'&&
           typeof editorScroll?.tableSource==='function'&&!!document.getElementById('tableCellDialog')`);

@@ -18,7 +18,7 @@ function between(text, start, end) {
 const closer = between(source, "async function closeOwnedFixtureTabs(",
   "\nasync function run(win)");
 assert.equal(createHash("sha256").update(closer).digest("hex"),
-  "8771b1324757f3f6cc88e98cfc66cc0cbbf7fc8a70d628a4d91494f6ffa33aef");
+  "25299256f98a6872bbba85a33065b786ed112ab4188918d1283241ff8dc44844");
 const setup = between(source, "  const closedDeletedFile =",
   "  const closedCloseKey =");
 const cleanCapture = between(source, "  const closedCloseKey =",
@@ -224,7 +224,7 @@ function deletedFixture(options = {}) {
   win.getReloadRequestDiagnostics = () => ({
     sequence: state.reloadSequence, pendingNavigationToken: state.navigation || 0,
   });
-  win.folia = {
+  win.markaloo = {
     getVersion: async () => {
       state.barriers++;
       if (state.barriers === 2) {
@@ -241,7 +241,7 @@ function deletedFixture(options = {}) {
     },
   };
   win.queryDocumentDeletionState = (file, owner) =>
-    win.folia.queryDocumentDeletionState({ ...owner, filePath: file });
+    win.markaloo.queryDocumentDeletionState({ ...owner, filePath: file });
   win.retireDeletionTombstone = (file, owner, tombstone, consent) => {
     state.retirements.push({ file, owner: { ...owner }, consent: { ...consent } });
     assert.equal(file, aPath);

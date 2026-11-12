@@ -97,7 +97,7 @@
     if (document.activeElement === notesRetry) notesToggle.focus();
     renderNotes(toast.classList.contains("show"));
     try {
-      const value = await window.folia.getUpdateReleaseNotes(owner.id, owner.version, retry);
+      const value = await window.markaloo.getUpdateReleaseNotes(owner.id, owner.version, retry);
       if (notes !== owner || value.status === "retired") return;
       const fragment = value.body ? renderNotesMarkdown(value.body) : null;
       owner.status = value.body ? "loaded" : "empty";
@@ -147,13 +147,13 @@
   }
 
   function downloadAction() {
-    if (state?.manualOnly) window.folia.openUpdateRelease();
-    else window.folia.downloadUpdate();
+    if (state?.manualOnly) window.markaloo.openUpdateRelease();
+    else window.markaloo.downloadUpdate();
   }
 
   function installAction() {
     window.MarkalooDialogs.closeAbout();
-    window.folia.installUpdate();
+    window.markaloo.installUpdate();
   }
 
   function render() {
@@ -213,7 +213,7 @@
   window.MarkalooUpdates = Object.freeze({
     bindAbout(surface) {
       about = surface;
-      surface.check.addEventListener("click", () => window.folia.checkForUpdates());
+      surface.check.addEventListener("click", () => window.markaloo.checkForUpdates());
       surface.download.addEventListener("click", downloadAction);
       surface.install.addEventListener("click", installAction);
       render();
@@ -223,7 +223,7 @@
     closeAllDropdowns();
     // This local snapshot revalidates a download; opening About never checks
     // the provider or trusts the renderer's previous ready display.
-    window.folia.getUpdateState().then(apply, error => {
+    window.markaloo.getUpdateState().then(apply, error => {
       if (about) about.status.textContent = "Update status could not be read. Please reopen About to try again.";
       console.error("Could not refresh update state:", error);
     });
@@ -236,7 +236,7 @@
   function dismiss() {
     if (state?.presentationId) {
       dismissed = state.presentationId;
-      window.folia.dismissUpdateNotice(state.presentationId);
+      window.markaloo.dismissUpdateNotice(state.presentationId);
     }
     toast.classList.remove("show");
     toast.inert = true;
@@ -248,9 +248,9 @@
   toast.setAttribute("role", "region");
   toast.setAttribute("aria-label", "Application update");
   close.setAttribute("aria-label", "Dismiss update notice");
-  const unsubscribe = window.folia.onUpdateStatus(apply);
+  const unsubscribe = window.markaloo.onUpdateStatus(apply);
   window.addEventListener("pagehide", () => { unsubscribe(); resetNotes(); }, { once: true });
-  window.folia.getUpdateState().then(apply, error => {
+  window.markaloo.getUpdateState().then(apply, error => {
     message.textContent = "Update status could not be read. Reopen the window to try again.";
     title.textContent = "Update status unavailable";
     toast.classList.add("show");

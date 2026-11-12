@@ -174,7 +174,7 @@ async function checkMainContinuations() {
   let thawSends = 0;
   const thawContext = {
     shutdownCommitIngressBlocked: true,
-    foliaUpdaterAttemptRetainsFreeze: () => false,
+    markalooUpdaterAttemptRetainsFreeze: () => false,
     shutdownOwnerWindow: () => ({
       webContents: {
         isDestroyed: () => false, isCrashed: () => true,
@@ -466,13 +466,13 @@ async function checkProductionBridge() {
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false,
       preload: path.join(__dirname, "..", "src", "main-preload.js"),
-      additionalArguments: [`--folia-session-bootstrap=${nonce}`],
+      additionalArguments: [`--markaloo-session-bootstrap=${nonce}`],
     },
   });
   try {
     await win.loadFile(html);
     const promise = await win.webContents.executeJavaScript(`(() => {
-      window.largeAnswer = folia.confirmLargeRender({name:"guard.md",seconds:4,ignored:"not forwarded"});
+      window.largeAnswer = markaloo.confirmLargeRender({name:"guard.md",seconds:4,ignored:"not forwarded"});
       return typeof window.largeAnswer.then === "function";
     })()`);
     await waitFor(() => resolveLarge, "fixed large-render invoke");
@@ -482,13 +482,13 @@ async function checkProductionBridge() {
     check("production large-render bridge preserves cancellation",
       await win.webContents.executeJavaScript("window.largeAnswer") === false);
     check("production large-render bridge refuses malformed metadata before IPC",
-      await win.webContents.executeJavaScript(`folia.confirmLargeRender({name:"x",seconds:"bad"})
+      await win.webContents.executeJavaScript(`markaloo.confirmLargeRender({name:"x",seconds:"bad"})
         .then(()=>false,()=>true)`));
     win.webContents.send("main-dialog-visibility", true);
     await delay(30);
     let values = await win.webContents.executeJavaScript(`(() => {
       window.busyAnswers=[];
-      window.removeBusy=folia.onMainDialogVisibility(value=>window.busyAnswers.push(value));
+      window.removeBusy=markaloo.onMainDialogVisibility(value=>window.busyAnswers.push(value));
       return window.busyAnswers;
     })()`);
     check("a late visibility subscriber receives the current Main hold", values.length === 1 && values[0] === true);
@@ -501,7 +501,7 @@ async function checkProductionBridge() {
     await delay(30);
     values = await win.webContents.executeJavaScript("window.busyAnswers");
     check("visibility bridge unsubscribe removes only that callback", values.length === 2);
-    await win.webContents.executeJavaScript(`folia.publishDialogTheme("parchment");folia.publishDialogTheme("ember")`);
+    await win.webContents.executeJavaScript(`markaloo.publishDialogTheme("parchment");markaloo.publishDialogTheme("ember")`);
     await waitFor(() => themes.length > 0, "private appearance publication");
     check("theme publication carries only private bootstrap, generation and allow-listed appearance",
       themes.at(-1).themeId === "ember" && themes.at(-1).nonce === nonce &&
@@ -509,7 +509,7 @@ async function checkProductionBridge() {
       Object.keys(themes.at(-1)).sort().join(",") === "nonce,rendererGeneration,themeId");
     check("theme publication refuses arbitrary strings",
       await win.webContents.executeJavaScript(`(() => {
-        try { folia.publishDialogTheme("url(file:///other)");return false; } catch {return true;}
+        try { markaloo.publishDialogTheme("url(file:///other)");return false; } catch {return true;}
       })()`));
   } finally {
     win.destroy();

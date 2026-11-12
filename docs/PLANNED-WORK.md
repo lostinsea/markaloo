@@ -38,6 +38,16 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `v013-routine-profile-gates` - **INTEGRATED; LOCAL VALIDATION IN PROGRESS**.
+  - The reviewed release selection is assembled in an isolated worktree.
+    Original candidate bytes and excluded installer paths remain untouched.
+  - `test:profile-entry` runs entry, document-receipt and startup-admission
+    suites in separate fail-fast Node processes.
+  - Admission tests skip non-Windows before imports and reject a wrong Windows
+    Node version before fixtures. The required runtime is Node 24.18.1.
+  - Existing independent Sol/Luna source reviews are carried forward.
+    Actual guard behavior, the complete chain and CI runtime binding are being
+    checked. This is not final release qualification or permission to publish.
 - `v013-popup-diagnosis` - **DEFINED SURFACE GATES QUALIFIED; CORRECTION CLOSED**.
   - The user removed the one-diagnostic limit: "Not one, but as many times
     you wanted to understand this." The serialized owned native slot is
@@ -5329,7 +5339,7 @@ go away: the native window close button, `Ctrl+Q`, an ordinary application quit,
 and an update installation. Today those paths differ.
 
 This is the fork's own subject matter. The tab model (`src/custom-tabs.js`) is
-fork-owned and the reason Folia exists; a shutdown path that discards a dirty tab
+fork-owned and the reason Markaloo exists; a shutdown path that discards a dirty tab
 is the same class of data loss as the stale-refresh bug the fork was created to
 fix.
 
@@ -8217,7 +8227,7 @@ performance gates below remain mandatory.
 `feat/w2-sec08-harness-one-20261005` was created from the combined
 integration HEAD `7cc985a`. Sol (high) has implemented only the
 main-window test-preload selection gate there, uncommitted: the
-nonpackaged, explicitly marked `--folia-test-preload` path selects
+nonpackaged, explicitly marked `--markaloo-test-preload` path selects
 `test/test-preload.js`, and a marked launch with a missing file fails
 loudly. Terra then added the test-only preload, one PDF-restoration signal
 migration with a current-window, fresh-token, post-result witness,
@@ -8615,7 +8625,7 @@ startup verdict, review or integration is claimed at
 this handoff.
 Sol completed the four-file product-only edit in its isolated
 stream: the IIFE preserves CommonJS and publishes
-`FoliaContextMenu`, the local tag precedes both consumers,
+`MarkalooContextMenu`, the local tag precedes both consumers,
 and the renderer and tabs consume that browser global
 without a Node fallback. Independent read-only Opus/Luna
 product checks found no blocking issue; syntax and diff
@@ -8703,7 +8713,7 @@ created clean `feat/w2-sec08-loader-emoji-20261005` from
 performance result is claimed for that stream yet.
 Sol (high) completed only the four product files in the
 isolated emoji stream. IIFE-scoped map and parser retain
-CommonJS, publish `FoliaEmojiMap` and `FoliaEmoji`, and
+CommonJS, publish `MarkalooEmojiMap` and `MarkalooEmoji`, and
 the renderer consumes the latter without a Node fallback.
 The script tags load map -> parser -> renderer; emoji data,
 parse behavior and isolation flags are unchanged. Syntax,
@@ -8783,7 +8793,7 @@ from `04e1d14`. No implementation or gate result is
 claimed yet; Node integration remains enabled.
 Sol (high) completed only the four product paths in that
 isolated stream: a new IIFE-scoped dual-mode core publishes
-`FoliaFileHelpers`, the existing main-process adapter
+`MarkalooFileHelpers`, the existing main-process adapter
 retains the 13-key CommonJS API and its Node I/O helpers,
 the local script precedes its consumers, and tabs use the
 fail-loud global with no BOM-only fallback. The sync
@@ -9139,7 +9149,7 @@ application and integrated Wave-2 checks remain release obligations, not evidenc
 supplied by these source-level results. No performance, integration or release
 gate is claimed. Diagnostic-log hardening remains deferred.
 
-> **Folia uploads no logs. There is no telemetry, and this item does not add
+> **Markaloo uploads no logs. There is no telemetry, and this item does not add
 > any.** No first-party code sends document content, usage data, or log content
 > anywhere. Every rendering library is vendored under `libs/`, so no CDN is
 > contacted at runtime (`docs/SECURITY-AUDIT.md`, SEC-10 — *"Runtime libraries
@@ -9152,7 +9162,7 @@ gate is claimed. Diagnostic-log hardening remains deferred.
 > `img-src … https:` deliberately so remote images in markdown keep working
 > (`docs/SECURITY-AUDIT.md`, SEC-09), and the resulting read-receipt exposure is
 > recorded there rather than traded away. That request is the document's doing,
-> not Folia's, and it is not a log upload.
+> not Markaloo's, and it is not a log upload.
 
 What this item actually is: **`src/main.js` opens an append-only write stream to
 `<userData>\debug.log` at module load and writes to it unconditionally** —
@@ -9173,7 +9183,7 @@ gathered during review, all read from the tree):
   `log("Auto-updater error (silent):", err.message)` — the message is written
   verbatim, unfiltered.
 - **It survives uninstall.** `package.json` sets `nsis.deleteAppDataOnUninstall:
-  false`, so removing Folia leaves `<userData>\debug.log` on disk indefinitely.
+  false`, so removing Markaloo leaves `<userData>\debug.log` on disk indefinitely.
   That flag is otherwise deliberate — it is what preserves the user's tabs and
   settings across an upgrade — so the fix belongs in the logging, not in the
   uninstall behaviour.
@@ -9202,8 +9212,8 @@ rather than re-litigated:
    `!app.isPackaged` behaviour and is not the problem. Console-only stays the
    development default; nothing in this item adds a development file.
 3. **Diagnostics are enabled only by an explicit, documented switch.** Name:
-   **`FOLIA_DIAGNOSTIC_LOG=1`**. This follows the repository's existing
-   environment-variable convention — `FOLIA_DEVTOOLS` and `FOLIA_GOLDEN_COMMIT`
+   **`MARKALOO_DIAGNOSTIC_LOG=1`**. This follows the repository's existing
+   environment-variable convention — `Markaloo_devtools` and `MARKALOO_GOLDEN_COMMIT`
    are the precedents, alongside the unprefixed `PACKAGING_STRICT`. No collision
    exists in the tree today; confirm again at implementation time, and document
    it in `docs/BUILD.md` where the other switches live. With the switch set, the
@@ -9216,7 +9226,7 @@ rather than re-litigated:
    forbids.
 5. **An existing stale packaged `debug.log` stops being a growing artefact.**
    Users who already ran an affected build have one on disk. On a default
-   (opt-out) packaged start, Folia removes it, or at minimum never appends to it
+   (opt-out) packaged start, Markaloo removes it, or at minimum never appends to it
    again. Leaving a file that keeps growing after the fix ships would defeat the
    item.
 6. **No upload path is added, and none exists.** This item introduces no network
@@ -9232,7 +9242,7 @@ it from the default install, which is where nearly all of the exposure was: no
 file means nothing to accumulate, nothing to survive uninstall, nothing for
 another process running as that user to read. That genuinely reduces urgency.
 It does **not** make the risk disappear. When a user *does* set
-`FOLIA_DIAGNOSTIC_LOG=1`, the file they get is still the unhardened one — it
+`MARKALOO_DIAGNOSTIC_LOG=1`, the file they get is still the unhardened one — it
 still records document paths and the full `argv`, it still writes updater
 `err.message` verbatim (which can carry response metadata such as a status line,
 a URL or header-derived text, depending on what `electron-updater` surfaces), and
@@ -9252,7 +9262,7 @@ assertion proves the write stream is not opened when logging is disabled; a
 *pre-existing* packaged `debug.log` is either removed or provably left untouched
 and unappended on a default start — the two permitted outcomes of point 5, and
 the only sense in which a file may still be present after a default run;
-`FOLIA_DIAGNOSTIC_LOG=1` does create the diagnostic file; no upload path is
+`MARKALOO_DIAGNOSTIC_LOG=1` does create the diagnostic file; no upload path is
 added; `docs/BUILD.md` documents the switch **and** the temporary-use guidance
 above. Reverts pin each of those independently. Hardening assertions are
 explicitly *not* required here — they belong to `diagnostic-log-hardening`.
@@ -9291,7 +9301,7 @@ This item owns everything `w2-privacy` no longer does:
    pinning each guarantee independently. The temporary-use warning added by
    `w2-privacy` is revisited here and relaxed only if the hardening earns it.
 
-**Completion criteria.** With `FOLIA_DIAGNOSTIC_LOG=1`: the log rotates at a
+**Completion criteria.** With `MARKALOO_DIAGNOSTIC_LOG=1`: the log rotates at a
 fixed size, retains a fixed count, and an assertion proves both; **a specific
 retention duration is chosen and documented in `docs/BUILD.md` as a named
 constant — not left implicit — and age-based cleanup is proven by two
@@ -9436,7 +9446,7 @@ is **not** the packaged/profiled R3 source. No replacement build was made.
 
 ### `w2-upstream` — classify the outstanding upstream commits · CLASSIFIED; dispositions complete, integration pending
 
-Folia is a hard fork, not a branch: upstream commits are taken as deliberate
+Markaloo is a hard fork, not a branch: upstream commits are taken as deliberate
 individual cherry-picks, never merged wholesale
 (`.github/copilot-instructions.md`, `docs/CUSTOMIZATIONS.md`). Sixteen upstream
 commits are outstanding and unclassified — verified at `db7b960` with
@@ -9511,7 +9521,7 @@ histories are retained, not promoted. Final anchor audit also resolves the
 compound parts (`adoption-context-final-anchors-20261012.log`).
 **2026-10-14 paragraph-wrapper disposition.** The actual upstream diff changes
 both Mermaid placeholder restorations from replacing the bare token to
-replacing either `<p>token</p>` or the token. Folia already has the secure shared
+replacing either `<p>token</p>` or the token. Markaloo already has the secure shared
 nonce/function-replacer implementation, with explicit `unwrapParagraph=false`
 at both Mermaid call sites and `true` at both raw-HTML iframe sites.
 Upstream's Mermaid-only adaptation would change the empty-paragraph/spacing
@@ -9601,6 +9611,15 @@ and the saving is stated as a measured number.
 ---
 
 ## D. Performance and UI correctness
+
+### `reading-location-perf` - capture and navigation cost - PENDING / DEFERRED
+
+- Measure actual capture, restore and navigation cost on normal and large
+  documents through the existing paths.
+- Check whether repeated whole-document verification can be avoided without
+  weakening source, owner and currentness checks.
+- User-deferred work; no measurements or new budget are claimed. Existing
+  performance acceptance gates stay unchanged.
 
 ### `ctime-byte-witness` — restore content-aware disk-change detection · PENDING · DEFERRED
 
@@ -9842,7 +9861,7 @@ still emits them; the signing decision is recorded here either way.
 
 ### `readme-story` — rewrite the README around the fork's story · PENDING
 
-Rewrite `README.md` around Folia's divergence from upstream, what was improved,
+Rewrite `README.md` around Markaloo's divergence from upstream, what was improved,
 the measurements behind those claims, and where it is going. **Verify the
 README's own claims before publishing them** — stated counts in this repository
 have rotted every single time they were hand-maintained, which is why several of
@@ -10066,7 +10085,7 @@ resolves; the full chain is green; pushed.
 ### `user-verify` — verification against the real workflow · BLOCKED on `final-cleanup`
 
 Final verification by the maintainer against the real multi-file Copilot
-workflow — the actual use case Folia exists to serve. This is last on purpose:
+workflow — the actual use case Markaloo exists to serve. This is last on purpose:
 it is only meaningful against a clean, released-shaped tree.
 
 **Completion criteria.** The maintainer confirms the workflow behaves correctly,
@@ -10670,7 +10689,7 @@ substitutes for a before/after measurement.
 | `w2-sec08`, steady-state cost of the flags themselves | **Not classified.** | The four popups already run `nodeIntegration: false, contextIsolation: true` behind preloads, and no performance consequence is recorded for them — but an *absence* of a record is not a measurement, and a popup workload would not predict the main window's anyway. No number is offered. |
 | `w2-f03` sender/frame checks, and the existing navigation guards | **Expected negligible** — a constant-time comparison on an already-asynchronous message boundary. Still measured, because it is on the IPC path, which the gate names. | No IPC handler timing exists in `docs/PERF-AUDIT.md` or `bench/BASELINE.md`. The expectation is stated as an expectation, not a result. |
 | `w2-privacy` logging fix | **Expected neutral to slightly faster** in packaged builds, because the default path stops opening a stream and stops writing to disk. With the scope narrowed on 2026-09-02 this is the whole of the item — no rotation accounting is added here. | `src/main.js` writes to an append-only `debug.log` stream on every `log()` call in packaged builds. No logging measurement exists anywhere in the repository. |
-| `diagnostic-log-hardening` | **Expected confined to the opt-in path.** Rotation adds per-write size accounting and periodic rename/truncate; redaction adds per-call string work. Both are unmeasured, and neither runs in a default packaged build, where no file is opened at all. | The default-off behaviour is established by `w2-privacy`; this item only changes what happens once `FOLIA_DIAGNOSTIC_LOG=1` is set. |
+| `diagnostic-log-hardening` | **Expected confined to the opt-in path.** Rotation adds per-write size accounting and periodic rename/truncate; redaction adds per-call string work. Both are unmeasured, and neither runs in a default packaged build, where no file is opened at all. | The default-off behaviour is established by `w2-privacy`; this item only changes what happens once `MARKALOO_DIAGNOSTIC_LOG=1` is set. |
 | `sign-provenance` (free attestations) | **No runtime cost — CI-only.** Attestations are produced by the release workflow and change nothing the user executes. | The work is confined to `.github/workflows/release.yml`. |
 | `w2-f22` | **Close-time only. Measured against a predeclared budget; gate CLOSED.** The work runs on shutdown paths — window close, `Ctrl+Q`, quit, update install — and does not touch the render or open path. It adds a shutdown IPC round trip and an all-tab dirty scan, which the gates name explicitly, so it is benchmarked rather than argued. The gate found a real defect and refused it: the first run reached **22.4936 ms (LF)** and **98.1947 ms (CRLF)** at 25 tabs × 2 MB with every tab edited, against a **16.7 ms** budget fixed beforehand. With the dirty answer maintained at the edit instead of recomputed at the close, the same observations are **1.002 ms** and **1.2792 ms**, and every observation clears the budget across two subsequent runs with 0 failures. | `bench/BASELINE.md`, *The F22 shutdown-approval gate* — method and all three runs; `docs/PERF-AUDIT.md` PERF-10 — the defect and the fix. Matrix 50 KB / 500 KB / 2 MB × 1 / 10 / 25 tabs; bounded to ≤25 tabs and ≤2 MB per tab. The earlier one-fixture characterization (worst p95 3.09 ms, worst sample 3.78 ms) is kept as history in group A and is superseded. |
 | CSS normalisation (any sanitizer/theme change) | **Secondary, unmeasured risk.** Per-attribute and per-element CSSOM work on every sanitize; no style-heavy fixture exists to measure it with. | `docs/SECURITY-AUDIT.md` — `style.cssText` round-trip and `new CSSStyleSheet()` + `replaceSync()`. See *Style-heavy fixtures: benchmark CSS normalisation* above. |

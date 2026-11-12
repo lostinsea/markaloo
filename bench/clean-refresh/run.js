@@ -22,7 +22,7 @@ const BASELINE_REVISION = "790c1bc9267f4b794700a8eede506bb48e8be189";
 const APP_ROOT = path.join(OUTPUT_ROOT, "app");
 const LOG_ROOT = path.join(OUTPUT_ROOT, "logs");
 const RECORD_ROOT = path.join(OUTPUT_ROOT, "records");
-const LOCK_PATH = path.join(os.tmpdir(), "folia-machine-exclusive.lock");
+const LOCK_PATH = path.join(os.tmpdir(), "markaloo-machine-exclusive.lock");
 const RESULT_PATH = path.join(
   OUTPUT_ROOT,
   AA_CALIBRATION ? "aa-calibration-results.json" : "results.json",

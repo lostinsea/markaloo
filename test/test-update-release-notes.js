@@ -397,7 +397,7 @@ function toastFixture() {
     canCheck: true, canDownload: true, status: "available", percent: 0 };
   let receive;
   const window = {
-    folia: {
+    markaloo: {
       onUpdateStatus(callback) { receive = callback; return () => {}; },
       getUpdateState: () => Promise.resolve(initial),
       dismissUpdateNotice() {},

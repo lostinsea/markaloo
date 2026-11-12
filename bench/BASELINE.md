@@ -1,4 +1,4 @@
-# Folia render benchmark - recorded baseline
+# Markaloo render benchmark - recorded baseline
 
 This file is the reference result for the fixed corpus in `bench/`. It exists
 so that a performance claim can be checked rather than remembered: the numbers

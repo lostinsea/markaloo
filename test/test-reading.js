@@ -19,7 +19,7 @@ function failPreparation(stage, error) {
 let batch, phaseTempRoot;
 try {
   if (isElectron && !declaredPhases.includes(phase)) throw new Error("Unsupported reading fixture phase: " + phase);
-  batch = path.resolve(process.env.FOLIA_READING_BATCH || path.join(root, "tmp", "reading-" + randomUUID()));
+  batch = path.resolve(process.env.MARKALOO_READING_BATCH || path.join(root, "tmp", "reading-" + randomUUID()));
   phaseTempRoot = prepareOwnedRestartDirectory(root, "tmp", batch, path.join("isolation", phase));
   const entry = fs.lstatSync(phaseTempRoot);
   console.log("READING_PHASE_DIRECTORY " + JSON.stringify({
@@ -41,9 +41,9 @@ if (!isElectron) {
   let total = 0;
   let passed = 0;
   const panelPhases = ["startup", "welcomeChoice", "fresh", "freshClosed", "toc", "notes", "closed", "invalid", "missing", "unreadable"];
-  const phases = process.argv.includes("--panels") || process.env.FOLIA_READING_PANELS ? panelPhases :
-    process.env.FOLIA_READING_BORDERS ? ["borders"] :
-    process.env.FOLIA_READING_PERF ? ["screen"] : ["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed", "invalid", "missing", "unreadable", "borders"];
+  const phases = process.argv.includes("--panels") || process.env.MARKALOO_READING_PANELS ? panelPhases :
+    process.env.MARKALOO_READING_BORDERS ? ["borders"] :
+    process.env.MARKALOO_READING_PERF ? ["screen"] : ["startup", "welcomeChoice", "fresh", "freshClosed", "screen", "toc", "notes", "closed", "invalid", "missing", "unreadable", "borders"];
   for (const phase of phases) {
     const args = [__filename, phase];
     if (phase === "startup") {
@@ -53,7 +53,7 @@ if (!isElectron) {
     }
     const run = spawnSync(electron, args, {
       cwd: root, encoding: "utf8", timeout: 180000,
-      env: { ...process.env, FOLIA_READING_BATCH: batch },
+      env: { ...process.env, MARKALOO_READING_BATCH: batch },
     });
     process.stdout.write(run.stdout || "");
     process.stderr.write(run.stderr || "");
@@ -179,7 +179,7 @@ if (!isElectron) {
   async function screen() {
     fs.writeFileSync(first, markdown());
     fs.writeFileSync(other, "# Other reading document\n\nOther content.");
-    if (process.env.FOLIA_READING_PERF) {
+    if (process.env.MARKALOO_READING_PERF) {
       await exec("if(!document.body.classList.contains('dark-mode'))document.getElementById('darkModeToggle').click();true");
     }
     const sentinel = startErrorSentinel(win, { label: "reading", trapExternal: false });
@@ -195,17 +195,17 @@ if (!isElectron) {
     check("reading fixture has original tables and five actual diagrams",
       await exec("viewer.querySelectorAll('table').length===3&&viewer.querySelectorAll('.mermaid svg').length===5"));
     check("production renderer remains isolated",
-      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)"));
+      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)"));
     await exec("localStorage.setItem('notesVisible','false');setIndexVisible(false);document.getElementById('toggleIndex').click();true");
     let state = await exec(panelState);
-    if (!process.env.FOLIA_READING_PERF) check("TOC user intent persists without changing inline notes", state.toc && !state.notes && state.saved === "toc" && state.inline === "false", state);
+    if (!process.env.MARKALOO_READING_PERF) check("TOC user intent persists without changing inline notes", state.toc && !state.notes && state.saved === "toc" && state.inline === "false", state);
     await exec("document.getElementById('toggleNotes').click();true");
     state = await exec(panelState);
-    if (!process.env.FOLIA_READING_PERF) check("Notes replaces TOC and persists only the final drawer", !state.toc && state.notes && state.inertToc && !state.inertNotes && state.saved === "notes", state);
+    if (!process.env.MARKALOO_READING_PERF) check("Notes replaces TOC and persists only the final drawer", !state.toc && state.notes && state.inertToc && !state.inertNotes && state.saved === "notes", state);
     await exec("document.getElementById('closeNotes').click();true");
     state = await exec(panelState);
-    if (!process.env.FOLIA_READING_PERF) check("explicit Notes close saves closed and removes hidden controls", !state.toc && !state.notes && state.inertNotes && state.saved === "closed", state);
-    if (!process.env.FOLIA_READING_PERF) {
+    if (!process.env.MARKALOO_READING_PERF) check("explicit Notes close saves closed and removes hidden controls", !state.toc && !state.notes && state.inertNotes && state.saved === "closed", state);
+    if (!process.env.MARKALOO_READING_PERF) {
       const transient = await exec(`(()=>{
         const saved=localStorage.getItem('readingSidePanel');setIndexVisible(true);closeNotesPanel();
         return {saved,after:localStorage.getItem('readingSidePanel')};
@@ -243,7 +243,7 @@ if (!isElectron) {
         cases.push(value);
       }
     }
-    if (!process.env.FOLIA_READING_PERF) check("actual table headers pin align and release at their own ends across scrollowners and zoom",
+    if (!process.env.MARKALOO_READING_PERF) check("actual table headers pin align and release at their own ends across scrollowners and zoom",
       cases.every(c => c.pinned && c.aligned && c.original && c.end), cases);
     await setView(false, 100);
     win.setSize(850, 800);
@@ -256,10 +256,10 @@ if (!isElectron) {
       const a=h.rows[0].cells[0].getBoundingClientRect(),b=t.tBodies[0].rows[0].cells[0].getBoundingClientRect();
       return {overflow:c.scrollWidth>c.clientWidth+100,moved:c.scrollLeft,aligned:Math.abs(a.left-b.left)<1,pinned:Math.abs(h.getBoundingClientRect().top-s.getBoundingClientRect().top)<2};
     })()`);
-    if (!process.env.FOLIA_READING_PERF) check("wide pinned original headers follow horizontal scrolling in a narrow drawer layout",
+    if (!process.env.MARKALOO_READING_PERF) check("wide pinned original headers follow horizontal scrolling in a narrow drawer layout",
       horizontal.overflow && horizontal.moved > 100 && horizontal.aligned && horizontal.pinned, horizontal);
     await capture("sticky-narrow");
-    if (!process.env.FOLIA_READING_PERF) {
+    if (!process.env.MARKALOO_READING_PERF) {
       await exec("getViewerScroller().scrollTop=0;true");
       await settle();
       const point = await exec(`(()=>{
@@ -314,8 +314,8 @@ if (!isElectron) {
       measurements.push({ split, zoom, ...work });
       console.log("READING_PERF " + JSON.stringify(measurements.at(-1)));
     }
-    if (!process.env.FOLIA_READING_PERF) check("settled table and open TOC scrolling performs no geometry reads or viewer scans", measurements.every(work => work.geometry === 0 && work.scans === 0), measurements);
-    if (process.env.FOLIA_READING_PERF) {
+    if (!process.env.MARKALOO_READING_PERF) check("settled table and open TOC scrolling performs no geometry reads or viewer scans", measurements.every(work => work.geometry === 0 && work.scans === 0), measurements);
+    if (process.env.MARKALOO_READING_PERF) {
       const renders = await exec(`(async()=>{
         const samples=[];
         for(let i=0;i<3;i++){
@@ -511,7 +511,7 @@ if (!isElectron) {
   }
   async function borders() {
     check("production renderer remains isolated",
-      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)"));
+      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)"));
     const templates = await exec("Object.entries(MERMAID_TEMPLATES)");
     const fixtures = Object.fromEntries(templates);
     fixtures.flowchart = "flowchart LR\n subgraph Group\n A[Rectangle] --- B{Decision}\n B -.-> C[(Database)]\n end";
@@ -551,9 +551,9 @@ if (!isElectron) {
     Object.assign(fixtures, {
       participants,
       block: 'block-beta\n columns 2\n a["First"] b["Second"]\n a --> b',
-      c4: 'C4Context\n Person(reader, "Reader")\n System_Boundary(group, "Group") {\n System(app, "Folia")\n }\n Rel(reader, app, "Reads")',
+      c4: 'C4Context\n Person(reader, "Reader")\n System_Boundary(group, "Group") {\n System(app, "Markaloo")\n }\n Rel(reader, app, "Reads")',
       journey: 'journey\n title Reading\n section Read\n Open: 5: Reader\n Review: 3: Reader',
-      requirement: 'requirementDiagram\n requirement reading {\n id: 1\n text: Read files\n risk: low\n verifymethod: test\n }\n element folia {\n type: application\n }\n folia - satisfies -> reading',
+      requirement: 'requirementDiagram\n requirement reading {\n id: 1\n text: Read files\n risk: low\n verifymethod: test\n }\n element markaloo {\n type: application\n }\n markaloo - satisfies -> reading',
       packet: 'packet-beta\n 0-7: "Header"\n 8-15: "Content"',
       architecture: 'architecture-beta\n group group1(cloud)[Group]\n service file(database)[File] in group1\n service app(server)[App] in group1\n file:R -- L:app\n',
       kanban: 'kanban\n todo[To do]\n item[Read file]',
@@ -578,7 +578,7 @@ if (!isElectron) {
       custom: '---\nconfig:\n  themeVariables:\n    primaryBorderColor: "#404040"\n    actorBorder: "#505050"\n    actorLineColor: "#505050"\n    strokeWidth: 1\n---\nsequenceDiagram\n participant A\n participant B\n A->>B: Authored palette',
       directive: '%%{initialize: {"themeVariables": {"actorBorder": "#505050", "actorLineColor": "#505050"}}}%%\nsequenceDiagram\n participant A\n participant B\n A->>B: Authored directive palette',
       customquadrant: '---\nconfig:\n  quadrantChart:\n    quadrantInternalBorderStrokeWidth: 0.5\n    quadrantExternalBorderStrokeWidth: 0\n---\nquadrantChart\n x-axis Low --> High\n y-axis Low --> High\n quadrant-1 First\n quadrant-2 Second\n quadrant-3 Third\n quadrant-4 Fourth\n Point: [0.3, 0.4]',
-      customc4: 'C4Context\n System_Boundary(group, "Authored group") {\n System(app, "Folia")\n }\n UpdateElementStyle(group, $borderColor="#404040")\n UpdateElementStyle(app, $borderColor="#404040")',
+      customc4: 'C4Context\n System_Boundary(group, "Authored group") {\n System(app, "Markaloo")\n }\n UpdateElementStyle(group, $borderColor="#404040")\n UpdateElementStyle(app, $borderColor="#404040")',
       customparticipant: 'sequenceDiagram\n participant D@{ "type": "database" }\n properties D: {"class":"customParticipant"}\n participant A\n D->>A: Custom class',
       handdrawn: '---\nconfig:\n  look: handDrawn\n---\nflowchart LR\n A[Sketch] --> B{Hatching}',
     });
@@ -887,7 +887,7 @@ if (!isElectron) {
     check("argument document keeps its new profile preference unset and does not focus a drawer",
       state.saved === null && !["closeIndex", "closeNotes", "notesSearchInput"].includes(state.focused), state);
     check("argument fixture uses the isolated production preload and admitted file",
-      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)&&window.CustomTabs.getActiveTab()?.filePath===" + JSON.stringify(path.join(batch, "startup.md"))));
+      await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)&&window.CustomTabs.getActiveTab()?.filePath===" + JSON.stringify(path.join(batch, "startup.md"))));
     await capture("fresh-argument-toc");
   }
   async function fresh() {

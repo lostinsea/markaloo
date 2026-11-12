@@ -149,5 +149,5 @@
 
   const readingHistory = Object.freeze({ createReadingHistory, MAX_LOCATIONS });
   if (typeof module !== "undefined" && module.exports) module.exports = readingHistory;
-  if (typeof window !== "undefined") window.FoliaReadingHistory = readingHistory;
+  if (typeof window !== "undefined") window.MarkalooReadingHistory = readingHistory;
 })();

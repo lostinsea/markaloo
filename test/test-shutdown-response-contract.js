@@ -55,7 +55,7 @@ function run(report = (name, ok, detail) => {
         if (name !== 'electron') throw new Error('Unexpected shutdown import: ' + name);
         return { ipcRenderer: transport, contextBridge: {
           exposeInMainWorld(name, api) {
-            if (name !== 'folia' || Object.hasOwn(window, name) || !Object.isFrozen(api)) {
+            if (name !== 'markaloo' || Object.hasOwn(window, name) || !Object.isFrozen(api)) {
               throw new Error('Expected the actual frozen production preload API');
             }
             Object.defineProperty(window, name, { value: api, enumerable: true });
@@ -120,10 +120,10 @@ function run(report = (name, ok, detail) => {
   ]) {
     if (file === "custom-tabs.js") {
       vm.runInContext(`
-        window.FoliaDocumentEvents.on('file-opened', window.rendererFileOpenHandler);
+        window.MarkalooDocumentEvents.on('file-opened', window.rendererFileOpenHandler);
         for (const channel of [
           'file-reload-result', 'save-markdown-result', 'file-changed-externally',
-        ]) window.FoliaDocumentEvents.on(channel, fail('renderer event ' + channel));
+        ]) window.MarkalooDocumentEvents.on(channel, fail('renderer event ' + channel));
       `, context, { filename: "shutdown-renderer-collaborators.js", timeout: 1000 });
     }
     const filename = path.join(sourceRoot, file);
@@ -139,14 +139,14 @@ function run(report = (name, ok, detail) => {
     const request = id => ({ id, gen: fixture.generation, reason: 'window-close' });
     const listeners = subscriptions.get('quit-approval-request') || [];
     verify('loads whole scripts with one listener and the actual generation handshake',
-      Object.isFrozen(window.folia) && listeners.length === 1 &&
+      Object.isFrozen(window.markaloo) && listeners.length === 1 &&
       fixture.generationQueries === 1 && fixture.errors.length === 0 &&
       JSON.stringify(fixture.sends) === JSON.stringify([{
         channel: 'quit-approval-ready',
         payload: { gen: fixture.generation, pageSession: 'shutdown-contract-page' },
       }]) &&
       fixture.registrations.some(item => item.name === 'DOMContentLoaded') &&
-      window.FoliaDocumentEvents.listeners('file-opened').length === 1);
+      window.MarkalooDocumentEvents.listeners('file-opened').length === 1);
     if (listeners.length !== 1) throw new Error('Actual shutdown transport listener missing');
     const deliver = data => listeners[0]({}, data);
     verify('starts with an empty clean unfrozen document and no retained answer',

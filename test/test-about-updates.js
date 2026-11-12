@@ -527,7 +527,7 @@ if (typeof electron === "string") {
     throw new Error("Timed out: " + label);
   }
   const pageWait = (label, code) => wait(label, () => exec(code));
-  const snapshot = () => exec("window.folia.getUpdateState()");
+  const snapshot = () => exec("window.markaloo.getUpdateState()");
   const click = id => exec(`document.getElementById(${JSON.stringify(id)}).click();true`);
   async function openAbout() {
     await click("menuBtn");
@@ -553,7 +553,7 @@ if (typeof electron === "string") {
     for (const theme of ["clarity", "abyss"]) for (const [width, zoom] of [[1280, 1], [480, 1], [620, 1.5]]) {
       win.setContentSize(width, 800);
       win.webContents.setZoomFactor(zoom);
-      await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});menuBtn.focus();true`);
+      await exec(`window.markalooThemes.setScheme(${JSON.stringify(theme)});menuBtn.focus();true`);
       await sleep(100);
       await key("Enter");
       await key("Tab");
@@ -622,7 +622,7 @@ if (typeof electron === "string") {
       await sleep(60);
     };
     await closeAbout();
-    await pageWait("daily cached toast", "window.folia.getUpdateState().then(s=>s.canShowUpdate)");
+    await pageWait("daily cached toast", "window.markaloo.getUpdateState().then(s=>s.canShowUpdate)");
     const first = await snapshot();
     check(dailyRequired[0], counts.checks === 0 && first.presentationOrigin === "automatic" &&
       settings().updateReminder.lastReservedLocalDay === today() &&
@@ -631,13 +631,13 @@ if (typeof electron === "string") {
     ipcMain.emit("dismiss-update-notice", { sender: win.webContents, senderFrame: null }, first.presentationId);
     check(dailyRequired[12], !(await snapshot()).presentationDismissed && (await snapshot()).canShowUpdate);
     await click("laterUpdateBtn");
-    await pageWait("Main dismissal retained", "window.folia.getUpdateState().then(s=>s.presentationDismissed)");
+    await pageWait("Main dismissal retained", "window.markaloo.getUpdateState().then(s=>s.presentationDismissed)");
     const reloaded = new Promise(resolve => win.webContents.once("did-finish-load", resolve));
     win.webContents.reload();
     await reloaded;
     await pageWait("daily reloaded production bridge", "!!window.MarkalooUpdates&&typeof window.CustomTabs?.getTabs==='function'");
     const afterReload = await snapshot();
-    await exec("window.folia.dismissUpdateNotice('stale-presentation');true");
+    await exec("window.markaloo.dismissUpdateNotice('stale-presentation');true");
     check(dailyRequired[1], afterReload.presentationId === first.presentationId &&
       afterReload.presentationDismissed && !afterReload.canShowUpdate &&
       await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));
@@ -651,7 +651,7 @@ if (typeof electron === "string") {
       settings().updateSchedule.state === "claimed" && counts.checks === 1 &&
       settings().updateReminder.lastReservedLocalDay < today());
     releaseCheck(); checkGate = null;
-    await pageWait("daily manual overlap completed", "window.folia.getUpdateState().then(s=>s.canCheck)");
+    await pageWait("daily manual overlap completed", "window.markaloo.getUpdateState().then(s=>s.canCheck)");
     const manual = await snapshot();
     await closeAbout();
     await click("laterUpdateBtn");
@@ -663,13 +663,13 @@ if (typeof electron === "string") {
       settings().updateReminder.lastReservedLocalDay < today());
     await openAbout();
     await advance(5);
-    await pageWait("daily automatic check settled behind About", "window.folia.getUpdateState().then(s=>s.canCheck)");
+    await pageWait("daily automatic check settled behind About", "window.markaloo.getUpdateState().then(s=>s.canCheck)");
     check(dailyRequired[4], counts.checks === 2 && settings().updateReminder.lastReservedLocalDay < today() &&
       !(await snapshot()).canShowUpdate &&
       await exec("document.getElementById('aboutUpdateStatus').textContent.includes('0.10.0')"));
     const wasFocused = win.isFocused();
     await closeAbout();
-    await pageWait("daily next-day same-version toast", "window.folia.getUpdateState().then(s=>s.canShowUpdate&&s.presentationOrigin==='automatic')");
+    await pageWait("daily next-day same-version toast", "window.markaloo.getUpdateState().then(s=>s.canShowUpdate&&s.presentationOrigin==='automatic')");
     const laterDay = await snapshot();
     check(dailyRequired[5], laterDay.presentationId !== manual.presentationId &&
       laterDay.presentationVersion === first.presentationVersion &&
@@ -695,7 +695,7 @@ if (typeof electron === "string") {
     await advance(6);
     const beforeCancel = settings().updateReminder.lastReservedLocalDay;
     await choose(pending, "1");
-    await pageWait("daily cancellation leaves scheduler live", "window.folia.getUpdateState().then(s=>s.canShowUpdate&&s.presentationOrigin==='automatic')");
+    await pageWait("daily cancellation leaves scheduler live", "window.markaloo.getUpdateState().then(s=>s.canShowUpdate&&s.presentationOrigin==='automatic')");
     check(dailyRequired[7], quitHeld && beforeCancel < today() &&
       settings().updateReminder.lastReservedLocalDay === today() && dailyTimers.size === 1 &&
       !main.__shutdown.state().authorized &&
@@ -859,7 +859,7 @@ if (typeof electron === "string") {
     await openAbout();
     await click("aboutCheckUpdates");
     await wait("combined one held manual check", () => counts.checks === 1);
-    await pageWait("combined checking button", "aboutCheckUpdates.disabled&&window.folia.getUpdateState().then(s=>s.status==='checking')");
+    await pageWait("combined checking button", "aboutCheckUpdates.disabled&&window.markaloo.getUpdateState().then(s=>s.status==='checking')");
     await closeAbout();
     await select(1);
     await click("toggleTocBtn");
@@ -884,7 +884,7 @@ if (typeof electron === "string") {
       await exec("aboutUpdateStatus.textContent===updateMessage.textContent&&aboutUpdateStatus.textContent.includes('0.10.0')&&aboutInstallUpdate.hidden") &&
       same(await state(), drafts[0]) && (await panel()).toc);
     for (const theme of ["clarity", "abyss"]) {
-      await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});true`);
+      await exec(`window.markalooThemes.setScheme(${JSON.stringify(theme)});true`);
       for (const narrow of [false, true]) {
         win.setMinimumSize(400, 400);
         win.setSize(narrow ? 680 : 1280, narrow ? 720 : 850);
@@ -951,7 +951,7 @@ if (typeof electron === "string") {
     const initialPresentation = (await snapshot()).presentationId;
     await click("aboutCheckUpdates");
     await pageWait("notes manual check completed",
-      `window.folia.getUpdateState().then(s=>s.canCheck&&s.availableVersion==='0.10.0'&&` +
+      `window.markaloo.getUpdateState().then(s=>s.canCheck&&s.availableVersion==='0.10.0'&&` +
       `s.presentationOrigin==='manual'&&s.presentationId!==${JSON.stringify(initialPresentation)})`);
     await closeAbout();
     await pageWait("notes offered popup", "appUpdateToast.classList.contains('show')&&!appUpdateToast.inert");
@@ -1022,7 +1022,7 @@ if (typeof electron === "string") {
       ["short enlarged", 700, 380, 1.25, "clarity"],
     ]) {
       win.setContentSize(width, height); win.webContents.setZoomFactor(zoom);
-      await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});appUpdateToast.scrollTop=0;true`);
+      await exec(`window.markalooThemes.setScheme(${JSON.stringify(theme)});appUpdateToast.scrollTop=0;true`);
       await exec("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
       const geometry = await exec(`(()=>{
         const toast=appUpdateToast.getBoundingClientRect(),body=updateNotesBody;
@@ -1063,7 +1063,7 @@ if (typeof electron === "string") {
       await wait("notes during download", () => notesRequests.length === 2);
       const downloading = await snapshot();
       releaseDownload();
-      await pageWait("notes actual ready install", "window.folia.getUpdateState().then(s=>s.canInstall)");
+      await pageWait("notes actual ready install", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
       const ready = await snapshot();
       check(notesRequired[5], ready.presentationId === downloading.presentationId &&
         notesRequests.length === 2 && !notesRequests[1].aborted &&
@@ -1077,7 +1077,7 @@ if (typeof electron === "string") {
     const previousPresentation = (await snapshot()).presentationId;
     await openAbout(); await click("aboutCheckUpdates");
     await pageWait("notes fresh manual presentation",
-      `window.folia.getUpdateState().then(s=>s.canCheck&&s.presentationId!==${JSON.stringify(previousPresentation)})`);
+      `window.markaloo.getUpdateState().then(s=>s.canCheck&&s.presentationId!==${JSON.stringify(previousPresentation)})`);
     await closeAbout();
     check(notesRequired[6], notesRequests.length === cachedRequestCount &&
       await exec("updateNotesToggle.getAttribute('aria-expanded')==='false'&&updateNotesPanel.hidden"));
@@ -1086,7 +1086,7 @@ if (typeof electron === "string") {
     const before = await snapshot();
     offerVersion = "0.11.0";
     await notesState.check();
-    await pageWait("higher target on same presentation", "window.folia.getUpdateState().then(s=>s.presentationVersion==='0.11.0')");
+    await pageWait("higher target on same presentation", "window.markaloo.getUpdateState().then(s=>s.presentationVersion==='0.11.0')");
     const changed = await snapshot();
     check(notesRequired[7], before.presentationId === changed.presentationId &&
       notesRequests[cachedRequestCount].aborted &&
@@ -1124,7 +1124,7 @@ if (typeof electron === "string") {
     offerVersion = "0.10.0";
     await openAbout(); await click("aboutCheckUpdates");
     await pageWait("lower live offer",
-      `window.folia.getUpdateState().then(s=>s.canCheck&&s.lastCheck==='not-available'&&` +
+      `window.markaloo.getUpdateState().then(s=>s.canCheck&&s.lastCheck==='not-available'&&` +
       `s.presentationId!==${JSON.stringify(retryPresentation)})`);
     await closeAbout(); await click("updateNotesToggle");
     await wait("higher remembered target notes", () => notesRequests.length === cachedRequestCount + 4);
@@ -1325,13 +1325,13 @@ if (typeof electron === "string") {
       await finish();
       return;
     }
-    await pageWait("production updater bridge", "!!window.MarkalooUpdates&&!!window.folia?.getUpdateState");
+    await pageWait("production updater bridge", "!!window.MarkalooUpdates&&!!window.markaloo?.getUpdateState");
     await pageWait("shutdown renderer registered", "typeof window.CustomTabs?.getTabs==='function'");
     sentinel = startErrorSentinel(win, { label: "about-updates", trapExternal: false });
     const alive = await proveSentinelAlive(win, sentinel);
     check("About sentinel proves both error channels alive", alive.console && alive.dom, alive);
     check("About uses frozen production preload without Node or raw IPC",
-      await exec("Object.isFrozen(window.folia)&&typeof require==='undefined'&&typeof window.folia.invoke==='undefined'"));
+      await exec("Object.isFrozen(window.markaloo)&&typeof require==='undefined'&&typeof window.markaloo.invoke==='undefined'"));
     await openAbout();
     check("About is isolated immediately above History after All Notes and Export",
       await exec(`(() => {
@@ -1356,11 +1356,11 @@ if (typeof electron === "string") {
     } else if (phase === "download-failure") {
       await closeAbout();
       await pageWait("download failure cached notice",
-        "window.folia.getUpdateState().then(s=>s.canShowUpdate)");
+        "window.markaloo.getUpdateState().then(s=>s.canShowUpdate)");
       const prior = await snapshot();
       await click("laterUpdateBtn");
       await pageWait("download failure prior notice dismissed",
-        "window.folia.getUpdateState().then(s=>s.presentationDismissed)");
+        "window.markaloo.getUpdateState().then(s=>s.presentationDismissed)");
       check(downloadFailureRequired[0],
         prior.presentationOrigin === "automatic" && counts.checks === 0 && counts.downloads === 0 &&
         !(await snapshot()).canShowUpdate);
@@ -1371,7 +1371,7 @@ if (typeof electron === "string") {
       check(downloadFailureRequired[4], artifactBefore !== null && counts.downloads === 0);
       await click("aboutDownloadUpdate");
       await pageWait("actual Main download transfer failed",
-        "window.folia.getUpdateState().then(s=>s.status==='error'&&s.canDownload)");
+        "window.markaloo.getUpdateState().then(s=>s.status==='error'&&s.canDownload)");
       await closeAbout();
       const failed = await snapshot();
       check(downloadFailureRequired[1],
@@ -1396,7 +1396,7 @@ if (typeof electron === "string") {
       await click("aboutCheckUpdates");
       await pageWait("portable available", "document.getElementById('aboutDownloadUpdate').hidden===false");
       await click("aboutDownloadUpdate");
-      await pageWait("portable verified ready", "window.folia.getUpdateState().then(s=>s.canInstall)");
+      await pageWait("portable verified ready", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
       check("portable fixture uses a verified download without any process launch", counts.downloads === 1 && counts.launches === 0);
       if (phase === "portable-cancel") {
         await closeAbout();
@@ -1411,7 +1411,7 @@ if (typeof electron === "string") {
         await closeAbout();
         await click("laterUpdateBtn");
         await pageWait("portable prior presentation dismissed",
-          "window.folia.getUpdateState().then(s=>s.presentationDismissed&&!s.canShowUpdate)");
+          "window.markaloo.getUpdateState().then(s=>s.presentationDismissed&&!s.canShowUpdate)");
         check("portable explicit-install setup proves the prior presentation is dismissed",
           (await snapshot()).presentationDismissed &&
           await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));
@@ -1422,7 +1422,7 @@ if (typeof electron === "string") {
         await choose(await question(), "0");
         await wait("portable child intercepted", () => counts.launches === 1);
         await choose(await question(), "1");
-        await pageWait("portable safe cancellation", "window.folia.getUpdateState().then(s=>s.canInstall)");
+        await pageWait("portable safe cancellation", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
         check("portable commit cancellation is not reported as failure",
           (await snapshot()).status === "ready" && !(await snapshot()).error);
         check("portable commit cancellation preserves genuine unsaved edits and disk",
@@ -1431,7 +1431,7 @@ if (typeof electron === "string") {
       } else {
         await wait("portable child intercepted", () => counts.launches === 1);
         if (phase === "portable-throw") {
-          await pageWait("portable synchronous failure safe retry", "window.folia.getUpdateState().then(s=>s.canInstall)");
+          await pageWait("portable synchronous failure safe retry", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
         } else {
           await wait("portable cancellation reached the intercepted child", () => counts.kills === 1);
           await sleep(60);
@@ -1440,7 +1440,7 @@ if (typeof electron === "string") {
         }
         const state = await snapshot();
         if (phase === "portable-failure" || phase === "portable-throw") {
-          await pageWait("portable failure safe retry", "window.folia.getUpdateState().then(s=>s.canInstall)");
+          await pageWait("portable failure safe retry", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
           check(`portable ${phase === "portable-throw" ? "synchronous " : ""}launch failure is visible and safely retryable`,
             state.status === "error" && state.error?.includes("could not be started") && state.canInstall);
           await exec("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
@@ -1451,7 +1451,7 @@ if (typeof electron === "string") {
         } else {
           check("portable ambiguous handoff requires restart and forbids retry",
             state.status === "error" && state.error?.includes("Restart Markaloo") && !state.canInstall && !state.canCheck);
-          await exec("window.folia.installUpdate();true");
+          await exec("window.markaloo.installUpdate();true");
           check("portable ambiguous handoff cannot launch a second child", counts.launches === 1);
         }
         check("portable failures retain availability and revoke shutdown approval",
@@ -1465,7 +1465,7 @@ if (typeof electron === "string") {
             retryState.status === "installing" && !retryState.error && !retryState.canInstall);
           releaseHeldLaunch();
           await wait("portable retry child stopped", () => counts.kills === 2);
-          await pageWait("portable retry safely refused", "window.folia.getUpdateState().then(s=>s.canInstall)");
+          await pageWait("portable retry safely refused", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
         }
       }
       check("portable fixtures never ran a real installer or external application", counts.external.length === 0);
@@ -1475,7 +1475,7 @@ if (typeof electron === "string") {
       await click("aboutCheckUpdates");
       await wait("one pending check", () => counts.checks === 1);
       await pageWait("checking UI", "document.getElementById('aboutCheckUpdates').disabled");
-      await exec("window.folia.checkForUpdates();window.folia.checkForUpdates();true");
+      await exec("window.markaloo.checkForUpdates();window.markaloo.checkForUpdates();true");
       check("checking disables the button and coalesces duplicate commands",
         counts.checks === 1 && (await snapshot()).status === "checking");
       releaseCheck();
@@ -1515,7 +1515,7 @@ if (typeof electron === "string") {
       await menuPlacement();
       await openAbout();
       for (const theme of ["clarity", "abyss"]) {
-        await exec(`window.foliaThemes.setScheme(${JSON.stringify(theme)});true`);
+        await exec(`window.markalooThemes.setScheme(${JSON.stringify(theme)});true`);
         await sleep(150);
         fs.writeFileSync(path.join(batch, `about-${theme}.png`), (await win.webContents.capturePage()).toPNG());
         win.setMinimumSize(400, 400);
@@ -1560,7 +1560,7 @@ if (typeof electron === "string") {
         downloadGate = new Promise(resolve => { releaseDownload = resolve; });
         await click("aboutDownloadUpdate");
         await wait("download entered", () => counts.downloads === 1);
-        await exec("window.folia.downloadUpdate();true");
+        await exec("window.markaloo.downloadUpdate();true");
         await pageWait("progress shared", "document.getElementById('aboutUpdateStatus').textContent.includes('42%')&&document.getElementById('updateMessage').textContent.includes('42%')");
         check("download progress is shared and duplicate downloads coalesce",
           counts.downloads === 1 && !(await snapshot()).canInstall);
@@ -1581,12 +1581,12 @@ if (typeof electron === "string") {
         await openAbout();
         await click("aboutInstallUpdate");
         const firstQuestion = await question();
-        await exec("window.folia.installUpdate();window.folia.installUpdate();true");
+        await exec("window.markaloo.installUpdate();window.markaloo.installUpdate();true");
         check("duplicate Install keeps one Main question and no launch",
           BrowserWindow.getAllWindows().filter(w => w.webContents.getURL().includes("owned-dialog.html")).length === 1 &&
           installAttempts() === 0);
         await choose(firstQuestion, "1");
-        await pageWait("install cancellation releases UI", "window.folia.getUpdateState().then(s=>s.canInstall)");
+        await pageWait("install cancellation releases UI", "window.markaloo.getUpdateState().then(s=>s.canInstall)");
         check("canceling install preserves dirty content disk and shutdown protection",
           installAttempts() === 0 && await exec(`hasUnsavedChanges&&currentReloadSnapshot()===${JSON.stringify(edited)}`) &&
           fs.readFileSync(fixture, "utf8") === originalBody && !main.__shutdown.state().authorized);
@@ -1599,7 +1599,7 @@ if (typeof electron === "string") {
         if (!discard) throw new Error("No genuine discard action: " + JSON.stringify(choices));
         await choose(secondQuestion, discard.id);
         await wait("controlled launch refusal", () => installAttempts() === 1);
-        await pageWait("failed installer retry honest", "window.folia.getUpdateState().then(s=>s.status==='error'&&s.canInstall)");
+        await pageWait("failed installer retry honest", "window.markaloo.getUpdateState().then(s=>s.status==='error'&&s.canInstall)");
         check("discard delegates only to Main launcher and failed launch restores protection",
           installAttempts() === 1 && !main.__shutdown.state().authorized &&
           fs.readFileSync(fixture, "utf8") === originalBody);
@@ -1614,7 +1614,7 @@ if (typeof electron === "string") {
         observation.hits.length === 0 && observation.stalls.length === 0, observation);
     } else if (phase === "offline") {
       await pageWait("cached notice defers behind actual About modal",
-        "window.folia.getUpdateState().then(s=>!s.canShowUpdate&&!document.getElementById('appUpdateToast').classList.contains('show'))");
+        "window.markaloo.getUpdateState().then(s=>!s.canShowUpdate&&!document.getElementById('appUpdateToast').classList.contains('show'))");
       check("full restart restores availability before any check and defers the automatic toast behind About",
         (await snapshot()).availableVersion === "0.10.0" && counts.checks === 0 &&
         await exec("!document.getElementById('appUpdateToast').classList.contains('show')"));

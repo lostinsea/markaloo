@@ -221,9 +221,917 @@ function backgroundSaveVersionContracts() {
     "Removing byte equality admits a same-size edit and fails the unchanged original byte safeguard");
 }
 
+async function windowsAdmissionRejectionContracts() {
+  const { EventEmitter } = require("node:events");
+  const { isDeepStrictEqual } = require("node:util");
+  const mainPath = path.resolve(__dirname, "..", "src", "main.js");
+  const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
+  const witness = between(source, "async function expectWindowsAdmissionRejection(",
+    "\nasync function runWindowsInstalledLauncherScenarios(");
+  const replacement = between(source, "function replaceMethod(", "\n// A stand-in for");
+  const polling = between(source, "async function waitUntil(", "\n// Replaces a method");
+  const installEvent = between(source, "function portableInstallEvent(win) {",
+    "\n// The private directory");
+  const approval = between(main, "function isApprovalSender(", "\nfunction addDiagnosticCount(");
+  const sender = between(main, "function isUpdaterSender(", '\nipcMain.handle("get-update-state"');
+  const handler = between(main, 'ipcMain.on("install-update", (event) => {',
+    "\nfunction isExistingRegularFile(");
+  const plan = between(main, "function windowsInstalledUpdateLaunchPlan(",
+    "\nfunction reportInstalledUpdateLaunchFailure(");
+  const installed = between(main, "function performWindowsInstalledUpdate(",
+    "\n  const attempt = watchUpdaterInstallCommit(updater);");
+  const installedPreflight = installed.slice(installed.indexOf("  let plan;"));
+  const stateSetup = between(main, "const updateState = createUpdateState({",
+    "\nfunction updateReaderWindow(");
+  const scheduleSetup = between(main, "updateSchedule = createUpdateSchedule({",
+    "\nupdateNotes = createUpdateReleaseNotes(");
+  const stateCode = fs.readFileSync(path.join(producerRoot, "update-state.js"), "utf8");
+  const scheduleCode = fs.readFileSync(path.join(producerRoot, "update-schedule.js"), "utf8");
+  const directoryReason = "The update could not start: custom NSIS install directories are unsupported by the verified launcher";
+  const packageReason = "The update could not start: NSIS web-installer packages are unsupported by the verified launcher";
+  const candidate = "9.0.1", installer = "C:\\fixture\\admission-setup.exe";
+  // Controlled fixture ports, not semver coverage. No dependency is loaded or replaced on disk.
+  const versions = ["9.0.0", "9.0.1"];
+  const fixedVersion = value => {
+    if (!versions.includes(value)) throw new Error("Unexpected admission fixture version: " + String(value));
+    return value;
+  };
+  const fixedGt = (left, right) =>
+    versions.indexOf(fixedVersion(left)) > versions.indexOf(fixedVersion(right));
+  const fixtureRequire = name => {
+    if (name === "semver/functions/valid") return fixedVersion;
+    if (name === "semver/functions/gt") return fixedGt;
+    if (name === "crypto" || name === "perf_hooks") return require(name);
+    throw new Error("Unexpected admission fixture module: " + name);
+  };
+  for (const version of versions) check(fixedVersion(version) === version,
+    "Controlled version port returns the exact fixture version string: " + version);
+  for (const left of versions) for (const right of versions) check(
+    fixedGt(left, right) === (left === "9.0.1" && right === "9.0.0"),
+    "Controlled comparison preserves equal, forward and reverse fixture ordering: " + left + "/" + right);
+  for (const invalid of ["9.0.2", "", null, undefined, true, 9]) {
+    assert.throws(() => fixedVersion(invalid), /Unexpected admission fixture version/);
+    assert.throws(() => fixedGt(invalid, candidate), /Unexpected admission fixture version/);
+    assert.throws(() => fixedGt(candidate, invalid), /Unexpected admission fixture version/);
+    check(true, "Controlled version ports fail loudly outside the fixed input set: " + String(invalid));
+  }
+  assert.throws(() => fixtureRequire("electron"), /Unexpected admission fixture module/);
+  check(true, "Controlled module port rejects every module outside its explicit allowlist");
+  const actualModule = code => {
+    const module = { exports: {} };
+    vm.runInNewContext(code, { require: fixtureRequire, module, queueMicrotask: () => {},
+      setTimeout: () => { throw new Error("Unexpected admission timer"); }, clearTimeout() {} });
+    return module.exports;
+  };
+  const { createUpdateState } = actualModule(stateCode);
+  const { createUpdateSchedule } = actualModule(scheduleCode);
+  const projectedFields = vm.runInNewContext(between(witness, "  const fields = [",
+    "\n  const snapshot =").slice("  const fields = ".length).replace(/;\s*$/, ""));
+  const projection = between(main.slice(main.indexOf("module.exports = {")),
+    "          state: () =>", "          // Cancel a held fixture commit");
+  for (const field of projectedFields) check(new RegExp("\\b" + field + "\\s*[:,]").test(projection),
+    "Admission witness reads an existing Main state field: " + field);
+  check(handler.indexOf("windowsInstalledUpdateLaunchPlan(updater);") <
+    handler.indexOf("startupContext.pauseForUpdate()") &&
+    handler.indexOf('"The update could not start: " + error.message') <
+    handler.indexOf("updateSchedule.beginManualAction()") &&
+    handler.indexOf("updateSchedule.beginManualAction()") < handler.indexOf("requestShutdown("),
+  "Actual metadata rejection publishes before startup pause, shutdown approval and install");
+
+  const make = async (options = {}) => {
+    const ipc = new EventEmitter(), status = new Set(), thaw = new Set();
+    const effects = { pauses: 0, resumes: 0, shutdowns: 0, installs: 0,
+      children: 0, spawns: 0, quits: 0, dialogs: 0, manualActionsInIngress: 0 };
+    const observed = { sends: [], subscriptions: [], disposals: [], emitReturn: null,
+      receiver: null, emittedArgs: null, sendReceiver: null, sendArgs: null, wireChanges: 0,
+      inIngress: false, rpcs: [], deadlines: [], timerFires: 0 };
+    let time = 0, timerSequence = 0;
+    const timers = new Map();
+    // Expire the actual witness timers without wall-clock sleeps in every negative control.
+    const clock = {
+      get now() { return time; },
+      get pending() { return timers.size; },
+      advance(ms, fire = true) {
+        assert.ok(Number.isFinite(ms) && ms >= 0);
+        time += ms;
+        if (fire) for (const [id, timer] of [...timers]) {
+          if (timer.until <= time && timers.delete(id)) {
+            observed.timerFires++;
+            timer.callback();
+          }
+        }
+      },
+    };
+    const pageState = { page: "admission-page", generation: 7,
+      freeze: { frozen: false, id: 0, revision: 23, editorReadOnly: false,
+        wrapperInert: false, bodyInert: false, deferredOperationCount: 0 } };
+    const state = Object.fromEntries(projectedFields.map(field => [field, 0]));
+    Object.assign(state, { renderer: "ready", rendererGeneration: 7,
+      rendererPageSession: pageState.page, authorized: false, updateInstallStarted: false,
+      updaterDownloadInFlight: false, updaterFreezeRetained: false, updaterLiveAttemptIds: [],
+      updaterLastInstallAttempt: null });
+    const indexURL = require("node:url").pathToFileURL(path.join(path.dirname(mainPath), "index.html")).href;
+    const frame = { frameTreeNodeId: 31, parent: null, url: indexURL, isDestroyed: () => false };
+    const wc = { id: 17, mainFrame: frame, isDestroyed: () => false };
+    const win = { webContents: wc, isDestroyed: () => false,
+      isVisible: () => true, isMinimized: () => false };
+    const updater = new EventEmitter();
+    Object.assign(updater, { quitAndInstallCalled: false, installerPath: installer, installDirectory: "",
+      downloadedUpdateHelper: { file: installer, versionInfo: { version: candidate },
+        downloadedFileInfo: { isAdminRightsRequired: false } },
+      async checkForUpdates() {
+        updater.emit("update-available", { version: candidate });
+        return { updateInfo: { version: candidate } };
+      },
+      async downloadUpdate() {
+        updater.emit("update-downloaded", { version: candidate, downloadedFile: installer });
+        return [installer];
+      },
+    });
+    const subscribe = (kind, listeners) => callback => {
+      observed.subscriptions.push(kind);
+      if (options.setupFailure === kind) throw new Error("Injected " + kind + " setup failure");
+      listeners.add(callback);
+      return () => {
+        observed.disposals.push(kind);
+        listeners.delete(callback);
+        if (options.cleanupFailure === kind) throw new Error("Injected " + kind + " cleanup failure");
+      };
+    };
+    const timer = (callback, delay) => {
+      assert.ok(Number.isFinite(delay) && delay > 0 && delay <= 5000,
+        "Witness and renderer ownership timers stay within five seconds");
+      observed.deadlines.push(delay);
+      const id = ++timerSequence;
+      timers.set(id, { until: clock.now + delay, callback });
+      return id;
+    };
+    const clearTimer = id => timers.delete(id);
+    const FixtureDate = class extends Date { static now() { return clock.now; } };
+    const page = { getReloadRequestSession: () => pageState.page,
+      CustomTabs: { getApprovalRendererGeneration: () => pageState.generation,
+        __shutdownFreeze: () => clone(pageState.freeze) },
+      markaloo: { onUpdateStatus: subscribe("status", status),
+        onQuitApprovalThaw: subscribe("thaw", thaw),
+        installUpdate() { observed.rendererInstallCalls++; throw new Error("Unexpected renderer install bridge"); } } };
+    observed.rendererInstallCalls = 0;
+    const rendererContext = vm.createContext({ window: page, Date: FixtureDate,
+      performance: { now: () => clock.now + 900000 }, setTimeout: timer, clearTimeout: clearTimer });
+    const originalSend = function (channel, value) {
+      observed.sendReceiver = this; observed.sendArgs = [...arguments];
+      if (channel === "update-status") {
+        let delivered = value;
+        if (options.wire && observed.armed) {
+          delivered = clone(value);
+          options.wire(delivered, fixture); observed.wireChanges++;
+        }
+        observed.sends.push(clone(delivered));
+        if (!options.noReceipt) for (const callback of [...status]) callback(clone(delivered));
+        if (options.duplicateReceipt && observed.armed) for (const callback of [...status]) callback(clone(delivered));
+      }
+      if (channel === "quit-approval-thaw") for (const callback of [...thaw]) callback();
+      return "forwarded";
+    };
+    wc.send = originalSend;
+    const originalEmit = function () {
+      observed.receiver = this; observed.emittedArgs = [...arguments];
+      if (options.emitFailure && observed.armed) throw options.emitFailure;
+      const previous = observed.inIngress;
+      if (arguments[0] === "install-update") observed.inIngress = true;
+      try {
+        const result = options.noIngress ? false : Reflect.apply(EventEmitter.prototype.emit, this, arguments);
+        if (arguments[0] === "install-update" && !previous) {
+          observed.emitReturn = options.falseReturn ? false : result;
+          observed.completedBeforeReturn = observed.sends.at(-1)?.error &&
+            fixture.approvalPending() === false && Object.values(effects).every(value => value === 0);
+          if (options.duplicateIngress) ipc.emit(...arguments);
+        }
+        return options.falseReturn && arguments[0] === "install-update" ? false : result;
+      }
+      finally { observed.inIngress = previous; }
+    };
+    ipc.emit = originalEmit;
+    const context = vm.createContext({
+      require: name => name === "node:perf_hooks"
+        ? { performance: { now: () => {
+          if (options.now) options.now(fixture);
+          return clock.now;
+        } } } : require(name),
+      path, __dirname: path.dirname(mainPath), ipcMain: ipc, autoUpdater: updater,
+      Date: FixtureDate, setTimeout: timer, clearTimeout: clearTimer,
+      sleep: async ms => {
+        assert.equal(ms, 25, "Actual waitUntil retains its polling interval");
+        if (options.afterPoll) await options.afterPoll(fixture);
+        clock.advance(ms);
+      },
+      app: { getVersion: () => "9.0.0", isPackaged: true }, process: { platform: "win32" },
+      fs: { readFileSync(file) {
+        if (file === mainPath) return options.anchorSource || main;
+        if (file === "settings") return "{}";
+        throw new Error("Unexpected admission read: " + file);
+      } },
+      createUpdateState, createUpdateSchedule: ports => {
+        const schedule = createUpdateSchedule(options.publication ? {
+          ...ports, publish(value) {
+            if (!observed.armed) return ports.publish(value);
+            const altered = clone(value);
+            options.publication(altered, fixture); observed.wireChanges++;
+            return ports.publish(altered);
+          },
+        } : ports);
+        return { ...schedule, beginManualAction() {
+          if (observed.inIngress) effects.manualActionsInIngress++;
+          return Reflect.apply(schedule.beginManualAction, this, arguments);
+        } };
+      }, pathToFileURL: require("node:url").pathToFileURL,
+      log() {}, loadWindowState: () => ({}), writeWindowStatePatch() {},
+      WINDOW_STATE_FILE: "settings", updateReaderWindow: () => win,
+      shutdownOwnerWindow: () => options.owner?.(win) || win,
+      getAutoUpdater: () => updater, isExistingRegularFile: file => file === installer,
+      isPortable: false, updateInstallStarted: false, activeUpdaterInstallAttempt: null,
+      updateSurface: { frame, mainDialog: false, modal: false },
+      ownedDialogs: { owners: new Set() }, updateMainDialogDepth: 0,
+      pendingShutdown: null, pendingShutdownCommit: null,
+      startupContext: { pauseForUpdate() { effects.pauses++; return {}; },
+        resumeAfterUpdate() { effects.resumes++; }, hasPendingRequests: () => false },
+      holdStartupClosing: () => { if (!options.installedRoute) effects.pauses++; },
+      replayAbsorbedUserShutdownAfterUpdaterCancel() {},
+      requestShutdown: () => { effects.shutdowns++; },
+      performUpdateInstall: () => { effects.installs++; },
+      markalooUpdaterAttemptRetainsFreeze: () => false,
+      __shutdown: { state: () => state }, isDeepStrictEqual,
+      fixtureThrown: options.handlerFailure,
+    });
+    vm.runInContext(`let updateSchedule; let updateNotes = null;
+      let downloadedUpdatePath = null, updaterDownloadInFlight = false, updateInstallApprovalPending = false;
+      ${approval}\n${sender}\n${plan}\n${stateSetup}\n${scheduleSetup}
+      globalThis.producer = { state: updateState, schedule: updateSchedule };`, context);
+    context.installedPreflight = vm.compileFunction(installedPreflight, ["updater", "admissionPause"],
+      { filename: mainPath, parsingContext: context,
+        lineOffset: main.slice(0, main.indexOf(installedPreflight)).split("\n").length - 1 });
+    const alteredHandler = options.installedRoute ? handler.replace(
+      "      windowsInstalledUpdateLaunchPlan(updater);",
+      "      return installedPreflight(updater, admissionPause);")
+      : options.handler ? options.handler(handler) : handler;
+    vm.runInContext(alteredHandler, context, { filename: options.origin || mainPath,
+      lineOffset: main.slice(0, main.indexOf(handler)).split("\n").length - 1 });
+    vm.runInContext(replacement + "\n" + polling + "\n" + installEvent + "\n" + witness, context);
+    const actualInstallEvent = context.portableInstallEvent;
+    context.portableInstallEvent = target => options.event ? fixture.event() : actualInstallEvent(target);
+    updater.on("update-available", info => context.producer.state.observeAvailable(info));
+    context.producer.state.attach(updater);
+    const fixture = { ipc, wc, win, frame, updater, effects, observed, page, pageState, state,
+      status, thaw, context, clock, originalSend, originalEmit,
+      event: () => ({ sender: wc, senderFrame: frame }),
+      emit() { return ipc.emit("install-update", fixture.event()); },
+      read: () => context.producer.schedule.snapshot(),
+      approvalPending: () => vm.runInContext("updateInstallApprovalPending", context),
+      rpc: async (phase, work) => {
+        observed.rpcs.push(phase);
+        if (options.rpcBefore) await options.rpcBefore(phase, fixture);
+        const result = await work();
+        if (options.rpcAfter) await options.rpcAfter(phase, fixture);
+        return result;
+      },
+      exec: script => {
+        const phase = script.includes("return cleanup();") ? "cleanup"
+          : script.includes("window.__windowsAdmissionWitness = state;") ? "setup" : "read";
+        return fixture.rpc(phase, async () => {
+          if (phase === "read" && !observed.afterDispatched) {
+            observed.afterDispatched = true;
+            if (options.afterTrigger) await options.afterTrigger(fixture);
+          }
+          if (options.execBefore) options.execBefore(script, fixture);
+          const result = await vm.runInContext(script, rendererContext);
+          if (options.execAfter) options.execAfter(script, fixture);
+          return result === undefined ? undefined : vm.runInContext(
+            "JSON.parse(" + JSON.stringify(JSON.stringify(result)) + ")", context);
+        });
+      },
+    };
+    await context.producer.state.check();
+    await context.producer.state.download();
+    check(fixture.read().readyVersion === candidate && fixture.read().canInstall === true &&
+      status.size === 0 && thaw.size === 0,
+    "Actual provider/download/state/schedule chain establishes a ready unobserved candidate");
+    const run = async (reason = directoryReason) => {
+      if (reason === directoryReason) {
+        updater.installDirectory = "C:\\Unsupported Directory";
+        delete updater.downloadedUpdateHelper.packageFile;
+      } else {
+        updater.installDirectory = "";
+        updater.downloadedUpdateHelper.packageFile = "C:\\fixture\\package.7z";
+      }
+      observed.armed = true;
+      observed.afterDispatched = false;
+      const result = await context.expectWindowsAdmissionRejection({
+        win, exec: fixture.exec, updater, expectedError: options.expectedError || reason,
+        readUpdate: () => fixture.rpc("baseline", async () => {
+          const value = fixture.read();
+          assert.deepEqual(observed.subscriptions.slice(-2), ["status", "thaw"],
+            "Both renderer subscriptions are installed before dispatch");
+          assert.notEqual(ipc.emit, originalEmit, "Main ingress capture is armed before dispatch");
+          assert.notEqual(wc.send, originalSend, "Main publication capture is armed before dispatch");
+          if (options.beforeTrigger) await options.beforeTrigger(fixture);
+          return value;
+        }),
+        readEffects: () => clone(effects),
+      });
+      assert.equal(fixture.approvalPending(), false,
+        "Actual lexical install approval latch must stay false after each admission rejection");
+      return result;
+    };
+    fixture.run = run;
+    fixture.cleanupIntact = () => ipc.emit === originalEmit && wc.send === originalSend &&
+      status.size === 0 && thaw.size === 0 && !page.__windowsAdmissionWitness &&
+      !Object.keys(page).some(key => key.startsWith("__windowsAdmissionCleanup_")) && clock.pending === 0;
+    return fixture;
+  };
+  const rejectsBounded = async (work, expected = /Windows admission rejection witness failed/) => {
+    let watchdog;
+    try {
+      await assert.rejects(Promise.race([
+        work,
+        new Promise((_resolve, reject) => {
+          watchdog = setTimeout(() => reject(new Error("Admission control stalled beyond its deterministic deadline")), 1000);
+        }),
+      ]), expected);
+    } finally { clearTimeout(watchdog); }
+  };
+  const positive = await make();
+  const baseline = positive.read();
+  const directorySends = positive.observed.sends.length;
+  const directory = await positive.run();
+  check(directory.rejected && directory.error === directoryReason &&
+    directory.revision > baseline.revision && positive.observed.emitReturn === true &&
+    positive.observed.receiver === positive.ipc &&
+    positive.observed.emittedArgs[0] === "install-update" &&
+    positive.observed.emittedArgs[1].sender === positive.wc &&
+    positive.observed.sendReceiver === positive.wc &&
+    positive.observed.sendArgs[0] === "update-status" &&
+    positive.effects.pauses === 0 && positive.effects.resumes === 0 &&
+    positive.effects.shutdowns === 0 && positive.effects.installs === 0 &&
+    positive.effects.manualActionsInIngress === 0 &&
+    positive.observed.sends.length === directorySends + 1 &&
+    positive.observed.completedBeforeReturn && positive.observed.rendererInstallCalls === 0 &&
+    positive.approvalPending() === false &&
+    positive.cleanupIntact(),
+  "Directory admission is witnessed through its original return and immediate renderer receipt without pause/shutdown/install");
+  const packageSends = positive.observed.sends.length;
+  const packageLeg = await positive.run(packageReason);
+  check(packageLeg.rejected && packageLeg.error === packageReason &&
+    packageLeg.candidate === directory.candidate && packageLeg.revision > directory.revision &&
+    positive.read().readyVersion === candidate && positive.read().canInstall === true &&
+    positive.state.lastRequestId === 0 && positive.state.rendererGeneration === 7 &&
+    positive.observed.sends.length === packageSends + 1 && positive.approvalPending() === false &&
+    positive.observed.completedBeforeReturn && positive.observed.rendererInstallCalls === 0 &&
+    Object.values(positive.effects).every(value => value === 0) && positive.cleanupIntact(),
+  "Package admission after directory preserves the ready candidate and request/page state without a new prepare");
+  check(!/\btrigger\b|installUpdate\s*\(/.test(witness) &&
+    witness.includes('ipcMain.emit("install-update", portableInstallEvent(win));') &&
+    witness.includes('if (!publication() || issues.length)') &&
+    witness.indexOf('if (!publication() || issues.length)') < witness.indexOf("const matched = await"),
+  "Admission uses synchronous actual Main dispatch and completion, never a deferred trigger or renderer install bridge");
+  const falseReturn = await make({ falseReturn: true });
+  check((await falseReturn.run()).rejected && falseReturn.observed.emitReturn === false &&
+    falseReturn.observed.completedBeforeReturn && falseReturn.cleanupIntact(),
+  "An emit boolean is not the oracle; actual original-handler completion, publication and receipt prove rejection");
+  const noCompletion = await make({ noIngress: true });
+  await rejectsBounded(noCompletion.run());
+  check(!noCompletion.observed.rpcs.includes("read") && noCompletion.cleanupIntact(),
+    "Missing actual handler publication fails synchronously before waiting for a renderer receipt");
+
+  for (const reason of [directoryReason, packageReason]) {
+    for (const phase of ["setup", "baseline", "dispatch"]) {
+      let checksAfterBaseline = 0, armedExpiry = false;
+      const fixture = await make({
+        rpcAfter: (entered, f) => {
+          if (entered === phase) f.clock.advance(5000, false);
+          if (phase === "dispatch" && entered === "baseline") armedExpiry = true;
+        },
+        now: f => {
+          if (armedExpiry && ++checksAfterBaseline === 2) f.clock.advance(5000, false);
+        },
+      });
+      await rejectsBounded(fixture.run(reason));
+      check(fixture.observed.emittedArgs === null && fixture.observed.rendererInstallCalls === 0 &&
+        Object.values(fixture.effects).every(value => value === 0) &&
+        !fixture.approvalPending() && fixture.cleanupIntact(),
+      "Expired " + phase + " produces zero install ingress or later install action: " + reason);
+    }
+    for (const changed of ["document", "emit protection", "send protection"]) {
+      let foreignCalls = 0;
+      const fixture = await make({ beforeTrigger: f => {
+        if (changed === "document") f.state.rendererGeneration++;
+        else if (changed === "emit protection") f.ipc.emit = () => { foreignCalls++; return false; };
+        else f.wc.send = () => { foreignCalls++; };
+      } });
+      await assert.rejects(fixture.run(), error =>
+        error.errors?.[0]?.message === "Admission dispatch lost its current document or Main protections");
+      check(fixture.observed.emittedArgs === null && foreignCalls === 0 &&
+        fixture.status.size === 0 && fixture.thaw.size === 0 && fixture.clock.pending === 0 &&
+        fixture.observed.rendererInstallCalls === 0,
+      "Actual dispatch rechecks ownership before any install effect: " + changed);
+    }
+    for (const receipt of ["missing", "delayed"]) {
+      let deliver;
+      const fixture = await make({ noReceipt: true,
+        rpcBefore: (phase, f) => {
+          if (receipt === "delayed" && phase === "read") {
+            const callbacks = [...f.status], value = clone(f.observed.sends.at(-1));
+            deliver = () => callbacks.forEach(callback => callback(value));
+            f.clock.advance(5000);
+            return new Promise(() => {});
+          }
+        } });
+      await rejectsBounded(fixture.run(reason));
+      const effects = clone(fixture.effects), request = fixture.state.lastRequestId;
+      fixture.updater.installDirectory = "";
+      delete fixture.updater.downloadedUpdateHelper.packageFile;
+      if (deliver) deliver();
+      fixture.clock.advance(10000);
+      check(fixture.observed.emitReturn === true && fixture.observed.completedBeforeReturn &&
+        fixture.observed.rendererInstallCalls === 0 && isDeepStrictEqual(effects, fixture.effects) &&
+        request === fixture.state.lastRequestId && !fixture.approvalPending() && fixture.cleanupIntact(),
+      "A " + receipt + " renderer receipt fails without any future install after outer restoration: " + reason);
+    }
+  }
+  for (const successor of [false, true]) {
+    let release, outstanding, held = false, rejectLate = false;
+    const originalLateError = new Error("Original delayed setup response error");
+    const options = {
+      rpcBefore: (phase, f) => {
+        if (phase === "setup" && !held) {
+          held = true;
+          f.clock.advance(5000);
+          return new Promise(resolve => { release = resolve; });
+        }
+      },
+      execAfter: script => {
+        if (rejectLate && script.includes("window.__windowsAdmissionWitness = state;")) throw originalLateError;
+      },
+    };
+    const fixture = await make(options), rpc = fixture.rpc;
+    fixture.rpc = (...args) => {
+      const work = Reflect.apply(rpc, fixture, args);
+      if (args[0] === "setup" && !outstanding) { outstanding = work; work.catch(() => {}); }
+      return work;
+    };
+    let originalFailure;
+    await rejectsBounded(fixture.run(), error => {
+      originalFailure = error;
+      return error.errors?.[0]?.message === "Admission renderer setup timed out";
+    });
+    const originalTimeout = originalFailure.errors[0];
+    check(fixture.cleanupIntact() && fixture.observed.subscriptions.length === 0,
+      "Held setup really outlives completed witness cleanup before release");
+    fixture.updater.installDirectory = "";
+    delete fixture.updater.downloadedUpdateHelper.packageFile;
+    const releaseSetup = async () => {
+      const owned = fixture.page.__windowsAdmissionWitness;
+      const subscriptions = fixture.observed.subscriptions.length;
+      rejectLate = true; release();
+      await assert.rejects(outstanding, error => error === originalLateError);
+      rejectLate = false;
+      check(fixture.page.__windowsAdmissionWitness === owned &&
+        fixture.observed.subscriptions.length === subscriptions &&
+        originalFailure.errors[0] === originalTimeout &&
+        fixture.observed.rendererInstallCalls === 0 &&
+        Object.values(fixture.effects).every(value => value === 0),
+      "Expired setup installs nothing, preserves the successor and retains both original errors: " + successor);
+    };
+    if (successor) {
+      options.beforeTrigger = releaseSetup;
+      check((await fixture.run(packageReason)).rejected,
+        "A successor owner completes actual admission while the expired setup remains inert");
+    } else await releaseSetup();
+    check(fixture.cleanupIntact(), "Late setup leaves no handles, subscriptions or timers after release");
+  }
+  const setupError = new Error("Original setup transport rejection");
+  const retired = await make(), execute = retired.exec;
+  let delayedSetup;
+  retired.exec = script => {
+    if (!delayedSetup && script.includes("window.__windowsAdmissionWitness = state;")) {
+      delayedSetup = () => execute(script);
+      return Promise.reject(setupError);
+    }
+    return execute(script);
+  };
+  await assert.rejects(retired.run(), error => error.errors?.includes(setupError));
+  const retirementKey = Object.keys(retired.page).find(key => key.startsWith("__windowsAdmissionCleanup_"));
+  check(retired.page[retirementKey] === false && retired.status.size === 0 && retired.thaw.size === 0,
+    "Early failed setup leaves only a finite invocation-local retirement marker");
+  await delayedSetup();
+  check(retired.observed.subscriptions.length === 0 && !retired.page.__windowsAdmissionWitness,
+    "Retired setup is inert even before its epoch expiry");
+  retired.clock.advance(5000);
+  check(retired.cleanupIntact(), "The retirement marker expires without a cleanup RPC or manual rescue");
+
+  for (const partial of [false, true]) {
+    const fixture = await make({
+      setupFailure: partial ? "thaw" : undefined,
+      rpcAfter: (phase, f) => {
+        if (!partial && phase === "setup") {
+          f.clock.advance(5000);
+          return new Promise(() => {});
+        }
+      },
+      rpcBefore: (phase, f) => {
+        if (phase === "cleanup") {
+          f.clock.advance(5000);
+          return new Promise(() => {});
+        }
+      },
+    });
+    let failure;
+    await rejectsBounded(fixture.run(), error => { failure = error; return error.errors?.length >= 2; });
+    const original = failure.errors[0];
+    fixture.clock.advance(5000);
+    check(fixture.cleanupIntact() && fixture.observed.emittedArgs === null &&
+      fixture.observed.disposals.join(",") === (partial ? "status" : "status,thaw") &&
+      original === failure.errors[0] && failure.errors.some(error => /renderer cleanup timed out/.test(error.message)),
+    "Lost or partial setup with unavailable cleanup self-disposes without claiming cleanup ran: " + partial);
+  }
+  const failedRestore = await make({ beforeTrigger: f => {
+    Object.defineProperty(f.wc, "send", { value: f.wc.send, configurable: false, writable: false });
+  } });
+  await assert.rejects(failedRestore.run(), error => error.errors?.some(item => item.name === "TypeError"));
+  const restoreEffects = clone(failedRestore.effects);
+  failedRestore.updater.installDirectory = "";
+  delete failedRestore.updater.downloadedUpdateHelper.packageFile;
+  failedRestore.clock.advance(10000);
+  check(failedRestore.ipc.emit === failedRestore.originalEmit &&
+    failedRestore.wc.send !== failedRestore.originalSend &&
+    failedRestore.status.size === 0 && failedRestore.thaw.size === 0 &&
+    failedRestore.clock.pending === 0 && !failedRestore.approvalPending() &&
+    isDeepStrictEqual(restoreEffects, failedRestore.effects) && failedRestore.observed.rendererInstallCalls === 0,
+  "An actual Main restoration failure is reported while independent cleanup and no-future-install confinement hold");
+
+  const admissionFailure = '      updateState.fail(new Error(\n' +
+    '        "The update could not start: " + error.message,\n      ));';
+  const afterAdmissionFailure = extra => text => {
+    assert.equal(text.split(admissionFailure).length, 2, "Mutation binds the unique actual admission catch");
+    return text.replace(admissionFailure, admissionFailure + "\n" + extra);
+  };
+  const handlerError = new Error("Original actual handler exception");
+  const handlerThrow = await make({ handlerFailure: handlerError,
+    handler: afterAdmissionFailure("      throw fixtureThrown;"),
+    cleanupFailure: "status",
+    beforeTrigger: f => {
+      Object.defineProperty(f.wc, "send", { value: f.wc.send, configurable: false, writable: false });
+    },
+  });
+  let handlerFailure;
+  await assert.rejects(handlerThrow.run(), error => {
+    handlerFailure = error;
+    return error.errors?.[0] === handlerError &&
+      error.errors.some(item => item.name === "TypeError") &&
+      error.errors.some(item => /Injected status cleanup failure/.test(item.message));
+  });
+  handlerThrow.clock.advance(10000);
+  check(handlerFailure.errors[0] === handlerError &&
+    handlerThrow.ipc.emit === handlerThrow.originalEmit && handlerThrow.status.size === 0 &&
+    handlerThrow.thaw.size === 0 && handlerThrow.observed.rendererInstallCalls === 0 &&
+    Object.values(handlerThrow.effects).every(value => value === 0),
+  "An actual handler throw keeps its identity through independent Main restoration and renderer cleanup failures");
+  for (const reason of [directoryReason, packageReason]) {
+    for (const [label, extra, manualCalls] of [
+      ["manual action", "      updateSchedule.beginManualAction();", 1],
+      ["extra synchronous publication", "      updateState.publish();", 0],
+    ]) {
+      const fixture = await make({ handler: afterAdmissionFailure(extra) });
+      const beforeSends = fixture.observed.sends.length;
+      await assert.rejects(fixture.run(reason), /Windows admission rejection witness failed/);
+      check(fixture.effects.manualActionsInIngress === manualCalls &&
+        fixture.observed.sends.length === beforeSends + 2 &&
+        fixture.observed.sends.slice(beforeSends).every(value =>
+          value.status === "error" && value.error === reason && value.readyVersion === candidate) &&
+        fixture.observed.emitReturn === true && fixture.approvalPending() === false &&
+        fixture.cleanupIntact(),
+      "Actual rejection catches " + label + " after its expected publication: " + reason);
+    }
+  }
+  const packageLatch = await make({ handler: afterAdmissionFailure(
+    "      if (updater.downloadedUpdateHelper.packageFile) updateInstallApprovalPending = true;") });
+  check((await packageLatch.run()).rejected && packageLatch.approvalPending() === false,
+    "Package-only approval-latch mutation really leaves directory rejection unchanged");
+  await assert.rejects(packageLatch.run(packageReason),
+    /Actual lexical install approval latch must stay false after each admission rejection/);
+  check(packageLatch.approvalPending() === true && packageLatch.cleanupIntact() &&
+    Object.values(packageLatch.effects).every(value => value === 0),
+  "Package rejection checks the actual lexical approval latch after its expected receipt and cleanup");
+
+  for (const phase of ["setup", "baseline", "read", "cleanup"]) {
+    for (const mode of ["late", "unresolved"]) {
+      const fixture = await make({ rpcAfter: (entered, current) => {
+        if (entered !== phase) return;
+        current.clock.advance(5001, mode === "unresolved");
+        if (mode === "unresolved") return new Promise(() => {});
+      } });
+      await rejectsBounded(fixture.run());
+      check(fixture.cleanupIntact() && fixture.observed.rpcs.includes(phase) &&
+        fixture.clock.now === 5001 && fixture.observed.deadlines.at(-1) === 5000 &&
+        (mode === "late" ? fixture.observed.timerFires === 0 : fixture.observed.timerFires > 0),
+      "Actual witness bounds " + mode + " " + phase + " RPC and independently cleans up");
+    }
+  }
+  const sharedDeadline = await make({ rpcAfter: (phase, fixture) => {
+    const elapsed = { setup: 2000, baseline: 2999, read: 1 }[phase];
+    if (elapsed !== undefined) fixture.clock.advance(elapsed, false);
+  } });
+  await rejectsBounded(sharedDeadline.run());
+  check(sharedDeadline.clock.now === 5000 && sharedDeadline.observed.deadlines.includes(1) &&
+    sharedDeadline.observed.timerFires === 0 && sharedDeadline.cleanupIntact(),
+  "Setup, baseline and join share one five-second deadline and reject exact-deadline success");
+  const setupNeverRuns = await make({ rpcBefore: (phase, fixture) => {
+    if (phase === "setup") {
+      fixture.clock.advance(5000);
+      return new Promise(() => {});
+    }
+  } });
+  await rejectsBounded(setupNeverRuns.run());
+  check(setupNeverRuns.cleanupIntact() && setupNeverRuns.observed.subscriptions.length === 0 &&
+    setupNeverRuns.observed.rpcs.join(",") === "setup,cleanup",
+  "A setup RPC that never executes is bounded without claiming or disposing renderer ownership");
+  let restoredBeforeStall = false;
+  const cleanupNeverRuns = await make({ rpcBefore: (phase, fixture) => {
+    if (phase === "cleanup") {
+      restoredBeforeStall = fixture.ipc.emit === fixture.originalEmit &&
+        fixture.wc.send === fixture.originalSend;
+      fixture.clock.advance(5000);
+      return new Promise(() => {});
+    }
+  } });
+  await rejectsBounded(cleanupNeverRuns.run());
+  const retainedKey = Object.keys(cleanupNeverRuns.page).find(key => key.startsWith("__windowsAdmissionCleanup_"));
+  check(restoredBeforeStall && cleanupNeverRuns.clock.pending === 1 &&
+    cleanupNeverRuns.status.size === 0 && cleanupNeverRuns.thaw.size === 0 &&
+    typeof cleanupNeverRuns.page[retainedKey] === "function",
+  "Unavailable cleanup fails after Main restoration; the renderer lease disposes both subscriptions independently");
+  cleanupNeverRuns.clock.advance(5000);
+  check(cleanupNeverRuns.cleanupIntact(),
+    "The finite error-retention handle also retires without a cleanup RPC or manual rescue");
+  let lostCleanup;
+  const lostHandle = await make({ rpcBefore: (phase, fixture) => {
+    if (phase === "cleanup") {
+      const key = Object.keys(fixture.page).find(name => name.startsWith("__windowsAdmissionCleanup_"));
+      lostCleanup = fixture.page[key];
+      delete fixture.page[key];
+    }
+  } });
+  await rejectsBounded(lostHandle.run());
+  check(lostHandle.ipc.emit === lostHandle.originalEmit && lostHandle.wc.send === lostHandle.originalSend &&
+    lostHandle.status.size === 1 && lostHandle.thaw.size === 1 && typeof lostCleanup === "function",
+  "An unexpectedly missing owned cleanup handle fails loudly after independent Main restoration");
+  assert.throws(() => lostCleanup(), /Admission renderer cleanup handle changed/);
+  check(lostHandle.cleanupIntact(), "The retained original closure still disposes its own subscriptions after handle loss");
+
+  for (const [label, options] of [
+    ["no renderer receipt", { noReceipt: true }],
+    ["missing ingress", { noIngress: true }],
+    ["duplicate ingress", { duplicateIngress: true }],
+    ["duplicate exact receipt", { duplicateReceipt: true }],
+    ["wrong exact reason", { expectedError: packageReason }],
+    ["wrong candidate publication", { publication: value => { value.readyVersion = "9.0.2"; } }],
+    ["wrong available candidate", { publication: value => { value.availableVersion = "9.0.2"; } }],
+    ["wrong reason publication", { publication: value => { value.error += " other"; } }],
+    ["wrong status publication", { publication: value => { value.status = "ready"; } }],
+    ["stale schedule revision", { publication: (value, f) => { value.revision = f.baselineRevision; },
+      beforeTrigger: f => { f.baselineRevision = f.read().revision; } }],
+    ["noninteger revision", { publication: value => { value.revision = "new"; } }],
+    ["wrong renderer reason", { wire: value => { value.error += " other"; } }],
+    ["wrong renderer candidate", { wire: value => { value.readyVersion = "9.0.2"; } }],
+    ["wrong renderer revision", { wire: value => { value.revision++; } }],
+    ["foreign Main origin", { origin: mainPath + ".foreign" }],
+    ["actual installed-preflight route", { installedRoute: true }],
+    ["stale Main location", { handler: text => "\n".repeat(7) + text }],
+    ["publication outside ingress", { noIngress: true,
+      beforeTrigger: f => f.context.producer.state.fail(new Error(directoryReason)) }],
+    ["foreign sender", { beforeTrigger: f => { f.event = () => ({
+      sender: { ...f.wc, id: 99 }, senderFrame: f.frame }); }, event: true }],
+    ["child frame", { beforeTrigger: f => { f.event = () => ({
+      sender: f.wc, senderFrame: { ...f.frame, parent: {} } }); }, event: true }],
+    ["wrong index URL", { beforeTrigger: f => { f.event = () => ({
+      sender: f.wc, senderFrame: { ...f.frame, url: "file:///foreign.html" } }); }, event: true }],
+    ["destroyed sender", { beforeTrigger: f => { f.event = () => ({
+      sender: { ...f.wc, isDestroyed: () => true }, senderFrame: f.frame }); }, event: true }],
+    ["destroyed frame", { beforeTrigger: f => { f.event = () => ({
+      sender: f.wc, senderFrame: { ...f.frame, isDestroyed: () => true } }); }, event: true }],
+    ["destroyed current frame", { beforeTrigger: f => { f.wc.mainFrame = {
+      ...f.frame, isDestroyed: () => true }; } }],
+    ["wrong sender main frame", { beforeTrigger: f => { f.event = () => ({
+      sender: { ...f.wc, mainFrame: { ...f.frame, frameTreeNodeId: 99 } }, senderFrame: f.frame }); }, event: true }],
+    ["replaced current frame", { beforeTrigger: f => { f.wc.mainFrame = {
+      ...f.frame, frameTreeNodeId: f.frame.frameTreeNodeId + 1 }; } }],
+    ["approval traffic", { afterTrigger: f => f.wc.send("quit-approval-request", {}) }],
+    ["thaw traffic", { afterTrigger: f => f.wc.send("quit-approval-thaw") }],
+    ["renderer generation changed", { afterTrigger: f => { f.pageState.generation++; } }],
+    ["renderer page changed", { afterTrigger: f => { f.pageState.page += "-new"; } }],
+    ["renderer freeze changed", { afterTrigger: f => { f.pageState.freeze.editorReadOnly = true; } }],
+    ["shutdown request changed", { afterTrigger: f => { f.state.lastRequestId++; } }],
+    ["authorization changed", { afterTrigger: f => { f.state.authorized = true; } }],
+    ["attempt changed", { afterTrigger: f => { f.state.updaterInstallAttemptId++; } }],
+    ["child spawned", { afterTrigger: f => { f.effects.children++; } }],
+    ["quit called", { afterTrigger: f => { f.effects.quits++; } }],
+    ["partial renderer setup", { setupFailure: "thaw" }],
+    ["first renderer setup failure", { setupFailure: "status" }],
+    ["renderer disposer failure", { cleanupFailure: "status" }],
+    ["missing semantic admission catch", { anchorSource: main.replace(
+      '      updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));',
+      "      updateState.publish();") }],
+    ["duplicate semantic admission catch", { anchorSource: main.replace(
+      '      updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));',
+      '      updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));\n' +
+      '      updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));') }],
+  ]) {
+    const fixture = await make(options);
+    await assert.rejects(fixture.run(), options.anchorSource
+      ? /Windows admission witness needs its unique current Main catch/
+      : /Windows admission rejection witness failed/);
+    check(fixture.cleanupIntact() && (!(options.wire || options.publication) ||
+      fixture.observed.wireChanges > 0),
+      "Actual-source admission witness rejects and independently cleans up: " + label);
+  }
+  const sameNode = await make({ event: true, beforeTrigger: f => { f.event = () => ({
+    sender: { ...f.wc, mainFrame: { ...f.frame } }, senderFrame: { ...f.frame } }); } });
+  check((await sameNode.run()).rejected && sameNode.cleanupIntact(),
+    "Actual Main and witness both accept distinct sender/frame wrappers for the same current top-frame node");
+  const identityPublication = await make({ publication() {} });
+  check((await identityPublication.run()).rejected && identityPublication.observed.wireChanges === 1 &&
+    identityPublication.cleanupIntact(),
+  "An unchanged controlled publication port preserves the actual admission callsite and succeeds");
+  const skippedRevisions = await make({ beforeTrigger: f => {
+    f.context.producer.schedule.beginManualAction();
+    f.context.producer.schedule.dismiss(f.read().presentationId);
+  } });
+  const revisionBefore = skippedRevisions.read().revision;
+  check((await skippedRevisions.run()).revision > revisionBefore + 1 &&
+    skippedRevisions.cleanupIntact(),
+  "Admission joins the newer public schedule revision without assuming exactly one revision step");
+  const rawRevision = await make({ publication: (value, f) => {
+    value.revision = f.context.producer.state.snapshot().revision;
+  } });
+  for (let i = 0; i < 4; i++) {
+    rawRevision.context.producer.schedule.beginManualAction();
+    rawRevision.context.producer.schedule.dismiss(rawRevision.read().presentationId);
+  }
+  check(rawRevision.read().revision > rawRevision.context.producer.state.snapshot().revision,
+    "Schedule-only publications really move the public cursor beyond raw state revision");
+  await assert.rejects(rawRevision.run(), /Windows admission rejection witness failed/);
+  check(rawRevision.observed.wireChanges === 1 && rawRevision.cleanupIntact(),
+    "A newer raw-state revision cannot substitute for a newer externally published schedule revision");
+  const replayOptions = {}, replay = await make(replayOptions);
+  await replay.run();
+  const oldReceipt = clone(replay.observed.sends.at(-1));
+  replayOptions.noReceipt = true;
+  replayOptions.beforeTrigger = f => {
+    for (const callback of [...f.status]) callback(oldReceipt);
+  };
+  await assert.rejects(replay.run(), /Windows admission rejection witness failed/);
+  check(replay.cleanupIntact(), "A retained old admission receipt cannot satisfy a new ingress/publication");
+  const later = await make({ afterTrigger: f => {
+    f.context.producer.schedule.beginManualAction();
+    f.context.producer.schedule.dismiss(f.read().presentationId);
+  } });
+  check((await later.run()).rejected && later.observed.sends.length > positive.observed.sends.length &&
+    later.cleanupIntact(),
+  "Later legitimate schedule publications do not invalidate the joined admission receipt");
+  const failedSend = new Error("Injected original send failure");
+  const send = await make();
+  send.observed.armed = false;
+  const sendBefore = send.wc.send;
+  send.wc.send = function () { throw failedSend; };
+  await assert.rejects(send.run(), error => {
+    const nested = error.errors || [];
+    return nested.includes(failedSend) || nested.some(item => item.cause === failedSend);
+  });
+  check(send.ipc.emit === send.originalEmit && send.status.size === 0 && send.thaw.size === 0,
+    "Failed original publication is not credited and other wrappers/subscriptions are restored");
+  send.wc.send = sendBefore;
+  const emitFailure = new Error("Injected original ingress failure");
+  const failedEmit = await make({ emitFailure });
+  await assert.rejects(failedEmit.run(), error => error.errors?.includes(emitFailure));
+  check(failedEmit.cleanupIntact(), "Original ingress exception survives observation and cleanup");
+  const partialMain = await make();
+  Object.defineProperty(partialMain.wc, "send", { value: partialMain.originalSend, configurable: false });
+  await assert.rejects(partialMain.run(), /Windows admission rejection witness failed/);
+  check(partialMain.cleanupIntact() && partialMain.observed.subscriptions.length === 0,
+    "Failed second Main wrapper setup restores the first without triggering or subscribing");
+  let replacementEmit;
+  const ownership = await make({ afterTrigger: f => {
+    replacementEmit = () => false; f.ipc.emit = replacementEmit;
+  } });
+  await assert.rejects(ownership.run(), /Windows admission rejection witness failed/);
+  check(ownership.ipc.emit === replacementEmit && ownership.wc.send === ownership.originalSend &&
+    ownership.status.size === 0 && ownership.thaw.size === 0,
+  "Lost Main wrapper ownership is reported, not overwritten, while independent cleanup still runs");
+  const dispose = await make({ cleanupFailure: "status" });
+  await assert.rejects(dispose.run(), /Windows admission rejection witness failed/);
+  check(dispose.observed.disposals.join(",") === "status,thaw" && dispose.cleanupIntact(),
+    "A failing renderer disposer does not skip the other subscription or Main restorations");
+  const captureFailure = await make({ beforeTrigger: f => {
+    f.page.CustomTabs.__shutdownFreeze = () => { throw new Error("Injected observer freeze failure"); };
+  } });
+  await assert.rejects(captureFailure.run(), /Windows admission rejection witness failed/);
+  check(captureFailure.observed.emitReturn === true && captureFailure.cleanupIntact(),
+    "Renderer observer faults fail the fixture afterward without throwing into the actual producer");
+  const occupied = await make();
+  const foreign = { keep: true };
+  occupied.page.__windowsAdmissionWitness = foreign;
+  await assert.rejects(occupied.run(), /Windows admission rejection witness failed/);
+  check(occupied.page.__windowsAdmissionWitness === foreign &&
+    occupied.ipc.emit === occupied.originalEmit && occupied.wc.send === occupied.originalSend &&
+    occupied.status.size === 0 && occupied.thaw.size === 0,
+  "Pre-existing renderer ownership is not claimed or cleaned up by a failed setup");
+  const interruptedSetup = await make({ execAfter: script => {
+    if (script.includes("window.__windowsAdmissionWitness = state;")) {
+      throw new Error("Injected lost renderer setup response");
+    }
+  } });
+  await assert.rejects(interruptedSetup.run(), /Windows admission rejection witness failed/);
+  check(interruptedSetup.cleanupIntact() && interruptedSetup.observed.disposals.join(",") === "status,thaw",
+    "An unavailable setup response still cleans up subscriptions already installed in the renderer");
+  for (const scenario of ["occupied observer and lost reply", "replacement after owned setup",
+    "replacement with unavailable cleanup"]) {
+    const options = {}, fixture = await make(options);
+    const foreignStatus = () => {}, foreignThaw = () => {};
+    let foreign;
+    const installForeign = () => {
+      foreign = { pageSession: fixture.pageState.page, errors: [], read() {},
+        off: [fixture.page.markaloo.onUpdateStatus(foreignStatus),
+          fixture.page.markaloo.onQuitApprovalThaw(foreignThaw)] };
+      fixture.page.__windowsAdmissionWitness = foreign;
+    };
+    if (scenario === "occupied observer and lost reply") {
+      installForeign();
+      options.execAfter = script => {
+        if (script.includes("window.__windowsAdmissionWitness = state;")) {
+          throw new Error("Injected lost occupied setup response");
+        }
+      };
+    } else options.afterTrigger = installForeign;
+    if (scenario === "replacement with unavailable cleanup") options.rpcBefore = (phase, f) => {
+      if (phase === "cleanup") {
+        f.clock.advance(5000);
+        return new Promise(() => {});
+      }
+    };
+    await rejectsBounded(fixture.run());
+    if (scenario !== "replacement after owned setup") fixture.clock.advance(5000);
+    check(fixture.page.__windowsAdmissionWitness === foreign && foreign.off.length === 2 &&
+      fixture.status.size === 1 && fixture.status.has(foreignStatus) &&
+      fixture.thaw.size === 1 && fixture.thaw.has(foreignThaw) &&
+      fixture.ipc.emit === fixture.originalEmit && fixture.wc.send === fixture.originalSend &&
+      fixture.observed.disposals.length === (scenario === "occupied observer and lost reply" ? 0 : 2) &&
+      !Object.keys(fixture.page).some(key => key.startsWith("__windowsAdmissionCleanup_")),
+    "Original owned cleanup leaves a same-page foreign observer and its subscriptions untouched: " + scenario);
+    for (const off of foreign.off) off();
+    delete fixture.page.__windowsAdmissionWitness;
+    check(fixture.cleanupIntact(), "The composed ownership scenario leaves no owned subscriptions: " + scenario);
+  }
+  const passThrough = await make({ beforeTrigger: f => {
+    const receiver = {}, argument = { unchanged: true };
+    assert.equal(f.ipc.emit.call(receiver, "fixture-pass-through", argument, 17), false);
+    assert.equal(f.observed.receiver, receiver);
+    assert.deepEqual(f.observed.emittedArgs, ["fixture-pass-through", argument, 17]);
+    assert.equal(f.wc.send.call(receiver, "fixture-pass-through", argument, 19), "forwarded");
+    assert.equal(f.observed.sendReceiver, receiver);
+    assert.deepEqual(f.observed.sendArgs, ["fixture-pass-through", argument, 19]);
+  } });
+  check((await passThrough.run()).rejected && passThrough.cleanupIntact(),
+    "Observation preserves original receiver, complete argument list and original emit/send return values");
+}
+
 function installedLauncherDiagnosticContracts() {
   let actor = between(source, "async function runWindowsInstalledLauncherScenarios(",
     "\nfunction installMainOwnedShutdownQuestions(");
+  const admissionEffects = '    const admissionEffects = () => ({\n' +
+    '      children: children.length, spawns: spawnCalls.length, quits: rig.quits,\n' +
+    '      closes: rig.closes, quitEvents: rig.quitEvents.length, dialogs: rig.dialogs.length,\n' +
+    '    });\n';
+  check(actor.includes(admissionEffects), "Admission effect capture has its narrow reviewed shape");
+  actor = actor.replace(admissionEffects, "");
+  for (const [label, reason] of [
+    ["Directory", "custom NSIS install directories are unsupported by the verified launcher"],
+    ["Package", "NSIS web-installer packages are unsupported by the verified launcher"],
+  ]) {
+    const lower = label.toLowerCase();
+    const replacement = `    const unsupported${label}Rejected = (await expectWindowsAdmissionRejection({
+      win, exec, updater, readUpdate: updaterFixture.read, readEffects: admissionEffects,
+      expectedError: "The update could not start: ${reason}",
+    })).rejected;`;
+    check(actor.includes(replacement), "Only the reviewed " + lower + " admission wait is normalized");
+    actor = actor.replace(replacement,
+      `    const ${lower}RequestBefore = __shutdown.state().lastRequestId;
+    await start();
+    const unsupported${label}Rejected = await waitUntil(
+      () =>
+        launcherPoll("unsupported-${lower}",
+          __shutdown.state().lastRequestId > ${lower}RequestBefore &&
+          __shutdown.state().updaterInstallAttemptId === 0),
+      5000,
+    );`);
+  }
   const remove = (start, end) => { actor = actor.replace(between(actor, start, end), ""); };
   remove("  let launcherDiagnostic = null;", "  const restoreFields = () => {");
   const field = between(actor, "  const setField =", "  const setLatch =");
@@ -238,7 +1146,7 @@ function installedLauncherDiagnosticContracts() {
     "    await updaterFixture.prepare();");
   remove("  const start = () => {", "\n  let launcherFailure = null;");
   actor = actor.replace("\n  let launcherFailure = null;",
-    "  const start = () => exec(`window.folia.installUpdate(); null;`);\n\n  let launcherFailure = null;");
+    "  const start = () => exec(`window.markaloo.installUpdate(); null;`);\n\n  let launcherFailure = null;");
   remove("    try {\n      launcherDiagnosticToken =", "    write(installerPath,");
   actor = actor.replace(/^.*launcherDiagnostic\??\.[^\n]*\n/gm, "").replaceAll("launcherCheck(", "check(");
   for (const label of ["directory", "package"]) actor = actor.replace(
@@ -250,25 +1158,74 @@ function installedLauncherDiagnosticContracts() {
   remove("    let rendererDiagnostic =", "    for (const restore of [");
   remove('    try {\n      console.log("WINDOWS_LAUNCHER_DIAGNOSTIC ', "    if (failures.length) {");
   check(require("node:crypto").createHash("sha256").update(actor).digest("hex") ===
-    "f8153bf99092ed1e95fd6e32618a2bf75b91dacd447b81f3b454b41097e97b71",
-  "Outside passive diagnostics the complete original Windows actor, predicates, metadata order, deadlines and cleanup are byte-equivalent");
+    "2cebd463896d1c507fa2ef36476041ce49437b8ba4f768e06791a40e75162642",
+  "Outside passive diagnostics and the two reviewed admission waits the original Windows actor, assertions, metadata order, deadlines and cleanup are byte-equivalent");
   const helper = between(source, "  const createLauncherDiagnostic = () => {",
     "  const observeLauncherRenderer = token => {");
   const rendererHelper = between(source, "  const observeLauncherRenderer = token => {",
     "  let launcherDiagnosticToken = null;");
-  const mainLines = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8")
-    .replace(/\r\n/g, "\n").split("\n");
-  check(mainLines[12735].trim() === "releaseShutdownFreeze();" &&
-    mainLines.slice(12728, 12736).join("\n").includes("else if (started === false)") &&
-    mainLines[14140].includes('updateState.fail(new Error("The downloaded update is incomplete.') &&
-    mainLines.slice(14136, 14141).join("\n").includes("catch (err)"),
-  "Launcher diagnostic route coordinates name the actual post-return-false thaw and preflight publication");
-  const make = ({ enabled = false } = {}) => {
+  const mainPath = path.resolve(__dirname, "..", "src", "main.js");
+  const main = fs.readFileSync(path.join(producerRoot, "main.js"), "utf8").replace(/\r\n/g, "\n");
+  const continuations = between(main, "function runApprovedContinuations(", "\nfunction safeFileLabel(");
+  const falseStart = between(continuations, "} else if (started === false) {", "\n      }\n");
+  const installed = between(main, "function performWindowsInstalledUpdate(",
+    "\n  const attempt = watchUpdaterInstallCommit(updater);");
+  const admission = between(main, 'ipcMain.on("install-update", (event) => {',
+    "\n  updateSchedule.beginManualAction();");
+  const lineOf = (body, statement) => {
+    const offset = body.indexOf(statement);
+    assert.ok(offset >= 0 && body.indexOf(statement, offset + statement.length) < 0);
+    return main.slice(0, main.indexOf(body) + offset).split("\n").length;
+  };
+  const thawLine = lineOf(falseStart, "releaseShutdownFreeze();");
+  const preflightLine = lineOf(installed,
+    'updateState.fail(new Error("The update could not start: " + err.message));');
+  const admissionLine = lineOf(admission,
+    'updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));');
+  const stackAt = (line, file = mainPath) => `at publication (${file}:${line}:5)`;
+  check(falseStart.includes("revokeShutdownAuthorization();") &&
+    installed.includes('log("Installed update preflight failed:", err.message);') &&
+    installed.includes('"installed-update-preflight-failed"') &&
+    installed.trimEnd().endsWith("return false;\n  }") &&
+    admission.includes('log("Installed update admission preflight failed:", error.message);') &&
+    new Set([thawLine, preflightLine, admissionLine]).size === 3,
+  "Current Main has distinct admission publication, installed preflight failure and post-return-false thaw branches");
+  const launchPlan = vm.compileFunction(between(main, "function windowsInstalledUpdateLaunchPlan(",
+    "\nfunction reportInstalledUpdateLaunchFailure(") + "\nreturn windowsInstalledUpdateLaunchPlan;",
+  ["isExistingRegularFile"])(() => true);
+  const preflight = vm.compileFunction(installed.slice(installed.indexOf("  let plan;")),
+    ["updater", "admissionPause", "windowsInstalledUpdateLaunchPlan", "assertWindowsUpdateAdmission",
+      "log", "updateState", "holdStartupClosing", "replayAbsorbedUserShutdownAfterUpdaterCancel"]);
+  const publications = [];
+  for (const metadata of [
+    { installDirectory: "C:\\Unsupported Directory" },
+    { packageFile: "C:\\fixture\\package.7z" },
+  ]) {
+    const updater = { quitAndInstallCalled: false, installerPath: "C:\\fixture\\setup.exe",
+      installDirectory: metadata.installDirectory || "",
+      downloadedUpdateHelper: { downloadedFileInfo: { isAdminRightsRequired: false },
+        ...(metadata.packageFile ? { packageFile: metadata.packageFile } : {}) } };
+    const effects = [], errors = [];
+    check(preflight(updater, {}, launchPlan,
+      () => { throw new Error("Unreachable admission after rejected launch metadata"); },
+      () => {}, { fail: error => { effects.push("publication"); errors.push(error); } },
+      () => effects.push("hold"), why => effects.push(why)) === false &&
+      errors.length === 1 &&
+      JSON.stringify(effects) === JSON.stringify(
+        ["publication", "hold", "installed-update-preflight-failed"]),
+    "Actual installed preflight rejects unsupported metadata, publishes before recovery and returns false");
+    publications.push({ status: "error", error: errors[0].message });
+  }
+  check(publications[0].error !== publications[1].error &&
+    publications.every(value => value.error.startsWith("The update could not start: ")),
+  "Actual launch-plan failures retain their separate reasons through Main's installed preflight publication");
+  const payload = publications[0];
+  const make = ({ enabled = false, mainSource = main } = {}) => {
     const ipc = new (require("node:events").EventEmitter)();
     const state = { lastRequestId: 7, rendererGeneration: 3, rendererPageSession: "owned-page",
       pendingId: 0, updaterInstallAttemptId: 0 };
     const model = { ignored: false, stateFault: false, jsonFault: false, originalThrow: null,
-      stack: "at publication (C:\\repo\\src\\main.js:14141:5)", enabled, enables: 0,
+      stack: stackAt(preflightLine), enabled, enables: 0,
       disables: 0, entries: [], emits: 0, sends: 0, stackAllocations: 0, stackReads: 0 };
     const wc = { id: 12, mainFrame: {}, send(channel, payload) {
       model.sends++; model.sendThis = this; model.sendPayload = payload;
@@ -285,13 +1242,18 @@ function installedLauncherDiagnosticContracts() {
       downloadedUpdateHelper: { file: "C:\\fixture\\setup.exe", versionInfo: { version: "0.12.1" } },
       quitAndInstallCalled: false };
     const context = vm.createContext({ updater, ipcMain: ipc, wc, win: { id: 4, webContents: wc },
-      children: [], spawnCalls: [], Buffer, AggregateError,
+      children: [], spawnCalls: [], Buffer, AggregateError, path, __dirname,
+      fs: { readFileSync(file, encoding) {
+        assert.equal(file, mainPath);
+        assert.equal(encoding, "utf8");
+        return mainSource;
+      } },
       Error: class extends Error { constructor(...args) {
         super(...args);
         model.stackAllocations++;
         Object.defineProperty(this, "stack", { get() { model.stackReads++; return model.stack; } });
       } },
-      JSON: { stringify: (...args) => {
+      JSON: { parse: JSON.parse, stringify: (...args) => {
         if (model.jsonFault) throw new Error("controlled serialization fault");
         return JSON.stringify(...args);
       } },
@@ -333,8 +1295,7 @@ function installedLauncherDiagnosticContracts() {
     ["quit-approval-request", ingressPayload], ["quit-approval-commit", ingressPayload],
     ["quit-approval-verify", ingressPayload], ["update-status", { status: "available" }],
     ["update-status", { status: "error", error: "unrelated error" }],
-    ["update-status", { status: "installing",
-      error: "The downloaded update is incomplete. Download it again." }],
+    ["update-status", { ...payload, status: "installing" }],
   ]) {
     assert.equal(filtered.wc.send(channel, data), "original-send-return");
     assert.equal(filtered.model.sendThis, filtered.wc);
@@ -345,9 +1306,8 @@ function installedLauncherDiagnosticContracts() {
     filtered.packet().records.every(record => record.stack === null),
   "Unrelated original ingress approval commit verification and status paths delegate exactly once without acquiring or materializing callsites");
   filtered.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
-  assert.equal(filtered.wc.send("update-status", { status: "error",
-    error: "The downloaded update is incomplete. Download it again." }), "original-send-return");
-  filtered.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
+  assert.equal(filtered.wc.send("update-status", payload), "original-send-return");
+  filtered.model.stack = stackAt(thawLine);
   assert.equal(filtered.wc.send("quit-approval-thaw"), "original-send-return");
   const filteredPacket = filtered.packet();
   check(filtered.model.stackAllocations === 2 && filtered.model.stackReads === 2 &&
@@ -380,16 +1340,15 @@ function installedLauncherDiagnosticContracts() {
   check(packet.invocations[0].admittedId === 8 && packet.invocations[1].admittedId === null &&
     packet.terminal === "UNOBSERVED",
   "An ignored second Install cannot inherit the first admitted id or turn id advancement into completion");
-  const payload = { status: "error", error: "The downloaded update is incomplete. Download it again." };
   h.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101, settledAt: 90 }];
   check(h.wc.send("update-status", payload) === "original-send-return" &&
     h.model.sendThis === h.wc && h.model.sendPayload === payload,
   "Launcher send preserves receiver, payload reference and original return");
-  h.model.stack = "at reset (C:\\repo\\src\\main.js:15100:9)";
+  h.model.stack = stackAt(thawLine + 1);
   h.wc.send("quit-approval-thaw");
   check(h.packet().terminal === "UNOBSERVED",
     "A reset or other refusal thaw cannot substitute for the exact post-return-false terminal route");
-  h.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
+  h.model.stack = stackAt(thawLine);
   h.wc.send("quit-approval-thaw");
   packet = h.packet();
   check(packet.routes.length === 1 && packet.routes[0].requestId === 8 &&
@@ -434,7 +1393,7 @@ function installedLauncherDiagnosticContracts() {
   unpublished.model.originalThrow = originalError;
   assert.throws(() => unpublished.wc.send("update-status", payload), error => error === originalError);
   unpublished.model.originalThrow = null;
-  unpublished.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
+  unpublished.model.stack = stackAt(thawLine);
   unpublished.wc.send("quit-approval-thaw");
   check(unpublished.packet().terminal === "UNOBSERVED" &&
     unpublished.packet().records.some(record => record.kind === "send:throw") &&
@@ -444,13 +1403,89 @@ function installedLauncherDiagnosticContracts() {
   const wrongPublisher = make();
   wrongPublisher.emit();
   wrongPublisher.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
-  wrongPublisher.model.stack = "at another route (C:\\repo\\src\\main.js:13855:9)";
+  wrongPublisher.model.stack = stackAt(preflightLine + 1);
   wrongPublisher.wc.send("update-status", payload);
-  wrongPublisher.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
+  wrongPublisher.model.stack = stackAt(thawLine);
   wrongPublisher.wc.send("quit-approval-thaw");
   check(wrongPublisher.packet().terminal === "UNOBSERVED",
     "A generic error from a different publication route cannot establish the NSIS preflight outcome");
   wrongPublisher.diagnostic.restore();
+  for (const [label, publicationStack, thawStack, message, status = "error"] of [
+    ["admission failure", stackAt(admissionLine), stackAt(thawLine), payload.error],
+    ["foreign publisher", stackAt(preflightLine, "C:\\foreign\\src\\main.js"),
+      stackAt(thawLine), payload.error],
+    ["foreign thaw", stackAt(preflightLine),
+      stackAt(thawLine, "C:\\foreign\\src\\main.js"), payload.error],
+    ["stale publication", stackAt(14162), stackAt(thawLine), payload.error],
+    ["stale thaw", stackAt(preflightLine), stackAt(12757), payload.error],
+    ["publication line prefix", stackAt(Number(String(preflightLine) + "0")),
+      stackAt(thawLine), payload.error],
+    ["retired message", stackAt(preflightLine), stackAt(thawLine),
+      "The downloaded update is incomplete. Download it again."],
+    ["unknown reason", stackAt(preflightLine), stackAt(thawLine),
+      "The update could not start: unrelated failure"],
+    ["empty reason", stackAt(preflightLine), stackAt(thawLine), "The update could not start: "],
+    ["changed message", stackAt(preflightLine), stackAt(thawLine), payload.error + " extra"],
+    ["wrong status", stackAt(preflightLine), stackAt(thawLine), payload.error, "installing"],
+  ]) {
+    const mismatch = make();
+    mismatch.emit();
+    mismatch.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
+    mismatch.model.stack = publicationStack;
+    mismatch.wc.send("update-status", { status, error: message });
+    mismatch.model.stack = thawStack;
+    mismatch.wc.send("quit-approval-thaw");
+    check(mismatch.packet().terminal === "UNOBSERVED" &&
+      mismatch.packet().routes.length === 0,
+    "Current-source launcher route rejects " + label);
+    mismatch.diagnostic.restore();
+  }
+  for (const [label, mainSource, shift, file] of [
+    ["unchanged source", main, 0, mainPath],
+    ["moved source lines", "// unrelated source line\n\n" + main, 2, mainPath],
+    ["CRLF source and slash-normalized stack", main.replace(/\n/g, "\r\n"), 0,
+      mainPath.replace(/\\/g, "/")],
+  ]) {
+    for (const publication of publications) {
+      const current = make({ mainSource });
+      current.emit();
+      current.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
+      current.model.stack = stackAt(preflightLine + shift, file);
+      current.wc.send("update-status", publication);
+      current.model.stack = stackAt(thawLine + shift, file);
+      current.wc.send("quit-approval-thaw");
+      const result = current.packet();
+      check(result.routes.length === 1 && result.terminal === "ROUTE OBSERVED" &&
+        current.model.stackAllocations === 2 && current.model.stackReads === 2 &&
+        result.consumerJoin.startsWith("UNOBSERVED"),
+      "Actual preflight reason and semantic callsites survive " + label + ": " + publication.error);
+      current.diagnostic.restore();
+    }
+  }
+  for (const anchor of [
+    "} else if (started === false) {",
+    "function performWindowsInstalledUpdate(",
+    'ipcMain.on("install-update", (event) => {',
+  ]) {
+    assert.throws(() => make({ mainSource: main.replace(anchor, "/* missing source anchor */") }),
+      /Launcher diagnostic source section is missing or ambiguous/);
+    assert.throws(() => make({ mainSource: main + "\n" + anchor }),
+      /Launcher diagnostic source section is missing or ambiguous/);
+    check(true, "Launcher diagnostics fail visibly for missing or duplicate semantic route: " + anchor);
+  }
+  for (const statement of [
+    "releaseShutdownFreeze();",
+    'updateState.fail(new Error("The update could not start: " + err.message));',
+  ]) {
+    const body = statement === "releaseShutdownFreeze();" ? falseStart : installed;
+    const missing = body.replace(statement, "/* missing callsite */");
+    assert.throws(() => make({ mainSource: main.replace(body, missing) }),
+      /Launcher diagnostic callsite is missing or ambiguous/);
+    const duplicate = body.replace(statement, statement + "\n" + statement);
+    assert.throws(() => make({ mainSource: main.replace(body, duplicate) }),
+      /Launcher diagnostic callsite is missing or ambiguous/);
+    check(true, "Launcher diagnostics reject missing or duplicate route statements: " + statement);
+  }
   const large = make();
   large.updater.downloadedUpdateHelper.packageFile = "界".repeat(10000);
   for (let i = 0; i < 80; i++) large.diagnostic.note("bounded", { ordinal: i });
@@ -481,17 +1516,17 @@ function installedLauncherDiagnosticContracts() {
     mismatch.model.entries = [{ id: 8, reason: "update-install", continuationInvokedAt: 101 }];
     mismatch.wc.send("update-status", payload);
     change(mismatch);
-    mismatch.model.stack = "at continuation (C:\\repo\\src\\main.js:12736:9)";
+    mismatch.model.stack = stackAt(thawLine);
     mismatch.wc.send("quit-approval-thaw");
     check(mismatch.packet().terminal === "UNOBSERVED",
       "Ambiguous launcher correlation stays unobserved: " + label);
     mismatch.diagnostic.restore();
   }
   const window = { getReloadRequestSession: () => "owned-page",
-    CustomTabs: { __shutdownFreeze: () => ({ frozen: true, id: 8, revision: 3 }) }, folia: {} };
+    CustomTabs: { __shutdownFreeze: () => ({ frozen: true, id: 8, revision: 3 }) }, markaloo: {} };
   let callback, disposed = 0;
-  window.folia.onQuitApprovalThaw = listener => { callback = listener; return () => { disposed++; }; };
-  window.folia.onUpdateStatus = () => { throw new Error("controlled second subscription failure"); };
+  window.markaloo.onQuitApprovalThaw = listener => { callback = listener; return () => { disposed++; }; };
+  window.markaloo.onUpdateStatus = () => { throw new Error("controlled second subscription failure"); };
   const context = vm.createContext({ window });
   vm.runInContext(rendererHelper + '\nobserveLauncherRenderer("owned-token")', context);
   check(window.__installedLauncherDiagnostic.off.length === 1 &&
@@ -512,7 +1547,7 @@ function installedLauncherDiagnosticContracts() {
   const callbacks = {};
   let liveFreeze = { frozen: true, id: 8, revision: 3 }, liveDisposed = 0;
   const liveWindow = { getReloadRequestSession: () => "owned-page",
-    CustomTabs: { __shutdownFreeze: () => liveFreeze }, folia: {
+    CustomTabs: { __shutdownFreeze: () => liveFreeze }, markaloo: {
       onQuitApprovalThaw: cb => { callbacks.thaw = cb; return () => { liveDisposed++; }; },
       onUpdateStatus: cb => { callbacks.status = cb; return () => { liveDisposed++; }; },
     } };
@@ -530,7 +1565,7 @@ function installedLauncherDiagnosticContracts() {
   vm.runInContext(expression, liveContext);
   check(liveDisposed === 2, "Both successful renderer subscriptions are retired by the actual collection path");
   let starts = 0;
-  const brokenWindow = { folia: { installUpdate: () => { starts++; } } };
+  const brokenWindow = { markaloo: { installUpdate: () => { starts++; } } };
   Object.defineProperty(brokenWindow, "__installedLauncherDiagnostic", {
     get() { throw new Error("controlled observer property failure"); },
   });
@@ -575,10 +1610,10 @@ function defaultAdmissionFixture(options = {}) {
   const win = {}, chooserOptions = { properties: ["openFile"] };
   const dialog = { showOpenDialog() { throw new Error("Unintercepted chooser"); } };
   const originalChooser = Object.getOwnPropertyDescriptor(dialog, "showOpenDialog");
-  page.folia.queryDocumentDeletionState = () => { deletionReads++; return control.query; };
+  page.markaloo.queryDocumentDeletionState = () => { deletionReads++; return control.query; };
   page.CustomTabs.settleSessionLayout = async () => { trace.push("layout"); };
-  page.folia.getVersion = async () => { trace.push("Main flush"); };
-  page.folia.openFileDialog = async () => {
+  page.markaloo.getVersion = async () => { trace.push("Main flush"); };
+  page.markaloo.openFileDialog = async () => {
     trace.push("chooser");
     const choice = await dialog.showOpenDialog(win, chooserOptions);
     assert.deepEqual(Array.from(choice.filePaths), [control.tab.filePath]);
@@ -846,7 +1881,7 @@ function pageFixture() {
       __shutdownFreeze: () => ({ dialogDecisionIntent: control.intent }),
       captureDialogContext: () => { throw new Error("Must not recapture consent"); },
     },
-    folia: { queryDocumentDeletionState: () => control.query },
+    markaloo: { queryDocumentDeletionState: () => control.query },
     exitEditBtn: { click: () => {
       control.exits++;
       control.intent++;
@@ -892,6 +1927,20 @@ async function loadHelpers(fixture, mutateAtChoice = () => {}, mutateBeforeInput
   })()`, host, { timeout: 1000 });
 }
 
+function installReadingViewportFixture(page, context) {
+  const events = new EventTarget();
+  page.Event = Event;
+  for (const method of ["addEventListener", "removeEventListener", "dispatchEvent"]) {
+    page.window[method] = events[method].bind(events);
+  }
+  vm.runInContext(fs.readFileSync(path.join(producerRoot, "reading-viewport.js"), "utf8") + "\n" +
+    between(renderer, "function createReadingViewportLifecycle()", "\nconst readingZoomWheelIntents"), context);
+  const owner = page.window.readingViewport;
+  assert.ok(owner && owner === vm.runInContext("readingViewport", context) &&
+    owner.isPermitCurrent(owner.capturePermit()), "Every default fixture binds one real live lexical/window owner");
+  return owner;
+}
+
 function installOrdinaryInput(fixture, transformSource = value => value) {
   const { page, control, context } = fixture;
   Object.assign(control.state, { saveFailure: false, content: control.tab.content,
@@ -920,7 +1969,7 @@ function installOrdinaryInput(fixture, transformSource = value => value) {
     }
   };
   Object.assign(page, {
-    Event: function Event(type) { this.type = type; },
+    Event,
     documentState: new Map([[control.tab, control.state]]),
     activeTabForMutations: control.tab, activeTabId: control.tab.id,
     tabs: [control.tab], previewDebounceTimer: null, fileOpenSequence: 1, editorModeRevision: 1,
@@ -942,7 +1991,7 @@ function installOrdinaryInput(fixture, transformSource = value => value) {
     renderMarkdown: content => { page.viewer.textContent = content; },
   });
   vm.runInContext(fs.readFileSync(path.join(producerRoot, "context-menu-utils.js"), "utf8"), context);
-  page.hideContextMenuHelper = page.FoliaContextMenu.hideContextMenu;
+  page.hideContextMenuHelper = page.MarkalooContextMenu.hideContextMenu;
   vm.runInContext(between(renderer, "function hideContextMenu(event)",
     "\n// Show context menu on right-click"), context);
   vm.runInContext(between(renderer, "function hideNotesPanelContextMenu(event)",
@@ -953,6 +2002,7 @@ function installOrdinaryInput(fixture, transformSource = value => value) {
     control.inputTrace.push({ phase: "dismiss", args, menus: menuState() });
     return result;
   };
+  installReadingViewportFixture(page, context);
   const mutation = between(customTabs, "  function bumpTabMutationRevision(",
     "  function bumpDocumentRevision(") +
     between(customTabs, "  function noteActiveContentMutation()",
@@ -977,6 +2027,41 @@ function installOrdinaryInput(fixture, transformSource = value => value) {
     between(renderer, "// Live preview with fast debounce", "// Sync editor textarea");
   vm.runInContext(transformSource(inputSource), context, { timeout: 1000 });
   check(listeners.length === 1, "Exact current ordinary preview input producer was installed");
+}
+
+function captureReadingViewportBinding({ page, control, context }) {
+  const owner = page.readingViewport;
+  const intent = owner.beginIntent(), permit = owner.capturePermit();
+  assert.ok(owner === vm.runInContext("readingViewport", context) &&
+    owner.isIntentCurrent(intent) && owner.isPermitCurrent(permit),
+    "Default fixture binds one real production lifecycle to both renderer and tab consumers");
+  let notifications = 0;
+  page.addEventListener("reading-viewport-invalidated", () => { notifications++; });
+  return () => {
+    assert.ok(!owner.isPermitCurrent(permit) && owner.isIntentCurrent(intent) && notifications === 1,
+      "Actual default ordinary source input retires its viewport permit without minting genuine intent");
+    const replacement = { ...control.tab };
+    assert.ok(replacement !== control.tab && typeof replacement.filePath === "string" &&
+      replacement.filePath.length > 0 && replacement.filePath === control.tab.filePath,
+      "Default ownership counterfactual really uses distinct equal-path tab objects");
+    const beforeReplacement = owner.capturePermit();
+    page.CustomTabs.getActiveTab = () => replacement;
+    assert.ok(!owner.isPermitCurrent(beforeReplacement) && !owner.isIntentCurrent(intent),
+      "Default fixture real lifecycle refuses authority borrowed by an equal-path replacement tab");
+    const replacementPermit = owner.capturePermit();
+    assert.ok(owner.isPermitCurrent(replacementPermit),
+      "Default fixture real lifecycle first admits the replacement tab");
+    owner.retireTab(replacement);
+    assert.ok(!owner.isPermitCurrent(replacementPermit) && owner.capturePermit() === null,
+      "Default fixture real lifecycle refuses a committed retired tab");
+    page.CustomTabs.getActiveTab = () => control.tab;
+    const beforePagehide = owner.capturePermit();
+    assert.ok(owner.isPermitCurrent(beforePagehide),
+      "Default pagehide control first owns a live tab and viewport permit");
+    page.dispatchEvent(new Event("pagehide"));
+    assert.ok(!owner.isPermitCurrent(beforePagehide) && owner.beginIntent() === null,
+      "Default fixture real pagehide binding retires window authority");
+  };
 }
 
 function inputMenuContracts() {
@@ -1012,7 +2097,9 @@ function inputMenuContracts() {
     assert.equal(page.viewer.textContent, control.typed, "Actual input still paints its live preview");
   };
   const positive = make();
+  const verifyOwnership = captureReadingViewportBinding(positive);
   input(positive); verify(positive);
+  verifyOwnership();
   check(true, "Ordinary input fully dismisses real menus before scroll and actual mutation without eager cache folding");
   for (const [label, transform, expected] of [
     ["omitted dismissal", text => text.replace("  hideDocumentContextMenus();\n", ""),
@@ -1021,8 +2108,11 @@ function inputMenuContracts() {
       "  hideDocumentContextMenus(true);"), "Ordinary input requests full dismissal"],
     ["reordered dismissal", text => text.replace(
       "  hideDocumentContextMenus();\n" +
+      "  readingViewport.invalidate();\n" +
       "  // History changes the source, not which pane the reader chose to drive it.\n" +
       "  if (preserveScrollOwner) editorScroll.start();\n  else editorScroll.changed();",
+      "  readingViewport.invalidate();\n" +
+      "  // History changes the source, not which pane the reader chose to drive it.\n" +
       "  if (preserveScrollOwner) editorScroll.start();\n  else editorScroll.changed();\n" +
       "  hideDocumentContextMenus();"),
       "Full menu dismissal precedes scroll and actual tab mutation"],
@@ -1191,7 +2281,7 @@ async function subscriptionContracts() {
         page.currentFilePath = active.filePath;
       },
     });
-    page.folia.onSaveMarkdownResult = listener => {
+    page.markaloo.onSaveMarkdownResult = listener => {
       callback = listener; return () => { unsubscribed++; };
     };
     installOrdinaryInput(fixture);
@@ -1268,7 +2358,7 @@ async function discardHistoryContracts() {
     const relative = path.relative(path.join(__dirname, "..", "src"), file);
     assert.ok(!relative.startsWith("..") && !path.isAbsolute(relative));
     return fs.readFileSync(path.join(producerRoot, relative), encoding);
-  } }, path, vm, assert, console, Event });
+  } }, path, vm, assert, console, Event, setImmediate });
   const beforeBody = execBody("  const discardBefore = await exec(`", "\n  const s7Question = ");
   const afterBody = execBody("  const discardAfter = await exec(`", "\n  const s7Questions = ");
   const guard = (name, discard) => {
@@ -1297,11 +2387,11 @@ async function discardHistoryContracts() {
       actualOpenPrimer(c);
     } };
     const render = c.renderMarkdown;
-    c.renderMarkdown = content => { c.viewer.textContent = content; return render(content); };
+    c.renderMarkdown = (content, ...args) => { c.viewer.textContent = content; return render(content, ...args); };
     return f;
   };
   const actualOpenPrimer = context => vm.runInContext(between(renderer,
-    "    captureEditSessionBaseline(true);\n    markdownEditor.value",
+    "\n    captureEditSessionBaseline(true);\n",
     "\n    if (!editorScroll.enter())"), context);
   const execute = async (f, body) => {
     let settled = false;
@@ -1311,7 +2401,7 @@ async function discardHistoryContracts() {
     // Drain the existing controller's discrete jobs, not native wall-clock waits.
     for (let turnIndex = 0; turnIndex < 20 && !settled; turnIndex++) {
       for (const [id, callback] of [...f.timers]) { f.timers.delete(id); callback(); }
-      f.finishRenders(); f.flushMicrotasks(); await turn();
+      await f.finishRenders(); f.flushMicrotasks(); await turn();
     }
     assert.ok(settled, "Actual S7 history work must settle under the existing controlled scheduler");
     return outcome;
@@ -1343,8 +2433,8 @@ async function discardHistoryContracts() {
       "Actual S7 native divergence gate rejects a missing " + label);
   }
   const unpainted = make(), ordinaryRender = unpainted.context.renderMarkdown;
-  unpainted.context.renderMarkdown = content => content.includes("S7_TYPED")
-    ? { then: done => done() } : ordinaryRender(content);
+  unpainted.context.renderMarkdown = (content, ...args) => content.includes("S7_TYPED")
+    ? { then: done => done() } : ordinaryRender(content, ...args);
   const rejected = await execute(unpainted, beforeBody);
   check(!!rejected.error && /actual TYPED source and preview/.test(rejected.error.message) &&
     unpainted.context.markdownEditor.value === "# Alpha\n\nS7_TYPED\n",
@@ -1353,7 +2443,7 @@ async function discardHistoryContracts() {
     "      // The tab record holds its own copy") + "}");
   actual.context.isEditMode = false;
   actual.context.renderMarkdown(actual.context.originalMarkdown);
-  actual.finishRenders();
+  await actual.finishRenders();
   const after = await execute(actual, afterBody);
   assert.ifError(after.error);
   check(guard(repainted, after.value) && guard(restored, after.value),
@@ -1425,7 +2515,7 @@ function reloadPreviewFixture(options = {}) {
     },
     exec: async script => {
       const value = await vm.runInContext(script, context, { timeout: 1000 });
-      if (script.includes("window.folia.queryDocumentDeletionState(") &&
+      if (script.includes("window.markaloo.queryDocumentDeletionState(") &&
           ++mainQueries === 2) options.afterMainQuery?.({ page, control });
       return value === undefined ? undefined : clone(value);
     },
@@ -2106,14 +3196,14 @@ function lazyNativeFixture(options = {}) {
   }
   const originalLoad = Host.prototype.loadFile;
   const page = {
-    FoliaFileHelpers: require(path.join(producerRoot, "file-helpers.js")),
+    MarkalooFileHelpers: require(path.join(producerRoot, "file-helpers.js")),
     getReloadRequestSession: () => state.rendererPageSession,
     document: { getElementById: id => id === "viewer" ? { textContent: control.viewer } : null },
   };
   const accepted = new Set();
   const switchToTab = async id => {
     const tab = tabs.find(candidate => candidate.id === id);
-    const verdict = page.FoliaFileHelpers.isLargeDocument(tab.content);
+    const verdict = page.MarkalooFileHelpers.isLargeDocument(tab.content);
     if (verdict.large && !accepted.has(id) && control.active !== id) {
       const request = { name: path.basename(tab.filePath), seconds: Math.round(verdict.estimatedMs / 1000) };
       const record = recordQuestion(request), bridge = deferred();
@@ -2173,7 +3263,7 @@ function lazyNativeFixture(options = {}) {
     getDocumentIdentityForTab: id => identity(tabs.find(tab => tab.id === id)),
     switchToTab,
   };
-  page.folia = Object.freeze({
+  page.markaloo = Object.freeze({
     openFileDialog: () => {
       const work = (async () => {
         const result = await dialog.showOpenDialog(win, chooserOptions);
@@ -2323,7 +3413,7 @@ function replacementNativeFixture(options = {}) {
       getDocumentIdentityForTab: () => ({ ...owner }),
       getActiveDocumentIdentity: () => ({ ...owner }),
       confirmDocumentReplacement: originalConfirm },
-    folia: Object.freeze({}),
+    markaloo: Object.freeze({}),
     document,
   };
   if (options.holdAdoption) {
@@ -2508,7 +3598,7 @@ async function ordinarySuffixBoundaryContracts() {
   let live = { ...baseline }, refusal = null;
   const requests = [];
   const page = { CustomTabs: { getTabs: () => [{ id: 7, diskVersion: baseline }] },
-    folia: Object.freeze({ checkOwnedTabDiskSnapshot(request) {
+    markaloo: Object.freeze({ checkOwnedTabDiskSnapshot(request) {
       requests.push(clone(request));
       return refusal || { matches: true, pathKey: owner.pathKey, diskVersion: { ...live } };
     } }) };
@@ -2616,7 +3706,7 @@ async function lazyNativeBoundaryContracts() {
   check(fixture.control.choiceRequested && !completed &&
     fixture.control.constructorCalls.length === 2 &&
     fixture.page.fs === undefined && fixture.page.ipcRenderer === undefined &&
-    fixture.page.require === undefined && Object.isFrozen(fixture.page.folia),
+    fixture.page.require === undefined && Object.isFrozen(fixture.page.markaloo),
   "Actual S10 boundary reaches a pending constructor question without renderer filesystem raw IPC or require");
   check(fixture.control.active === 1 && fixture.control.viewer.includes("GUARD_SMALL_DOC") &&
     fixture.control.selections.length === 1 && fixture.control.terminal.length === 0,
@@ -3198,7 +4288,7 @@ async function popupCaptureDiagnosticContracts() {
       Date, setTimeout, clearTimeout, isDeepStrictEqual: util.isDeepStrictEqual,
       BrowserWindow: { getAllWindows: () => windows.filter(window => !window.isDestroyed()) },
       exec: async script => vm.runInContext(script, context),
-      window: { folia: { openMermaidPopup: dispatch } },
+      window: { markaloo: { openMermaidPopup: dispatch } },
       require: name => {
         assert.equal(name, "util");
         return { inspect: (value, settings) => {
@@ -4194,7 +5284,7 @@ async function shutdownAdmissionDiagnosticContracts() {
       observation.renders.push(painted);
     });
     record.promise.catch(() => {});
-    page.folia.openFileDialog = async () => {
+    page.markaloo.openFileDialog = async () => {
       const choice = await dialog.showOpenDialog(win, { properties: ["multiSelections"] });
       assert.deepEqual(Array.from(choice.filePaths), [filePath]);
       observation.processors.push(record); delivered = true;
@@ -4512,8 +5602,8 @@ async function installedQuestionSnapshotContracts() {
     const getElement = page.document.getElementById;
     page.document.getElementById = id => id === "appMessageDialog" ?
       options.local === undefined ? null : { open: options.local } : getElement(id);
-    page.folia.onMainDialogVisibility = function(listener) {
-      assert.equal(this, page.folia);
+    page.markaloo.onMainDialogVisibility = function(listener) {
+      assert.equal(this, page.markaloo);
       subscriptions++; listeners.add(listener); callback = listener; trace.push("subscribe");
       if (!["missing", "late"].includes(options.signal)) {
         for (const value of options.deliveries ?? [options.main ?? false]) {
@@ -4529,7 +5619,7 @@ async function installedQuestionSnapshotContracts() {
         if (options.cleanupFailure) throw cleanupError;
       };
     };
-    if (Object.hasOwn(options, "capability")) page.folia.onMainDialogVisibility = options.capability;
+    if (Object.hasOwn(options, "capability")) page.markaloo.onMainDialogVisibility = options.capability;
     let actual = program;
     if (options.unsafeLocal) actual = actual.replace(
       "document.getElementById('appMessageDialog')?.open === true || mainVisible",
@@ -4708,8 +5798,16 @@ async function generationFinalizerContracts() {
       shutdownAuthorized: true, shutdownAuthorizationOwnerId: 1,
       shutdownAuthorizationGeneration: 3, shutdownAuthorizationCapacityLatched: false,
       ownerDocumentBaselines: baselines, activeDialogExtraBatch: null, documentAdmissions: new Map(),
+      nativeDocumentOpenTickets: new Map(), startupDocuments: { pending: new Map(), active: null },
+      scheduleStartupDocumentPump: () => {
+        assert.equal(mainContext.shutdownCommitIngressBlocked, false);
+        assert.equal(mainContext.nativeDocumentOpenTickets.size, 0);
+        assert.equal(mainContext.startupDocuments.pending.size, 0);
+        assert.equal(mainContext.startupDocuments.active, null);
+        trace.push("schedule-empty-startup");
+      },
       shutdownOwnerWindow: () => owner, ownerRendererAvailable: target => target === wc,
-      foliaUpdaterAttemptRetainsFreeze: () => false, QUIT_APPROVAL_THAW: "THAW",
+      markalooUpdaterAttemptRetainsFreeze: () => false, QUIT_APPROVAL_THAW: "THAW",
       QUIT_APPROVAL_COMMIT: "COMMIT", wc, record: { id: 76, revision: 1 },
       attempt: { generation: 3 }, cancelDocumentReplacementConsents() {},
       SUPPORTED_EXTENSIONS: { markdown: [".md"], mermaid: [".mmd"] },
@@ -4828,6 +5926,11 @@ async function generationFinalizerContracts() {
     good.trace.indexOf("reset-2") < good.trace.indexOf("reload") &&
     good.assertions.length === 3 && good.assertions.every(assertion => assertion.success),
   "Actual finalizer prep reset precedes the genuine chooser source; measured reset still erases only baseline before reload re-admission");
+  check(good.trace.filter(value => value === "schedule-empty-startup").length === 2 &&
+    good.trace.indexOf("reset-1") < good.trace.indexOf("schedule-empty-startup") &&
+    good.trace.indexOf("schedule-empty-startup") < good.trace.indexOf("chooser") &&
+    good.trace.lastIndexOf("schedule-empty-startup") > good.trace.indexOf("reset-2"),
+  "Both actual freeze releases call the explicit empty-startup scheduling port after the fence clears");
   const noPreparation = await run({ noPreparation: true, bodyFailure: true });
   check(noPreparation.error?.errors?.[0] === noPreparation.bodyFailure &&
     noPreparation.error.errors[1]?.message === "NATIVE_FILE_NOT_DELIVERED" &&
@@ -4917,6 +6020,12 @@ async function generationNavigationSetupContracts() {
   const loadSaved = between(customTabs, "  async function loadSavedTabs(", "\n  const tabPathAliases =");
   const navigate = between(main, '  wc.on("did-navigate", () => {',
     "\n\n  // The page finished loading");
+  const startupState = between(main, "const nativeDocumentOpenTickets = new Map();",
+    "\nlet documentSessionManifest = null;");
+  const startupDeadline = between(main, "function scheduleNativeDocumentDeadline() {",
+    "\nfunction invalidateStartupDocumentGeneration()");
+  const startupInvalidation = between(main, "function invalidateStartupDocumentGeneration() {",
+    "\nfunction retryRetainedStartupDocuments()");
   const revoke = between(main, "function revokeShutdownAuthorization() {", "\nfunction grantShutdownAuthorization(");
   const dirty = between(customTabs, "  function dirtyTabNames(", "\n  window.addEventListener(PENDING_SAVE_STATUS_EVENT,");
   const run = async (options = {}) => {
@@ -4926,9 +6035,11 @@ async function generationNavigationSetupContracts() {
     const seed = "Navigation edit fixture\n\n" +
       (options.discardBoundary ? "Generation discard fixture\n\n" : "") + "before\n";
     const version = { dev: 1, ino: 2, size: seed.length, mtimeMs: 3, ctimeMs: 4 };
-    const trace = [], assertions = [], trackingSelections = [], handlers = new Map(), owners = new Map();
+    const trace = [], rendererErrors = [], assertions = [], trackingSelections = [], handlers = new Map(), owners = new Map();
     const baselines = new Map(), knownOwners = new Map(), adoptionCalls = [], preparations = [];
     const documentState = new Map();
+    const startupTransitions = [], clearedStartupDeadlines = [];
+    const startupTimer = {};
     const crypto = require("node:crypto");
     const aReadStarted = deferred(), aReadRelease = deferred(), pageWorks = [];
     let aReadHeld = false, aReadReleased = false;
@@ -5005,6 +6116,10 @@ async function generationNavigationSetupContracts() {
         return true;
       },
       console: { error: (...args) => trace.push("main-error:" + args.join(" ")) },
+      clearTimeout: timer => {
+        assert.equal(timer, startupTimer);
+        clearedStartupDeadlines.push(timer);
+      },
     });
     const currentAdmission = (ref, owner, filePath) => {
       const record = mainContext.documentAdmissions.get(ref);
@@ -5073,7 +6188,11 @@ async function generationNavigationSetupContracts() {
       capture + "\n" + chooser + "\n" + restoreRoute + "\n" +
       prepareRoute + "\n" + authority + "\n" + committedCheck + "\n" + commit + "\n" +
       identity + "\n" + ownerKey + "\n" + versionNormalizer + "\n" + closingOwner + "\n" +
-      revoke + "\n" + navigate, mainContext);
+      startupState + "\n" + startupDeadline + "\n" +
+      (options.noStartupInvalidation
+        ? "function invalidateStartupDocumentGeneration() {}"
+        : startupInvalidation) + "\n" + revoke + "\n" + navigate, mainContext);
+    const startup = vm.runInContext("({ nativeDocumentOpenTickets, startupDocuments })", mainContext);
     const register = (tab, descriptor) => {
       const identity = { tabId: tab.id, pageSession,
         rendererGeneration: state.rendererGeneration, documentGeneration: nextRef,
@@ -5114,7 +6233,7 @@ async function generationNavigationSetupContracts() {
       recordSelection(active, false);
     };
     Object.assign(page.window, {
-      folia: {
+      markaloo: {
         openFileDialog: () => { trace.push("chooser"); mainContext.openFileDialog(); },
         restoreSession: () => handlers.get("restore-document-session")({ sender: wc, senderFrame: frame }),
         checkCommittedDiskAdoption: data => {
@@ -5176,7 +6295,10 @@ async function generationNavigationSetupContracts() {
       },
       notify: message => trace.push("notification:" + message),
       console: { log() {}, warn: (...args) => trace.push("renderer-warning:" + args[0]),
-        error: (...args) => trace.push("renderer-error:" + args[0]) },
+        error: (...args) => {
+          rendererErrors.push(args.map(value => value?.stack || String(value)).join("\n"));
+          trace.push("renderer-error:" + args[0]);
+        } },
       queuePreHandshakeTrackingAssertion() {}, dismissUpdatePrompt() {}, renderTabs() {},
       bumpDocumentRevision() {},
       positionOf: () => ({}), restorePosition() {},
@@ -5212,6 +6334,7 @@ async function generationNavigationSetupContracts() {
       if (!options.noPaint) painted = content;
       trace.push("paint-" + state.rendererGeneration);
     };
+    installReadingViewportFixture(page, rendererContext);
     vm.runInContext(dirty + "\n" + verification + "\n" + approvalMatch + "\n" + activation + "\n" +
       loadSaved + "\nwindow.CustomTabs.__dirtyTabNames = dirtyTabNames;", rendererContext);
     const exec = async script => vm.runInContext(script, rendererContext);
@@ -5231,7 +6354,23 @@ async function generationNavigationSetupContracts() {
     wc.reload = () => {
       trace.push("reload");
       active = null; painted = "";
+      const pending = { state: "offered", ambiguous: false, ticket: "owned-ticket",
+        probe: {}, deadline: 100, correlation: {}, admission: {}, sender: wc, frame };
+      startup.nativeDocumentOpenTickets.set("owned-ticket", { deadline: 100 });
+      startup.startupDocuments.pending.set("owned-startup", pending);
+      Object.assign(startup.startupDocuments, {
+        active: pending, deadlineTimer: startupTimer, deadlineAt: 100,
+      });
       wc.emit("did-navigate");
+      startupTransitions.push({
+        tickets: startup.nativeDocumentOpenTickets.size,
+        state: pending.state,
+        retired: ["ticket", "probe", "deadline", "correlation", "admission", "sender", "frame"]
+          .every(field => pending[field] === null),
+        active: startup.startupDocuments.active,
+        timer: startup.startupDocuments.deadlineTimer,
+        deadline: startup.startupDocuments.deadlineAt,
+      });
       trace.push("navigation-invalidated-" + state.rendererGeneration);
       mainContext.approvalRendererPageSession = pageSession = "navigation-page-" + state.rendererGeneration;
       state.renderer = "ready";
@@ -5408,7 +6547,8 @@ async function generationNavigationSetupContracts() {
     try { await vm.runInContext("(async () => {\n" + actual + "\n})()", context); }
     catch (failure) { error = failure; }
     await Promise.all(pageWorks);
-    return { trace, assertions, error, rig, beforeOwner, restoredOwner, closeRequests, phaseA,
+    return { trace, rendererErrors, assertions, error, rig, beforeOwner, restoredOwner, closeRequests, phaseA,
+      startupTransitions, clearedStartupDeadlines,
       adoptionCalls, preparations, active, painted,
       aReadHeld, aReadReleased, remainingNavigationListeners: wc.listenerCount("did-navigate"),
       questionDriverRestored,
@@ -5418,8 +6558,20 @@ async function generationNavigationSetupContracts() {
   };
   const good = await run();
   assert.equal(good.error, null, require("node:util").inspect({
-    error: good.error, trace: good.trace, preparations: good.preparations, adoptionCalls: good.adoptionCalls,
+    error: good.error, trace: good.trace, rendererErrors: good.rendererErrors,
+    preparations: good.preparations, adoptionCalls: good.adoptionCalls,
   }, { depth: null }));
+  const startupRetired = result => result.startupTransitions.length === 2 &&
+    result.clearedStartupDeadlines.length === 2 &&
+    result.startupTransitions.every(record => record.tickets === 0 && record.state === "queued" &&
+      record.retired && record.active === null && record.timer === null && record.deadline === Infinity);
+  check(startupRetired(good),
+  "Actual navigation invalidator clears seeded tickets and pending bindings and its real deadline helper cancels each owned timer");
+  const missingStartupInvalidation = await run({ noStartupInvalidation: true });
+  check(!missingStartupInvalidation.error &&
+    missingStartupInvalidation.assertions.every(assertion => assertion.success) &&
+    !startupRetired(missingStartupInvalidation),
+  "An inert invalidator preserves the older actor checks but fails the seeded startup retirement oracle");
   check(!good.error && good.assertions.length === 3 && good.assertions.every(assertion => assertion.success) &&
     good.beforeOwner.tabId !== good.restoredOwner.tabId &&
     good.beforeOwner.documentRef !== good.restoredOwner.documentRef &&
@@ -6051,6 +7203,7 @@ async function generationOwnedQuestionContracts() {
 (async () => {
   let failures = 0;
   for (const run of [sourceContracts, backgroundSaveVersionContracts, installedLauncherDiagnosticContracts,
+    windowsAdmissionRejectionContracts,
     consentContracts, requestContracts,
     subscriptionContracts, sameTaskContracts, deliveryContracts,
     liveEditorContract, liveConsentContract, switchPermissionContracts, questionObserverContracts,

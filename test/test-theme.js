@@ -1,5 +1,5 @@
 // Regression harness for the theme system: the two DEFAULT schemes must look
-// exactly as Folia looked before the theme system existed.
+// exactly as Markaloo looked before the theme system existed.
 //
 // That is a user requirement, not a nicety - "make sure current themes also
 // bundle up as Dark/Light defaults" - so the oracle is a FROZEN BASELINE
@@ -766,7 +766,7 @@ app.whenReady().then(async () => {
     const welcomeStash = await exec(`(() => {
       const w = document.querySelector('#viewer > .welcome');
       if (!w) return 0;
-      window.__foliaWelcomeHTML = w.outerHTML;
+      window.__markalooWelcomeHTML = w.outerHTML;
       return w.querySelectorAll('*').length;
     })()`);
     const fixture = path.join(__dirname, "..", "tmp", "document-editor-theme.md");
@@ -2206,7 +2206,7 @@ app.whenReady().then(async () => {
 
     // ─── SECTION 10: THE SCHEME LAYER ───────────────────────────────────────
     // Sections 1-9 guard FIDELITY: the two default schemes must look exactly as
-    // Folia looked before the theme system existed. This section guards the
+    // Markaloo looked before the theme system existed. This section guards the
     // thing built on top - the four additional schemes, the registry that names
     // them and the menu that applies them.
     //
@@ -2217,7 +2217,7 @@ app.whenReady().then(async () => {
     // and THE BACKGROUND IT WAS MEASURED AGAINST; it cannot notice that the
     // background belongs to a different palette. So a contrast bar alone can
     // never catch a stranded surface, and 10c below is the assertion that can.
-    const HELD = "window.__foliaExportThemeHeld";
+    const HELD = "window.__markalooExportThemeHeld";
 
     /* Properties a scheme is NOT required to override, each with the reason.
        Anything else the mode's base declares as a LITERAL must be overridden,
@@ -2248,7 +2248,7 @@ app.whenReady().then(async () => {
             if (m) cssIds.add(m[1]);
           }
         }
-        const S = window.foliaThemes.SCHEMES;
+        const S = window.markalooThemes.SCHEMES;
         return JSON.stringify({
           cssIds: [...cssIds],
           nonBase: S.filter((s) => !s.base).map((s) => s.id),
@@ -2328,7 +2328,7 @@ app.whenReady().then(async () => {
           },
           schemes: {},
         };
-        for (const s of window.foliaThemes.SCHEMES.filter((x) => !x.base)) {
+        for (const s of window.markalooThemes.SCHEMES.filter((x) => !x.base)) {
           const own = decl('body[data-theme="' + s.id + '"]');
           const base = bases[s.mode];
           out.schemes[s.id] = {
@@ -2524,7 +2524,7 @@ app.whenReady().then(async () => {
     const applyState = (mode, scheme) =>
       exec(`(() => {
         localStorage.setItem('themeMode', ${JSON.stringify(mode)});
-        window.foliaThemes.setScheme(${JSON.stringify(scheme || `default-${mode}`)});
+        window.markalooThemes.setScheme(${JSON.stringify(scheme || `default-${mode}`)});
         return (document.body.getAttribute('data-theme') || 'none') + '/' +
                (document.body.classList.contains('dark-mode') ? 'dark' : 'light');
       })()`);
@@ -2672,18 +2672,18 @@ app.whenReady().then(async () => {
        markup styles identically either way, and appending it unchanged keeps
        what is scanned the PRODUCT's markup under the PRODUCT's rules. */
     const welcomeAttached = await exec(`(() => {
-      if (!window.__foliaWelcomeHTML) return 0;
+      if (!window.__markalooWelcomeHTML) return 0;
       const viewer = document.getElementById('viewer');
-      viewer.insertAdjacentHTML('beforeend', window.__foliaWelcomeHTML);
+      viewer.insertAdjacentHTML('beforeend', window.__markalooWelcomeHTML);
       const node = viewer.lastElementChild;
-      node.setAttribute('data-folia-welcome-probe', '1');
+      node.setAttribute('data-markaloo-welcome-probe', '1');
       return node.querySelectorAll('*').length;
     })()`);
     await applySettled("light", null, "light default (welcome re-attach)");
     const welcomeLive = JSON.parse(
       await exec(`(() => {
         const pick = (s, prop) => {
-          const el = document.querySelector('[data-folia-welcome-probe] ' + s);
+          const el = document.querySelector('[data-markaloo-welcome-probe] ' + s);
           return el ? getComputedStyle(el).getPropertyValue(prop) : null;
         };
         return JSON.stringify({
@@ -2814,7 +2814,7 @@ app.whenReady().then(async () => {
     }
 
     // ── 10d: a scheme may not make contrast worse than the default ───────────
-    // Deliberately NOT an absolute WCAG bar. Folia's own defaults carry several
+    // Deliberately NOT an absolute WCAG bar. Markaloo's own defaults carry several
     // sub-4.5 cells (worst: white on the dark accent at 2.26) that cannot be
     // fixed without breaking the byte-exact-default requirement sections 1-9
     // enforce, so an absolute bar could only be met by changing the very thing
@@ -3248,7 +3248,7 @@ app.whenReady().then(async () => {
     /* ── 10f: the accent GLOWS - the half of the appearance no golden can see ─
        Sections 1-9 sample surfaces in their RESTING state, because that is all
        getComputedStyle can reach. Every rule below paints only on :hover,
-       :focus or ::after, so the twelve box-shadows that carry Folia's accent
+       :focus or ::after, so the twelve box-shadows that carry Markaloo's accent
        halo were invisible to the entire suite - and 10c caught the resulting
        gap only by accident, through the one glow that happens to sit on
        .welcome-open-btn.
@@ -3655,15 +3655,15 @@ app.whenReady().then(async () => {
            declarations, would catch them and fail this check. */
         const probe = document.createElement('style');
         probe.textContent =
-          '.folia-literal-selfcheck-hex { color: #279ea7 }' +
-          '.folia-literal-selfcheck-upperhex { color: #3DBDC6 }' +
-          '.folia-literal-selfcheck-rgb { color: rgb(61, 189, 198) }' +
-          '.folia-literal-selfcheck-rgba { box-shadow: 0 0 8px rgba(231, 76, 60, 0.3) }' +
-          '.folia-literal-selfcheck-varfallback { color: var(--folia-unset, #279EA7) }' +
-          '.folia-literal-selfcheck-shorthand { border: 1px solid var(--folia-unset, rgb(59, 191, 204)) }' +
-          '@keyframes foliaLiteralSelfcheckKf { 50% { box-shadow: 0 0 8px rgba(39, 158, 167, 0.3) } }' +
-          '.folia-literal-selfcheck-clean { color: rgb(1, 2, 3) }' +
-          '.folia-literal-selfcheck-custom { --folia-selfcheck-token: #279ea7 }';
+          '.markaloo-literal-selfcheck-hex { color: #279ea7 }' +
+          '.markaloo-literal-selfcheck-upperhex { color: #3DBDC6 }' +
+          '.markaloo-literal-selfcheck-rgb { color: rgb(61, 189, 198) }' +
+          '.markaloo-literal-selfcheck-rgba { box-shadow: 0 0 8px rgba(231, 76, 60, 0.3) }' +
+          '.markaloo-literal-selfcheck-varfallback { color: var(--markaloo-unset, #279EA7) }' +
+          '.markaloo-literal-selfcheck-shorthand { border: 1px solid var(--markaloo-unset, rgb(59, 191, 204)) }' +
+          '@keyframes markalooLiteralSelfcheckKf { 50% { box-shadow: 0 0 8px rgba(39, 158, 167, 0.3) } }' +
+          '.markaloo-literal-selfcheck-clean { color: rgb(1, 2, 3) }' +
+          '.markaloo-literal-selfcheck-custom { --markaloo-selfcheck-token: #279ea7 }';
         document.head.appendChild(probe);
         const planted = sweep();
         probe.remove();
@@ -3758,7 +3758,7 @@ app.whenReady().then(async () => {
            10c exists to catch, wearing a spelling 10c cannot see.
        Measured before this was written: the product carried two, both in the
        theme-menu chrome added by this item (--primary-color -> #2d9cdb, the
-       pre-Folia accent, and --text-secondary -> #777), and both were in the
+       pre-Markaloo accent, and --text-secondary -> #777), and both were in the
        FIRST state - --primary-color resolved to #3DBDC6 on a probe element in
        the live document, so neither fallback could ever have painted.
        Deliberately NOT limited to the frozen accent family: the whole point is
@@ -3922,24 +3922,24 @@ app.whenReady().then(async () => {
          document.styleSheets traversal the real claim rests on. */
       const probe = document.createElement('style');
       probe.textContent =
-        '.folia-varfb-selfcheck-hex { color: var(--folia-unset-a, #123456) }' +
-        '.folia-varfb-selfcheck-rgb { color: var(--folia-unset-b, rgb(1, 2, 3)) }' +
-        '.folia-varfb-selfcheck-kw { color: var(--folia-unset-e, rebeccapurple) }' +
-        '.folia-varfb-selfcheck-modern { color: var(--folia-unset-f, oklch(0.7 0.1 200)) }' +
-        '.folia-varfb-selfcheck-nested-hex { color: var(--folia-unset-g, var(--folia-unset-h, #abcdef)) }' +
-        '.folia-varfb-selfcheck-inside { box-shadow: var(--folia-unset-i, 0 0 4px red) }' +
-        '.folia-varfb-selfcheck-upper { color: VAR(--folia-unset-l, #654321) }' +
-        '.folia-varfb-selfcheck-ok-chain { color: var(--folia-unset-c, var(--primary-color)) }' +
-        '.folia-varfb-selfcheck-ok-kw { color: var(--folia-unset-d, inherit) }' +
-        '.folia-varfb-selfcheck-ok-transparent { color: var(--folia-unset-j, transparent) }' +
-        '.folia-varfb-selfcheck-ok-quoted::after { content: "var(--folia-unset-m, #ff0000)" }' +
-        '.folia-varfb-selfcheck-ok-length { gap: var(--folia-unset-k, 4px) }';
+        '.markaloo-varfb-selfcheck-hex { color: var(--markaloo-unset-a, #123456) }' +
+        '.markaloo-varfb-selfcheck-rgb { color: var(--markaloo-unset-b, rgb(1, 2, 3)) }' +
+        '.markaloo-varfb-selfcheck-kw { color: var(--markaloo-unset-e, rebeccapurple) }' +
+        '.markaloo-varfb-selfcheck-modern { color: var(--markaloo-unset-f, oklch(0.7 0.1 200)) }' +
+        '.markaloo-varfb-selfcheck-nested-hex { color: var(--markaloo-unset-g, var(--markaloo-unset-h, #abcdef)) }' +
+        '.markaloo-varfb-selfcheck-inside { box-shadow: var(--markaloo-unset-i, 0 0 4px red) }' +
+        '.markaloo-varfb-selfcheck-upper { color: VAR(--markaloo-unset-l, #654321) }' +
+        '.markaloo-varfb-selfcheck-ok-chain { color: var(--markaloo-unset-c, var(--primary-color)) }' +
+        '.markaloo-varfb-selfcheck-ok-kw { color: var(--markaloo-unset-d, inherit) }' +
+        '.markaloo-varfb-selfcheck-ok-transparent { color: var(--markaloo-unset-j, transparent) }' +
+        '.markaloo-varfb-selfcheck-ok-quoted::after { content: "var(--markaloo-unset-m, #ff0000)" }' +
+        '.markaloo-varfb-selfcheck-ok-length { gap: var(--markaloo-unset-k, 4px) }';
       document.head.appendChild(probe);
       const planted = scan();
       probe.remove();
       const after = scan();
 
-      const only = (set) => set.literal.filter((h) => h.selector.indexOf('.folia-varfb-selfcheck') === 0).map((h) => h.selector);
+      const only = (set) => set.literal.filter((h) => h.selector.indexOf('.markaloo-varfb-selfcheck') === 0).map((h) => h.selector);
       return JSON.stringify({
         before: before,
         plantedHits: only(planted),
@@ -3970,13 +3970,13 @@ app.whenReady().then(async () => {
            does not skip quoted strings reports a literal fallback for a
            string that paints no colour at all. */
     const wantCaught = [
-      ".folia-varfb-selfcheck-hex",
-      ".folia-varfb-selfcheck-rgb",
-      ".folia-varfb-selfcheck-kw",
-      ".folia-varfb-selfcheck-modern",
-      ".folia-varfb-selfcheck-nested-hex",
-      ".folia-varfb-selfcheck-inside",
-      ".folia-varfb-selfcheck-upper",
+      ".markaloo-varfb-selfcheck-hex",
+      ".markaloo-varfb-selfcheck-rgb",
+      ".markaloo-varfb-selfcheck-kw",
+      ".markaloo-varfb-selfcheck-modern",
+      ".markaloo-varfb-selfcheck-nested-hex",
+      ".markaloo-varfb-selfcheck-inside",
+      ".markaloo-varfb-selfcheck-upper",
     ];
     const wronglyCaught = varFb.plantedHits.filter((s) => s.includes("-ok-"));
     const missed = wantCaught.filter((s) => !varFb.plantedHits.includes(s));
@@ -6657,17 +6657,17 @@ app.whenReady().then(async () => {
     // The welcome markup has served 10c, 10d, 10f and 10g; take it back out so
     // 10e and the final restore see the document the rest of the suite built.
     await exec(
-      `(() => { const n = document.querySelector('[data-folia-welcome-probe]');
+      `(() => { const n = document.querySelector('[data-markaloo-welcome-probe]');
         if (n) n.remove(); return 1; })()`,
     );
 
     // ── 10e: behaviour - the registry's own rules ────────────────────────────
     // Everything above measures the STYLESHEET. These measure the JS that
-    // decides which block applies, driven through window.foliaThemes rather
+    // decides which block applies, driven through window.markalooThemes rather
     // than a reimplementation of it.
     const beh = JSON.parse(
       await exec(`(() => {
-        const T = window.foliaThemes, K = T.SCHEME_KEYS, out = {};
+        const T = window.markalooThemes, K = T.SCHEME_KEYS, out = {};
         const state = () => (document.body.getAttribute('data-theme') || 'none') + '/' +
           (document.body.classList.contains('dark-mode') ? 'dark' : 'light');
 
@@ -7061,7 +7061,7 @@ app.whenReady().then(async () => {
         // the next state, and so restoreExportScheme() is exercised each pass.
         await exec(`(() => {
           window.__pdfReleaseSeen = false;
-          window.__pdfReleaseOff = window.folia.onPdfExportResult(() => {
+          window.__pdfReleaseOff = window.markaloo.onPdfExportResult(() => {
             window.__pdfReleaseSeen = true;
             window.__pdfReleaseOff();
           });
@@ -7414,11 +7414,11 @@ app.whenReady().then(async () => {
 
     const mermaidReal = {};
     await exec(`(() => {
-      window.__foliaMermaidCalls = [];
-      window.__foliaMermaidWrapped = window.mermaid.initialize;
+      window.__markalooMermaidCalls = [];
+      window.__markalooMermaidWrapped = window.mermaid.initialize;
       window.mermaid.initialize = function (cfg) {
-        window.__foliaMermaidCalls.push(JSON.stringify(cfg));
-        return window.__foliaMermaidWrapped.apply(this, arguments);
+        window.__markalooMermaidCalls.push(JSON.stringify(cfg));
+        return window.__markalooMermaidWrapped.apply(this, arguments);
       };
       return 1;
     })()`);
@@ -7432,12 +7432,12 @@ app.whenReady().then(async () => {
            mode change per state makes every state exercise the re-theme site
            rather than inheriting the previous state's configuration. */
         await applySettled(mode === "dark" ? "light" : "dark", null, `10i mermaid pre-${label}`);
-        await exec(`(() => { window.__foliaMermaidCalls = []; return 1; })()`);
+        await exec(`(() => { window.__markalooMermaidCalls = []; return 1; })()`);
         await applySettled(mode, scheme, `10i mermaid ${label}`);
         await exec(`(async () => { await whenMermaidSettled(); return 1; })()`);
         mermaidReal[label] = JSON.parse(
           await exec(`JSON.stringify({
-            calls: window.__foliaMermaidCalls,
+            calls: window.__markalooMermaidCalls,
             /* The load-time site's argument, read as that site itself spells
                it - so a state that legitimately makes no re-theme call is
                still covered on the axis that decides the NEXT document. */
@@ -7447,11 +7447,11 @@ app.whenReady().then(async () => {
       }
     } finally {
       await exec(`(() => {
-        if (window.__foliaMermaidWrapped) {
-          window.mermaid.initialize = window.__foliaMermaidWrapped;
-          delete window.__foliaMermaidWrapped;
+        if (window.__markalooMermaidWrapped) {
+          window.mermaid.initialize = window.__markalooMermaidWrapped;
+          delete window.__markalooMermaidWrapped;
         }
-        delete window.__foliaMermaidCalls;
+        delete window.__markalooMermaidCalls;
         return 1;
       })()`);
     }
@@ -7525,7 +7525,7 @@ app.whenReady().then(async () => {
        literal early. */
     const popupSites = [];
     for (const channel of POPUP_CHANNELS) {
-      const needle = "window.folia." + POPUP_METHODS[channel] + "(";
+      const needle = "window.markaloo." + POPUP_METHODS[channel] + "(";
       let at = rendererSrc.indexOf(needle);
       while (at !== -1) {
         const open = rendererSrc.indexOf("{", at);
@@ -8141,7 +8141,7 @@ app.whenReady().then(async () => {
     );
 
     // ── 10j: THE MENU, DRIVEN THE WAY A READER DRIVES IT ────────────────────
-    /* EVERY OTHER ASSERTION IN THIS FILE CALLS window.foliaThemes.setScheme()
+    /* EVERY OTHER ASSERTION IN THIS FILE CALLS window.markalooThemes.setScheme()
        DIRECTLY. That is the right subject for a colour claim - it is the
        shortest path to the state being measured - but it means the surface the
        user actually touches has never been exercised: the hamburger, the View
@@ -8953,7 +8953,7 @@ app.whenReady().then(async () => {
     const labelMisses = [];
     for (const r of clickResults) {
       const want = await exec(
-        `(() => { const s = window.foliaThemes.SCHEMES.find((x) => x.id === ${JSON.stringify(r.id)}); return s ? s.label : ''; })()`,
+        `(() => { const s = window.markalooThemes.SCHEMES.find((x) => x.id === ${JSON.stringify(r.id)}); return s ? s.label : ''; })()`,
       );
       if (r.label !== want) labelMisses.push(`${r.id}: row reads "${r.label}", registry says "${want}"`);
     }
@@ -9389,7 +9389,7 @@ app.whenReady().then(async () => {
         localStorage.setItem("themeLightScheme", "parchment");
         localStorage.setItem("themeDarkScheme", "ember");
 
-        const t = window.foliaThemes;
+        const t = window.markalooThemes;
         out.exportsResolver = typeof window.resolveStoredMode;
 
         // The exact expression every scheme site used before unification.
@@ -9453,7 +9453,7 @@ app.whenReady().then(async () => {
     check(
       "10k: the overlay's stored-mode helper honours the legacy darkMode key",
       resolverProbe.overlayMode === "dark",
-      `foliaThemes.storedMode() = ${resolverProbe.overlayMode}, want dark${resolverProbe.error ? ` [${resolverProbe.error}]` : ""}`,
+      `markalooThemes.storedMode() = ${resolverProbe.overlayMode}, want dark${resolverProbe.error ? ` [${resolverProbe.error}]` : ""}`,
     );
 
     check(
@@ -9867,7 +9867,7 @@ app.whenReady().then(async () => {
        "Follow Desktop" row - the only one whose mode is not a scheme mode and
        the only one that reaches resolveMode()'s matchMedia branch from the
        menu - were unproven end to end. applyTheme is deliberately NOT exported
-       on window.foliaThemes, so clicking is not merely the realistic path, it
+       on window.markalooThemes, so clicking is not merely the realistic path, it
        is the only one.
 
        THE SNAPSHOT IS TAKEN HERE, BEFORE THE FIRST CLICK, not further down
@@ -10005,9 +10005,9 @@ app.whenReady().then(async () => {
           localStorage.setItem("themeMode", "desktop");
           localStorage.setItem("themeLightScheme", "clarity");
           localStorage.setItem("themeDarkScheme", "abyss");
-          window.__foliaOsFlips = 0;
+          window.__markalooOsFlips = 0;
           window.matchMedia("(prefers-color-scheme: dark)")
-            .addEventListener("change", () => { window.__foliaOsFlips++; });
+            .addEventListener("change", () => { window.__markalooOsFlips++; });
           return 1;
         })()`);
         await emulate("light");
@@ -10021,7 +10021,7 @@ app.whenReady().then(async () => {
            machine's real preference happens to be, which would make the pin
            below machine-dependent. From here on every increment is one of the
            three asserted flips. */
-        await exec(`(() => { window.__foliaOsFlips = 0; return 1; })()`);
+        await exec(`(() => { window.__markalooOsFlips = 0; return 1; })()`);
         for (const want of ["dark", "light", "dark"]) {
           await emulate(want);
           await waitFor(
@@ -10041,7 +10041,7 @@ app.whenReady().then(async () => {
           });
         }
         osProbe.loopFlips = JSON.parse(
-          await exec(`(() => JSON.stringify(window.__foliaOsFlips))()`),
+          await exec(`(() => JSON.stringify(window.__markalooOsFlips))()`),
         );
         /* THE NEGATIVE HALF: a reader who has PINNED a mode must not be
            dragged around by the OS. Without this the assertion above is
@@ -10069,7 +10069,7 @@ app.whenReady().then(async () => {
           "10o: the app to settle to light before the mode is pinned",
         );
         await exec(`(() => {
-          window.__foliaOsFlips = 0;
+          window.__markalooOsFlips = 0;
           document.querySelector('.custom-theme-option[data-mode="light"]').click();
           return 1;
         })()`);
@@ -10096,7 +10096,7 @@ app.whenReady().then(async () => {
            carries a counter for. */
         await waitFor(
           exec,
-          `window.__foliaOsFlips >= 1`,
+          `window.__markalooOsFlips >= 1`,
           "10o: the emulated OS flip to reach a media-query listener",
         );
         osProbe.pinned = JSON.parse(
@@ -10104,7 +10104,7 @@ app.whenReady().then(async () => {
             dark: document.body.classList.contains("dark-mode"),
             attr: document.body.getAttribute("data-theme"),
             stored: localStorage.getItem("themeMode"),
-            flips: window.__foliaOsFlips,
+            flips: window.__markalooOsFlips,
           }))()`),
         );
 

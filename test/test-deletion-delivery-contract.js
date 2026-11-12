@@ -17,6 +17,12 @@ const ACK_FIELDS = [
 function createFixture() {
   const html = fs.readFileSync(path.join(SRC, "index.html"), "utf8");
   const ids = [...html.matchAll(/\bid=["']([^"']+)["']/g)].map(match => match[1]);
+  const dialogIds = [...html.matchAll(/<([\w-]+)\b([^>]*)>/g)]
+    .filter(([, tag, attributes]) => tag === "dialog" ||
+      /\bclass=["'][^"']*\bnote-dialog-overlay\b/.test(attributes) ||
+      /\baria-modal=["']true["']/.test(attributes))
+    .map(([, , attributes]) => attributes.match(/\bid=["']([^"']+)["']/)?.[1]).filter(Boolean);
+  assert(dialogIds.length > 0, "actual HTML dialog selector facts must exist");
   const noteColors = [...html.matchAll(/class="note-color-option(?: selected)?"\s+data-color="([^"]+)"/g)]
     .map(match => ({ color: match[1], selected: /\bselected\b/.test(match[0]) }));
   const templates = [...html.matchAll(/class="mermaid-tpl-btn"\s+data-tpl="([^"]+)"/g)].map(match => match[1]);
@@ -25,7 +31,7 @@ function createFixture() {
   assert(noteColors.length > 0 && templates.length > 0 && slides.length > 0 && slides.length === dots.length,
     "actual HTML selector facts must exist");
   const version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
-  const context = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+  const context = vm.createContext({ Event }, { microtaskMode: "afterEvaluate" });
   const execute = source => vm.runInContext(source, context, { timeout: 1000 });
   const snapshot = source => JSON.parse(execute("JSON.stringify(" + source + ")"));
 
@@ -91,6 +97,7 @@ function createFixture() {
       };
     };
     const __nodes = new Map(${JSON.stringify(ids)}.map(id => [id, __node(id)]));
+    const __dialogs = ${JSON.stringify(dialogIds)}.map(id => __nodes.get(id));
     const __wrapper = __node('content-wrapper');
     const __footer = __node('reload-dialog-footer');
     const __colors = ${JSON.stringify(noteColors)}.map((fact, index) => {
@@ -122,10 +129,13 @@ function createFixture() {
       getElementById: id => __nodes.get(id) || null,
       querySelector(selector) {
         if (selector === '.content-wrapper') return __wrapper;
+        if (selector === 'dialog[open], .note-dialog-overlay.visible, [aria-modal="true"].visible')
+          return __dialogs.find(node => node.open || node.classList.contains('visible')) || null;
         return __fail('document.querySelector')(selector);
       },
       querySelectorAll(selector) {
         if (selector === '.note-color-option') return __colors;
+        if (selector === 'dialog, .note-dialog-overlay, [aria-modal="true"]') return __dialogs;
         return __fail('document.querySelectorAll')(selector);
       },
       addEventListener(name, callback) { __fixture.registrations.push({ id: 'document', name, callback }); },
@@ -143,8 +153,17 @@ function createFixture() {
       removeItem(key) { __storage.delete(key); } };
     globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
     globalThis.getComputedStyle = () => ({ fontSize: '16px', lineHeight: '24px', getPropertyValue: () => '' });
-    globalThis.addEventListener = (name, callback) => __fixture.registrations.push({ id: 'window', name, callback });
-    globalThis.removeEventListener = () => {};
+    const __windowListeners = new Map();
+    globalThis.addEventListener = (name, callback) => {
+      __fixture.registrations.push({ id: 'window', name, callback });
+      if (!__windowListeners.has(name)) __windowListeners.set(name, new Set());
+      __windowListeners.get(name).add(callback);
+    };
+    globalThis.removeEventListener = (name, callback) => __windowListeners.get(name)?.delete(callback);
+    globalThis.dispatchEvent = event => {
+      for (const callback of [...(__windowListeners.get(event.type) || [])]) callback.call(window, event);
+      return !event.defaultPrevented;
+    };
     globalThis.requestAnimationFrame = callback => { __fixture.timers.push({ raf: callback }); return __fixture.timers.length; };
     globalThis.cancelAnimationFrame = () => {};
     globalThis.setTimeout = (callback, delay) => { __fixture.timers.push({ callback, delay }); return __fixture.timers.length; };
@@ -154,7 +173,7 @@ function createFixture() {
     globalThis.MutationObserver = class { constructor(callback) { this.callback = callback; } observe() {} disconnect() {} };
     globalThis.ResizeObserver = class { constructor(callback) { this.callback = callback; } observe() {} disconnect() {} };
     globalThis.BroadcastChannel = class {
-      constructor(name) { if (name !== 'folia-export') return __fail('BroadcastChannel')(name); }
+      constructor(name) { if (name !== 'markaloo-export') return __fail('BroadcastChannel')(name); }
       postMessage = __fail('BroadcastChannel.postMessage');
     };
     globalThis.console = { log: (...args) => __fixture.logs.push(args.map(String)),
@@ -196,7 +215,7 @@ function createFixture() {
       require(name) {
         if (name !== 'electron') return __fail('preload.require')(name);
         return { ipcRenderer: __transport, contextBridge: { exposeInMainWorld(name, api) {
-          if (name !== 'folia' || Object.hasOwn(window, name) || !Object.isFrozen(api)) {
+          if (name !== 'markaloo' || Object.hasOwn(window, name) || !Object.isFrozen(api)) {
             return __fail('contextBridge.exposeInMainWorld')(name);
           }
           Object.defineProperty(window, name, { value: api, enumerable: true });
@@ -204,19 +223,30 @@ function createFixture() {
       },
     };
   `);
+  assert.deepEqual(snapshot(`(() => {
+    let calls = 0, receiver = false;
+    const listener = function (event) { calls++; receiver = this === window && event.type === 'fixture-event'; };
+    window.addEventListener('fixture-event', listener);
+    window.addEventListener('fixture-event', listener);
+    const dispatched = window.dispatchEvent(new Event('fixture-event'));
+    window.removeEventListener('fixture-event', listener);
+    window.dispatchEvent(new Event('fixture-event'));
+    return { calls, receiver, dispatched };
+  })()`), { calls: 1, receiver: true, dispatched: true }, "window events must dispatch registered callbacks and remove them");
   const preload = path.join(SRC, "main-preload.js");
   vm.compileFunction(fs.readFileSync(preload, "utf8"), ["require", "process"], {
     parsingContext: context, filename: preload,
   })(execute("__imports.require"), execute("__imports.process"));
   for (const name of ["editor-scroll.js", "emoji-map.js", "emoji-parser.js", "utils.js",
     "mermaid-config.js", "context-menu-utils.js", "file-helpers-core.js", "document-events.js",
-    "app-dialogs.js", "inline-formatting.js", "table-cell-editor.js", "reload-request.js", "renderer.js"]) {
+    "app-dialogs.js", "inline-formatting.js", "table-cell-editor.js", "reload-request.js",
+    "reading-history.js", "reading-viewport.js", "renderer.js"]) {
     const file = path.join(SRC, name);
     vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file, timeout: 1000 });
   }
   const startup = snapshot(`({
     exported: typeof window.renderMarkdown === 'function' && typeof window.getReloadRequestSession === 'function',
-    frozen: Object.isFrozen(window.folia), subscriptions: (__fixture.subscriptions.get('file-deleted') || []).length,
+    frozen: Object.isFrozen(window.markaloo), subscriptions: (__fixture.subscriptions.get('file-deleted') || []).length,
     versionQueries: __fixture.versionQueries, uuidCalls: __fixture.uuidCalls,
     versionText: __nodes.get('welcomeVersion').textContent, unexpected: __fixture.unexpected, sends: __fixture.sends,
     writes: __fixture.writes, shows: __fixture.shows
@@ -226,8 +256,8 @@ function createFixture() {
     versionText: "v" + version, unexpected: [], sends: [], writes: [], shows: [],
   }, "whole production code must load without unexpected work");
 
-  const ownedPath = path.join(path.parse(ROOT).root, "folia-deletion-contract", "owned.md");
-  const otherPath = path.join(path.parse(ROOT).root, "folia-deletion-contract", "other.md");
+  const ownedPath = path.join(path.parse(ROOT).root, "markaloo-deletion-contract", "owned.md");
+  const otherPath = path.join(path.parse(ROOT).root, "markaloo-deletion-contract", "other.md");
   execute(`
     const __ownedPath = ${JSON.stringify(ownedPath)};
     const __otherPath = ${JSON.stringify(otherPath)};

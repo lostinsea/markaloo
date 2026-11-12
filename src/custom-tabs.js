@@ -15,27 +15,27 @@
 
   // Keep the per-tab clipboard local instead of borrowing renderer.js's scope.
   // The menu helpers come from the preceding classic script, not a Node require.
-  if (!window.FoliaDocumentEvents) {
-    throw new Error("FoliaDocumentEvents must load before custom-tabs.js");
+  if (!window.MarkalooDocumentEvents) {
+    throw new Error("MarkalooDocumentEvents must load before custom-tabs.js");
   }
-  const documentEvents = window.FoliaDocumentEvents;
-  if (!window.FoliaContextMenu) {
-    throw new Error("FoliaContextMenu must load before custom-tabs.js");
+  const documentEvents = window.MarkalooDocumentEvents;
+  if (!window.MarkalooContextMenu) {
+    throw new Error("MarkalooContextMenu must load before custom-tabs.js");
   }
-  if (!window.FoliaFileHelpers) {
-    throw new Error("FoliaFileHelpers must load before custom-tabs.js");
+  if (!window.MarkalooFileHelpers) {
+    throw new Error("MarkalooFileHelpers must load before custom-tabs.js");
   }
-  const fileHelpers = window.FoliaFileHelpers;
+  const fileHelpers = window.MarkalooFileHelpers;
   const {
     positionContextMenu: positionTabMenu,
     hideContextMenu: hideTabMenuEl,
-  } = window.FoliaContextMenu;
+  } = window.MarkalooContextMenu;
   let newlineAlignmentDiagnosticsEnabled = false;
   let newlineAlignmentWitnessSequence = 0;
   let pendingNewlineAlignmentWitness = null;
   let newlineAlignmentFlushScheduled = false;
   try {
-    window.folia
+    window.markaloo
       .getNewlineAlignmentDiagnosticsEnabled()
       .then((enabled) => {
         newlineAlignmentDiagnosticsEnabled = enabled === true;
@@ -55,7 +55,7 @@
     if (newlineAlignmentWitnessSequence >= Number.MAX_SAFE_INTEGER) return;
     newlineAlignmentWitnessSequence += 1;
     try {
-      window.folia.reportNewlineAlignmentWitness({
+      window.markaloo.reportNewlineAlignmentWitness({
         callId: newlineAlignmentWitnessSequence,
         ...witness,
       });
@@ -363,7 +363,7 @@
           "Check your open documents before relying on them.",
         6000,
       );
-      window.folia.reportQuitApprovalOverflow({
+      window.markaloo.reportQuitApprovalOverflow({
         id: shutdownFreeze.id,
         gen: shutdownFreeze.gen,
       });
@@ -421,9 +421,38 @@
     return true;
   }
 
+  let readingSourceSequence = 0;
+  function freshReadingKey() {
+    return "reading-" + ++readingSourceSequence;
+  }
+
+  function installReadingCache(tab, state, content, key = null) {
+    const unchanged = sameDocument(state.content, content);
+    state.readingKey = key || (unchanged && state.readingKey) ||
+      window.displayedReadingKeyForContent?.(tab, normaliseNewlines(content)) ||
+      freshReadingKey();
+    state.readingWitness = Object.freeze({});
+    state.readingAdoption = null;
+    state.content = content;
+  }
+
+  function admitReadingSource(tab, source) {
+    const state = documentState.get(tab);
+    if (!state || !tabs.includes(tab) || typeof source?.source !== "string") return null;
+    if (source.source !== normaliseNewlines(state.content)) {
+      const live = getActiveTab() === tab ? liveDocument() : null;
+      if (typeof live !== "string" || source.source !== normaliseNewlines(live) ||
+          !adoptDocumentContent(tab, live)) return null;
+    }
+    return state.readingKey;
+  }
+
   function defineDocumentAccessors(tab, content, reservedGeneration = null) {
     const state = {
       content: content,
+      readingKey: freshReadingKey(),
+      readingWitness: Object.freeze({}),
+      readingAdoption: null,
       originalContent: content,
       dirty: false,
       // The live document this tab's fold last looked at. See
@@ -459,7 +488,7 @@
       },
       set(value) {
         if (!mayMutateDocument("tab:content-setter")) return;
-        state.content = value;
+        installReadingCache(tab, state, value);
         state.dirty = !sameDocument(value, state.originalContent);
         bumpDocumentRevision(tab);
       },
@@ -574,7 +603,7 @@
       return true;
     }
 
-    state.content = content;
+    installReadingCache(tab, state, content);
     state.originalContent = content;
     state.dirty = false;
     state.foldedLive = content;
@@ -585,7 +614,7 @@
   }
 
   function adoptCleanDocument(
-    tab, content, reservedGeneration = null,
+    tab, content, reservedGeneration = null, rollback = null,
   ) {
     const state = documentState.get(tab);
     if (
@@ -605,6 +634,11 @@
         : reservedGeneration;
       state.deletionTombstone = null;
       state.editor = freshEditorState(content, state.editor.open);
+      if (rollback && rollback.state === state) {
+        rollback.installed = state.readingWitness;
+        rollback.installedRevision = state.mutationRevision;
+        state.readingAdoption = rollback.operation;
+      }
     }
     return true;
   }
@@ -1283,7 +1317,7 @@
     // cachedSpellingFor returns the original string for semantic equality.
     // Otherwise it has already proved the edit dirty; the accessor would
     // compare the entire document with the same baseline a second time.
-    state.content = cached;
+    installReadingCache(tab, state, cached);
     state.dirty = true;
     bumpDocumentRevision(tab);
   }
@@ -1549,8 +1583,12 @@
   window.addEventListener('preview-navigation-intent', () => {
     if (cancelActiveRestore) cancelActiveRestore();
   });
+  window.addEventListener('reading-viewport-invalidated', () => {
+    if (cancelActiveRestore) cancelActiveRestore();
+  });
 
-  function restorePosition(anchor) {
+  function restorePosition(anchor, viewportPermit) {
+    if (!window.readingViewport.isPermitCurrent(viewportPermit)) return;
     if (cancelActiveRestore) {
       cancelActiveRestore();
       cancelActiveRestore = null;
@@ -1560,6 +1598,7 @@
     let cancelled = false;
     const apply = () => {
       if (cancelled) return;
+      if (!window.readingViewport.isPermitCurrent(viewportPermit)) return;
       if (!mayMutateDocument("render:restore-observer")) {
         cancelled = true;
         if (cancelActiveRestore) {
@@ -1571,7 +1610,7 @@
       }
       const scroller = getScroller();
       const top = resolveAnchorTop(anchor);
-      if (scroller && top !== null) {
+      if (scroller && top !== null && window.readingViewport.isPermitCurrent(viewportPermit)) {
         scroller.scrollTop = Math.max(0, top);
       }
     };
@@ -1593,29 +1632,17 @@
       return;
     }
 
-    const scroller = getScroller();
     const observer = new ResizeObserver(apply);
     observer.observe(viewerEl);
 
     const dispose = () => {
       cancelled = true;
       observer.disconnect();
-      if (scroller) {
-        scroller.removeEventListener("wheel", dispose);
-        scroller.removeEventListener("mousedown", dispose);
-      }
-      document.removeEventListener("keydown", dispose);
       clearTimeout(timer);
       if (cancelActiveRestore === dispose) {
         cancelActiveRestore = null;
       }
     };
-
-    if (scroller) {
-      scroller.addEventListener("wheel", dispose, { passive: true });
-      scroller.addEventListener("mousedown", dispose);
-    }
-    document.addEventListener("keydown", dispose);
 
     const timer = setTimeout(dispose, 1200);
     cancelActiveRestore = dispose;
@@ -1676,7 +1703,12 @@
   function snapshotTabAdoption(tab, sourcePath) {
     const state = documentState.get(tab);
     const spelling = normaliseTabPath(sourcePath).spelling;
-    return {
+    const prior = {
+      state,
+      operation: Object.freeze({}),
+      readingKey: state.readingKey,
+      readingWitness: state.readingWitness,
+      installed: null,
       content: state.content,
       originalContent: state.originalContent,
       dirty: state.dirty,
@@ -1695,23 +1727,35 @@
       hadAlias: tabPathAliases.has(spelling),
       alias: tabPathAliases.get(spelling),
     };
+    // Keep only operation identity in state; rollback bytes remain with the caller.
+    state.readingAdoption = prior.operation;
+    return prior;
   }
 
   function restoreTabAdoption(tab, prior) {
     const state = documentState.get(tab);
+    if (!state || !tabs.includes(tab) || state !== prior.state ||
+        state.readingAdoption !== prior.operation ||
+        state.readingWitness !== (prior.installed || prior.readingWitness) ||
+        (prior.installed && state.mutationRevision !== prior.installedRevision)) {
+      console.warn("[CustomTabs] Refusing superseded disk adoption rollback");
+      return false;
+    }
     for (const key of [
-      "content", "originalContent", "dirty", "foldedLive",
+      "originalContent", "dirty", "foldedLive",
       "reloadConflict", "saveFailure", "deletionTombstone",
       "generation", "pathKey", "admission", "editor",
     ]) {
       state[key] = prior[key];
     }
+    installReadingCache(tab, state, prior.content, prior.readingKey);
     tab.diskVersion = prior.diskVersion;
     tab.mtimeMs = prior.mtimeMs;
     tab.hasUnsavedChanges = prior.hasUnsavedChanges;
     if (prior.hadAlias) tabPathAliases.set(prior.spelling, prior.alias);
     else tabPathAliases.delete(prior.spelling);
     bumpDocumentRevision(tab);
+    return true;
   }
 
   function completeDiskAdoption(approval, tab, filePath) {
@@ -1770,6 +1814,7 @@
   function removeUnactivatedTab(tab) {
     const index = tabs.indexOf(tab);
     if (index < 0 || tab.id === activeTabId) return false;
+    window.readingViewport.retireTab(tab);
     tabs.splice(index, 1);
     largeConfirmed.delete(tab.id);
     bumpDocumentRevision(tab);
@@ -1814,7 +1859,7 @@
       (retargeted && !allowPathReplacement) ||
       typeof window.prepareDocumentDiskAdoption !== "function" ||
       typeof window.commitDocumentDiskAdoption !== "function" ||
-      typeof window.folia?.checkCommittedDiskAdoption !== "function"
+      typeof window.markaloo?.checkCommittedDiskAdoption !== "function"
     ) {
       notify("The file target changed. The in-memory copy was kept.", 6000);
       return null;
@@ -2000,7 +2045,7 @@
     }
     let checked;
     try {
-      checked = window.folia.checkCommittedDiskAdoption({
+      checked = window.markaloo.checkCommittedDiskAdoption({
         capability: committed.capability,
         pageSession: session,
         rendererGeneration: approvalRendererGeneration,
@@ -2103,7 +2148,7 @@
     let snapshot;
     let reservation;
     const readAndVerify = async () => {
-      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({
+      snapshot = await window.markaloo.refreshOwnedTabDiskSnapshot({
         filePath,
         pageSession: session,
         rendererGeneration: identity.rendererGeneration,
@@ -2163,7 +2208,7 @@
       const prior = snapshotTabAdoption(tab, tab.filePath);
       appliedDiskAdoptionApprovals.add(approval);
       if (!adoptCleanDocument(
-        tab, snapshot.content, reservation.documentGeneration,
+        tab, snapshot.content, reservation.documentGeneration, prior,
       )) {
         appliedDiskAdoptionApprovals.delete(approval);
         return false;
@@ -2305,6 +2350,7 @@
           : null,
       diskVersion,
     };
+    window.readingViewport.registerTab(tab);
     // `content` and `originalContent` are installed as accessors rather than
     // written as plain fields, so that every later assignment - from anywhere -
     // keeps the maintained dirty answer in step. See defineDocumentAccessors.
@@ -2582,7 +2628,7 @@
 
     const isCurrent = captureDialogContext(tab);
     try {
-      const decision = window.folia.confirmLargeRender({
+      const decision = window.markaloo.confirmLargeRender({
         name: tab.filename,
         seconds: seconds,
       });
@@ -2628,6 +2674,7 @@
       notify("This file is still being verified. Retry switching when its open completes.", 4000);
       return false;
     }
+    window.readingViewport.beginIntent();
     const largeDecision = tabId !== activeTabId
       ? confirmLargeTab(tab, opts.silent) : true;
     const largeAccepted = largeDecision && typeof largeDecision.then === "function"
@@ -2642,6 +2689,9 @@
       console.log("[CustomTabs] Large tab switch declined:", tab.filename);
       return;
     }
+    // Admission has accepted this switch. Retire outgoing writes before even
+    // the snapshot/disk path can await, without retiring either tab's lifetime.
+    window.readingViewport.beginIntent();
     if (
       !opts.fileOpenData &&
       typeof window.cancelPendingNavigation === "function"
@@ -2876,6 +2926,7 @@
     activeTabId = tabId;
     activeTabForMutations = tab;
     window.updateEditorHistoryControls?.();
+    window.dispatchEvent(new Event('reading-history-owner-changed'));
     window.hideDocumentContextMenus?.();
     console.log("[CustomTabs] Switched to tab:", tab.filename);
 
@@ -2914,7 +2965,9 @@
     if (window.renderMarkdown) {
       const position = positionOf(tab);
       const generation = ++renderGeneration;
-      window.renderMarkdown(tab.content).then(() => {
+      const viewport = fileOpenContext?.viewport || {};
+      const initial = window.renderMarkdown(tab.content, null, viewport);
+      Promise.all([initial, viewport.completion]).then(() => {
         if (generation !== renderGeneration || activeTabId !== tabId ||
             !tabs.includes(tab) || isDocumentFrozen()) return;
         if (adoptionApproval && !approvedReloadSnapshotMatches(
@@ -2946,7 +2999,7 @@
             generation === renderGeneration &&
             mayMutateDocument("render:restore-position")
           ) {
-            restorePosition(position);
+            restorePosition(position, viewport.permit);
           }
         };
         if (fileOpenContext) {
@@ -3265,6 +3318,7 @@
       console.log("[CustomTabs] Closing tab:", tab.filename);
       tabIndex = tabs.indexOf(tab);
       if (tabIndex === -1) return;
+      window.readingViewport.retireTab(tab);
       const closingLastActive =
         tab.id === activeTabId && tabs.length === 1;
       if (
@@ -3291,6 +3345,7 @@
           await switchToTab(newActiveTab.id);
         } else {
           activeTabId = null;
+          window.dispatchEvent(new Event('reading-history-owner-changed'));
           // Nothing is open any more. Leaving the watcher armed on the file we
           // just closed makes an external change raise a "reload?" prompt over
           // the welcome screen, for a document that no longer has a tab.
@@ -3371,7 +3426,7 @@
     window.hideDocumentContextMenus?.();
     // A source-splice transaction already owns every newline. Re-aligning it
     // against repeated lines would discard information the transaction kept.
-    state.content = content;
+    installReadingCache(tab, state, content);
     state.foldedLive = normaliseNewlines(content);
     state.dirty = !sameDocument(content, state.originalContent);
     tab.hasUnsavedChanges = state.dirty;
@@ -3428,7 +3483,7 @@
         const request = pendingSessionLayout;
         pendingSessionLayout = null;
         try {
-          await window.folia.saveSessionLayout(request.layout);
+          await window.markaloo.saveSessionLayout(request.layout);
           durableSessionLayoutRevision = request.revision;
           sessionLayoutFailure = null;
         } catch (error) {
@@ -3477,7 +3532,7 @@
     try {
       const ready = await sessionOwnerReady;
       if (!ready || !stillCurrent()) return;
-      const saved = await window.folia.restoreSession();
+      const saved = await window.markaloo.restoreSession();
       if (!saved || saved.superseded || !stillCurrent()) return;
       if (saved.error) {
         notify(`The previous document session could not be restored: ${saved.error}`, 8000);
@@ -3549,7 +3604,7 @@
   }
 
   function normaliseTabPath(filePath) {
-    return window.FoliaUtils.normaliseDocumentPath(filePath);
+    return window.MarkalooUtils.normaliseDocumentPath(filePath);
   }
 
   function canonicalTabPath(filePath) {
@@ -3600,7 +3655,7 @@
     }
     try {
       if (retainedOwner) {
-        const checked = window.folia.checkOwnedTabDiskSnapshot({
+        const checked = window.markaloo.checkOwnedTabDiskSnapshot({
           filePath: ownerPath,
           sourcePath,
           owner: retainedOwner,
@@ -3612,7 +3667,7 @@
           checked.pathKey === approval.pathKey &&
           sameDiskVersion(checked.diskVersion, approval.version);
       }
-      const checked = window.folia.checkCommittedDiskAdoption({
+      const checked = window.markaloo.checkCommittedDiskAdoption({
         capability: approval.capability,
         pageSession: window.getReloadRequestSession(),
         rendererGeneration: approval.rendererGeneration,
@@ -4028,7 +4083,7 @@
       state.reloadConflict = false;
       state.saveFailure = false;
       if (sameDocument(currentContent, savedContent)) {
-        state.content = savedContent;
+        installReadingCache(tab, state, savedContent);
         state.dirty = false;
       } else {
         state.dirty = true;
@@ -4147,7 +4202,7 @@
           try {
             const extraReservation = reserveDocumentIdentity();
             if (!extraReservation) continue;
-            const snapshot = await window.folia.readDialogExtra({
+            const snapshot = await window.markaloo.readDialogExtra({
               grant: extraReadGrants[index],
               pageSession: window.getReloadRequestSession(),
               rendererGeneration: approvalRendererGeneration,
@@ -4226,20 +4281,20 @@
 
       const handleFileOpened = async (event, data) => {
         if (
-          deferPreHandshakeFileOpen(() => handleFileOpened(event, data))
-        ) return;
+          deferPreHandshakeFileOpen(() => dispatchFileOpened(event, data))
+        ) return "deferred";
         if (
           deferFrozenDocumentOperation("ipc:file-opened", () =>
             dispatchFileOpened(event, data),
-            () => notify(
-              `File open was refused while closing: ${
+            () => {
+              window.reportRetainedStartupDocument?.(data, "mutation-blocked");
+              notify(`File open was refused while closing: ${
                 data && data.path ? data.path : "unknown file"
-              }`,
-              6000,
-            ),
+              }`, 6000);
+            },
           )
         ) {
-          return;
+          return "deferred";
         }
         if (!mayMutateDocument("ipc:file-opened")) return;
         const intent = ++latestFileOpenIntent;
@@ -4262,7 +4317,7 @@
                 !/^[a-f0-9]{64}$/.test(data.document.openTicket)) {
               throw new Error("Reopening after Save requires a current native open ticket");
             }
-            const settledSnapshot = await window.folia.readOpenTicketSnapshot({
+            const settledSnapshot = await window.markaloo.readOpenTicketSnapshot({
               openTicket: data.document.openTicket,
             });
             if (!settledSnapshot) {
@@ -4432,7 +4487,7 @@
                 "ipc:file-opened-after-attestation",
                 () => dispatchFileOpened(event, data),
               );
-              return;
+              return "deferred";
             }
             if (!adoptionApproval) return;
           }
@@ -4497,7 +4552,7 @@
             ) !== adoptionApproval.pathKey ||
               !adoptCleanDocument(
               targetTab, content,
-              targetReservation.documentGeneration,
+              targetReservation.documentGeneration, prior,
             )) {
               restoreTabAdoption(targetTab, prior);
               priorAdoptionRestored = true;
@@ -4535,7 +4590,7 @@
               "ipc:file-opened-after-attestation",
               () => dispatchFileOpened(event, data),
             );
-            return;
+            return "deferred";
           }
           if (!adoptionApproval) return;
           if (overtakenForSameDocument()) {
@@ -4615,13 +4670,19 @@
           }
           if (adoptionApproval) {
             grantCompleted = true;
+            registerTabDiskOwner(targetTab);
+            window.reportAdoptedStartupDocument?.(openData,
+              documentIdentity(targetTab, window.getReloadRequestSession()), targetTab.filePath);
             if (markCompletedBackgroundAdoptionConflict(
               targetTab, adoptionApproval, filePath,
             )) {
               pendingActivationTabs.delete(targetTab);
               return;
             }
+          } else if (preserveCachedDocument) {
             registerTabDiskOwner(targetTab);
+            window.reportAdoptedStartupDocument?.(openData,
+              documentIdentity(targetTab, window.getReloadRequestSession()), targetTab.filePath);
           }
           pendingActivationTabs.delete(targetTab);
           saveTabs();
@@ -4651,6 +4712,8 @@
           onTrackingCommitted: () => {
             selectionCommitted = true;
             if (adoptionApproval) grantCompleted = true;
+            window.reportAdoptedStartupDocument?.(openData,
+              documentIdentity(targetTab, window.getReloadRequestSession()), targetTab.filePath);
           },
           fileOpenOptions: {
             preserveEditBaseline: preserveCachedDocument,
@@ -4765,9 +4828,15 @@
       };
 
       const dispatchFileOpened = (event, data) => {
-        return handleFileOpened(event, data).catch((error) => {
+        if (data?.startup && data.startup.pageSession !== window.getReloadRequestSession()) {
+          return Promise.resolve();
+        }
+        return handleFileOpened(event, data).then(result => {
+          if (result !== "deferred") window.finishStartupDocumentDelivery?.(data);
+        }).catch((error) => {
           console.error("[CustomTabs] File open failed:", error);
           notify("The file could not be opened.", 6000);
+          window.finishStartupDocumentDelivery?.(data);
         });
       };
       documentEvents.on("file-opened", dispatchFileOpened);
@@ -4903,7 +4972,9 @@
               data.trackingSelection.unresolvedEvidence === true,
             );
           }
-          return Promise.resolve(window.renderMarkdown(data.content));
+          const viewport = data.viewport || {};
+          const initial = window.renderMarkdown(data.content, null, viewport);
+          return Promise.all([initial, viewport.completion]);
         }
         console.error("[CustomTabs] Reload handler unavailable");
         notify(
@@ -5358,7 +5429,7 @@
         ) !== adoptionApproval.pathKey ||
           !adoptCleanDocument(
             targetTab, data.content,
-            reloadReservation.documentGeneration,
+            reloadReservation.documentGeneration, prior,
           )) {
           if (!isBackground) {
             quarantineSelectedReload(
@@ -5473,10 +5544,13 @@
         );
         return;
       }
+      const viewport = {};
       const reloadPromise = delegateReload(event, {
         ...data,
         trackingSelection,
+        viewport,
       });
+      const completion = viewport.completion;
 
       // Baseline for the "was it edited during the render?" test below.
       //
@@ -5494,7 +5568,7 @@
       // line endings.
       const baseline = liveDocument();
 
-      reloadPromise
+      Promise.all([reloadPromise, completion])
         .then(() => {
           if (generation !== renderGeneration || activeTabId !== reloadTabId ||
               !tabs.includes(targetTab) || isDocumentFrozen() ||
@@ -5546,7 +5620,7 @@
             window.setUnsavedState(false);
           }
 
-          restorePosition(anchor);
+          restorePosition(anchor, viewport.permit);
           if (trackingSelection.unresolvedEvidence !== true &&
               trackingSelection.trackingConflict !== true) {
             notify(t("notif.fileReloaded", "File reloaded successfully"), 2000);
@@ -6039,7 +6113,7 @@
   // before a switch is still reported.
   let highestShutdownRequestId = 0;
   let pendingSaveShutdownRetry = null;
-  const PENDING_SAVE_STATUS_EVENT = "folia-pending-save-status-changed";
+  const PENDING_SAVE_STATUS_EVENT = "markaloo-pending-save-status-changed";
   // BOUNDED TO ONE ENTRY, AND PRUNED WHERE IT GROWS. Only the answer to the
   // HIGHEST id observed can ever be asked for again: main.js re-dispatches a
   // request only while it is still the open one, and every lower id is refused
@@ -6101,7 +6175,7 @@
     const pendingStatus = pendingSaveStatusForShutdown();
     if (pendingStatus.pending) {
       const error = new Error("save pending for an open tab");
-      error.code = "FOLIA_PENDING_SAVE";
+      error.code = "MARKALOO_PENDING_SAVE";
       error.status = pendingStatus;
       throw error;
     }
@@ -6133,7 +6207,7 @@
     }
     if (status.pending) return;
     pendingSaveShutdownRetry.sent = true;
-    window.folia.requestQuitApprovalRetry({
+    window.markaloo.requestQuitApprovalRetry({
       id: pendingSaveShutdownRetry.id,
       gen: pendingSaveShutdownRetry.gen,
       revision: documentRevision,
@@ -6238,7 +6312,7 @@
     return true;
   }
 
-  window.folia.onQuitApprovalCommit(async data => {
+  window.markaloo.onQuitApprovalCommit(async data => {
     const id = data && data.id;
     const generation = data && data.gen;
     const revision = data && data.revision;
@@ -6247,7 +6321,7 @@
     // throw inside the one handler that must always answer.
     let recheckedDirtyFiles = null;
     const reply = (committed, why) =>
-      window.folia.respondToQuitCommit({
+      window.markaloo.respondToQuitCommit({
         id: id,
         gen: generation,
         committed: committed,
@@ -6277,7 +6351,7 @@
       console.error("[CustomTabs] Commit re-check failed:", error);
       reply(
         false,
-        error && error.code === "FOLIA_PENDING_SAVE"
+        error && error.code === "MARKALOO_PENDING_SAVE"
           ? "pending-save"
           : "unreadable",
       );
@@ -6320,11 +6394,12 @@
     reply(true, "committed");
   });
 
-  window.folia.onQuitApprovalThaw(() => {
+  window.markaloo.onQuitApprovalThaw(() => {
     thawDocument("main-released");
+    window.flushStartupDocumentIdleProbe?.();
   });
 
-  window.folia.onQuitApprovalVerification(data => {
+  window.markaloo.onQuitApprovalVerification(data => {
     const valid = !!(
       data &&
       shutdownFreeze &&
@@ -6336,7 +6411,7 @@
       durableSessionLayoutRevision === sessionLayoutRevision &&
       !shutdownFreeze.deferredOperationsOverflowed
     );
-    window.folia.respondToQuitVerification({
+    window.markaloo.respondToQuitVerification({
       id: data && data.id,
       gen: data && data.gen,
       revision: documentRevision,
@@ -6353,7 +6428,7 @@
   // strands the main process with no timeout to release it - the one failure
   // this side can cause and cannot recover from - so an unreadable state is
   // REPORTED as unreadable rather than becoming silence.
-  window.folia.onQuitApprovalRequest(data => {
+  window.markaloo.onQuitApprovalRequest(data => {
     const id = data && data.id;
     const generation = data && data.gen;
     if (
@@ -6376,7 +6451,7 @@
     );
     const cached = shutdownResponses.get(id);
     if (cached) {
-      window.folia.respondToQuitApproval(cached);
+      window.markaloo.respondToQuitApproval(cached);
       return;
     }
     if (
@@ -6403,13 +6478,13 @@
     try {
       dirtyFiles = dirtyTabNames(true);
     } catch (error) {
-      if (error && error.code === "FOLIA_PENDING_SAVE") {
+      if (error && error.code === "MARKALOO_PENDING_SAVE") {
         pendingSaveShutdownRetry = {
           id,
           gen: generation,
           sent: false,
         };
-        window.folia.respondToQuitApproval({
+        window.markaloo.respondToQuitApproval({
           id,
           gen: generation,
           dirtyFiles: null,
@@ -6435,7 +6510,7 @@
     // answer it displaces has become unreachable above.
     shutdownResponses.clear();
     shutdownResponses.set(id, response);
-    window.folia.respondToQuitApproval(response);
+    window.markaloo.respondToQuitApproval(response);
   });
 
   // ============================================
@@ -6443,6 +6518,7 @@
   // ============================================
 
   window.CustomTabs = {
+    admitReadingSource,
     // A scroll can look correct even while a restore is still armed to undo it.
     __scrollRestorePending: () => !!cancelActiveRestore,
     createTab,
@@ -6597,6 +6673,7 @@
       documentState.get(tabs.find(tab => tab.id === tabId))?.admission || null,
     settleSessionLayout,
     getActiveDocumentIdentity,
+    getApprovalRendererGeneration: () => approvalRendererGeneration,
     getDocumentIdentityForTab,
     ownsDocumentIdentity,
     retainDeletionTombstone,
@@ -6621,7 +6698,7 @@
   // Restored tabs are clean by construction (saveTabs persists no content and
   // loadSavedTabs re-reads from disk), so announcing before the DOMContentLoaded
   // restore below cannot under-report anything unsaved.
-  window.folia
+  window.markaloo
     .getQuitApprovalGeneration()
     .then((generation) => {
       if (!Number.isSafeInteger(generation) || generation <= 0) {
@@ -6639,7 +6716,7 @@
       ) {
         throw new Error("renderer page session is unavailable");
       }
-      window.folia.announceQuitApprovalReady({
+      window.markaloo.announceQuitApprovalReady({
         gen: generation,
         pageSession,
       });

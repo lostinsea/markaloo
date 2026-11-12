@@ -76,7 +76,7 @@ function fixture(inactive = false) {
     currentFilePath: selectedTab().filePath, originalMarkdown: selectedTab().content,
     getReloadRequestSession: () => "pair-page",
     getPendingSaveStatus: () => ({ count: page.pending, pending: page.pending !== 0 }),
-    folia: {
+    markaloo: {
       getVersion: () => "controlled",
       queryDocumentDeletionState: () => {
         counts.deletionReads++;
@@ -233,7 +233,7 @@ test("legacy deleted driver remains byte-exact outside this two-owner slice", ()
   const legacy = between("    async function closeDeletedReloadOrigin(",
     "    // A path is not a tab generation.");
   assert.equal(crypto.createHash("sha256").update(legacy).digest("hex"),
-    "0ebd35be05b86b9dfd1d3f098837df76d2a488801001934135daf1c8e7cd1106");
+    "7d0aedd94d1cf0cc8d25dc63bd9f0168d4f93c3edbaf65a2f8b8bd6170e06284");
 });
 test("failure admission restores A before unlink without consuming held replies", () => {
   const actor = between('    const backgroundFailureAFile =',

@@ -962,7 +962,7 @@ app.whenReady().then(async () => {
     backgroundThrottling: false,
   };
 
-  say("Folia render benchmark");
+  say("Markaloo render benchmark");
   say("");
   say("machine fingerprint (numbers are only comparable within one fingerprint)");
   say(`  cpu        ${(os.cpus()[0] || {}).model || "unknown"} x${os.cpus().length}`);
@@ -1249,7 +1249,49 @@ app.whenReady().then(async () => {
           if (performance.now() - t0 > ${SETTLE_CAP_MS}) { capped = true; break; }
         }`;
 
+  const neutralizeViewerInput = async () => {
+    const point = await exec(`(() => {
+      const viewer = document.getElementById('viewer');
+      if (!viewer) throw new Error('fixture input: viewer missing');
+      document.activeElement.blur();
+      const points = [
+        { x: 8, y: 8 }, { x: innerWidth - 8, y: 8 },
+        { x: 8, y: innerHeight - 8 }, { x: innerWidth - 8, y: innerHeight - 8 },
+      ];
+      const point = points.find(({ x, y }) => {
+        const hit = document.elementFromPoint(x, y);
+        return hit && !viewer.contains(hit);
+      });
+      if (!point) throw new Error('fixture input: no exposed point outside viewer');
+      return point;
+    })()`);
+    win.webContents.sendInputEvent({ type: "mouseMove", ...point });
+    const state = await exec(`(async () => {
+      const viewer = document.getElementById('viewer');
+      const point = ${JSON.stringify(point)};
+      const tick = ${TICK};
+      const deadline = performance.now() + 2000;
+      do {
+        const hit = document.elementFromPoint(point.x, point.y);
+        const active = document.activeElement;
+        if (hit && !viewer.contains(hit) && !viewer.matches(':hover') &&
+            !viewer.contains(active)) {
+          return {
+            point, hit: { tag: hit.tagName, id: hit.id, classes: hit.className },
+            active: { tag: active.tagName, id: active.id },
+            viewerHovered: false, viewerFocused: false,
+          };
+        }
+        await tick();
+      } while (performance.now() < deadline);
+      throw new Error('fixture input: pointer or focus did not leave viewer');
+    })()`);
+    say("fixture input: " + JSON.stringify(state));
+    return state;
+  };
   const reset = async () => {
+    // Hover controls persist until teardown, so neutralize input before the empty render.
+    await neutralizeViewerInput();
     // The reset is VERIFIED, not assumed, and it WAITS FOR QUIET rather than
     // sleeping a fixed interval. Two distinct hazards make both halves
     // necessary:

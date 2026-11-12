@@ -148,8 +148,8 @@ function fixture(settings = {}) {
     actor.records.push(question);
   };
   const exec = async code => {
-    if (code === "window.folia.getUpdateState()") return { manualOnly: false };
-    if (code.includes("window.folia.installUpdate()")) { dispatch("update-install"); return null; }
+    if (code === "window.markaloo.getUpdateState()") return { manualOnly: false };
+    if (code.includes("window.markaloo.installUpdate()")) { dispatch("update-install"); return null; }
     if (code.includes("const tab = window.CustomTabs.getActiveTab()")) {
       return { live: page.live, cached: page.cached, baseline: page.baseline, dirty: page.dirty };
     }

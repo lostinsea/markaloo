@@ -284,7 +284,7 @@ async function runUtilsLoaderProbe() {
     await loaderWin.loadFile(path.join(__dirname, "fixtures", "utils-loader.html"));
     const probe = await loaderWin.webContents.executeJavaScript(
       `(() => {
-        const api = window.FoliaUtils;
+        const api = window.MarkalooUtils;
         const terminal = document.getElementById("sec08-utils-loader-terminal");
         return {
           terminal: terminal && terminal.dataset.status,
@@ -312,13 +312,13 @@ async function runUtilsLoaderProbe() {
     );
     check(
       // This static document marker proves parsing completed independently of
-      // FoliaUtils, so R680 can distinguish a missing API from a failed load.
+      // MarkalooUtils, so R680 can distinguish a missing API from a failed load.
       "SEC-08 loader document reaches its terminal DOM marker",
       probe.terminal === "parsed",
       JSON.stringify(probe),
     );
     check(
-      "SEC-08 classic utils script publishes representative FoliaUtils behavior",
+      "SEC-08 classic utils script publishes representative MarkalooUtils behavior",
       probe.apiType === "object" &&
         probe.behavior &&
         probe.behavior.removeBOM === "loader" &&
@@ -388,7 +388,7 @@ async function runMermaidConfigLoaderProbe() {
     await loaderWin.loadFile(path.join(__dirname, "fixtures", "mermaid-config-loader.html"));
     const probe = await loaderWin.webContents.executeJavaScript(
       `(() => {
-        const api = window.FoliaMermaidConfig;
+        const api = window.MarkalooMermaidConfig;
         const terminal = document.getElementById("sec08-mermaid-loader-terminal");
         const light = api && api.getMermaidConfig(false);
         const dark = api && api.getMermaidConfig(true);
@@ -428,13 +428,13 @@ async function runMermaidConfigLoaderProbe() {
     );
     check(
       // This static document marker proves parsing completed independently of
-      // FoliaMermaidConfig, so R683 can distinguish a missing API from a failed load.
+      // MarkalooMermaidConfig, so R683 can distinguish a missing API from a failed load.
       "SEC-08 mermaid loader document reaches its terminal DOM marker",
       probe.terminal === "parsed",
       JSON.stringify(probe),
     );
     check(
-      "SEC-08 classic mermaid-config script publishes representative FoliaMermaidConfig behavior",
+      "SEC-08 classic mermaid-config script publishes representative MarkalooMermaidConfig behavior",
       probe.apiType === "object" &&
         probe.darkBoundaryType === "function" &&
         JSON.stringify(probe.keys) === JSON.stringify(expectedKeys) &&
@@ -497,7 +497,7 @@ async function runContextMenuLoaderProbe() {
     await loaderWin.loadFile(path.join(__dirname, "fixtures", "context-menu-loader.html"));
     const probe = await loaderWin.webContents.executeJavaScript(
       `(() => {
-        const api = window.FoliaContextMenu;
+        const api = window.MarkalooContextMenu;
         const terminal = document.getElementById("sec08-context-menu-loader-terminal");
         const menu = document.getElementById("sec08-context-menu-loader-menu");
         const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -536,7 +536,7 @@ async function runContextMenuLoaderProbe() {
     );
     check(
       // This static document marker proves parsing completed independently of
-      // FoliaContextMenu, so R687 can distinguish a missing API from a failed load.
+      // MarkalooContextMenu, so R687 can distinguish a missing API from a failed load.
       "SEC-08 context-menu loader document reaches its terminal DOM marker",
       probe.terminal === "parsed",
       JSON.stringify(probe),
@@ -605,8 +605,8 @@ async function runEmojiLoaderProbe() {
     await loaderWin.loadFile(path.join(__dirname, "fixtures", "emoji-loader.html"));
     const probe = await loaderWin.webContents.executeJavaScript(
       `(() => {
-        const map = window.FoliaEmojiMap;
-        const api = window.FoliaEmoji;
+        const map = window.MarkalooEmojiMap;
+        const api = window.MarkalooEmoji;
         const terminal = document.getElementById("sec08-emoji-loader-terminal");
         return {
           terminal: terminal && terminal.dataset.status,
@@ -638,7 +638,7 @@ async function runEmojiLoaderProbe() {
       JSON.stringify(probe),
     );
     check(
-      "SEC-08 classic emoji scripts publish FoliaEmojiMap and FoliaEmoji",
+      "SEC-08 classic emoji scripts publish MarkalooEmojiMap and MarkalooEmoji",
       probe.mapType === "object" &&
         probe.parserType === "object" &&
         probe.mapStar === "\u2b50" &&
@@ -651,24 +651,24 @@ async function runEmojiLoaderProbe() {
       JSON.stringify(probe),
     );
 
-    await sentinel.mute("missing FoliaEmojiMap must fail loudly");
+    await sentinel.mute("missing MarkalooEmojiMap must fail loudly");
     let missingMapSetup;
     let missingMapMute;
     try {
       missingMapSetup = await loaderWin.webContents.executeJavaScript(
         `new Promise((resolve) => {
-          const savedMap = window.FoliaEmojiMap;
-          delete window.FoliaEmojiMap;
+          const savedMap = window.MarkalooEmojiMap;
+          delete window.MarkalooEmojiMap;
           const script = document.createElement("script");
           script.src = "../../src/emoji-parser.js?sec08-missing-map=" + Date.now();
           const finish = (event) => {
-            const mapWasAbsent = window.FoliaEmojiMap === undefined;
-            window.FoliaEmojiMap = savedMap;
+            const mapWasAbsent = window.MarkalooEmojiMap === undefined;
+            window.MarkalooEmojiMap = savedMap;
             script.remove();
             resolve({
               event,
               mapWasAbsent,
-              mapRestored: window.FoliaEmojiMap === savedMap,
+              mapRestored: window.MarkalooEmojiMap === savedMap,
             });
           };
           script.addEventListener("load", () => finish("load"), { once: true });
@@ -696,7 +696,7 @@ async function runEmojiLoaderProbe() {
       missingMapSuppressed.some(
         (entry) =>
           entry.kind === "console-error" &&
-          entry.detail.includes("FoliaEmojiMap must load before emoji-parser.js"),
+          entry.detail.includes("MarkalooEmojiMap must load before emoji-parser.js"),
       ),
       JSON.stringify(missingMapSuppressed),
     );
@@ -883,7 +883,7 @@ async function runFileHelpersLoaderProbe({
     await loaderWin.loadFile(path.join(__dirname, "fixtures", "file-helpers-loader.html"));
     const probe = await loaderWin.webContents.executeJavaScript(
       `(() => {
-        const api = window.FoliaFileHelpers;
+        const api = window.MarkalooFileHelpers;
         const terminal = document.getElementById("sec08-file-helpers-loader-terminal");
         const fence = String.fromCharCode(96).repeat(3);
         const sample = "# H\\n| a | b |\\n" + fence + "\\n| c | d |\\n" + fence + "\\n";
@@ -1011,40 +1011,40 @@ async function runFileHelpersLoaderProbe({
   });
   try {
     await missingGlobalWin.loadFile(path.join(__dirname, "fixtures", "file-helpers-loader.html"));
-    await missingGlobalSentinel.mute("missing FoliaFileHelpers must fail loudly");
+    await missingGlobalSentinel.mute("missing MarkalooFileHelpers must fail loudly");
     let missingGlobalSetup;
     let missingGlobalMute;
     try {
       missingGlobalSetup = await missingGlobalWin.webContents.executeJavaScript(
         `new Promise((resolve) => {
-          const savedCore = window.FoliaFileHelpers;
-          const savedMenu = window.FoliaContextMenu;
-          const savedEvents = window.FoliaDocumentEvents;
+          const savedCore = window.MarkalooFileHelpers;
+          const savedMenu = window.MarkalooContextMenu;
+          const savedEvents = window.MarkalooDocumentEvents;
           // Reach the target guard rather than failing an earlier prerequisite.
           const prerequisiteEvents = Object.freeze({});
-          window.FoliaDocumentEvents = prerequisiteEvents;
-          window.FoliaContextMenu = {
+          window.MarkalooDocumentEvents = prerequisiteEvents;
+          window.MarkalooContextMenu = {
             positionContextMenu() {},
             hideContextMenu() {},
           };
-          delete window.FoliaFileHelpers;
+          delete window.MarkalooFileHelpers;
           const script = document.createElement("script");
           script.src = "../../src/custom-tabs.js?sec08-missing-file-helpers=" + Date.now();
           const finish = (event) => {
-            const coreWasAbsent = window.FoliaFileHelpers === undefined;
-            const precedingCorePresent = window.FoliaDocumentEvents === prerequisiteEvents;
-            window.FoliaFileHelpers = savedCore;
-            if (savedMenu === undefined) delete window.FoliaContextMenu;
-            else window.FoliaContextMenu = savedMenu;
-            if (savedEvents === undefined) delete window.FoliaDocumentEvents;
-            else window.FoliaDocumentEvents = savedEvents;
+            const coreWasAbsent = window.MarkalooFileHelpers === undefined;
+            const precedingCorePresent = window.MarkalooDocumentEvents === prerequisiteEvents;
+            window.MarkalooFileHelpers = savedCore;
+            if (savedMenu === undefined) delete window.MarkalooContextMenu;
+            else window.MarkalooContextMenu = savedMenu;
+            if (savedEvents === undefined) delete window.MarkalooDocumentEvents;
+            else window.MarkalooDocumentEvents = savedEvents;
             script.remove();
             resolve({
               event,
               coreWasAbsent,
-              coreRestored: window.FoliaFileHelpers === savedCore,
+              coreRestored: window.MarkalooFileHelpers === savedCore,
               precedingCorePresent,
-              precedingCoreRestored: window.FoliaDocumentEvents === savedEvents,
+              precedingCoreRestored: window.MarkalooDocumentEvents === savedEvents,
             });
           };
           script.addEventListener("load", () => finish("load"), { once: true });
@@ -1062,7 +1062,7 @@ async function runFileHelpersLoaderProbe({
     const missingCoreErrors = missingGlobalSuppressed.filter(
       (entry) =>
         entry.kind === "console-error" &&
-        entry.detail.includes("FoliaFileHelpers must load before custom-tabs.js"),
+        entry.detail.includes("MarkalooFileHelpers must load before custom-tabs.js"),
     );
     check(
       "SEC-08 file-helpers missing-global probe removes and restores the browser core around a fresh custom-tabs load",
@@ -1146,7 +1146,7 @@ async function run(win) {
   // carries Toggle Developer Tools on Ctrl+Shift+I. The renderer here runs with
   // nodeIntegration: true, so that stock keystroke is a Node console with the
   // user's full filesystem rights in a shipped build: the "open this file,
-  // press the shortcut, paste this" route, which needs no bug in Folia at all.
+  // press the shortcut, paste this" route, which needs no bug in Markaloo at all.
   //
   // MEASURED, with a positive control, because a bare "it did not open" would
   // have failed open: two identical windows were sent a synthesised
@@ -1177,12 +1177,12 @@ async function run(win) {
   const exec = (code) => win.webContents.executeJavaScript(code, true);
 
   const testPreloadBridge = await exec(
-    `typeof globalThis.__foliaTestPdfRestore`,
+    `typeof globalThis.__markalooTestPdfRestore`,
   );
   check(
     "an unmarked security launch has no test-only PDF restore bridge",
     testPreloadBridge === "undefined",
-    `typeof globalThis.__foliaTestPdfRestore=${testPreloadBridge}`,
+    `typeof globalThis.__markalooTestPdfRestore=${testPreloadBridge}`,
   );
 
   // This suite's whole job is to fire hostile input at the app, so a large
@@ -3287,7 +3287,7 @@ async function run(win) {
       if (!samePage()) throw new Error("SEC-12 lost its actual source page; no recovery was attempted");
       return exec(`(() => {
         const probe = window.__securityLocalLinks;
-        if (!probe || probe.tabs !== window.CustomTabs || probe.folia !== window.folia ||
+        if (!probe || probe.tabs !== window.CustomTabs || probe.markaloo !== window.markaloo ||
             probe.pageSession !== window.getReloadRequestSession()) {
           throw new Error('Local link page observation lost ownership');
         }
@@ -3313,7 +3313,7 @@ async function run(win) {
         requestAnimationFrame(() => resolve(true))))`);
       // A real public round-trip drains earlier Main deliveries without exposing
       // or synthesizing any private request.
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
     }
     async function counts() {
       const page = await readPage();
@@ -3769,7 +3769,7 @@ async function run(win) {
       await exec(`(() => {
         if (window.__securityLocalLinks) throw new Error('Local link witness already exists');
         const probe = window.__securityLocalLinks = {
-          clicks: [], errors: [], target: null, tabs: window.CustomTabs, folia: window.folia,
+          clicks: [], errors: [], target: null, tabs: window.CustomTabs, markaloo: window.markaloo,
           pageSession: window.getReloadRequestSession(),
         };
         probe.capture = event => {
@@ -3778,7 +3778,7 @@ async function run(win) {
             text: a.textContent.trim(), selected: a === probe.target });
         };
         window.addEventListener('click', probe.capture, true);
-        probe.unsubscribe = window.folia.onError(message => {
+        probe.unsubscribe = window.markaloo.onError(message => {
           const toast = document.getElementById('notificationToast');
           const text = document.getElementById('notificationMessage');
           probe.errors.push({ message, text: text?.textContent,
@@ -3891,7 +3891,7 @@ async function run(win) {
         await requireKnownPageOwners();
         retiredPage = Object.freeze(await exec(`(() => {
           const probe = window.__securityLocalLinks;
-          if (!probe || probe.tabs !== window.CustomTabs || probe.folia !== window.folia ||
+          if (!probe || probe.tabs !== window.CustomTabs || probe.markaloo !== window.markaloo ||
               probe.pageSession !== window.getReloadRequestSession()) {
             throw new Error('Local link page disposal lost ownership');
           }
@@ -4331,7 +4331,7 @@ async function run(win) {
     return exec(`(() => {
       const p = window.__securityN11;
       if (!p || p.owner !== ${JSON.stringify(n11PageKey)} || p.complete !== true ||
-          p.tabs !== window.CustomTabs || p.folia !== window.folia ||
+          p.tabs !== window.CustomTabs || p.markaloo !== window.markaloo ||
           p.session !== window.getReloadRequestSession() || !Array.isArray(window.__e2eErrors)) {
         throw new Error('N11 page observation lost its owner or suite sentinel');
       }
@@ -4361,7 +4361,7 @@ async function run(win) {
   async function n11Barrier() {
     await exec(`new Promise(resolve => requestAnimationFrame(() =>
       requestAnimationFrame(() => resolve(true))))`);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
   }
   async function n11NoLate() {
     if (!n11Sealed) return;
@@ -4393,7 +4393,7 @@ async function run(win) {
       if (!n11SamePage() || !n11Owner) return false;
       const before = n11Shutdown.state();
       if (before.renderer !== "ready") return false;
-      const generation = await exec("window.folia.getQuitApprovalGeneration()");
+      const generation = await exec("window.markaloo.getQuitApprovalGeneration()");
       const owner = await readSecurityImageOwner(n11SourcePath);
       const page = await n11ReadPage();
       const after = n11Shutdown.state();
@@ -4444,7 +4444,7 @@ async function run(win) {
       const p = window.__securityN11 = {
         owner: ${JSON.stringify(n11PageKey)}, complete: false,
         subscriptionAttempted: false, dialogsInstalled: false, confirmInstalled: false,
-        tabs: window.CustomTabs, folia: window.folia, session: window.getReloadRequestSession(),
+        tabs: window.CustomTabs, markaloo: window.markaloo, session: window.getReloadRequestSession(),
         clicks: [], errors: [], notifications: [], toast, message,
         dialogCalls: [], confirmCalls: [], opened: false, target: null,
         dialogs: window.MarkalooDialogs, confirm: window.confirm,
@@ -4459,7 +4459,7 @@ async function run(win) {
       };
       window.addEventListener('click', p.capture, true);
       p.subscriptionAttempted = true;
-      p.unsubscribe = window.folia.onError(message => {
+      p.unsubscribe = window.markaloo.onError(message => {
         p.errors.push({ message, text: document.getElementById('notificationMessage')?.textContent,
           visible: !!document.getElementById('notificationToast')?.classList.contains('show') });
       });
@@ -4554,7 +4554,7 @@ async function run(win) {
       const p = window.__securityN11, errors = [];
       if (!p) return null;
       if (p.owner !== ${JSON.stringify(n11PageKey)} ||
-          p.tabs !== window.CustomTabs || p.folia !== window.folia ||
+          p.tabs !== window.CustomTabs || p.markaloo !== window.markaloo ||
           p.session !== window.getReloadRequestSession() || p.close ||
           p.toast !== document.getElementById('notificationToast') ||
           p.message !== document.getElementById('notificationMessage')) {
@@ -5552,7 +5552,7 @@ async function run(win) {
       throw new Error('SEC-13 requires the existing current-page sentinel');
     }
     window.__securitySec13 = Object.freeze({
-      errors: window.__e2eErrors, tabs: window.CustomTabs, folia: window.folia,
+      errors: window.__e2eErrors, tabs: window.CustomTabs, markaloo: window.markaloo,
       session: window.getReloadRequestSession()
     });
     window.__pwned = null;
@@ -5568,7 +5568,7 @@ async function run(win) {
     const observation = await exec(`(() => {
       const p = window.__securitySec13;
       if (!p || p.errors !== window.__e2eErrors || p.tabs !== window.CustomTabs ||
-          p.folia !== window.folia || p.session !== window.getReloadRequestSession()) {
+          p.markaloo !== window.markaloo || p.session !== window.getReloadRequestSession()) {
         throw new Error('SEC-13 observation lost its original page or sentinel');
       }
       return {pwned:window.__pwned,renderError:window.__lastRenderError,errors:p.errors.slice()};
@@ -5690,7 +5690,7 @@ async function run(win) {
   const sec13Retired = await exec(`(() => {
     const p = window.__securitySec13;
     if (!p || p.errors !== window.__e2eErrors || p.tabs !== window.CustomTabs ||
-        p.folia !== window.folia || p.session !== window.getReloadRequestSession()) {
+        p.markaloo !== window.markaloo || p.session !== window.getReloadRequestSession()) {
       throw new Error('SEC-13 cleanup lost its original page or sentinel');
     }
     updateNotesList();
@@ -6256,7 +6256,7 @@ async function run(win) {
       const dirty = document.createElement('template');
       dirty.innerHTML = marked.parseInline(raw);
       const input = document.createElement('div');
-      const provenance = FoliaTableCells.prepareCell(input, raw, raw, marked, {},
+      const provenance = MarkalooTableCells.prepareCell(input, raw, raw, marked, {},
         parseEmojis, sanitizeTableHtml);
       const session = { model: { links: {} } };
       const column = { id: 'security-preparation-column' };
@@ -6268,7 +6268,7 @@ async function run(win) {
       rejectedInput.textContent = 'PreparationControl';
       let refusal = null, constructedFormCell = false, constructionRefusal = null;
       try {
-        FoliaTableCells.prepareCell(rejectedInput, form, form, marked, {},
+        MarkalooTableCells.prepareCell(rejectedInput, form, form, marked, {},
           parseEmojis, sanitizeTableHtml);
       } catch (error) {
         refusal = error instanceof Error ? error.message : String(error);
@@ -7057,12 +7057,12 @@ async function run(win) {
   const sec11Read = async () => {
     if (!sec11Authority()) throw new Error("SEC-11 image-map lost its current Main authority");
     const before = sec11Shutdown.state();
-    const generation = await exec("window.folia.getQuitApprovalGeneration()");
+    const generation = await exec("window.markaloo.getQuitApprovalGeneration()");
     const owner = await readSecurityImageOwner(sec11AreaFile);
     const page = await exec(`(() => {
       const p = window.__securityArea;
       if (!p || p.owner !== ${JSON.stringify(sec11Key)} || p.errors !== window.__e2eErrors ||
-          p.tabs !== window.CustomTabs || p.folia !== window.folia ||
+          p.tabs !== window.CustomTabs || p.markaloo !== window.markaloo ||
           p.session !== window.getReloadRequestSession() ||
           p.toast !== document.getElementById('notificationToast') ||
           p.message !== document.getElementById('notificationMessage') ||
@@ -7106,7 +7106,7 @@ async function run(win) {
       }
       const p = window.__securityArea = {
         owner:${JSON.stringify(sec11Key)},errors:window.__e2eErrors,tabs:window.CustomTabs,
-        folia:window.folia,session:window.getReloadRequestSession(),clicks:[],notices:[],
+        markaloo:window.markaloo,session:window.getReloadRequestSession(),clicks:[],notices:[],
         dialogCalls:[],confirms:[],notifications:[],opened:false,target:null,
         dialogs:window.MarkalooDialogs,confirm:window.confirm,
         toast:document.getElementById('notificationToast'),
@@ -7120,7 +7120,7 @@ async function run(win) {
         if (area) p.clicks.push({event,selected:area===p.target,href:area.getAttribute('href')});
       };
       window.addEventListener('click', p.capture, true);
-      p.unsubscribe = window.folia.onError(message => p.notices.push(String(message)));
+      p.unsubscribe = window.markaloo.onError(message => p.notices.push(String(message)));
       if (typeof p.unsubscribe !== 'function') throw new Error('SEC-11 error subscription has no cleanup');
       p.observedDialogs = Object.freeze({...p.dialogs,show(...args) {
         p.dialogCalls.push(String(args[0]?.title || 'untitled')); return p.dialogs.show(...args);
@@ -7194,7 +7194,7 @@ async function run(win) {
     sec11Contents.sendInputEvent({type:"mouseDown",x:sec11Point.x,y:sec11Point.y,button:"left",clickCount:1});
     sec11Contents.sendInputEvent({type:"mouseUp",x:sec11Point.x,y:sec11Point.y,button:"left",clickCount:1});
     await sleep(700);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     const sec11Page = await sec11Read();
     const sec11External = await visualUtils.readExternalOpens(win);
     const sec11ShellPaths = await visualUtils.readShellOpens(win);
@@ -7219,7 +7219,7 @@ async function run(win) {
     if (!sec11Routed) throw new Error("SEC-11 image-map refuses unvalidated route evidence");
     sec11Phase = "retirement";
     await closeSecurityImageFixture(sec11Owner,sec11AreaFile,sec11AreaBody,"Nav");
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     if (sec11Shutdown.documentAdmissionIsCurrent(sec11Owner.descriptor.ref) !== false ||
         !sec11Authority()) throw new Error("SEC-11 image-map Main admission did not actually retire");
     const sec11FinalExternal = await visualUtils.readExternalOpens(win);
@@ -7260,7 +7260,7 @@ async function run(win) {
             window.confirm = p.confirm;
           });
           const quiet = p.errors === window.__e2eErrors && p.errors.length === 0 &&
-            p.tabs === window.CustomTabs && p.folia === window.folia &&
+            p.tabs === window.CustomTabs && p.markaloo === window.markaloo &&
             p.session === window.getReloadRequestSession() &&
             p.toast === document.getElementById('notificationToast') &&
             p.message === document.getElementById('notificationMessage') &&
@@ -7699,7 +7699,7 @@ async function run(win) {
     async function dropBarrier() {
       await exec(`new Promise(resolve => requestAnimationFrame(() =>
         requestAnimationFrame(() => resolve(true))))`);
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
     }
     function securityDropIngressMatches(action, event) {
       const own = entries.slice(action.start.entries);

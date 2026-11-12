@@ -2,8 +2,9 @@
 
 // Mapping markup lives only in a detached metadata copy. The displayed HTML is
 // unchanged, and bindings cross over only after complete DOM verification.
-window.createEditorScroll = function ({ editor, preview, active, frozen, identity, scale }) {
-  const attribute = 'data-folia-scroll';
+window.createEditorScroll = function ({ editor, preview, active, frozen, identity, scale, presentation, readingSourceIdentity }) {
+  const readingEnabled = typeof presentation === 'function' && typeof readingSourceIdentity === 'function';
+  const attribute = 'data-markaloo-scroll';
   let committed = null, owner = null, anchors = [], frame = 0, dirty = false;
   let mirror = null, mirrorText = null, mirrorKey = null, mirrorOffsets = null, observing = false;
   let sourceMarkers = [];
@@ -11,6 +12,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   const measuredSizes = new WeakMap();
   const tableReceipts = new WeakMap();
   const textReceipts = new WeakMap(), sourceTextReceipts = new WeakMap();
+  const readingAdoptions = new WeakMap(), readingOwners = new WeakMap(), readingBodies = new WeakMap(), readingFinal = new WeakMap(), readingReceipts = new WeakMap();
+  let publishedText = null, readingEpoch = 0, bindingEpoch = 0;
+  let lastReadingCaptureFailure = null;
   let pendingSource = false, lastEditor = 0, lastPreview = 0;
   let pendingNestedWheel = null;
   const stats = { builds: 0, scrolls: 0, writes: 0, callbacks: [] };
@@ -165,6 +169,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       this.bindings = [];
       this.editableTables = new Map();
       this.textSpecs = new WeakMap();
+      this.readingTextSpecs = new WeakMap();
       this.textGroups = [];
       this.editableText = [];
       this.captureOwners = [];
@@ -265,6 +270,31 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         if (/^ .* $/.test(body.text) && /[^ ]/.test(body.text)) body = sliceView(body, 1, body.text.length - 1);
         return body;
       };
+      const fencedReadingCode = (token, view) => {
+        const opening = /^( {0,3})(`{3,}|~{3,})[^\n]*\n/.exec(token.raw);
+        if (!opening || token.codeBlockStyle === 'indented') return null;
+        const delimiter = opening[2][0], width = opening[2].length, start = opening[0].length;
+        const closing = new RegExp('(?:^|\\n) {0,3}' + delimiter + '{' + width + ',}[ \\t]*(?:\\n)?$')
+          .exec(token.raw.slice(start));
+        const stop = closing ? start + closing.index + (closing[0][0] === '\n' ? 1 : 0) : token.raw.length;
+        const rawLines = token.raw.slice(start, stop).split('\n'), rows = [];
+        let sourceOffset = start, output = 0;
+        const lines = rawLines.map(raw => {
+          const indentation = opening[1].length && raw.startsWith(opening[1]) ? opening[1].length : 0;
+          const text = raw.slice(indentation);
+          rows.push({ from: output, view: sliceView(view, sourceOffset + indentation, sourceOffset + raw.length), text });
+          sourceOffset += raw.length + 1; output += text.length + 1;
+          return text;
+        });
+        const body = lines.join('\n').replace(/\n$/, '');
+        if (body !== token.text) return null;
+        const retained = token.text.replace(/\n$/, ''), display = retained + '\n';
+        const runs = rows.filter(row => row.text.length && row.from < retained.length).map(row => ({
+          from: row.from, display: row.text, view: row.view, kind: 'code',
+        }));
+        return runs.every(run => run.from + run.display.length <= retained.length &&
+          run.view.text === run.display && run.view.exact(0) && run.view.exact(run.display.length)) ? { display, runs } : null;
+      };
       const captureBody = (descriptor, view) => {
         if (descriptor.view.exact(0) && descriptor.view.exact(descriptor.view.text.length) &&
             view.exact(0) && view.exact(view.text.length)) {
@@ -273,7 +303,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const containsHtml = token => token.type === 'html' ||
         [...(token.tokens || []), ...(token.items || [])].some(containsHtml);
-      const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null) => {
+      const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null, readingOnly = false) => {
         let cursor = 0;
         for (const token of items || []) {
           if (!token.raw || token.type === 'checkbox') continue;
@@ -290,11 +320,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             continue;
           }
           const tokenView = sliceView(view, at, at + token.raw.length);
-          if (topLevel && at > cursor && /^\s*$/.test(view.text.slice(cursor, at)) &&
+          if (!readingOnly && topLevel && at > cursor && /^\s*$/.test(view.text.slice(cursor, at)) &&
               view.exact(cursor) && view.exact(at)) {
             this.captureGaps.push({ start: view.at(cursor), end: view.at(at) });
           }
-          if (['space', 'br'].includes(token.type) && tokenView.exact(0) &&
+          if (!readingOnly && ['space', 'br'].includes(token.type) && tokenView.exact(0) &&
               tokenView.exact(token.raw.length)) {
             this.captureGaps.push({ start: tokenView.at(0), end: tokenView.at(token.raw.length) });
           }
@@ -306,7 +336,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           let codeOffset = 0;
           const codeStart = token.type === 'code' ? token.raw.indexOf(token.text) : -1;
           spans.set(token, { start: tokenView.at(0), end: tokenView.at(end), kind: token.type, inline, opaque,
-            owner: tokenOwner, root: topLevel, view: tokenView,
+            owner: tokenOwner, root: topLevel, view: tokenView, ...(readingOnly ? { readingOnly: true } : {}),
             rows: token.type === 'table' ? [rows[0], ...rows.slice(2)] : [],
             codeLines: codeStart >= 0
               ? token.text.split('\n').map(line => {
@@ -314,12 +344,44 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
                 codeOffset += line.length + 1;
                 return entry;
               }) : [],
+            ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
-          if (token.type === 'codespan') captureBody(spans.get(token), codeBody(token, tokenView));
+          if (!readingOnly && token.type === 'codespan') captureBody(spans.get(token), codeBody(token, tokenView));
           cursor = at + token.raw.length;
           const opaqueChildren = opaque || (this.coarseHtml && topLevel && containsHtml(token));
-          if (token.items) locate(token.items, tokenView, false, false, opaqueChildren, tokenOwner);
+          if (token.type === 'table' && readingEnabled && !opaqueChildren) {
+            const index = window.MarkalooTableCells?.index;
+            if (typeof index !== 'function') this.warn('reading table parser unavailable');
+            else {
+              const model = index(tokenView.text, marked, value => value), table = model.tables[0];
+              const expected = [token.header, ...token.rows];
+              if (model.tables.length === 1 && !model.otherTables.length && table.start === 0 &&
+                  table.end === token.raw.trimEnd().length && table.token.raw.trimEnd() === token.raw.trimEnd() &&
+                  table.rows.length === expected.length &&
+                  [table.token.header, ...table.token.rows].every((row, r) => row.length === expected[r].length &&
+                    row.every((cell, c) => cell.text === expected[r][c].text))) {
+                const cells = expected.map((row, r) => row.map((cell, c) => {
+                  const actual = table.rows[r].cells[c];
+                  if (!actual) return { text: cell.text, synthetic: true };
+                  const view = replaceView(sliceView(tokenView, actual.start, actual.end), /\\\|/g, () => '|');
+                  if (view.text !== cell.text || !view.exact(0) || !view.exact(view.text.length)) return null;
+                  return { text: cell.text, start: view.at(0), end: view.at(view.text.length), view, token: cell };
+                }));
+                if (cells.every(row => row.every(Boolean))) {
+                  spans.get(token).readingTable = cells;
+                  for (let r = 0; r < cells.length; r++) for (let c = 0; c < cells[r].length; c++) {
+                    const cell = cells[r][c];
+                    if (cell.synthetic) continue;
+                    spans.set(cell.token, { ...cell, kind: 'cell', row: r, column: c, readingOnly: true,
+                      owner: tokenOwner, root: false, inline: true });
+                    locate(cell.token.tokens, cell.view, false, true, false, tokenOwner, true);
+                  }
+                } else this.warn('unverified reading table cell projection');
+              } else this.warn('unverified reading table structure');
+            }
+          }
+          if (token.items) locate(token.items, tokenView, false, false, opaqueChildren, tokenOwner, readingOnly);
           if (!token.tokens || token.type === 'image') continue;
           let children = tokenView;
           if (token.type === 'blockquote') {
@@ -347,12 +409,12 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           } else if (token.type === 'link' && token.raw.startsWith('<') && token.raw.endsWith('>')) {
             children = sliceView(tokenView, 1, token.raw.length - 1);
           }
-          if (children?.omissions) this.captureGaps.push(...children.omissions);
-          if (children && ['strong', 'em', 'del', 'link'].includes(token.type)) {
+          if (!readingOnly && children?.omissions) this.captureGaps.push(...children.omissions);
+          if (!readingOnly && children && ['strong', 'em', 'del', 'link'].includes(token.type)) {
             captureBody(spans.get(token), children);
           }
           if (children) locate(token.tokens, children, false,
-            inline || !['list_item', 'blockquote'].includes(token.type), opaqueChildren, tokenOwner);
+            inline || !['list_item', 'blockquote'].includes(token.type), opaqueChildren, tokenOwner, readingOnly);
           else this.warn('unverified ' + token.type + ' prefix removal');
         }
       };
@@ -364,7 +426,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const renderer = new marked.Renderer();
       for (const name of ['heading', 'paragraph', 'code', 'list', 'listitem', 'blockquote',
-        'table', 'html', 'hr', 'image', 'strong', 'em', 'del', 'link']) {
+        'table', 'tablecell', 'html', 'hr', 'image', 'strong', 'em', 'del', 'link']) {
         const render = renderer[name];
         renderer[name] = function (token) {
           let html = render.call(this, token);
@@ -448,6 +510,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         return this.verifyMapping(root, sanitize);
       } catch (error) {
         this.textSpecs = new WeakMap();
+        this.readingTextSpecs = new WeakMap();
         this.warn('metadata verification failed: ' + error.message);
         return new WeakMap();
       }
@@ -459,6 +522,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         template.content.append(copy);
         copy.innerHTML = sanitize(html);
         this.textSpecs = new WeakMap();
+        this.readingTextSpecs = new WeakMap();
         this.invalidAnnotations = false;
         const bindings = this.detachAnnotations(copy, new Set(), sanitize);
         copy.normalize();
@@ -481,8 +545,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         metadata = read(this.mappingHtml);
         verified = metadata.valid && equal(root, metadata.copy);
       }
-      const bindings = new WeakMap(), specs = this.textSpecs;
+      const bindings = new WeakMap(), specs = this.textSpecs, readingSpecs = this.readingTextSpecs;
       this.textSpecs = new WeakMap();
+      this.readingTextSpecs = new WeakMap();
       if (!verified) {
         this.warn('unverified authored HTML structure');
         return bindings;
@@ -494,12 +559,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         if (descriptor) bindings.set(actual[i], descriptor);
         const text = specs.get(copies[i]);
         if (text) this.textSpecs.set(actual[i], text);
+        const reading = readingSpecs.get(copies[i]);
+        if (reading) this.readingTextSpecs.set(actual[i], reading);
       }
       return bindings;
     }
     detachAnnotations(root, consumed, sanitize) {
       const bindings = new WeakMap();
-      const runs = [];
+      const runs = [], codeRuns = [];
       for (const node of root.querySelectorAll(`[${this.attribute}]`)) {
         const value = node.getAttribute(this.attribute);
         if (!value.startsWith(this.nonce + ':')) continue;
@@ -523,6 +590,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             }
           }
           bindings.set(node, descriptor);
+          if (descriptor.readingCode) codeRuns.push({ node, descriptor });
           continue;
         }
         let block = node;
@@ -547,15 +615,21 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           positions.set(descriptor.owner, descriptor.start);
         }
       }
-      const blocks = new Map();
+      const blocks = new Map(), editingBlocks = new Set();
       for (const run of runs) {
         if (!blocks.has(run.block)) {
           const content = textNodes(run.block);
-          blocks.set(run.block, new Map(content.nodes.map(entry => [entry.node, entry.start])));
-          this.textSpecs.set(run.block, { text: content.text, runs: [] });
+          blocks.set(run.block, { positions: new Map(content.nodes.map(entry => [entry.node, entry.start])), text: content.text });
+          if (readingEnabled) this.readingTextSpecs.set(run.block, { text: content.text, runs: [] });
         }
-        const walker = document.createTreeWalker(run.node, NodeFilter.SHOW_TEXT), first = walker.nextNode();
-        const from = blocks.get(run.block).get(first);
+        if (!run.descriptor.readingOnly && !editingBlocks.has(run.block)) {
+          this.textSpecs.set(run.block, { text: blocks.get(run.block).text, runs: [] });
+          editingBlocks.add(run.block);
+        }
+        const child = run.node.firstChild;
+        const first = child?.nodeType === Node.TEXT_NODE ? child :
+          document.createTreeWalker(run.node, NodeFilter.SHOW_TEXT).nextNode();
+        const from = blocks.get(run.block).positions.get(first);
         let view = run.descriptor.view;
         if (view.text !== run.display && /&(?:#\d+|#x[\da-f]+|[a-z][\da-z]+);/i.test(view.text)) {
           const decoder = document.createElement('textarea');
@@ -565,11 +639,31 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           });
         }
         if (from !== undefined && view.text === run.display) {
-          this.textSpecs.get(run.block).runs.push({ from, display: run.display, view });
+          if (!run.descriptor.readingOnly) this.textSpecs.get(run.block).runs.push({ from, display: run.display, view });
+          if (readingEnabled) this.readingTextSpecs.get(run.block).runs.push({
+            from, display: run.display, view, ...(run.descriptor.readingOnly ? { kind: 'table' } : {}),
+          });
         } else if (from !== undefined) {
           this.warn('unverified inline text transformation');
         }
         if (run.descriptor.temporary) run.node.replaceWith(...run.node.childNodes);
+      }
+      if (readingEnabled) {
+        for (const { node, descriptor } of codeRuns) {
+          const codes = node.querySelectorAll('code'), code = codes[0];
+          if (node.tagName !== 'PRE' || codes.length !== 1 || code.parentNode !== node ||
+              code.textContent !== descriptor.readingCode.display ||
+              [...code.childNodes].some(child => child.nodeType !== Node.TEXT_NODE)) continue;
+          let block = node;
+          while (block.parentNode !== root) block = block.parentNode;
+          const content = textNodes(block), codeContent = textNodes(code);
+          const from = content.nodes.find(entry => entry.node === codeContent.nodes[0]?.node)?.start;
+          if (from === undefined) continue;
+          const specs = this.readingTextSpecs.get(block) || { text: content.text, runs: [] };
+          specs.runs.push(...descriptor.readingCode.runs.map(run => ({ ...run, from: from + run.from })));
+          specs.runs.sort((a, b) => a.from - b.from);
+          this.readingTextSpecs.set(block, specs);
+        }
       }
       for (const template of root.querySelectorAll('template')) this.detachAnnotations(template.content, consumed, sanitize);
       return bindings;
@@ -601,9 +695,22 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             [...(adopted.tagName === tag ? [adopted] : []), ...adopted.querySelectorAll(tag)]);
           target = adoptedTags.get(tag)[ordinal];
         }
-        if (target) {
-          if (descriptor.captureBody) this.captureOwners.push({ ...descriptor, element: target, block: adopted });
-          else this.bindings.push({ ...descriptor, element: target, block: adopted });
+        if (target && !descriptor.readingOnly) {
+          const editingDescriptor = { ...descriptor, element: target, block: adopted };
+          if (readingEnabled) {
+            delete editingDescriptor.readingCode;
+            delete editingDescriptor.readingTable;
+          }
+          if (descriptor.captureBody) this.captureOwners.push(editingDescriptor);
+          else this.bindings.push(editingDescriptor);
+        }
+        if (readingEnabled && descriptor.view &&
+            (fresh === adopted || (node === fresh && fresh.isEqualNode(adopted))) &&
+            descriptor.view.exact(0) && descriptor.view.exact(descriptor.view.text.trimEnd().length)) {
+          const owners = readingOwners.get(this) || [];
+          owners.push({ element: fresh === adopted ? node : adopted, start: descriptor.start, end: descriptor.end,
+            kind: descriptor.kind, tag: (fresh === adopted ? node : adopted).tagName, role: 'body' });
+          readingOwners.set(this, owners);
         }
       }
       const specs = this.textSpecs.get(fresh);
@@ -616,12 +723,854 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           this.editableText.push({ element: adopted, canonical: fresh.outerHTML, ...specs });
         }
       }
+      const reading = this.readingTextSpecs.get(fresh);
+      if (readingEnabled && reading) {
+        const bodies = readingBodies.get(this) || [];
+        bodies.push({ fresh, adopted, specs: reading, tree: readingTree(fresh),
+          bindings: nodes.map(node => ({ node, descriptor: bindings.get(node) })).filter(entry => entry.descriptor) });
+        readingBodies.set(this, bodies);
+      }
+      if (readingEnabled && reading &&
+          (fresh === adopted || fresh.isEqualNode(adopted))) {
+        const groups = readingAdoptions.get(this) || [];
+        groups.push({ element: adopted, ...reading, shape: readingShape(adopted), elements: readingElements(adopted) });
+        readingAdoptions.set(this, groups);
+      }
     }
   }
 
   function usable() {
     return active() && !frozen() && !pendingSource && committed &&
       committed.selection === identity();
+  }
+  // Reading publication is opt-in and independent of pending editor text.
+  // Renderer lifecycle/revision binding and all restoration are still unwired.
+  const readingLimits = { atom: 256, display: 128, context: 32, nested: 4 };
+  function readingTree(root) {
+    if (root.nodeType === Node.TEXT_NODE) return root.data;
+    return { node: root, tag: root.tagName, attributes: [...root.attributes].map(attr => [attr.name, attr.value]).sort(),
+      children: [...root.childNodes].map(readingTree) };
+  }
+  function readingHighlight(node) {
+    const attributes = [...node.attributes];
+    return node.tagName === 'SPAN' && attributes.length === 1 && attributes[0].name === 'class' &&
+      /^(?:search-highlight(?: current)?|current search-highlight)$/.test(attributes[0].value);
+  }
+  function readingElements(root, controls = new Set()) {
+    return [root, ...root.querySelectorAll('*')].filter(node => {
+      if (readingHighlight(node)) return false;
+      for (let parent = node.parentElement; parent && parent !== root.parentElement; parent = parent.parentElement) {
+        if (controls.has(parent)) return false;
+      }
+      return true;
+    });
+  }
+  function sameReadingElements(elements, root, controls) {
+    const current = readingElements(root, controls);
+    return current.length === elements.length && current.every((node, index) => node === elements[index]);
+  }
+  function readingShape(root, controls = new Set()) {
+    const parts = [];
+    let text = '';
+    const flush = () => { if (text) { parts.push(text); text = ''; } };
+    const visit = node => {
+      if (node.nodeType === Node.TEXT_NODE) { text += node.data; return; }
+      if (node.nodeType !== Node.ELEMENT_NODE) { flush(); parts.push(['other', node.nodeType]); return; }
+      if (controls.has(node)) { flush(); parts.push(['control', node.tagName]); return; }
+      const attributes = [...node.attributes].map(attr => [attr.name, attr.value]).sort();
+      const transparent = readingHighlight(node);
+      if (!transparent) { flush(); parts.push(['open', node.tagName, attributes]); }
+      for (const child of node.childNodes) visit(child);
+      if (!transparent) { flush(); parts.push(['close']); }
+    };
+    visit(root); flush();
+    return JSON.stringify(parts);
+  }
+  function readingContext() {
+    if (!readingEnabled) return null;
+    const value = presentation();
+    const scalar = part => (typeof part === 'string' && part.length > 0 && part.length <= 128) ||
+      (typeof part === 'number' && Number.isSafeInteger(part) && part >= 0);
+    return value && scalar(value.owner) && scalar(value.revision)
+      ? { owner: value.owner, revision: value.revision } : null;
+  }
+  function sameReadingContext(a, b) {
+    return !!a && !!b && a.owner === b.owner && a.revision === b.revision;
+  }
+  function readingState(source) {
+    if (!readingEnabled) return null;
+    // Only external authority reads are caught. Their failure is an explicit API refusal.
+    try {
+      const context = readingContext();
+      if (source === null) return { context };
+      const selection = identity(), held = frozen(), key = readingSourceIdentity(source);
+      return context && typeof key === 'string' && key.length > 0 && key.length <= 128
+        ? { context, selection, frozen: held, key } : null;
+    } catch {
+      return null;
+    }
+  }
+  function readingFailure(status, reason) { return Object.freeze({ status, reason }); }
+  function bindReadingPresentation(source, context, associations) {
+    const observation = typeof readingPublicationObservation === 'undefined' ? null : readingPublicationObservation;
+    const observedAttempt = observation?.bindingOp || 0;
+    const observedAdmission = observation?.admission ?? null;
+    if (!(source instanceof Source)) return readingFailure('unavailable', 'presentation-unbound');
+    const entered = readingEpoch, enteredBinding = bindingEpoch, state = readingState(source);
+    if (!state || entered !== readingEpoch || enteredBinding !== bindingEpoch ||
+        !sameReadingContext(context, state.context) || source.selection !== state.selection ||
+        state.frozen || !Array.isArray(associations)) {
+      return readingFailure('unavailable', 'presentation-unbound');
+    }
+    const ticket = ++bindingEpoch, proofs = readingBodies.get(source);
+    readingFinal.delete(source);
+    if (!proofs?.length || associations.length !== proofs.length) return readingFailure('unsupported', 'incomplete-body-associations');
+    const groups = [], owners = [], usedBodies = new Set(), usedFresh = new Set(), usedWrappers = new Set(), usedControls = new Set();
+    const usedSections = new Set(), imageControls = new Map();
+    const pseudos = new Map(), translatedHeaders = new Set(), translatedTables = new Set();
+    for (const association of associations) {
+      const proof = proofs.find(proof => proof.fresh === association?.fresh), body = association?.body;
+      if (!proof || usedFresh.has(proof.fresh) || !(body instanceof Element) || !body.isConnected ||
+          !preview.contains(body) || usedBodies.has(body) || !Array.isArray(association.owners) ||
+          (association.sections !== undefined && !Array.isArray(association.sections)) ||
+          (association.images !== undefined && !Array.isArray(association.images))) {
+        return readingFailure('unsupported', 'unverified-body-association');
+      }
+      usedFresh.add(proof.fresh); usedBodies.add(body);
+      const targets = new Map(), codeBodies = new Map(), tableBodies = new Set(), controls = new Set(), ownerPairs = new Map(), wrappers = new Map();
+      const sections = new Map(), images = new Map();
+      for (const pair of association.sections || []) {
+        const tree = findReadingTree(proof.tree, pair?.fresh), section = pair?.section;
+        if (!tree || !/^H[1-6]$/.test(tree.tag) || sections.has(pair.fresh) ||
+            !(pair.header instanceof Element) || !body.contains(pair.header) ||
+            !(section instanceof Element) || !section.isConnected || !preview.contains(section) ||
+            usedSections.has(section) || pair.header.nextElementSibling !== section ||
+            JSON.stringify([...section.attributes].map(attr => [attr.name, attr.value]).sort()) !== pair.attributes) {
+          return readingFailure('unsupported', 'unverified-producer-section');
+        }
+        sections.set(pair.fresh, pair.header);
+        usedSections.add(section);
+      }
+      for (const pair of association.images || []) {
+        const tree = findReadingTree(proof.tree, pair?.fresh), image = pair?.body;
+        const wrapper = pair?.wrapper, control = pair?.control;
+        if (!tree || tree.tag !== 'IMG' || images.has(pair.fresh) ||
+            !(image instanceof Element) || image.tagName !== 'IMG' || !body.contains(image) ||
+            !(wrapper instanceof Element) || wrapper.tagName !== 'DIV' || !body.contains(wrapper) ||
+            usedWrappers.has(wrapper) || image.parentElement !== wrapper ||
+            !(control instanceof Element) || control.tagName !== 'BUTTON' ||
+            usedControls.has(control) || control.parentElement !== wrapper ||
+            wrapper.childNodes.length !== 2 || wrapper.childNodes[0] !== image || wrapper.childNodes[1] !== control ||
+            JSON.stringify([...wrapper.attributes].map(attr => [attr.name, attr.value]).sort()) !== pair.attributes ||
+            typeof pair.controlMarkup !== 'string' || control.outerHTML !== pair.controlMarkup) {
+          return readingFailure('unsupported', 'unverified-image-container');
+        }
+        images.set(pair.fresh, image);
+        wrappers.set(wrapper, image); usedWrappers.add(wrapper);
+        controls.add(control); usedControls.add(control);
+        imageControls.set(control, pair.controlMarkup);
+      }
+      const authoredAttributes = new Map();
+      for (const change of association.attributes || []) {
+        if (!(change?.body instanceof Element) || !body.contains(change.body) ||
+            !['id', 'class', 'style', 'tabindex'].includes(change.name) ||
+            (change.value !== null && typeof change.value !== 'string') ||
+            change.body.getAttribute(change.name) !== change.value) {
+          return readingFailure('unsupported', 'unverified-producer-attribute');
+        }
+        let attributes = authoredAttributes.get(change.body);
+        if (!attributes) authoredAttributes.set(change.body, attributes = new Set());
+        if (attributes.has(change.name)) return readingFailure('unsupported', 'duplicate-producer-attribute');
+        attributes.add(change.name);
+      }
+      for (const pseudo of association.pseudos || []) {
+        if (!(pseudo?.body instanceof Element) || !body.contains(pseudo.body) ||
+            !/^H[1-6]$/.test(pseudo.body.tagName) || pseudo.name !== '::before' ||
+            getComputedStyle(pseudo.body, pseudo.name).content !== pseudo.content) {
+          return readingFailure('unsupported', 'unverified-producer-pseudo');
+        }
+        pseudos.set(pseudo.body, pseudo.content);
+      }
+      for (const pair of association.owners) {
+        const bound = proof.bindings.find(entry => entry.node === pair?.fresh);
+        const descriptor = bound?.descriptor, target = pair?.body;
+        if (!descriptor || (!descriptor.readingCode && !descriptor.readingTable) ||
+            ownerPairs.has(pair.fresh) || !(target instanceof Element) || !body.contains(target) ||
+            !Array.isArray(pair.controls) || !Array.isArray(pair.decorations)) {
+          return readingFailure('unsupported', 'unverified-owner-association');
+        }
+        ownerPairs.set(pair.fresh, pair);
+        for (const control of pair.controls) {
+          if (!(control instanceof Element) ||
+              (control.tagName !== 'BUTTON' && !(pair.overlay === control && control.tagName === 'DIV' &&
+                textNodes(control).text === '')) || usedControls.has(control) ||
+              (control.parentElement !== target && control.parentElement !== pair.wrapper)) {
+            return readingFailure('unsupported', 'unverified-generated-control');
+          }
+          controls.add(control); usedControls.add(control);
+        }
+        if (pair.wrapper !== null) {
+          const wrapper = pair.wrapper;
+          if (!(wrapper instanceof Element) || !wrapper.isConnected || !preview.contains(wrapper) ||
+              target.parentElement !== wrapper || usedWrappers.has(wrapper) || wrapper === body ||
+              [...wrapper.childNodes].some(node => node !== target && !controls.has(node) &&
+                (node.nodeType !== Node.TEXT_NODE || /\S/.test(node.data)))) {
+            return readingFailure('unsupported', 'unverified-generated-container');
+          }
+          usedWrappers.add(wrapper);
+          wrappers.set(wrapper, target);
+          owners.push({ element: wrapper, start: descriptor.start, end: descriptor.end,
+            kind: descriptor.kind, tag: wrapper.tagName, role: 'scroller' });
+        }
+        if (pair.breakout !== undefined && pair.breakout !== null) {
+          if (!descriptor.readingTable || pair.breakout !== pair.wrapper) {
+            return readingFailure('unsupported', 'unverified-table-breakout');
+          }
+          translatedTables.add(pair.wrapper);
+        }
+        if (descriptor.readingCode) {
+          const code = pair.code, decorations = new Set(pair.decorations);
+          if (!(code instanceof Element) || code.tagName !== 'CODE' || code.parentElement !== target ||
+              textNodes(code).text !== descriptor.readingCode.display || decorations.size !== pair.decorations.length ||
+              [...code.querySelectorAll('*')].some(node => !readingHighlight(node) &&
+                (node.tagName !== 'SPAN' || !decorations.has(node))) ||
+              [...decorations].some(node => node.tagName !== 'SPAN' || !code.contains(node))) {
+            return readingFailure('unsupported', 'unverified-final-code');
+          }
+          const originalCode = proof.tree.node === bound.node ? proof.tree.children.find(child => typeof child !== 'string' && child.tag === 'CODE') :
+            findReadingTree(proof.tree, bound.node)?.children.find(child => typeof child !== 'string' && child.tag === 'CODE');
+          if (!originalCode) return readingFailure('unsupported', 'unverified-code-source-body');
+          codeBodies.set(originalCode.node, { code, display: descriptor.readingCode.display });
+        } else {
+          if (pair.decorations.length || pair.code !== null) return readingFailure('unsupported', 'unverified-table-decoration');
+          tableBodies.add(target);
+          if (pair.header !== undefined && pair.header !== null) {
+            if (pair.header.tagName !== 'THEAD' || pair.header.parentElement !== target) {
+              return readingFailure('unsupported', 'unverified-dynamic-table-header');
+            }
+            translatedHeaders.add(pair.header);
+          }
+        }
+      }
+      const parts = element => {
+        const children = [];
+        const append = node => {
+          if (controls.has(node)) return;
+          if (wrappers.has(node)) append(wrappers.get(node));
+          else if (node.nodeType === Node.TEXT_NODE) {
+            if (typeof children.at(-1) === 'string') children[children.length - 1] += node.data;
+            else children.push(node.data);
+          } else if (node.nodeType === Node.ELEMENT_NODE && readingHighlight(node)) {
+            for (const child of node.childNodes) append(child);
+          } else children.push(node);
+        };
+        for (const child of element.childNodes) append(child);
+        return children;
+      };
+      const match = (tree, element) => {
+        if (!(element instanceof Element) || tree.tag !== element.tagName) return false;
+        if (sections.has(tree.node) && sections.get(tree.node) !== element) return false;
+        if (images.has(tree.node) && images.get(tree.node) !== element) return false;
+        targets.set(tree.node, element);
+        const code = codeBodies.get(tree.node);
+        if (code) return element === code.code && textNodes(element).text === code.display;
+        const paired = ownerPairs.get(tree.node);
+        if (paired && paired.body !== element) return false;
+        const attributes = [...element.attributes].map(attr => [attr.name, attr.value]).sort();
+        // Renderer table sizing changes classes. Text/structure, not a class, proves the source association.
+        const styled = paired || (/^(?:THEAD|TBODY|TFOOT|TR|TH|TD)$/.test(element.tagName) &&
+          [...tableBodies].some(table => table.contains(element)));
+        const changes = authoredAttributes.get(element);
+        const keep = ([name]) => !(styled && name === 'class') && !changes?.has(name);
+        const expectedAttributes = tree.attributes.filter(keep);
+        const expectedAttributeValue = JSON.stringify(expectedAttributes);
+        const actualAttributes = attributes.filter(keep);
+        const actualAttributeValue = JSON.stringify(actualAttributes);
+        if (expectedAttributeValue !== actualAttributeValue) {
+          if (observation && observedAttempt && observation.active && observation.admission === observedAdmission &&
+              observation.attemptAdmission === observedAdmission &&
+              observation.attempt === observedAttempt && observation.bindingOp === observedAttempt) {
+            if (expectedAttributeValue.length + actualAttributeValue.length > 2048) {
+              observation.attrFailure = 'over-bound';
+              observation.diagnosticInvalid = true;
+            } else {
+              const expectedStyle = expectedAttributes.find(([name]) => name === 'style');
+              const expectedStyleValue = JSON.stringify(expectedStyle);
+              const actualStyle = actualAttributes.find(([name]) => name === 'style');
+              const other = pairs => JSON.stringify(pairs.filter(([name]) => name !== 'style'));
+              const styleDiffers = expectedStyleValue !== JSON.stringify(actualStyle);
+              observation.attrFailure = styleDiffers
+                ? (other(expectedAttributes) !== other(actualAttributes) ? 'style-and-other' : 'style')
+                : 'other';
+              if (styleDiffers) {
+                const tag = tree.tag;
+                const category = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'UL', 'OL', 'LI',
+                  'PRE', 'CODE', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'SPAN', 'A'].includes(tag)
+                  ? tag : 'OTHER';
+                const state = pair => !pair ? 'absent' : pair[1] === '' ? 'empty' : 'nonempty';
+                // "mapped" records identity inequality, not reuse or association history.
+                observation.attrPair = `${category}_${tree.node === element ? 'same' : 'mapped'}_${state(expectedStyle)}_${state(actualStyle)}`;
+                if (tree.tag === 'TABLE') projectReadingMeasurement(element, observation, observedAdmission, observedAttempt);
+              }
+            }
+          }
+          return false;
+        }
+        const expected = [];
+        for (const child of tree.children) {
+          if (typeof child === 'string' && typeof expected.at(-1) === 'string') expected[expected.length - 1] += child;
+          else expected.push(child);
+        }
+        const actual = parts(element);
+        return expected.length === actual.length && expected.every((child, index) =>
+          typeof child === 'string' ? child === actual[index] : match(child, actual[index]));
+      };
+      if (!match(proof.tree, body) || textNodes(body).text !== proof.specs.text ||
+          proof.bindings.some(({ node, descriptor }) => (descriptor.readingCode || descriptor.readingTable) && !ownerPairs.has(node))) {
+        return readingFailure('unsupported', 'final-body-does-not-match-source');
+      }
+      for (const { node, descriptor } of proof.bindings) {
+        const target = targets.get(node);
+        if (target && descriptor.view && descriptor.end > descriptor.start && descriptor.view.exact(0) &&
+            descriptor.view.exact(descriptor.view.text.trimEnd().length)) {
+          owners.push({ element: target, start: descriptor.start, end: descriptor.end,
+            kind: descriptor.kind, tag: target.tagName, role: 'body' });
+        }
+      }
+      groups.push({ element: body, ...proof.specs,
+        shape: readingShape(body, usedControls), elements: readingElements(body, usedControls) });
+    }
+    if (!orderedReadingGroups(groups)) return readingFailure('unsupported', 'final-text-order');
+    // A callback can replace the binding without publishing. Check both generations after the last callback.
+    const finalState = readingState(source);
+    if (ticket !== bindingEpoch || entered !== readingEpoch || !finalState || finalState.frozen ||
+        !sameReadingContext(state.context, finalState.context) || source.selection !== finalState.selection ||
+        state.key !== finalState.key) {
+      return readingFailure('unavailable', 'presentation-changed');
+    }
+    readingFinal.set(source, { groups, owners, context: state.context, key: state.key,
+      controls: usedControls, controlParents: new Map([...usedControls].map(node => [node, node.parentElement])),
+      imageControls,
+      pseudos, translatedHeaders, translatedTables,
+      shape: readingShape(preview, usedControls), elements: readingElements(preview, usedControls) });
+    return Object.freeze({ status: 'bound' });
+  }
+  function findReadingTree(tree, node) {
+    if (typeof tree === 'string') return null;
+    if (tree.node === node) return tree;
+    for (const child of tree.children) {
+      const found = findReadingTree(child, node);
+      if (found) return found;
+    }
+    return null;
+  }
+  function orderedReadingGroups(groups) {
+    const nodes = textNodes(preview).nodes, positions = new Map(nodes.map((entry, index) => [entry.node, index]));
+    let previousNode = -1, previousSource = -1;
+    for (const group of groups) {
+      const content = textNodes(group.element), first = positions.get(content.nodes[0]?.node);
+      if (first === undefined || first <= previousNode) return false;
+      previousNode = positions.get(content.nodes[content.nodes.length - 1].node);
+      let end = 0;
+      for (const run of group.runs) {
+        if (!Number.isSafeInteger(run.from) || run.from < end || !run.display.length ||
+            content.text.slice(run.from, run.from + run.display.length) !== run.display ||
+            run.view.text !== run.display || run.view.at(0) < previousSource) return false;
+        end = run.from + run.display.length;
+        previousSource = run.view.at(run.display.length);
+      }
+    }
+    return true;
+  }
+  function publishTextSource(source, context) {
+    if (source !== null && !(source instanceof Source)) return readingFailure('unavailable', 'presentation-unbound');
+    const entered = readingEpoch, enteredBinding = bindingEpoch, state = readingState(source);
+    if (!state || !sameReadingContext(context, state.context) || entered !== readingEpoch || enteredBinding !== bindingEpoch) {
+      return readingFailure('unavailable', 'presentation-unbound');
+    }
+    if (source === null) {
+      readingEpoch++;
+      publishedText = null;
+      return readingFailure('retired', 'explicit-retirement');
+    }
+    if (source.selection !== state.selection || !preview.isConnected || state.frozen) {
+      return readingFailure('unavailable', 'presentation-unbound');
+    }
+    const epoch = ++readingEpoch;
+    publishedText = null;
+    const final = readingFinal.get(source);
+    if (final && (!sameReadingContext(final.context, state.context) || final.key !== state.key)) return readingFailure('unavailable', 'stale-final-binding');
+    if (final && (readingShape(preview, final.controls) !== final.shape ||
+        !sameReadingElements(final.elements, preview, final.controls) ||
+        [...final.imageControls].some(([node, markup]) => node.outerHTML !== markup))) {
+      return readingFailure('unsupported', 'final-presentation-changed');
+    }
+    if (!final && readingBodies.get(source)?.some(proof => proof.bindings.some(({ descriptor }) =>
+      descriptor.readingCode || descriptor.readingTable))) return readingFailure('unsupported', 'final-binding-required');
+    const groups = (final?.groups || readingAdoptions.get(source))?.map(group => ({ ...group,
+      runs: group.runs.map(run => ({ ...run, view: { text: run.view.text, at: run.view.at, exact: run.view.exact } })) }));
+    if (!groups?.length || groups.some(group => !group.element.isConnected ||
+        !preview.contains(group.element) || readingShape(group.element, final?.controls) !== group.shape ||
+        !sameReadingElements(group.elements, group.element, final?.controls) ||
+        textNodes(group.element).text !== group.text) || !orderedReadingGroups(groups)) {
+      return readingFailure('unsupported', 'unverified-text-publication');
+    }
+    const finalState = readingState(source);
+    if (epoch !== readingEpoch || enteredBinding !== bindingEpoch || !finalState || finalState.frozen ||
+        !sameReadingContext(state.context, finalState.context) || source.selection !== finalState.selection ||
+        state.key !== finalState.key) {
+      return readingFailure('unavailable', 'presentation-changed');
+    }
+    const owners = (final?.owners || readingOwners.get(source) || []).map(owner => ({ ...owner }));
+    publishedText = { source, groups, owners, context: state.context, epoch,
+      controls: final?.controls || new Set(), controlParents: final?.controlParents || new Map(),
+      imageControls: final?.imageControls || new Map(),
+      pseudos: final?.pseudos || new Map(), translatedHeaders: final?.translatedHeaders || new Set(),
+      translatedTables: final?.translatedTables || new Set(),
+      shape: readingShape(preview, final?.controls), elements: readingElements(preview, final?.controls), key: state.key };
+    return Object.freeze({ status: 'published', sourceKey: publishedText.key });
+  }
+  function currentReadingPublication(expected) {
+    const publication = publishedText, entered = readingEpoch, enteredBinding = bindingEpoch;
+    if (!publication) return null;
+    const state = readingState(publication.source);
+    if (publication !== publishedText || entered !== readingEpoch || enteredBinding !== bindingEpoch) return null;
+    if (!state || state.frozen || state.key !== publication.key ||
+        publication.source.selection !== state.selection || !preview.isConnected ||
+        !sameReadingContext(publication.context, state.context) ||
+        readingShape(preview, publication.controls) !== publication.shape ||
+        !sameReadingElements(publication.elements, preview, publication.controls) ||
+        [...publication.controlParents].some(([node, parent]) => !node.isConnected || node.parentElement !== parent) ||
+        [...publication.imageControls].some(([node, markup]) => node.outerHTML !== markup) ||
+        publication.owners.some(owner => !owner.element.isConnected || !preview.contains(owner.element) || owner.element.tagName !== owner.tag) ||
+        publication.groups.some(group => !group.element.isConnected || !preview.contains(group.element) ||
+          readingShape(group.element, publication.controls) !== group.shape || textNodes(group.element).text !== group.text)) {
+      if (publishedText === publication && entered === readingEpoch && enteredBinding === bindingEpoch) publishedText = null;
+      return null;
+    }
+    return publication === publishedText && entered === readingEpoch && enteredBinding === bindingEpoch &&
+      (expected === undefined || sameReadingContext(state.context, expected)) ? publication : null;
+  }
+  function splitsReadingScalar(text, offset) {
+    return /[\uD800-\uDBFF]/.test(text[offset - 1] || '') && /[\uDC00-\uDFFF]/.test(text[offset] || '');
+  }
+  function readingContextText(text, start, end) {
+    let before = Math.max(0, start - readingLimits.context), after = Math.min(text.length, end + readingLimits.context);
+    if (splitsReadingScalar(text, before)) before++;
+    if (splitsReadingScalar(text, after)) after--;
+    return { before: text.slice(before, start), after: text.slice(end, after) };
+  }
+  function readingAtom(publication, group, run, index) {
+    const view = run.view, text = publication.source.source;
+    if (view.text !== run.display || index < 0 || index >= run.display.length) return null;
+    let from = index, to = index + (run.display.codePointAt(index) > 0xFFFF ? 2 : 1);
+    while (from > 0 && (!view.exact(from) || splitsReadingScalar(run.display, from))) from--;
+    while (to < run.display.length && (!view.exact(to) || splitsReadingScalar(run.display, to))) to++;
+    if (!view.exact(from) || !view.exact(to) || to - from > readingLimits.display) return null;
+    const start = view.at(from), end = view.at(to);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start ||
+        end > text.length || end - start > readingLimits.atom ||
+        splitsReadingScalar(text, start) || splitsReadingScalar(text, end)) return null;
+    return { group, run, from, to, start, end, atom: text.slice(start, end),
+      display: run.display.slice(from, to), blockKind: group.element.tagName, runKind: run.kind || 'text' };
+  }
+  function readingRange(candidate) {
+    const content = textNodes(candidate.group.element);
+    if (content.text !== candidate.group.text) return null;
+    const point = (position, end) => {
+      for (const entry of content.nodes) {
+        const stop = entry.start + entry.node.length;
+        if (position >= entry.start && (position < stop || (end && position === stop))) {
+          return { node: entry.node, offset: position - entry.start };
+        }
+      }
+      return null;
+    };
+    const first = point(candidate.run.from + candidate.from, false);
+    const last = point(candidate.run.from + candidate.to, true);
+    if (!first || !last) return null;
+    const range = document.createRange();
+    range.setStart(first.node, first.offset); range.setEnd(last.node, last.offset);
+    return range.toString() === candidate.display ? range : null;
+  }
+  function readingLayout(parent, scroller, publication, cache = new Map()) {
+    if (cache.has(parent)) return cache.get(parent);
+    if (!(scroller instanceof Element) || !scroller.isConnected ||
+        (scroller !== preview && !scroller.contains(preview)) ||
+        !/^(auto|scroll)$/.test(getComputedStyle(scroller).overflowY)) return null;
+    const doc = preview.ownerDocument, view = doc?.defaultView;
+    if (!view || doc !== document || view.frameElement || view.visualViewport?.scale !== 1) return null;
+    const clip = { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight };
+    if (![clip.right, clip.bottom].every(value => Number.isFinite(value) && value > 0)) return null;
+    const chain = [], nested = [], rounded = [];
+    const ancestry = [];
+    for (let node = parent; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.display === 'none') {
+        const hidden = { hidden: true };
+        cache.set(parent, hidden);
+        return hidden;
+      }
+      ancestry.push({ node, style });
+    }
+    // Computed visibility belongs to this text's parent; descendants may override an ancestor's hidden value.
+    if (ancestry[0]?.style.visibility === 'hidden') {
+      const hidden = { hidden: true };
+      cache.set(parent, hidden);
+      return hidden;
+    }
+    let reached = false;
+    for (const { node, style } of ancestry) {
+      if (node === scroller) reached = true;
+      if (['IFRAME', 'SVG', 'MATH', 'CANVAS', 'SCRIPT', 'STYLE', 'TEMPLATE'].includes(node.tagName) ||
+          style.display === 'contents' || !['visible', 'hidden'].includes(style.visibility) || Number(style.opacity) !== 1 ||
+          (style.transform !== 'none' && !((publication?.translatedHeaders.has(node) &&
+            /^matrix\(1,\s*0,\s*0,\s*1,\s*0,\s*-?(?:\d+(?:\.\d+)?|\.\d+)\)$/.test(style.transform)) ||
+            (publication?.translatedTables.has(node) &&
+            /^matrix\(1,\s*0,\s*0,\s*1,\s*-(?:\d+(?:\.\d+)?|\.\d+),\s*0\)$/.test(style.transform)))) ||
+          style.perspective !== 'none' || style.clipPath !== 'none' ||
+          style.clip !== 'auto' || style.maskImage !== 'none' || /paint|strict|content/.test(style.contain) ||
+          style.contentVisibility !== 'visible' || style.writingMode !== 'horizontal-tb' ||
+          style.position === 'fixed' || style.position === 'sticky' ||
+          ['::before', '::after'].some(pseudo => {
+            const content = getComputedStyle(node, pseudo).content;
+            return !['none', 'normal', '""'].includes(content) &&
+              !(pseudo === '::before' && publication?.pseudos.get(node) === content);
+          })) return null;
+      const box = node.getBoundingClientRect();
+      const zoom = scale(node);
+      if (!(zoom > 0) || ![zoom, box.left, box.top, box.width, box.height, node.scrollTop, node.scrollLeft].every(Number.isFinite)) return null;
+      const xClip = /^(auto|scroll|hidden|clip)$/.test(style.overflowX);
+      const yClip = /^(auto|scroll|hidden|clip)$/.test(style.overflowY);
+      if ((!xClip && style.overflowX !== 'visible') || (!yClip && style.overflowY !== 'visible')) return null;
+      const scrollsY = yClip && node.scrollHeight > node.clientHeight;
+      const scrollsX = xClip && node.scrollWidth > node.clientWidth;
+      const scrollableY = /^(auto|scroll)$/.test(style.overflowY);
+      const scrollableX = /^(auto|scroll)$/.test(style.overflowX);
+      // Rewrap can start or stop overflow without changing this source-backed owner.
+      if (node !== scroller && !node.contains(scroller) && (scrollsY || scrollsX || scrollableY || scrollableX)) {
+        if ((scrollsY && !/^(auto|scroll)$/.test(style.overflowY)) ||
+            (scrollsX && !/^(auto|scroll)$/.test(style.overflowX))) return null;
+        const owners = publication?.owners.filter(owner => owner.element === node) || [];
+        if (owners.length !== 1 || nested.length >= readingLimits.nested) return null;
+        const owner = owners[0];
+        if (publication.owners.filter(other => other.start === owner.start && other.end === owner.end &&
+            other.kind === owner.kind && other.tag === owner.tag && other.role === owner.role).length !== 1) return null;
+        nested.push({ scroller: node, start: owner.start, end: owner.end, kind: owner.kind, tag: owner.tag, role: owner.role });
+      }
+      if (xClip || yClip) {
+        const borders = [style.borderLeftWidth, style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth]
+          .map(value => typeof value === 'string' && /^\d+(?:\.\d+)?px$/.test(value) ? parseFloat(value) * zoom : NaN);
+        if (!borders.every(Number.isFinite)) return null;
+        const radii = [style.borderTopLeftRadius, style.borderTopRightRadius,
+          style.borderBottomRightRadius, style.borderBottomLeftRadius].map(value => {
+          const parts = value.trim().split(/\s+/);
+          if (parts.length > 2 || parts.some(part => !/^(?:\d+(?:\.\d+)?|\.\d+)(?:px|%)?$/.test(part))) return null;
+          return [parts[0], parts[1] || parts[0]].map((part, axis) =>
+            parseFloat(part) * (part.endsWith('%') ? (axis ? box.height : box.width) / 100 : zoom));
+        });
+        if (radii.some(value => value === null)) return null;
+        const factor = Math.min(1, box.width / Math.max(1, radii[0][0] + radii[1][0]),
+          box.width / Math.max(1, radii[3][0] + radii[2][0]),
+          box.height / Math.max(1, radii[0][1] + radii[3][1]),
+          box.height / Math.max(1, radii[1][1] + radii[2][1]));
+        radii.forEach(([x, y], index) => {
+          const left = index === 0 || index === 3, top = index < 2;
+          const borderX = borders[left ? 0 : 2], borderY = borders[top ? 1 : 3];
+          const rx = Math.max(0, x * factor - borderX), ry = Math.max(0, y * factor - borderY);
+          if (rx && ry) rounded.push({ x: left ? box.left + borderX + rx : box.right - borderX - rx,
+            y: top ? box.top + borderY + ry : box.bottom - borderY - ry,
+            rx, ry, left, top });
+        });
+      }
+      if (xClip) {
+        clip.left = Math.max(clip.left, box.left + node.clientLeft * zoom);
+        clip.right = Math.min(clip.right, box.left + (node.clientLeft + node.clientWidth) * zoom);
+      }
+      if (yClip) {
+        clip.top = Math.max(clip.top, box.top + node.clientTop * zoom);
+        clip.bottom = Math.min(clip.bottom, box.top + (node.clientTop + node.clientHeight) * zoom);
+      }
+      chain.push([node, node.scrollTop, node.scrollLeft, box.left, box.top, box.width, box.height, zoom,
+        node.clientWidth, node.clientHeight, node.scrollWidth, node.scrollHeight, node.clientLeft, node.clientTop]);
+    }
+    if (!reached) return null;
+    const layout = { clip, chain, nested, rounded };
+    cache.set(parent, layout);
+    return layout;
+  }
+  function readingRects(range) {
+    const rects = [...range.getClientRects()];
+    return rects.some(rect => ![rect.left, rect.right, rect.top, rect.bottom].every(Number.isFinite)) ? null :
+      rects.filter(rect => rect.right > rect.left && rect.bottom > rect.top);
+  }
+  function readingIntersects(rect, clip, vertical = true) {
+    return clip.right > clip.left && rect.left < clip.right && rect.right > clip.left &&
+      (!vertical || (clip.bottom > clip.top && rect.top < clip.bottom && rect.bottom > clip.top));
+  }
+  function readingGeometry(range, scroller, requireVisible, publication, candidate, failure = null) {
+    const refuse = (stage, details = null) => {
+      if (failure) Object.assign(failure, { stage }, details);
+      return null;
+    };
+    if (range.startContainer.parentElement !== range.endContainer.parentElement) return refuse('endpoint-parents');
+    const layout = readingLayout(range.startContainer.parentElement, scroller, publication);
+    if (!layout || layout.hidden) {
+      refuse(layout ? 'hidden-layout' : 'unverifiable-layout');
+      return layout;
+    }
+    const rects = readingRects(range);
+    if (!rects) return refuse('nonfinite-fragments');
+    // A transformed atom can span lines without an exact interior source boundary.
+    // Do not choose one fragment by rectangle order.
+    if (rects.length > 1) return refuse('multiple-fragments', { rectCount: rects.length });
+    const fragment = rects[0];
+    if (!fragment) {
+      refuse('no-fragments', { rectCount: 0 });
+      return { hidden: true };
+    }
+    const bounds = () => ({ rectCount: rects.length,
+      fragment: Object.freeze({ left: fragment.left, right: fragment.right, top: fragment.top, bottom: fragment.bottom }),
+      clip: Object.freeze({ ...layout.clip }) });
+    if (requireVisible && !readingIntersects(fragment, layout.clip)) {
+      refuse('outside-clip', failure ? bounds() : null);
+      return { hidden: true };
+    }
+    // Text inside the padding clears the real corner arcs; clipped corner text
+    // is refused rather than treated as if the rounded clip were rectangular.
+    const clippedCorner = readingIntersects(fragment, layout.clip) && layout.rounded.find(corner => [fragment.left, fragment.right].some(x =>
+      [fragment.top, fragment.bottom].some(y => (corner.left ? x < corner.x : x > corner.x) &&
+        (corner.top ? y < corner.y : y > corner.y) &&
+        ((x - corner.x) / corner.rx) ** 2 + ((y - corner.y) / corner.ry) ** 2 > 1)));
+    if (clippedCorner) return refuse('rounded-corner', failure
+      ? { ...bounds(), corner: Object.freeze({ ...clippedCorner }) } : null);
+    if (layout.nested.some(owner => owner.start > candidate.start || owner.end < candidate.end)) {
+      return refuse('outside-owner', { nestedCount: layout.nested.length });
+    }
+    const localTop = element => {
+      const row = layout.chain.find(row => row[0] === element);
+      return (fragment.top - row[4]) / row[7] - element.clientTop;
+    };
+    return { ...layout, fragment, nested: layout.nested.map(entry => ({ ...entry, top: localTop(entry.scroller) })),
+      top: localTop(scroller) };
+  }
+  function firstVisibleReadingOffset(node, clip) {
+    const range = document.createRange();
+    const find = (from, to) => {
+      range.setStart(node, from); range.setEnd(node, to);
+      const rects = readingRects(range);
+      if (!rects) return { unsupported: true };
+      if (!rects.some(rect => readingIntersects(rect, clip))) return null;
+      const width = node.data.codePointAt(from) > 0xFFFF ? 2 : 1;
+      if (to - from === width) return { index: from };
+      let middle = (from + to) >>> 1;
+      if (splitsReadingScalar(node.data, middle)) middle--;
+      if (middle <= from) middle = from + width;
+      if (middle >= to) return { unsupported: true };
+      return find(from, middle) || find(middle, to);
+    };
+    return find(0, node.length);
+  }
+  function readingReceipt(publication, candidate, range, scroller, geometry, alignment) {
+    const nested = Object.freeze(geometry.nested.map((entry, index) =>
+      Object.freeze({ scroller: entry.scroller, top: alignment.nested[index].top })));
+    const receipt = Object.freeze({ range, scroller, alignment, nested });
+    readingReceipts.set(receipt, { epoch: publication.epoch, candidate: {
+      start: candidate.start, end: candidate.end, atom: candidate.atom, display: candidate.display,
+      blockKind: candidate.blockKind, runKind: candidate.runKind,
+    }, geometry });
+    return receipt;
+  }
+  function captureVisibleText(scroller) {
+    lastReadingCaptureFailure = null;
+    const entered = readingEpoch, enteredBinding = bindingEpoch;
+    const publication = currentReadingPublication();
+    if (!publication) return readingFailure('unavailable', 'presentation-unbound-or-stale');
+    const groups = new Map(publication.groups.map(group => [group.element, group])), contents = new Map(), layouts = new Map();
+    for (const { node } of textNodes(preview).nodes) {
+      const layout = readingLayout(node.parentElement, scroller, publication, layouts);
+      if (!layout) return readingFailure('unsupported', 'unverifiable-clipping-chain');
+      if (layout.hidden) continue;
+      const visible = firstVisibleReadingOffset(node, layout.clip);
+      if (!visible) continue;
+      if (visible.unsupported) return readingFailure('unsupported', 'unverifiable-text-fragments');
+      let element = node.parentElement;
+      while (element && element !== preview && !groups.has(element)) element = element.parentElement;
+      const group = groups.get(element);
+      if (group && !contents.has(group)) contents.set(group, textNodes(group.element));
+      const content = contents.get(group);
+      const base = content?.nodes.find(entry => entry.node === node)?.start;
+      const position = base + visible.index;
+      const run = group?.runs.find(run => position >= run.from && position < run.from + run.display.length);
+      const candidate = run && readingAtom(publication, group, run, position - run.from);
+      if (!candidate) return readingFailure('unsupported', 'visible-text-without-exact-bounded-provenance');
+      const failure = { stage: 'range-reconstruction', blockKind: candidate.blockKind, runKind: candidate.runKind };
+      const range = readingRange(candidate), geometry = range && readingGeometry(range, scroller, true, publication, candidate, failure);
+      if (!geometry || geometry.hidden) {
+        lastReadingCaptureFailure = Object.freeze(failure);
+        return readingFailure('unsupported', 'unverifiable-atom-fragment');
+      }
+      if (currentReadingPublication() !== publication || entered !== readingEpoch || enteredBinding !== bindingEpoch) {
+        return readingFailure('unavailable', 'presentation-changed');
+      }
+      const alignment = Object.freeze({ top: geometry.top,
+        nested: Object.freeze(geometry.nested.map(({ start, end, kind, tag, role, top }) => Object.freeze({ start, end, kind, tag, role, top }))) });
+      const value = Object.freeze({ version: 1, sourceKey: publication.key, start: candidate.start, end: candidate.end,
+        atom: candidate.atom, display: candidate.display, ...readingContextText(publication.source.source, candidate.start, candidate.end),
+        blockKind: candidate.blockKind, runKind: candidate.runKind, alignment });
+      return Object.freeze({ status: 'captured', value,
+        receipt: readingReceipt(publication, candidate, range, scroller, geometry, alignment) });
+    }
+    return readingFailure('missing', 'no-visible-text');
+  }
+  function validReadingValue(value) {
+    const keys = (value, names) => value && typeof value === 'object' &&
+      Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
+    return keys(value, ['version', 'sourceKey', 'start', 'end', 'atom', 'display', 'before', 'after', 'blockKind', 'runKind', 'alignment']) &&
+      value.version === 1 && typeof value.sourceKey === 'string' && value.sourceKey.length > 0 && value.sourceKey.length <= 128 &&
+      Number.isSafeInteger(value.start) && value.start >= 0 && Number.isSafeInteger(value.end) && value.end > value.start &&
+      typeof value.atom === 'string' && value.atom.length === value.end - value.start && value.atom.length <= readingLimits.atom &&
+      typeof value.display === 'string' && value.display.length > 0 && value.display.length <= readingLimits.display &&
+      typeof value.before === 'string' && value.before.length <= readingLimits.context &&
+      typeof value.after === 'string' && value.after.length <= readingLimits.context &&
+      typeof value.blockKind === 'string' && /^[A-Z0-9]{1,16}$/.test(value.blockKind) && ['text', 'code', 'table'].includes(value.runKind) &&
+      keys(value.alignment, ['top', 'nested']) && Number.isFinite(value.alignment.top) && Array.isArray(value.alignment.nested) &&
+      value.alignment.nested.length <= readingLimits.nested && Array.from(value.alignment.nested).every(entry =>
+        keys(entry, ['start', 'end', 'kind', 'tag', 'role', 'top']) &&
+        Number.isSafeInteger(entry.start) && entry.start >= 0 && Number.isSafeInteger(entry.end) && entry.end > entry.start &&
+        typeof entry.kind === 'string' && /^[a-z_]{1,16}$/.test(entry.kind) &&
+        typeof entry.tag === 'string' && /^[A-Z0-9]{1,16}$/.test(entry.tag) && ['body', 'scroller'].includes(entry.role) && Number.isFinite(entry.top));
+  }
+  function readingCandidates(publication, saved, contextOnly = false) {
+    const matches = [];
+    for (const group of publication.groups) {
+      if (group.element.tagName !== saved.blockKind) continue;
+      for (const run of group.runs) for (let index = 0; index < run.display.length;) {
+        const candidate = readingAtom(publication, group, run, index);
+        index = candidate ? candidate.to : index + (run.display.codePointAt(index) > 0xFFFF ? 2 : 1);
+        if (!candidate || candidate.atom !== saved.atom || candidate.display !== saved.display || candidate.runKind !== saved.runKind) continue;
+        if (!contextOnly && publication.key === saved.sourceKey) {
+          if (candidate.start !== saved.start || candidate.end !== saved.end) continue;
+        } else {
+          const context = readingContextText(publication.source.source, candidate.start, candidate.end);
+          // A short context can reach the old document edge. Preserve its
+          // surviving suffix/prefix, then still require uniqueness and the full owner chain.
+          const beforeBoundary = saved.before.length < readingLimits.context && saved.before.length === saved.start;
+          const beforeMatches = beforeBoundary ? context.before.endsWith(saved.before) : context.before === saved.before;
+          const afterMatches = saved.after.length < readingLimits.context
+            ? context.after.startsWith(saved.after) : context.after === saved.after;
+          if (!beforeMatches || !afterMatches) continue;
+        }
+        matches.push(candidate);
+        if (matches.length > 1) return matches;
+      }
+    }
+    return matches;
+  }
+  function prepareModeTextCorrespondence(saved, source, key, context) {
+    if (!validReadingValue(saved) || !(source instanceof Source) ||
+        typeof key !== 'string' || !key.length || key.length > 128) {
+      return readingFailure('unsupported', 'invalid-mode-source-pair');
+    }
+    const entered = readingEpoch, enteredBinding = bindingEpoch;
+    const publication = currentReadingPublication(context);
+    if (!publication || publication.key !== saved.sourceKey ||
+        source.selection !== publication.source.selection) return readingFailure('unavailable', 'mode-origin-stale');
+    const candidates = readingCandidates(publication, saved, true);
+    if (candidates.length !== 1 || candidates[0].start !== saved.start || candidates[0].end !== saved.end) {
+      return readingFailure('unsupported', 'mode-origin-context-not-unique');
+    }
+    const before = publication.source.source, after = source.source;
+    if (before.length === after.length || key === publication.key) return readingFailure('unsupported', 'not-pure-source-indel');
+    const insertion = after.length > before.length;
+    const shorter = insertion ? before : after, longer = insertion ? after : before;
+    const length = longer.length - shorter.length;
+    let prefix = 0, suffix = 0;
+    while (prefix < shorter.length && shorter[prefix] === longer[prefix]) prefix++;
+    while (suffix < shorter.length && shorter[shorter.length - suffix - 1] === longer[longer.length - suffix - 1]) suffix++;
+    const first = shorter.length - suffix, lastEnd = prefix + (insertion ? 0 : length);
+    if (first > prefix || lastEnd >= saved.start - saved.before.length ||
+        saved.alignment.nested.some(owner => [owner.start, owner.end].some(boundary =>
+          boundary >= first && boundary <= lastEnd))) {
+      return readingFailure('unsupported', 'mode-indel-touches-protected-context-or-owner');
+    }
+    if (currentReadingPublication(context) !== publication || entered !== readingEpoch || enteredBinding !== bindingEpoch) {
+      return readingFailure('unavailable', 'presentation-changed');
+    }
+    return Object.freeze({ status: 'prepared', correspondence: Object.freeze({
+      fromKey: publication.key, toKey: key, at: first,
+      oldEnd: first + (insertion ? 0 : length), newEnd: first + (insertion ? length : 0),
+    }) });
+  }
+  function mappedReadingBoundary(mapping, boundary) {
+    return boundary < mapping.at ? boundary :
+      boundary > mapping.oldEnd ? boundary + mapping.newEnd - mapping.oldEnd : null;
+  }
+  function validModeCorrespondence(mapping, saved, publication) {
+    return mapping && Object.keys(mapping).length === 5 &&
+      ['fromKey', 'toKey', 'at', 'oldEnd', 'newEnd'].every(key => Object.hasOwn(mapping, key)) &&
+      mapping.fromKey === saved.sourceKey && mapping.toKey === publication.key &&
+      [mapping.at, mapping.oldEnd, mapping.newEnd].every(value => Number.isSafeInteger(value) && value >= 0) &&
+      ((mapping.oldEnd === mapping.at && mapping.newEnd > mapping.at) ||
+       (mapping.newEnd === mapping.at && mapping.oldEnd > mapping.at)) &&
+      mapping.newEnd <= publication.source.source.length &&
+      mapping.oldEnd < saved.start - saved.before.length &&
+      saved.alignment.nested.every(owner => [owner.start, owner.end].every(boundary =>
+        mappedReadingBoundary(mapping, boundary) !== null));
+  }
+  function resolveVisibleText(saved, scroller, context, correspondence = null) {
+    if (!validReadingValue(saved)) return readingFailure('unsupported', 'invalid-bounded-value');
+    const entered = readingEpoch, enteredBinding = bindingEpoch;
+    const publication = currentReadingPublication(context);
+    if (!publication) return readingFailure('unavailable', 'presentation-unbound-or-stale');
+    if (correspondence && !validModeCorrespondence(correspondence, saved, publication)) {
+      return readingFailure('unsupported', 'invalid-mode-correspondence');
+    }
+    const candidates = readingCandidates(publication, saved);
+    if (candidates.length !== 1) return readingFailure(candidates.length ? 'ambiguous' : 'missing', 'verified-text-match');
+    const candidate = candidates[0], range = readingRange(candidate);
+    if (correspondence && (candidate.start !== mappedReadingBoundary(correspondence, saved.start) ||
+        candidate.end !== mappedReadingBoundary(correspondence, saved.end))) {
+      return readingFailure('unsupported', 'mode-candidate-interval-changed');
+    }
+    const geometry = range && readingGeometry(range, scroller, false, publication, candidate);
+    if (!geometry || geometry.hidden) return readingFailure('unsupported', 'unverifiable-target-geometry');
+    const shift = saved.sourceKey === publication.key ? 0 : candidate.start - saved.start;
+    if (geometry.nested.length !== saved.alignment.nested.length || geometry.nested.some((entry, index) => {
+      const previous = saved.alignment.nested[index];
+      const start = correspondence ? mappedReadingBoundary(correspondence, previous.start) : previous.start + shift;
+      const end = correspondence ? mappedReadingBoundary(correspondence, previous.end) : previous.end + shift;
+      return entry.start !== start || entry.end !== end ||
+        ['kind', 'tag', 'role'].some(key => entry[key] !== previous[key]);
+    })) {
+      return readingFailure('unsupported', 'nested-owner-chain-changed');
+    }
+    if (currentReadingPublication(context) !== publication || entered !== readingEpoch || enteredBinding !== bindingEpoch) {
+      return readingFailure('unavailable', 'presentation-changed');
+    }
+    const alignment = Object.freeze({ top: saved.alignment.top,
+      nested: Object.freeze(saved.alignment.nested.map(entry => Object.freeze({ start: entry.start, end: entry.end,
+        kind: entry.kind, tag: entry.tag, role: entry.role, top: entry.top }))) });
+    return Object.freeze({ status: 'resolved', receipt: readingReceipt(publication, candidate, range, scroller, geometry, alignment) });
+  }
+  function isTextLocationCurrent(receipt) {
+    const entered = readingEpoch, enteredBinding = bindingEpoch;
+    const sealed = readingReceipts.get(receipt), publication = currentReadingPublication();
+    if (!sealed || !publication || sealed.epoch !== publication.epoch) return false;
+    const saved = { ...sealed.candidate, sourceKey: publication.key };
+    const candidates = readingCandidates(publication, saved);
+    if (candidates.length !== 1) return false;
+    const range = readingRange(candidates[0]), original = receipt.range;
+    if (!range || range.startContainer !== original.startContainer || range.startOffset !== original.startOffset ||
+        range.endContainer !== original.endContainer || range.endOffset !== original.endOffset) return false;
+    const geometry = readingGeometry(range, receipt.scroller, false, publication, candidates[0]), previous = sealed.geometry;
+    return !!geometry && !geometry.hidden &&
+      geometry.nested.length === previous.nested.length && geometry.nested.every((entry, index) =>
+        ['scroller', 'start', 'end', 'kind', 'tag', 'role'].every(key => entry[key] === previous.nested[index][key])) &&
+      ['left', 'right', 'top', 'bottom'].every(key => geometry.fragment[key] === previous.fragment[key] && geometry.clip[key] === previous.clip[key]) &&
+      geometry.chain.length === previous.chain.length && geometry.chain.every((row, i) =>
+        row.every((part, j) => part === previous.chain[i][j])) && currentReadingPublication() === publication &&
+      entered === readingEpoch && enteredBinding === bindingEpoch;
   }
   function sealTextSource(source) {
     if (source !== committed || source.selection !== identity() || source.source !== editor.value) return false;
@@ -1103,6 +2052,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   function claim(side) {
     pendingNestedWheel = null;
     if (!active() || frozen()) return;
+    // A no-motion claim must not retarget a callback queued for the previous driver.
+    if (owner !== side && frame) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+    }
     owner = side;
     if (side === 'editor') {
       window.dispatchEvent(new Event('editor-scroll-intent'));
@@ -1163,6 +2117,12 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   document.fonts?.addEventListener('loadingdone', invalidate);
   return {
     source: text => new Source(text),
+    bindReadingPresentation,
+    publishTextSource,
+    captureVisibleText,
+    prepareModeTextCorrespondence,
+    resolveVisibleText,
+    isTextLocationCurrent,
     start() { pendingSource = true; clearGeometry(); },
     commit(source, { textPending = false } = {}) {
       pendingNestedWheel = null;
@@ -1223,6 +2183,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     invalidate,
     diagnostics() {
       return { ready: !!usable() && anchors.length > 0, pendingGeometry: dirty || !!frame, owner, anchors: anchors.length,
+        lastReadingCaptureFailure,
         pendingSource, builds: stats.builds, scrolls: stats.scrolls, writes: stats.writes,
         matchesSource: committed?.source === editor.value, selection: identity(),
         mappedSelection: committed?.selection ?? null,

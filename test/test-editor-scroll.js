@@ -2,16 +2,91 @@
 const { app, BrowserWindow, dialog, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const firstTextOnly = process.argv.includes("--first-text");
+let firstTextIsolation = null;
+const originalTmpdir = os.tmpdir;
+if (firstTextOnly) {
+  try {
+    if (app.isReady() || app.isPackaged || process.env.MARKALOO_SCROLL_PROOF !== "mapping" ||
+        process.argv.slice(2).join(" ") !== "--first-text") {
+      throw new Error("--first-text requires only the mapping proof in an unpackaged pre-ready process");
+    }
+    const root = path.resolve(__dirname, ".."), parent = path.join(root, "tmp");
+    const requested = process.env.MARKALOO_SCROLL_FIRST_TEXT_ROOT;
+    if (!requested || !path.isAbsolute(requested) || path.dirname(path.resolve(requested)) !== parent ||
+        !/^editor-scroll-first-text-[a-zA-Z0-9-]+$/.test(path.basename(requested)) ||
+        fs.existsSync(requested) || process.env.MARKALOO_SCROLL_EVIDENCE) {
+      throw new Error("A fresh direct W\\tmp\\editor-scroll-first-text-* root is required; no separate evidence override");
+    }
+    for (const directory of [root, parent]) {
+      if (!fs.existsSync(directory)) fs.mkdirSync(directory);
+      if (fs.lstatSync(directory).isSymbolicLink() ||
+          fs.realpathSync.native(directory).toLowerCase() !== directory.toLowerCase()) {
+        throw new Error("First-text storage must use physical worktree directories");
+      }
+    }
+    const hash = file => require("crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    if (hash(path.join(root, "src", "editor-scroll.js")) !==
+          "52242b7717f1c2c55fd9553362adb67a257fafa21bc4b432402625f6a525340f" ||
+        hash(path.join(root, "test", "test-reading-landmarks.js")) !==
+          "546f275d82c3fd8014e00778eb89cec1faf709d7b42506f8d3f3727c298a2228") {
+      throw new Error("The reviewed first-text product or Node fixture changed");
+    }
+    fs.mkdirSync(requested);
+    firstTextIsolation = { root: requested, paths: {} };
+    for (const name of ["appData", "bootstrap-userData", "temp", "logs", "crashDumps", "fixtures", "evidence"]) {
+      const directory = path.join(requested, name);
+      fs.mkdirSync(directory);
+      firstTextIsolation.paths[name] = directory;
+    }
+    process.env.TEMP = process.env.TMP = firstTextIsolation.paths.temp;
+    app.setPath("appData", firstTextIsolation.paths.appData);
+    app.setPath("userData", firstTextIsolation.paths["bootstrap-userData"]);
+    app.setPath("temp", firstTextIsolation.paths.temp);
+    app.setPath("crashDumps", firstTextIsolation.paths.crashDumps);
+    app.setAppLogsPath(firstTextIsolation.paths.logs);
+    os.tmpdir = () => firstTextIsolation.paths.temp;
+  } catch (error) {
+    fs.writeSync(2, `First-text preparation refused: ${error.stack || error}\n`);
+    process.exit(2);
+  }
+}
 require("./test-userdata-isolation");
+os.tmpdir = originalTmpdir;
+if (firstTextIsolation) {
+  try {
+    const { USER_DATA_DIR } = require("./test-userdata-isolation");
+    app.setPath("sessionData", USER_DATA_DIR);
+    firstTextIsolation.paths.userData = firstTextIsolation.paths.sessionData = USER_DATA_DIR;
+    const verifyStorage = ready => {
+      for (const name of ["appData", "userData", "sessionData", "temp", "logs", "crashDumps"]) {
+        if (app.getPath(name) !== firstTextIsolation.paths[name]) throw new Error("Private path changed: " + name);
+      }
+      if (ready && (BrowserWindow.getAllWindows().length !== 0 ||
+          require("electron").session.defaultSession.storagePath !== USER_DATA_DIR)) {
+        throw new Error("Private defaultSession must be bound before Main creates a window");
+      }
+    };
+    verifyStorage(false);
+    app.once("ready", () => {
+      try { verifyStorage(true); firstTextIsolation.readyVerified = true; }
+      catch (error) { fs.writeSync(2, `${error.stack || error}\n`); app.exit(2); }
+    });
+  } catch (error) {
+    fs.writeSync(2, `${error.stack || error}\n`);
+    process.exit(2);
+  }
+}
 const { startErrorSentinel, proveSentinelAlive } = require("./test-visual-utils");
 const { generate } = require("../bench/corpus");
-const directory = path.resolve(__dirname, "..", "tmp", "editor-scroll");
-const evidence = path.resolve(process.env.FOLIA_SCROLL_EVIDENCE || directory);
+const directory = firstTextIsolation?.paths.fixtures || path.resolve(__dirname, "..", "tmp", "editor-scroll");
+const evidence = firstTextIsolation?.paths.evidence || path.resolve(process.env.MARKALOO_SCROLL_EVIDENCE || directory);
 fs.mkdirSync(directory, { recursive: true });
 fs.mkdirSync(evidence, { recursive: true });
 const baseline = process.argv.includes("--baseline");
 const perfOnly = process.argv.includes("--perf");
-const proof = process.env.FOLIA_SCROLL_PROOF;
+const proof = process.env.MARKALOO_SCROLL_PROOF;
 if (proof && !["core", "blocks", "input", "layout", "edits", "cost", "transitions", "save", "rich", "html", "mapping", "bounds", "empty", "mirror"].includes(proof)) {
   console.error("Unsupported editor-scroll proof route: " + proof);
   app.exit(2);
@@ -30,6 +105,7 @@ receipt.sources = Object.fromEntries(["main.js", "renderer.js", "editor-scroll.j
   "custom-styles.css", "custom-tabs.js", "file-helpers.js", "inline-formatting.js", "table-cell-editor.js"].map(name =>
   [name, require("crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname, "..", "src", name))).digest("hex")]));
 receipt.suiteSha256 = require("crypto").createHash("sha256").update(fs.readFileSync(__filename)).digest("hex");
+if (firstTextIsolation) receipt.firstTextIsolation = firstTextIsolation;
 const parts = ["# Scroll correspondence"];
 for (let i = 0; i < 25; i++) parts.push(`Before diagram paragraph ${i}. ` + "Reading a separate source block. ".repeat(8));
 parts[parts.length - 1] += "\n```mermaid\nflowchart TD\n" +
@@ -62,6 +138,7 @@ const mixed = parts.join("\n\n");
 const first = path.join(directory, "mixed.md"), second = path.join(directory, "short.md"),
   plain = path.join(directory, "plain50k.md"), syntax = path.join(directory, "syntax.md"),
   rich = path.join(directory, "rich.md");
+if (!firstTextOnly) {
 fs.writeFileSync(first, mixed);
 fs.writeFileSync(path.join(directory, "short.svg"),
   '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="1600"><rect width="180" height="1600" fill="#4f7d92"/></svg>');
@@ -105,6 +182,7 @@ receipt.fixtures = Object.fromEntries([first, plain, syntax, rich].map(file => [
   bytes: fs.statSync(file).size,
   sha256: require("crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex"),
 }]));
+}
 let chosen = first, win, sentinel;
 const results = [];
 dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
@@ -739,10 +817,245 @@ async function mirrorRetention() {
   }
 }
 
+function firstTextDomControls(predecessor, successor, wide) {
+  const rows = [], pairs = [], counts = [];
+  const assert = (ok, message) => { if (!ok) throw new Error(message); };
+  const describe = error => ({ name: error.name, message: error.message, stack: error.stack });
+  const walker = document.createTreeWalker, walkerOwn = Object.getOwnPropertyDescriptor(document, "createTreeWalker");
+  const normalize = Node.prototype.normalize, loadedFactory = window.createEditorScroll;
+  const shapes = ["wide", "direct", "siblings", "empty-text", "comment", "empty-element",
+    "nested", "absent", "element-no-text", "entities-code", "walker-error"];
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const offsets = spec => spec && ({ text: spec.text, runs: spec.runs.map(run => ({
+    from: run.from, display: run.display, kind: run.kind || null, text: run.view.text,
+    at: Array.from({ length: run.display.length + 1 }, (_, index) => run.view.at(index)),
+    exact: Array.from({ length: run.display.length + 1 }, (_, index) => run.view.exact(index)),
+  })) });
+  function exercise(factory, variant, reading, shape) {
+    const label = `${variant}/${reading ? "reading" : "editing"}/${shape}`;
+    const editor = document.createElement("textarea"), preview = document.createElement("div");
+    const fonts = document.fonts, fontOwn = Object.getOwnPropertyDescriptor(fonts, "addEventListener");
+    const addFontListener = fonts.addEventListener, listeners = [];
+    let mapping, source, detach, result, failure, cleanupFailure;
+    const metadata = [], calls = [], sentinel = new Error("first-text fallback walker sentinel");
+    let injectedEmpty = null, injectedSibling = null, thrown = null;
+    try {
+      Object.defineProperty(fonts, "addEventListener", { configurable: true, value(...args) {
+        listeners.push(args);
+        return Reflect.apply(addFontListener, this, args);
+      } });
+      try {
+        mapping = factory({ editor, preview, active: () => false, frozen: () => false,
+          identity: () => 1, scale: () => 1,
+          ...(reading ? { presentation: () => "preview", readingSourceIdentity: () => "first-text-owned" } : {}) });
+      } finally {
+        if (fontOwn) Object.defineProperty(fonts, "addEventListener", fontOwn);
+        else delete fonts.addEventListener;
+      }
+      const body = shape === "wide" ? wide : shape === "entities-code" ? "Entities &amp; `code`." : "alpha";
+      source = mapping.source(body);
+      preview.innerHTML = sanitizeHtml(source.parse(marked));
+      const mutate = (node, metadataCopy) => {
+        if (shape === "siblings") {
+          if (metadataCopy) {
+            node.firstChild.data = "al";
+            injectedSibling = document.createTextNode("pha");
+            node.append(injectedSibling);
+          }
+        } else if (shape === "empty-text") {
+          // HTML parsing cannot preserve an empty Text. Only the metadata copy needs it.
+          if (metadataCopy) { injectedEmpty = document.createTextNode(""); node.prepend(injectedEmpty); }
+        } else if (shape === "comment") {
+          node.prepend(document.createComment("first-text"));
+        } else if (shape === "empty-element") {
+          node.prepend(document.createElement("em"));
+        } else if (shape === "nested" || shape === "walker-error") {
+          const nested = document.createElement("em");
+          nested.append(...node.childNodes); node.append(nested);
+        } else if (shape === "absent" || shape === "element-no-text") {
+          node.replaceChildren();
+          if (shape === "element-no-text") node.append(document.createElement("em"));
+        }
+      };
+      if (shape !== "wide" && shape !== "entities-code") mutate(preview.querySelector("p"), false);
+      const before = preview.cloneNode(true), verify = source.verifyMapping;
+      detach = source.detachAnnotations;
+      const runNodes = new Set(), blockNodes = new Set();
+      source.detachAnnotations = function (...args) {
+        const [copy] = args;
+        const runs = [...copy.querySelectorAll("[" + this.attribute + "]")].map(node => {
+          const descriptor = this.descriptors[Number(node.getAttribute(this.attribute).split(":")[1])];
+          return { node, descriptor };
+        }).filter(run => run.descriptor?.kind === "text");
+        if (shape !== "wide" && shape !== "entities-code") {
+          assert(runs.length === 1, "the simple fixture must contain one actual text annotation");
+          mutate(runs[0].node, true);
+        }
+        for (const run of runs) {
+          let block = run.node;
+          while (block.parentNode !== copy) block = block.parentNode;
+          run.block = block; run.first = run.node.firstChild;
+          runNodes.add(run.node); blockNodes.add(block);
+        }
+        const entry = { copy, runs, bindings: null, specs: [] };
+        metadata.push(entry);
+        const bindings = Reflect.apply(detach, this, args);
+        entry.bindings = bindings;
+        entry.specs = [copy, ...copy.querySelectorAll("*")].map(node => ({
+          node, descriptor: bindings.get(node), text: this.textSpecs.get(node),
+          reading: this.readingTextSpecs.get(node),
+        }));
+        return bindings;
+      };
+      Object.defineProperty(document, "createTreeWalker", { configurable: true, value(...args) {
+        if (runNodes.has(args[0])) {
+          const call = { root: args[0], filter: args[1], first: null };
+          calls.push(call);
+          if (shape === "walker-error") { thrown = sentinel; throw sentinel; }
+          const result = Reflect.apply(walker, this, args), next = result.nextNode;
+          result.nextNode = function (...nextArgs) {
+            const node = Reflect.apply(next, this, nextArgs);
+            call.first = node; return node;
+          };
+          return result;
+        }
+        if (blockNodes.has(args[0])) calls.push({ block: args[0], filter: args[1] });
+        return Reflect.apply(walker, this, args);
+      } });
+      const bindings = source.detach(preview, sanitizeHtml);
+      assert(source.verifyMapping === verify, "real verifyMapping must not be replaced");
+      assert(preview.isEqualNode(before), "detach must preserve the real displayed DOM");
+      assert(metadata.length === 1 && metadata[0].copy.ownerDocument !== document,
+        "one real inert metadata construction must reach detachAnnotations");
+      const entry = metadata[0], actual = [preview, ...preview.querySelectorAll("*")];
+      const copies = [entry.copy, ...entry.copy.querySelectorAll("*")];
+      let adoptionError = null;
+      if (shape === "walker-error") {
+        assert(thrown === sentinel && actual.every(node => !bindings.has(node)) &&
+          source.warnings.has("metadata verification failed: " + sentinel.message) &&
+          actual.every(node => !source.textSpecs.has(node) && !source.readingTextSpecs.has(node)),
+        "the real detach catch must retain the fallback failure and refuse all specs/bindings");
+      } else {
+        assert(source.warnings.size === 0 && preview.isEqualNode(entry.copy) &&
+          actual.length === copies.length, "real native normalization and verification must succeed");
+        for (const saved of entry.specs) {
+          const index = copies.indexOf(saved.node), node = actual[index];
+          assert(index >= 0 && node !== saved.node, "metadata/display nodes must be distinct real nodes");
+          assert(bindings.get(node) === saved.descriptor &&
+            source.textSpecs.get(node) === saved.text && source.readingTextSpecs.get(node) === saved.reading,
+          "verified transfer must retain exact descriptor/spec objects on the corresponding displayed node");
+          for (const spec of [saved.text, saved.reading].filter(Boolean)) for (const run of spec.runs) {
+            assert(run.view.text === run.display && Number.isInteger(run.from) && run.from >= 0 &&
+              run.from + run.display.length <= spec.text.length, "spec offsets must identify actual block text");
+            for (let offset = 0; offset <= run.display.length; offset++) {
+              const at = run.view.at(offset);
+              assert(Number.isInteger(at) && at >= 0 && at <= body.length, "source offset must remain in this source");
+            }
+          }
+        }
+        if (shape === "empty-text") {
+          assert(entry.runs[0].first === injectedEmpty && injectedEmpty.nodeType === Node.TEXT_NODE &&
+            injectedEmpty.data === "" && injectedEmpty.parentNode === null &&
+            entry.specs.filter(value => value.text || value.reading).every(value =>
+              (!value.text || value.text.runs.length === 0) && (!value.reading || value.reading.runs.length === 0)),
+          "native normalization must remove the exact empty first Text without inventing a position/spec or warning");
+        }
+        if (shape === "siblings") assert(injectedSibling.parentNode === null &&
+          entry.runs[0].first.data === "alpha", "native normalize must merge the programmatic sibling Text");
+        if (shape === "absent" || shape === "element-no-text") assert(entry.specs.every(value =>
+          (!value.text || value.text.runs.length === 0) && (!value.reading || value.reading.runs.length === 0)),
+        "no text must not become a positioned run");
+        for (const call of calls.filter(value => value.root)) {
+          const run = entry.runs.find(value => value.node === call.root);
+          if (run.first?.nodeType === Node.TEXT_NODE) assert(call.first === run.first,
+            "the original walker must select the exact first Text, including empty Text");
+          if (shape === "comment" || shape === "empty-element" || shape === "nested") {
+            assert(call.first?.nodeType === Node.TEXT_NODE && call.first.data === "alpha",
+              "nontext first child must retain the native descendant-text fallback");
+          }
+          if (shape === "absent" || shape === "element-no-text") assert(call.first === null,
+            "the native fallback must retain its no-text result");
+        }
+      }
+      try { for (const child of preview.children) source.adopt(child, child, bindings); }
+      catch (error) { adoptionError = error; }
+      if (shape === "comment" && reading) {
+        assert(adoptionError instanceof TypeError && adoptionError.message === "root.attributes is not iterable",
+          "retain the predecessor's existing readingTree comment refusal, not an invented successful adoption");
+      } else assert(adoptionError === null, "real adoption must complete: " + adoptionError?.stack);
+      for (const group of source.textGroups) {
+        const spec = source.textSpecs.get(group.element);
+        assert(preview.contains(group.element) && spec && group.runs === spec.runs &&
+          group.runs.every((run, index) => run === spec.runs[index] && run.view === spec.runs[index].view),
+        "adoption must retain actual displayed node and exact run/view objects");
+      }
+      for (const saved of entry.specs.filter(value => value.descriptor && !value.descriptor.readingOnly)) {
+        const node = actual[copies.indexOf(saved.node)];
+        const adopted = [...source.bindings, ...source.captureOwners].find(value => value.element === node);
+        assert(adopted && adopted.view === saved.descriptor.view &&
+          adopted.start === saved.descriptor.start && adopted.end === saved.descriptor.end,
+        "adopted bindings must retain the exact view and source interval for the actual node");
+      }
+      result = { preview, signature: {
+        specs: actual.map(node => ({ text: offsets(source.textSpecs.get(node)), reading: offsets(source.readingTextSpecs.get(node)) })),
+        bindings: source.bindings.map(value => ({ kind: value.kind, start: value.start, end: value.end,
+          node: actual.indexOf(value.element) })),
+        warnings: [...source.warnings], adoptionError: adoptionError && { name: adoptionError.name, message: adoptionError.message },
+      }, count: { variant, reading, shape, runs: entry.runs.length,
+        direct: entry.runs.filter(run => run.first?.nodeType === Node.TEXT_NODE).length,
+        lookups: calls.filter(value => value.root).length, blocks: calls.filter(value => value.block).length } };
+    } catch (error) { failure = describe(error); }
+    finally {
+      try {
+        if (walkerOwn) Object.defineProperty(document, "createTreeWalker", walkerOwn);
+        else delete document.createTreeWalker;
+        if (source && detach) delete source.detachAnnotations;
+        mapping?.leave();
+        for (const args of listeners) fonts.removeEventListener(...args);
+        editor.remove(); preview.remove();
+        assert(document.createTreeWalker === walker && fonts.addEventListener === addFontListener &&
+          Node.prototype.normalize === normalize && window.createEditorScroll === loadedFactory &&
+          (!source || !detach || source.detachAnnotations === detach), "all observation hooks must be restored");
+      } catch (error) { cleanupFailure = describe(error); }
+    }
+    rows.push({ label, ok: !failure && !cleanupFailure, failure, cleanupFailure });
+    if (cleanupFailure) throw new Error("Unsafe first-text reset: " + cleanupFailure.stack);
+    return failure ? null : result;
+  }
+  for (const reading of [false, true]) for (const shape of shapes) {
+    const before = exercise(predecessor, "predecessor", reading, shape);
+    const after = exercise(successor, "successor", reading, shape);
+    const label = `equivalence/${reading ? "reading" : "editing"}/${shape}`;
+    if (!before || !after) { pairs.push({ label, ok: false, blocked: "one functional/identity leg failed" }); continue; }
+    pairs.push({ label, ok: before.preview.isEqualNode(after.preview) && same(before.signature, after.signature) });
+    counts.push(before.count, after.count);
+  }
+  // Count discrimination comes last: an expected RED cannot hide either functional leg.
+  const countChecks = counts.map(value => ({ label: `walkers/${value.variant}/${value.reading}/${value.shape}`,
+    ok: value.lookups === (value.variant === "predecessor" ? value.runs : value.runs - value.direct) &&
+      value.blocks === (value.runs ? 1 : 0), ...value }));
+  const wideBefore = counts.find(value => value.variant === "predecessor" && value.reading && value.shape === "wide");
+  const wideAfter = counts.find(value => value.variant === "successor" && value.reading && value.shape === "wide");
+  const discrimination = { expectedRed: wideBefore?.lookups === 60 && wideBefore?.blocks === 1,
+    green: wideAfter?.lookups === 0 && wideAfter?.blocks === 1,
+    actualDirectRuns: wideBefore?.direct === 60 && wideAfter?.direct === 60,
+    predecessorOptimizationPassed: wideBefore ? wideBefore.lookups === 0 : null,
+    successorOptimizationPassed: wideAfter ? wideAfter.lookups === 0 : null };
+  return { rows, pairs, countChecks, discrimination };
+}
+
 async function run() {
   await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof renderMarkdown==='function'");
   win.setSize(1440, 920);
   sentinel = startErrorSentinel(win, { label: "editor-scroll", trapExternal: false });
+  if (firstTextOnly) {
+    const startup = firstTextIsolation.readyVerified && win.webContents.getURL() ===
+      require("url").pathToFileURL(path.resolve(__dirname, "..", "src", "index.html")).href &&
+      await exec("window.require===undefined&&typeof window.createEditorScroll==='function'&&typeof window.MarkalooTableCells?.index==='function'");
+    check("first-text startup binds owned storage and the exact worktree renderer",
+      startup);
+    if (!startup) throw new Error("First-text startup prerequisites failed; controls not run");
+  } else {
   for (let i = 0; !proof && i < 6; i++) {
     const openMs = await open(i % 2 ? plain : first, i % 2 ? null : "Scroll correspondence");
     const splitMs = await mode(true);
@@ -762,8 +1075,9 @@ async function run() {
   await capture("editor-after-diagram");
   await correspondence("preview", "Middle paragraph 25.", "preview aligns content inside a long section");
   await capture("preview-middle-section");
+  }
   if (!baseline && !perfOnly && !coreProof) {
-    await wait("published scroll geometry", "getEditorScrollDiagnostics().ready");
+    if (!firstTextOnly) await wait("published scroll geometry", "getEditorScrollDiagnostics().ready");
     if (scenario("mirror")) await mirrorRetention();
     if (scenario("empty")) {
       const vm = require("vm");
@@ -1309,7 +1623,7 @@ async function run() {
         await correspondence(side, "List item 18.", `${side} follows individual list items after raw HTML`);
       }
       check("temporary mapping attributes never remain in the preview or its block hashes",
-        await exec("!viewer.querySelector('[data-folia-scroll]')&&[...viewer.querySelectorAll('[data-block-hash]')].every(e=>!e.dataset.blockHash.includes('data-folia-scroll'))"));
+        await exec("!viewer.querySelector('[data-markaloo-scroll]')&&[...viewer.querySelectorAll('[data-block-hash]')].every(e=>!e.dataset.blockHash.includes('data-markaloo-scroll'))"));
       await mode(false);
       await open(first, "Scroll correspondence");
       await mode(true);
@@ -1421,7 +1735,7 @@ async function run() {
         ["removed", 'Before <script>window.__unexpectedScrollScript=true</script> after.'],
         ["xmp", '<xmp>\nOpaque raw text\n\nLiteral **source**</xmp>'],
         ["plaintext", '<plaintext>\nLiteral raw text **source**'],
-        ["authored-attribute", '<div data-folia-scroll="authored-value">Authored attribute</div>'],
+        ["authored-attribute", '<div data-markaloo-scroll="authored-value">Authored attribute</div>'],
       ];
       for (const [name, body] of cases) {
         const text = `# HTML correspondence ${name}\n\n` +
@@ -1480,6 +1794,35 @@ async function run() {
       await mode(true);
     }
     if (scenario("mapping")) {
+      if (firstTextOnly) {
+        const current = fs.readFileSync(path.resolve(__dirname, "..", "src", "editor-scroll.js"), "utf8");
+        const lookup = "        const child = run.node.firstChild;\n" +
+          "        const first = child?.nodeType === Node.TEXT_NODE ? child :\n" +
+          "          document.createTreeWalker(run.node, NodeFilter.SHOW_TEXT).nextNode();";
+        const normalized = current.replace(/\r\n/g, "\n");
+        if (normalized.split(lookup).length !== 2) throw new Error("Exact reviewed lookup must occur once");
+        const original = normalized.replace(lookup,
+          "        const walker = document.createTreeWalker(run.node, NodeFilter.SHOW_TEXT), first = walker.nextNode();");
+        const controls = await exec(`(() => {
+          const predecessor = ((window) => {${original}\nreturn window.createEditorScroll;})({
+            MarkalooTableCells: window.MarkalooTableCells
+          });
+          return (${firstTextDomControls.toString()})(predecessor, window.createEditorScroll,
+            ${JSON.stringify(generate("wide", 1))});
+        })()`);
+        receipt.firstTextControls = controls;
+        check("both actual Source versions complete every real-DOM functional and identity leg",
+          controls.rows.length === 44 && controls.rows.every(value => value.ok), controls.rows);
+        check("predecessor/successor real DOM, transferred specs, views, offsets and refusals agree before count checks",
+          controls.pairs.length === 22 && controls.pairs.every(value => value.ok), controls.pairs);
+        check("all original/fallback counts retain the separate block-content walk",
+          controls.countChecks.length === 44 && controls.countChecks.every(value => value.ok), controls.countChecks);
+        check("original wide parser plus reading callbacks discriminates actual RED 60 from GREEN 0 per-run walkers",
+          controls.discrimination.expectedRed && controls.discrimination.green &&
+            controls.discrimination.actualDirectRuns &&
+            controls.discrimination.predecessorOptimizationPassed === false &&
+            controls.discrimination.successorOptimizationPassed === true, controls.discrimination);
+      }
       const guard = await exec(`(() => {
         const cases=['control','mismatch','duplicate','owner','order'];
         return cases.map(kind=>{
@@ -1758,20 +2101,36 @@ async function run() {
     require("crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname, "..", "src", name))).digest("hex") === digest));
 }
 app.whenReady().then(async () => {
+  try {
   await sleep(1600);
   win = BrowserWindow.getAllWindows()[0];
+  if (!win) throw new Error("No owned production window was created");
   // Apply the same frame scheduling to baseline and candidate observations.
   win.webContents.setBackgroundThrottling(false);
   const display = require("electron").screen.getDisplayMatching(win.getBounds());
   receipt.display = { bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor,
     windowBounds: win.getBounds(), contentBounds: win.getContentBounds(),
     zoomFactor: win.webContents.getZoomFactor(), dpr: await exec("devicePixelRatio") };
-  try { await run(); }
+  if (firstTextOnly) {
+    receipt.runtime.executable = process.execPath;
+    receipt.runtime.executableSha256 = require("crypto").createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex");
+    receipt.runtime.pid = process.pid;
+    receipt.runtime.ppid = process.ppid;
+    receipt.runtime.argv = process.argv;
+    receipt.runtime.cwd = process.cwd();
+    receipt.firstTextChildren = app.getAppMetrics().map(value => ({ pid: value.pid, type: value.type, creationTime: value.creationTime }));
+    receipt.renderer = { url: win.webContents.getURL(), pid: win.webContents.getOSProcessId() };
+  }
+  await run();
+  }
   catch (error) { check("scroll harness reaches completion", false, String(error.stack || error)); }
+  if (firstTextOnly) {
+    receipt.firstTextChildrenAtEnd = app.getAppMetrics().map(value => ({ pid: value.pid, type: value.type, creationTime: value.creationTime }));
+  }
   fs.writeFileSync(path.join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2));
   const summary = `=== ${results.filter(Boolean).length}/${results.length} passed ===`;
   app.once("quit", () => console.log(summary));
   app.once("will-quit", () => app.exit(results.every(Boolean) ? 0 : 1));
   app.quit();
 });
-setTimeout(() => { console.error("Scroll watchdog expired"); app.exit(2); }, 180000);
+setTimeout(() => { console.error("Scroll watchdog expired"); app.exit(2); }, firstTextOnly ? 90000 : 180000);

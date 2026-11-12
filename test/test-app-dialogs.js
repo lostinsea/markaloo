@@ -119,7 +119,7 @@ async function ownedChoice(target, id) {
 }
 async function captureRootMatrix(kind, show, close) {
   for (const scheme of ["clarity", "abyss"]) {
-    await exec(`window.foliaThemes.setScheme(${JSON.stringify(scheme)});true`);
+    await exec(`window.markalooThemes.setScheme(${JSON.stringify(scheme)});true`);
     await settle();
     await show();
     await screenshot(`${kind}-${scheme}`);
@@ -146,7 +146,7 @@ async function captureRootMatrix(kind, show, close) {
 }
 async function run() {
   check("app dialogs use the frozen production bridge without Node in the page",
-    await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)&&Object.isFrozen(window.MarkalooDialogs)"));
+    await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)&&Object.isFrozen(window.MarkalooDialogs)"));
   const sentinel = startErrorSentinel(win, { label: "app-dialogs" });
   const alive = await proveSentinelAlive(win, sentinel);
   check("app dialog sentinel proves both error channels alive", alive.console && alive.dom, alive);
@@ -280,14 +280,14 @@ async function run() {
     { width: 240, height: 140 }).toPNG());
   const sampleImage = require("url").pathToFileURL(sampleImagePath).href;
   const popoutRequests = [
-    ["image", `window.folia.openImagePopup(${JSON.stringify({
+    ["image", `window.markaloo.openImagePopup(${JSON.stringify({
       src: sampleImage, alt: "Disposable image preview", isDarkMode: false,
     })})`],
-    ["mermaid", `window.folia.openMermaidPopup(${JSON.stringify({
+    ["mermaid", `window.markaloo.openMermaidPopup(${JSON.stringify({
       svgContent: '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="160" viewBox="0 0 420 160"><rect x="20" y="30" width="170" height="90" rx="12" fill="#397db5"/><rect x="230" y="30" width="170" height="90" rx="12" fill="#587d4d"/><text x="65" y="82" fill="white" font-size="20">Document</text><text x="280" y="82" fill="white" font-size="20">Preview</text></svg>',
       isDarkMode: false,
     })})`],
-    ["table", `window.folia.openTablePopup(${JSON.stringify({
+    ["table", `window.markaloo.openTablePopup(${JSON.stringify({
       tableData: {
         columns: [{ title: "Document", field: "col0", headerFilter: "input" },
           { title: "Status", field: "col1", headerFilter: "input" }],
@@ -296,7 +296,7 @@ async function run() {
     })})`],
   ];
   for (const scheme of ["clarity", "abyss"]) {
-    await exec(`window.foliaThemes.setScheme(${JSON.stringify(scheme)});true`);
+    await exec(`window.markalooThemes.setScheme(${JSON.stringify(scheme)});true`);
     await settle();
     const expectedBackground = await exec("getComputedStyle(document.body).getPropertyValue('--bg-primary').trim()");
     for (const [kind, request] of popoutRequests) {
@@ -354,7 +354,7 @@ async function run() {
   await pageWait("authoritative deletion before close", `(()=>{
     const tab=window.CustomTabs.getActiveTab();
     const owner=window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession());
-    return window.folia.queryDocumentDeletionState({...owner,filePath:tab.filePath}).unresolved===true;
+    return window.markaloo.queryDocumentDeletionState({...owner,filePath:tab.filePath}).unresolved===true;
   })()`);
   await settle();
   await sentinel.mute("Measuring the exact production deletion-close acknowledgement");
@@ -369,7 +369,7 @@ async function run() {
   await sentinel.unmute();
   await open("main-dialog-document.md", "# Main dialog\n\nA clean document.\n");
   await exec(`window.__largeAnswer=null;
-    window.folia.confirmLargeRender({name:'Large disposable document.md',seconds:12}).then(value=>window.__largeAnswer=value);true`);
+    window.markaloo.confirmLargeRender({name:'Large disposable document.md',seconds:12}).then(value=>window.__largeAnswer=value);true`);
   const large = await ownedQuestion();
   const isolated = large.webContents.getLastWebPreferences();
   check("Main-owned dialog has its own sandboxed renderer and production preload",
@@ -379,7 +379,7 @@ async function run() {
   check("Main-owned large-document question starts on Cancel",
     await large.webContents.executeJavaScript("document.activeElement.textContent.trim()==='Cancel'"));
   for (const scheme of ["clarity", "abyss"]) {
-    await exec(`window.foliaThemes.setScheme(${JSON.stringify(scheme)});true`);
+    await exec(`window.markalooThemes.setScheme(${JSON.stringify(scheme)});true`);
     await wait("Main theme " + scheme, () => large.webContents.executeJavaScript(
       `document.body.dataset.theme===${JSON.stringify(scheme)}`));
     await screenshot("main-question-" + scheme, large);
@@ -408,7 +408,7 @@ async function run() {
   check("cancelling the Main warning neither opens the document nor loses the queued error",
     await exec("window.__largeAnswer===false&&currentReloadSnapshot().includes('A clean document.')"));
   await exec(`window.__largeAnswer=null;
-    window.folia.confirmLargeRender({name:'Approved disposable document.md',seconds:12}).then(value=>window.__largeAnswer=value);true`);
+    window.markaloo.confirmLargeRender({name:'Approved disposable document.md',seconds:12}).then(value=>window.__largeAnswer=value);true`);
   const approvedLarge = await ownedQuestion();
   await ownedChoice(approvedLarge, "0");
   await pageWait("large explicit result", "window.__largeAnswer===true");

@@ -72,7 +72,7 @@ app.once("browser-window-created", (_event, win) => {
 });
 require("../src/main.js");
 
-const evidence = process.env.FOLIA_LAYOUT_EVIDENCE ||
+const evidence = process.env.MARKALOO_LAYOUT_EVIDENCE ||
   path.join(__dirname, "..", "tmp", "responsive-layout");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const description =

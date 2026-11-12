@@ -1950,7 +1950,7 @@ for (const [profile, want] of Object.entries(CORPUS_DIGEST)) {
   const source = fs.readFileSync(path.join(__dirname, "native-actions.js"), "utf8");
   const start = source.indexOf("function overwriteActionFixture(");
   const end = source.indexOf("async function correctedSaveJourney(", start);
-  const directory = fs.mkdtempSync(path.join(require("os").tmpdir(), "folia-fixture-reset-"));
+  const directory = fs.mkdtempSync(path.join(require("os").tmpdir(), "markaloo-fixture-reset-"));
   const file = path.join(directory, "owned.md");
   const modes = [];
   const context = vm.createContext({ Buffer, samples: [], performance,

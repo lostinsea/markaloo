@@ -62,7 +62,7 @@ function fixture(settings = {}) {
   owner.webContents = Object.assign(new EventEmitter(), {
     destroyed: false, crashed: false,
     isDestroyed() { return this.destroyed; }, isCrashed() { return this.crashed; },
-    mainFrame: { url: "file:///simulated-folia.html", detached: false, destroyed: false,
+    mainFrame: { url: "file:///simulated-markaloo.html", detached: false, destroyed: false,
       isDestroyed() { return this.destroyed; } },
     send() {},
   });

@@ -32,7 +32,7 @@ const { admitTestDocument, VISUAL_PROBE_SOURCE, inspectVisual, captureScreenshot
 // app is ready. See test-userdata-isolation.js.
 require("./test-userdata-isolation");
 
-const TEST_PRELOAD_MARKER = "--folia-test-preload";
+const TEST_PRELOAD_MARKER = "--markaloo-test-preload";
 if (!process.argv.includes(TEST_PRELOAD_MARKER)) {
   process.argv.push(TEST_PRELOAD_MARKER);
 }
@@ -190,7 +190,7 @@ async function settleMermaidSession(win, label) {
   }, label, `(async () => {
     if (document.readyState !== 'complete' || typeof window.CustomTabs?.settleSessionLayout !== 'function')
       return false;
-    const generation = await window.folia.getQuitApprovalGeneration();
+    const generation = await window.markaloo.getQuitApprovalGeneration();
     const pageSession = window.getReloadRequestSession();
     if (!Number.isSafeInteger(generation) || generation <= 0 ||
         typeof pageSession !== 'string' || !pageSession) return false;
@@ -909,7 +909,7 @@ async function run(win) {
   // completed PDF export must leave nothing held.
   {
     const bridgeAvailable = await exec(
-      `typeof globalThis.__foliaTestPdfRestore?.signal`,
+      `typeof globalThis.__markalooTestPdfRestore?.signal`,
     );
     check(
       "the marked test-only PDF restore preload exposes its PDF restore capability",
@@ -1006,7 +1006,7 @@ async function run(win) {
         resultRestored.hold === 0
       ) {
         const signalSent = await exec(
-          `globalThis.__foliaTestPdfRestore.signal(${JSON.stringify(PDF_RESTORE_TOKEN)})`,
+          `globalThis.__markalooTestPdfRestore.signal(${JSON.stringify(PDF_RESTORE_TOKEN)})`,
         );
         freshWitness = await Promise.race([
           freshWitnessDelivery,
@@ -3671,7 +3671,7 @@ async function run(win) {
 
   await exec(`window.__fitReplies = [];
     window.__fitReplyListener = (_event, data) => window.__fitReplies.push(data);
-    window.FoliaDocumentEvents.on('file-reload-result', window.__fitReplyListener); null`);
+    window.MarkalooDocumentEvents.on('file-reload-result', window.__fitReplyListener); null`);
   async function reloadFit() {
     const before = await exec(`window.__fitReplies.length`);
     await exec(`document.getElementById('reloadFileBtn').click(); null`);
@@ -4090,7 +4090,7 @@ async function run(win) {
       Math.abs(wideSplit.nativeHeight - wideReader?.nativeHeight) <= 1,
     JSON.stringify(wideSplit));
   await exec(`contentWrapper.classList.remove('split-view'); null`);
-  await exec(`window.FoliaDocumentEvents.removeListener('file-reload-result', window.__fitReplyListener); null`);
+  await exec(`window.MarkalooDocumentEvents.removeListener('file-reload-result', window.__fitReplyListener); null`);
 
   // Everything above ran with the sentinel watching. This is the assertion the
   // end-of-run screenshot could never make: nothing visibly broke at any point

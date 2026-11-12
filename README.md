@@ -430,7 +430,7 @@ Output lands in `dist/`. See [`BUILD.md`](https://github.com/lostinsea/markaloo/
 On macOS, use `Cmd` in place of `Ctrl`.
 
 `F12` opens developer tools when Markaloo is run from source. **In an installed
-build it does nothing**, unless the app is started with `FOLIA_DEVTOOLS=1` in
+build it does nothing**, unless the app is started with `Markaloo_devtools=1` in
 the environment. That is deliberate: the renderer has full Node access, so the
 developer console can read and write any file you can, and "press F12 and paste
 this" is a well-worn way to talk someone into running code they never meant to.

@@ -73,7 +73,7 @@ async function deletionState() {
   return exec(`(()=>{
     const tab=window.CustomTabs.getActiveTab();
     const owner=window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession());
-    return window.folia.queryDocumentDeletionState({...owner,filePath:tab.filePath});
+    return window.markaloo.queryDocumentDeletionState({...owner,filePath:tab.filePath});
   })()`);
 }
 async function recreate(file, body) {
@@ -120,7 +120,7 @@ async function checkPreDialogSnapshot() {
   const prepare = () => exec(`(async()=>{
     const tab=window.CustomTabs.getActiveTab();
     const owner=window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession());
-    const snapshot=await window.folia.readOwnedTabDiskSnapshot({
+    const snapshot=await window.markaloo.readOwnedTabDiskSnapshot({
       filePath:tab.filePath,pageSession:owner.pageSession,
       rendererGeneration:owner.rendererGeneration,owner,
     });
@@ -129,14 +129,14 @@ async function checkPreDialogSnapshot() {
       oldOwner:owner,proposedOwner:owner,replaceDocument:false,
       contentDigest:Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join(''),
       modifiedTime:snapshot.modifiedTime,diskVersion:snapshot.diskVersion};
-    const state=await window.folia.prepareDocumentDiskAdoption(request);
+    const state=await window.markaloo.prepareDocumentDiskAdoption(request);
     return {state,request:{...request,capability:state.capability,revision:state.revision}};
   })()`);
   const prepared = await prepare();
   check("SEC-08 pre-dialog check setup retains actual deletion evidence and attests the restored file",
     prepared.state.known && prepared.state.ownDeletion && prepared.state.versionMatches, prepared.state);
-  const asked = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(prepared.request)})`);
-  const positive = asked.confirmation && await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
+  const asked = await exec(`window.markaloo.commitDocumentDiskAdoption(${JSON.stringify(prepared.request)})`);
+  const positive = asked.confirmation && await exec(`window.markaloo.respondToDocumentReplacementConsent(${JSON.stringify({
     id: asked.confirmation.id, pageSession: asked.confirmation.pageSession,
     rendererGeneration: asked.confirmation.rendererGeneration, approved: true,
   })})`);
@@ -146,18 +146,18 @@ async function checkPreDialogSnapshot() {
   const capability = { capability: prepared.state.capability,
     pageSession: prepared.request.pageSession, rendererGeneration: prepared.request.rendererGeneration };
   fs.writeFileSync(file, "# Pre-dialog check\n\nChanged after approval.\n");
-  const late = await exec(`window.folia.checkCommittedDiskAdoption(${JSON.stringify(capability)})`);
+  const late = await exec(`window.markaloo.checkCommittedDiskAdoption(${JSON.stringify(capability)})`);
   check("SEC-08 committed check refuses real disk changes after approval",
     late.valid === false && late.why === "disk-version-or-target-moved", late);
-  await exec(`window.folia.abandonDocumentDiskAdoption(${JSON.stringify(capability)});true`);
+  await exec(`window.markaloo.abandonDocumentDiskAdoption(${JSON.stringify(capability)});true`);
   const stale = await prepare();
   fs.writeFileSync(file, "# Pre-dialog check\n\nChanged before the question.\n");
-  const refused = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(stale.request)})`);
+  const refused = await exec(`window.markaloo.commitDocumentDiskAdoption(${JSON.stringify(stale.request)})`);
   check("SEC-08 Main refuses a stale prepared snapshot before asking replacement consent",
     refused.accepted === false && refused.why === "disk-version-or-target-moved" &&
     !Object.hasOwn(refused, "confirmation"), refused);
   if (refused.confirmation) {
-    await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
+    await exec(`window.markaloo.respondToDocumentReplacementConsent(${JSON.stringify({
       id: refused.confirmation.id, pageSession: refused.confirmation.pageSession,
       rendererGeneration: refused.confirmation.rendererGeneration, approved: false,
     })})`);
@@ -165,7 +165,7 @@ async function checkPreDialogSnapshot() {
 }
 async function run() {
   check("reload dialog production bridge remains isolated and frozen",
-    await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)"));
+    await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)"));
   const sentinel = startErrorSentinel(win, { label: "reload-dialog" });
   await exec(`window.__reloadConfirmations=[];
     const showReplacement=window.CustomTabs.confirmDocumentReplacement;
@@ -371,7 +371,7 @@ async function run() {
         try{await window.CustomTabs.closeTab(${raceId})}finally{clearInterval(answer)}
         return true;
       })()`);
-      const closedReply = await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
+      const closedReply = await exec(`window.markaloo.respondToDocumentReplacementConsent(${JSON.stringify({
         id: question.id, pageSession: question.pageSession,
         rendererGeneration: question.rendererGeneration, approved: true,
       })})`);
@@ -432,7 +432,7 @@ async function run() {
       const other = await exec(`(()=>{
         const tab=window.CustomTabs.getTabs().find(tab=>tab.id===${controlId});
         const owner=window.CustomTabs.getDocumentIdentityForTab(tab.id,tab.filePath,window.getReloadRequestSession());
-        return window.folia.queryDocumentDeletionState({...owner,filePath:tab.filePath});
+        return window.markaloo.queryDocumentDeletionState({...owner,filePath:tab.filePath});
       })()`);
       check("held consent evidence change is a real new missing-file episode",
         other.known && other.ownDeletion && other.revision > beforeRevision, other);
@@ -441,7 +441,7 @@ async function run() {
     let reply;
     try {
       if (change === "expiry") Date.now = () => realNow() + 60000;
-      reply = await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
+      reply = await exec(`window.markaloo.respondToDocumentReplacementConsent(${JSON.stringify({
         id: request.id, pageSession: request.pageSession,
         rendererGeneration: request.rendererGeneration, approved: true,
       })})`);
@@ -451,7 +451,7 @@ async function run() {
     check(`Main refuses ${change} state changes without trusting a forced affirmative reply`,
       reply.accepted === false && (await exec(stateExpression)).live === body &&
       (await deletionState()).ownDeletion === true, reply);
-    const replay = await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
+    const replay = await exec(`window.markaloo.respondToDocumentReplacementConsent(${JSON.stringify({
       id: request.id, pageSession: request.pageSession,
       rendererGeneration: request.rendererGeneration, approved: true,
     })})`);
@@ -572,7 +572,7 @@ async function reasonScenarios(sentinel) {
     await nextLoaded;
     await wait("next replacement-page handshake", `typeof window.CustomTabs?.getTabs==='function'&&
       window.getReloadRequestSession()!==${JSON.stringify(navigationConsent.pageSession)}`);
-    const oldPageReply = await exec(`window.folia.respondToDocumentReplacementConsent(${JSON.stringify({
+    const oldPageReply = await exec(`window.markaloo.respondToDocumentReplacementConsent(${JSON.stringify({
       id: navigationConsent.id, pageSession: navigationConsent.pageSession,
       rendererGeneration: navigationConsent.rendererGeneration, approved: true,
     })})`);

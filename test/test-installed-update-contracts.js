@@ -102,7 +102,7 @@ function readiness({ cached = null, platform = "win32" } = {}) {
   });
   controller.attach(updater);
   updater.on("update-available", controller.observeAvailable);
-  const window = { folia: Object.freeze({
+  const window = { markaloo: Object.freeze({
     getUpdateState: () => controller.snapshot(),
     checkForUpdates: () => { trace.push(["check-action"]); void controller.check(); },
     downloadUpdate: () => { trace.push(["download-action"]); void controller.download(); },
@@ -146,7 +146,7 @@ function documents() {
       __shutdownFreeze: () => ({ frozen: false }),
       settleSessionLayout: () => { calls.push("settle-layout"); },
     },
-    folia: {
+    markaloo: {
       queryDocumentDeletionState: () => ({
         known: options.ownerCurrent, unresolved: false, revision: 1,
       }),

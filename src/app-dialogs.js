@@ -363,7 +363,7 @@
   }
 
   window.MarkalooDialogs = Object.freeze({ show, showAbout, closeAbout, applyTheme, setMainDialogActive });
-  if (typeof window.folia?.onMainDialogVisibility === "function") {
-    window.folia.onMainDialogVisibility(setMainDialogActive);
+  if (typeof window.markaloo?.onMainDialogVisibility === "function") {
+    window.markaloo.onMainDialogVisibility(setMainDialogActive);
   }
 })();

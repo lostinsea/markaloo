@@ -10,6 +10,28 @@ ipcRenderer.on("main-dialog-visibility", (_event, value) => {
     catch (error) { console.error("Main dialog visibility callback failed:", error); }
   }
 });
+function subscribeReadingHistoryCommand(callback) {
+  if (typeof callback !== "function") {
+    throw new TypeError("Invalid reading history callback");
+  }
+  if (!process.isMainFrame) {
+    throw new Error("Reading history commands require the main frame");
+  }
+  let subscribed = true;
+  const listener = (_event, direction) => {
+    if (subscribed && (direction === -1 || direction === 1)) callback(direction);
+  };
+  const unsubscribe = () => {
+    if (!subscribed) return;
+    subscribed = false;
+    ipcRenderer.removeListener("reading-history-command", listener);
+    window.removeEventListener("pagehide", unsubscribe);
+  };
+  ipcRenderer.on("reading-history-command", listener);
+  window.addEventListener("pagehide", unsubscribe, { once: true });
+  return unsubscribe;
+}
+
 const dialogThemeIds = new Set([
   "default-light", "default-dark", "clarity", "parchment", "abyss", "ember",
 ]);
@@ -24,7 +46,7 @@ async function publishPendingDialogTheme() {
       const themeId = pendingDialogTheme;
       pendingDialogTheme = null;
       await ipcRenderer.invoke("private-publish-dialog-theme", {
-        nonce: bootstrapArgument.slice("--folia-session-bootstrap=".length),
+        nonce: bootstrapArgument.slice("--markaloo-session-bootstrap=".length),
         rendererGeneration, themeId,
       });
     }
@@ -38,7 +60,7 @@ async function publishPendingDialogTheme() {
 // Capture before any page script can replace the legacy keys. The nonce and
 // startup channel are deliberately absent from the public bridge.
 const bootstrapArgument = process.argv.find(argument =>
-  argument.startsWith("--folia-session-bootstrap="));
+  argument.startsWith("--markaloo-session-bootstrap="));
 if (process.isMainFrame && bootstrapArgument) {
   const capture = { openTabs: null, activeTabPath: null };
   try {
@@ -49,17 +71,24 @@ if (process.isMainFrame && bootstrapArgument) {
   }
   try {
     ipcRenderer.sendSync("bootstrap-legacy-document-session", {
-      nonce: bootstrapArgument.slice("--folia-session-bootstrap=".length),
+      nonce: bootstrapArgument.slice("--markaloo-session-bootstrap=".length),
       ...capture,
     });
   } catch (error) {
     console.error("Private document session bootstrap failed:", error);
   }
-  const nonce = bootstrapArgument.slice("--folia-session-bootstrap=".length);
+  const nonce = bootstrapArgument.slice("--markaloo-session-bootstrap=".length);
   const observeUpdateSurface = () => {
+    const overlayIds = new Set([
+      "noteDialogOverlay", "findNoteOverlay", "editTextOverlay", "mermaidTemplateOverlay",
+    ]);
+    // Keep shell identities, not matching elements from an authored document.
+    const overlays = [...document.body.children].filter(element =>
+      overlayIds.has(element.id) && element.classList.contains("note-dialog-overlay"));
     let previous = null;
     const report = () => {
-      const modal = !!document.querySelector("dialog[open]");
+      const modal = !!document.querySelector("dialog:modal") || overlays.some(element =>
+        element.parentElement === document.body && element.classList.contains("visible"));
       const current = `${modal}:${mainDialogVisible}`;
       if (current === previous) return;
       previous = current;
@@ -68,6 +97,9 @@ if (process.isMainFrame && bootstrapArgument) {
     const observer = new MutationObserver(report);
     observer.observe(document.documentElement, {
       subtree: true, childList: true, attributes: true, attributeFilter: ["open"],
+    });
+    for (const overlay of overlays) observer.observe(overlay, {
+      attributes: true, attributeFilter: ["class"],
     });
     mainDialogVisibilityCallbacks.add(report);
     report();
@@ -138,6 +170,58 @@ function copyNativeOpenTicket(request) {
     throw new TypeError("Invalid native document ticket");
   }
   return { ticket: request.ticket };
+}
+
+function copyStartupDocumentCorrelation(value) {
+  const keys = ["requestId", "attempt", "frameTreeNodeId", "rendererGeneration", "pageSession"];
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).length !== keys.length ||
+      !keys.every(key => Object.prototype.hasOwnProperty.call(value, key)) ||
+      typeof value.requestId !== "string" || !/^[a-f0-9]{64}$/.test(value.requestId) ||
+      !positiveInteger(value.attempt) || !positiveInteger(value.rendererGeneration) ||
+      !Number.isSafeInteger(value.frameTreeNodeId) || value.frameTreeNodeId < 0 ||
+      typeof value.pageSession !== "string" || !value.pageSession.length ||
+      value.pageSession.length > 128) {
+    throw new TypeError("Invalid startup document correlation");
+  }
+  return Object.freeze(Object.fromEntries(keys.map(key => [key, value[key]])));
+}
+
+function copyStartupDocumentReport(report) {
+  if (!report || typeof report !== "object" || Array.isArray(report) ||
+      !["idle", "adopted", "retained"].includes(report.kind)) {
+    throw new TypeError("Invalid startup document report");
+  }
+  const startup = copyStartupDocumentCorrelation(report.startup);
+  const payload = { kind: report.kind, startup };
+  let keys;
+  if (report.kind === "idle") {
+    keys = ["kind", "startup", "nonce"];
+    if (typeof report.nonce !== "string" || !/^[a-f0-9]{64}$/.test(report.nonce)) {
+      throw new TypeError("Invalid startup idle probe");
+    }
+    payload.nonce = report.nonce;
+  } else if (report.kind === "retained") {
+    keys = ["kind", "startup", "reason"];
+    if (!["consent-declined", "renderer-busy", "tracking-refused", "open-failed",
+      "mutation-blocked"].includes(report.reason)) {
+      throw new TypeError("Invalid startup retained reason");
+    }
+    payload.reason = report.reason;
+  } else {
+    keys = ["kind", "startup", "filePath", "owner"];
+    const tracking = copyTrackingEnvelope({
+      filePath: report.filePath, owner: report.owner,
+      pageSession: startup.pageSession, rendererGeneration: startup.rendererGeneration,
+    });
+    payload.filePath = tracking.filePath;
+    payload.owner = tracking.owner;
+  }
+  if (Object.keys(report).length !== keys.length ||
+      !keys.every(key => Object.prototype.hasOwnProperty.call(report, key))) {
+    throw new TypeError("Unexpected startup document report field");
+  }
+  return payload;
 }
 
 function copySessionAnchor(anchor) {
@@ -350,8 +434,8 @@ const DOCUMENT_EVENT_IDENTITY_FIELDS = [
 const DOCUMENT_EVENT_FIELDS = {
   "window-visibility-changed": ["visible"],
   "file-opened": ["path", "content", "allPaths", "extraReadGrants", "openRequest",
-    "modifiedTime", "diskVersion", "document"],
-  "file-open-result": ["success", "path", "openRequest", "reason", "message"],
+    "modifiedTime", "diskVersion", "document", "startup"],
+  "file-open-result": ["success", "path", "openRequest", "reason", "message", "startup"],
   "file-reload-result": ["success", "path", "content", "modifiedTime", "diskVersion",
     "error", "reloadRequest", "reloadSession"],
   "save-markdown-result": ["success", "path", "requestId", "saveRequestSession",
@@ -369,7 +453,7 @@ const DOCUMENT_EVENT_FIELDS = {
   "quit-approval-thaw": [],
   "file-deleted": ["path", "delivery"],
   "file-not-found": ["path"],
-  "external-file-open-request": ["filePath", "documentOpenTicket"],
+  "external-file-open-request": ["filePath", "documentOpenTicket", "startup", "startupProbe"],
   "show-error": [],
   "update-status": ["status", "version", "transferred", "total", "percent",
     "error", "message", "revision", "installedVersion", "availableVersion",
@@ -378,6 +462,9 @@ const DOCUMENT_EVENT_FIELDS = {
     "presentationOrigin", "presentationDismissed", "canShowUpdate", "scheduleError"],
 };
 const DOCUMENT_EVENT_RECORD_FIELDS = {
+  startup: ["requestId", "attempt", "frameTreeNodeId", "rendererGeneration", "pageSession"],
+  startupProbe: ["requestId", "attempt", "frameTreeNodeId", "rendererGeneration", "pageSession",
+    "nonce"],
   diskVersion: ["dev", "ino", "size", "mtimeMs", "ctimeMs"],
   document: ["ref", "entryId", "logicalPath", "spellingKey", "readTarget",
     "pathKey", "documentUrl", "diskVersion", "openTicket"],
@@ -702,6 +789,10 @@ function copyDocumentQueryReply(result, fields) {
 }
 
 const api = Object.freeze({
+  platform: process.platform,
+  onReadingHistoryCommand(callback) {
+    return subscribeReadingHistoryCommand(callback);
+  },
   publishDialogTheme(themeId) {
     if (typeof themeId !== "string" || !dialogThemeIds.has(themeId)) {
       throw new TypeError("Invalid dialog theme");
@@ -807,7 +898,7 @@ const api = Object.freeze({
   },
   async getNewlineAlignmentDiagnosticsEnabled() {
     // Main deliberately omits the diagnostic endpoint from packaged builds.
-    if (!process.argv.includes("--folia-newline-alignment-diagnostics")) return false;
+    if (!process.argv.includes("--markaloo-newline-alignment-diagnostics")) return false;
     const enabled = await ipcRenderer.invoke("newline-alignment-diagnostics-enabled");
     if (typeof enabled !== "boolean") throw new TypeError("Invalid diagnostics response");
     return enabled;
@@ -961,6 +1052,18 @@ const api = Object.freeze({
     const result = await ipcRenderer.invoke("cancel-native-document-ticket",
       copyNativeOpenTicket(request));
     if (typeof result !== "boolean") throw new TypeError("Invalid native cancel response");
+    return result;
+  },
+  async reportStartupDocumentOpen(report) {
+    const result = await ipcRenderer.invoke("report-startup-document-open",
+      copyStartupDocumentReport(report));
+    if (typeof result !== "boolean") throw new TypeError("Invalid startup report response");
+    return result;
+  },
+  async retryRetainedStartupOpens(request) {
+    const result = await ipcRenderer.invoke("retry-retained-startup-opens",
+      copyAdoptionEnvelope(request));
+    if (typeof result !== "boolean") throw new TypeError("Invalid startup retry response");
     return result;
   },
   async openReadme() {
@@ -1381,4 +1484,4 @@ const api = Object.freeze({
   },
 });
 
-contextBridge.exposeInMainWorld("folia", api);
+contextBridge.exposeInMainWorld("markaloo", api);

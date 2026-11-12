@@ -259,6 +259,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = mermaidConfig;
 }
 if (typeof window !== 'undefined') {
-  window.FoliaMermaidConfig = mermaidConfig;
+  window.MarkalooMermaidConfig = mermaidConfig;
 }
 })();

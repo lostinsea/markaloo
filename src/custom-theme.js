@@ -53,7 +53,7 @@
      applied over a light page.
 
      THE resolveMode() CALL IS NOT DEFENSIVE PADDING. This function is exported
-     on window.foliaThemes, and the value the app actually STORES for the mode
+     on window.markalooThemes, and the value the app actually STORES for the mode
      preference is "desktop" - so schemeFor(storedMode()), the most natural
      composition of two exported functions, hit SCHEME_KEYS["desktop"] ===
      undefined, read the literal localStorage key "undefined", matched no
@@ -81,7 +81,7 @@
      which ignores the legacy key that resolveDarkPreference() - the thing that
      decides the dark CLASS - honours; the two then disagree on a legacy-only
      profile and the page wears a light scheme's variables under `.dark-mode`.
-     The typeof guard mirrors the one on __foliaExportThemeHeld below: this is
+     The typeof guard mirrors the one on __markalooExportThemeHeld below: this is
      an overlay file and must degrade rather than throw if renderer.js is
      absent. It cannot be absent in the shipped app (index.html loads
      renderer.js first, both classic scripts), and test:theme asserts the export
@@ -109,8 +109,8 @@
     const scheme = schemeFor(mode);
     // PDF export can temporarily repaint the page; publish the preference,
     // not those temporary classes.
-    if (typeof window.folia?.publishDialogTheme === "function") {
-      window.folia.publishDialogTheme(schemeFor(storedMode()).id);
+    if (typeof window.markaloo?.publishDialogTheme === "function") {
+      window.markaloo.publishDialogTheme(schemeFor(storedMode()).id);
     }
     /* An export owns the document's appearance until it has finished
        rasterising. Mirrors the darkModeToggle handler in renderer.js: the
@@ -118,7 +118,7 @@
        write loses nothing - restoreExportScheme() re-derives it from storage
        when the last export releases the hold. Without this a scheme picked
        from the menu mid-export repaints the page underneath printToPDF. */
-    const held = window.__foliaExportThemeHeld;
+    const held = window.__markalooExportThemeHeld;
     if (typeof held === "function" && held()) return scheme;
     if (scheme.base) document.body.removeAttribute("data-theme");
     else document.body.setAttribute("data-theme", scheme.id);
@@ -188,7 +188,7 @@
     });
   }
 
-  window.foliaThemes = {
+  window.markalooThemes = {
     SCHEMES,
     SCHEME_KEYS,
     schemeFor,

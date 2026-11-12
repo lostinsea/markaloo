@@ -498,8 +498,8 @@ async function run(win) {
 
   async function openOwnedTableGrid(mode, { columns = 3, rows = 2, first = 1, last = first } = {}) {
     return JSON.parse(await exec(`JSON.stringify((() => {
-      const mode=FoliaTableCells.Mode[${JSON.stringify(mode)}];
-      if(mode===FoliaTableCells.Mode.INSERT){
+      const mode=MarkalooTableCells.Mode[${JSON.stringify(mode)}];
+      if(mode===MarkalooTableCells.Mode.INSERT){
         getSelection().removeAllRanges();
         markdownEditor.focus();
         markdownEditor.setSelectionRange(markdownEditor.value.length,markdownEditor.value.length);
@@ -508,7 +508,7 @@ async function run(win) {
         if(tables.length!==1||!editorScroll.tableSource(table))throw Error('Table layout target is not one source-owned table');
         table.scrollIntoView({block:'center'});
         const selection=getSelection();selection.removeAllRanges();
-        if(mode===FoliaTableCells.Mode.UPDATE_ROWS){
+        if(mode===MarkalooTableCells.Mode.UPDATE_ROWS){
           const range=document.createRange();
           range.setStartBefore(table.rows[${first}].cells[0]);
           range.setEndAfter(table.rows[${last}].cells[table.rows[${last}].cells.length-1]);
@@ -522,9 +522,9 @@ async function run(win) {
       if(!tableCellDialog.open||tableCellSession.mode!==mode||!tableCellSession.selection.isCurrent()){
         throw Error('Owned table layout dialog did not open');
       }
-      const defaults=mode!==FoliaTableCells.Mode.INSERT||
+      const defaults=mode!==MarkalooTableCells.Mode.INSERT||
         tableCellColumns.value==='3'&&tableCellDataRows.value==='2'&&tableCellDataRows.min==='0';
-      if(mode===FoliaTableCells.Mode.INSERT){
+      if(mode===MarkalooTableCells.Mode.INSERT){
         tableCellColumns.value=${JSON.stringify(String(columns))};
         tableCellDataRows.value=${JSON.stringify(String(rows))};
         tableCellStart.click();
@@ -3075,6 +3075,139 @@ async function run(win) {
     JSON.stringify(stranded),
   );
 
+  // The raw endpoint must precede CSSOM inspection: querying during the
+  // temporary write would change the observation order of the failing specimen.
+  const nullableTableStyle = JSON.parse(
+    await exec(`
+      (() => {
+        const viewer = document.getElementById('viewer');
+        const root = document.createElement('div');
+        const inputs = [
+          { name: 'absent', style: null },
+          { name: 'empty', style: '' },
+          { name: 'authored', style: '  color : red !important ; width : 137px !important ; ' },
+        ];
+        const cases = [];
+        try {
+          viewer.appendChild(root);
+          for (const input of inputs) {
+            const container = document.createElement('div');
+            const table = document.createElement('table');
+            container.className = 'table-container';
+            const row = table.createTHead().insertRow();
+            for (let column = 0; column < 6; column++) {
+              const cell = document.createElement('th');
+              cell.textContent = 'Column ' + column;
+              row.appendChild(cell);
+            }
+            const body = table.createTBody();
+            for (let line = 0; line < 20; line++) {
+              const bodyRow = body.insertRow();
+              for (let column = 0; column < 6; column++) {
+                bodyRow.insertCell().textContent = Array.from({ length: 24 }, (_, part) =>
+                  't' + line + 'c' + column + 'q' + part + '_').join('');
+              }
+            }
+            if (input.style !== null) table.setAttribute('style', input.style);
+            container.appendChild(table);
+            root.appendChild(container);
+            let result;
+            try {
+              const state = tablePreferredBegin(container, new Map());
+              let validState, previousOwnData, cap, width;
+              try {
+                const previous = state && Object.getOwnPropertyDescriptor(state, 'previous');
+                validState = !!state && state.table === table && state.row === row;
+                previousOwnData = !!previous &&
+                  Object.prototype.hasOwnProperty.call(previous, 'value') &&
+                  previous.value === input.style;
+                cap = state ? state.cap : null;
+                width = state ? tablePreferredRead(state) : null;
+              } finally {
+                if (state) tablePreferredRestore(state);
+              }
+              const raw = table.getAttribute('style');
+              result = {
+                name: input.name, validState, previousOwnData, cap, width, raw,
+                restoredWidth: table.style.width,
+                widthPriority: table.style.getPropertyPriority('width'),
+                restoredColor: table.style.color,
+                colorPriority: table.style.getPropertyPriority('color'),
+              };
+            } finally {
+              container.remove();
+            }
+            result.cleaned = !container.isConnected;
+            cases.push(result);
+          }
+        } finally {
+          root.remove();
+        }
+        return JSON.stringify({ cases, rootRemoved: !root.isConnected });
+      })()
+    `),
+  );
+  const [absentStyleCase, emptyStyleCase, authoredStyleCase] = nullableTableStyle.cases;
+  const exactStyleCases = nullableTableStyle.cases.length === 3 &&
+    absentStyleCase.name === "absent" && emptyStyleCase.name === "empty" &&
+    authoredStyleCase.name === "authored";
+  check(
+    "table style restoration measures exactly ABSENCE, EMPTY and AUTHORED",
+    exactStyleCases,
+    JSON.stringify(nullableTableStyle),
+  );
+  const styleMeasurementReady = (sample) => !!sample && sample.validState &&
+    sample.previousOwnData && Number.isFinite(sample.cap) && sample.cap > 0 &&
+    Number.isFinite(sample.width) && sample.width > 0;
+  for (const [label, sample, expectedRaw] of [
+    ["ABSENCE", absentStyleCase, null],
+    ["EMPTY", emptyStyleCase, ""],
+    ["AUTHORED", authoredStyleCase, "  color : red !important ; width : 137px !important ; "],
+  ]) {
+    check(
+      label + ": table measurement setup is real",
+      exactStyleCases && styleMeasurementReady(sample),
+      JSON.stringify(sample),
+    );
+    check(
+      label + ": table measurement restores exact raw style",
+      exactStyleCases && styleMeasurementReady(sample) && sample.raw === expectedRaw,
+      JSON.stringify(sample),
+    );
+  }
+  check(
+    "ABSENCE and EMPTY restore empty width/color values and priorities",
+    exactStyleCases && absentStyleCase.restoredWidth === "" &&
+      absentStyleCase.widthPriority === "" && absentStyleCase.restoredColor === "" &&
+      absentStyleCase.colorPriority === "" && emptyStyleCase.restoredWidth === "" &&
+      emptyStyleCase.widthPriority === "" && emptyStyleCase.restoredColor === "" &&
+      emptyStyleCase.colorPriority === "",
+    JSON.stringify(nullableTableStyle),
+  );
+  check(
+    "AUTHORED restores width and color values with both important priorities",
+    exactStyleCases && authoredStyleCase.restoredWidth === "137px" &&
+      authoredStyleCase.widthPriority === "important" && authoredStyleCase.restoredColor === "red" &&
+      authoredStyleCase.colorPriority === "important",
+    JSON.stringify(authoredStyleCase),
+  );
+  check(
+    "identical style fixtures retain matching caps and measurements",
+    exactStyleCases && styleMeasurementReady(absentStyleCase) &&
+      styleMeasurementReady(emptyStyleCase) && styleMeasurementReady(authoredStyleCase) &&
+      Math.abs(emptyStyleCase.cap - absentStyleCase.cap) < 0.01 &&
+      Math.abs(authoredStyleCase.cap - absentStyleCase.cap) < 0.01 &&
+      Math.abs(emptyStyleCase.width - absentStyleCase.width) < 0.01 &&
+      Math.abs(authoredStyleCase.width - absentStyleCase.width) < 0.01,
+    JSON.stringify(nullableTableStyle),
+  );
+  check(
+    "all three table style fixtures and their root are removed",
+    exactStyleCases && nullableTableStyle.rootRemoved && absentStyleCase.cleaned &&
+      emptyStyleCase.cleaned && authoredStyleCase.cleaned,
+    JSON.stringify(nullableTableStyle),
+  );
+
   // The equivalence claim itself, measured rather than argued. Batching is only
   // legitimate if asking every table at once gives the SAME answer as asking
   // them one at a time; if it did not, this would be an approximation dressed
@@ -3971,7 +4104,7 @@ async function run(win) {
         //
         // The block above builds its inversion from inline styles, which is a
         // real route (the sanitizer keeps them) but not the only one, and not
-        // the strongest. Folia's own block wrappers already invert these lists:
+        // the strongest. Markaloo's own block wrappers already invert these lists:
         // every wrapper appends an absolutely-positioned button AFTER the tall
         // content it decorates. The button is positioned by the STYLESHEET, so
         // the state survives even if the sanitizer is ever tightened to strip
@@ -4195,7 +4328,7 @@ async function run(win) {
   const zaWrap = zoomAnchor.wrap || {};
   console.log("note: wrapper scan " + JSON.stringify(zaWrap));
   check(
-    "the reading-position walk holds inside a Folia block wrapper, whose own button inverts the child order",
+    "the reading-position walk holds inside a Markaloo block wrapper, whose own button inverts the child order",
     zaWrap.violations === 0 && zaWrap.fellThrough === 0 && zaWrap.checks === 41,
     "violations=" +
       zaWrap.violations +
@@ -4267,7 +4400,7 @@ async function run(win) {
   // to PREPEND the button tomorrow. An independent review caught this, and it
   // is the recorded disease in its purest form: a fixture that is a copy of the
   // formula is its own oracle. The reachability argument in renderer.js leads
-  // with "Folia's own wrappers invert their child lists", so that claim has to
+  // with "Markaloo's own wrappers invert their child lists", so that claim has to
   // be a MEASUREMENT, not a reading of the source.
   //
   // The hand-built fixture also diverged in a way that mattered: the product

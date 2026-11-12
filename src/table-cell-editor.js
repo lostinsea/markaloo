@@ -1,8 +1,8 @@
 "use strict";
 
-window.FoliaTableCells = (() => {
+window.MarkalooTableCells = (() => {
   const { normalise, sourceView, projectContainer, spliceInput, serializeCell,
-    prepareCell, markdownCode, codeSources, codeDelimiters, typingSlice } = window.FoliaInlineFormatting;
+    prepareCell, markdownCode, codeSources, codeDelimiters, typingSlice } = window.MarkalooInlineFormatting;
   const fail = key => { throw new Error(key); };
   const Mode = Object.freeze({
     INSERT: 'insert',
@@ -59,8 +59,8 @@ window.FoliaTableCells = (() => {
     const template = document.createElement('template');
     template.innerHTML = render(raw);
     if (!template.content.querySelector('table')) return [];
-    const expected = template.innerHTML, attribute = 'data-folia-cell-source';
-    const marker = 'folia-cell-end-';
+    const expected = template.innerHTML, attribute = 'data-markaloo-cell-source';
+    const marker = 'markaloo-cell-end-';
     if (raw.includes(attribute) || raw.includes(marker)) return null;
     const starts = [], ends = [];
     const annotated = raw.replace(/<table(?=[\t\n\f\r />])|<\/table[\t\n\f\r ]*>/gi, (tag, offset) => {

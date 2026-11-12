@@ -128,7 +128,7 @@ if (app) {
     // Accept an aliased temp root, but never let a profile junction redefine
     // the subtree that the recursive wipe is allowed to remove.
     const trustedTempRoot = fs.realpathSync.native(os.tmpdir());
-    const parent = path.join(trustedTempRoot, "folia-test-userdata");
+    const parent = path.join(trustedTempRoot, "markaloo-test-userdata");
     const suite = suiteName();
     guardStage = "suite name";
     if (!suite || suite === "." || suite === "..")
@@ -193,7 +193,7 @@ if (app) {
 
   // Read by the packaging suite's coverage assertion and available to any suite
   // that wants to assert on its own isolation.
-  global.__foliaTestUserData = USER_DATA_DIR;
+  global.__markalooTestUserData = USER_DATA_DIR;
 }
 
 module.exports = {

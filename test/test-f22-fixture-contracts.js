@@ -90,7 +90,7 @@ function pairFixture(fault = {}) {
       return companion;
     },
     exec: code => {
-      if (code === "window.folia.getVersion()") {
+      if (code === "window.markaloo.getVersion()") {
         calls.push("barrier");
         return Promise.resolve("test-version");
       }

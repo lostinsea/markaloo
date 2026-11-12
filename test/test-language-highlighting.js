@@ -289,13 +289,13 @@ async function browserChecks() {
     if (!win) throw new Error("Production Main did not create a reader");
     win.webContents.setBackgroundThrottling(false);
     win.setSize(1440, 920);
-    await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof window.foliaThemes?.setScheme==='function'");
+    await wait("production renderer", "typeof window.CustomTabs?.getTabs==='function'&&typeof window.markalooThemes?.setScheme==='function'");
     sentinel = startErrorSentinel(win, { label: "official-language-highlighting", trapExternal: false });
     const preferences = win.webContents.getLastWebPreferences();
     check("syntax UI uses production preload with sandbox isolation and no page Node",
       preferences.nodeIntegration === false && preferences.contextIsolation === true && preferences.sandbox === true &&
-        !process.argv.includes("--folia-test-preload") &&
-        await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.folia)&&typeof window.folia?.exportPdf==='function'"),
+        !process.argv.includes("--markaloo-test-preload") &&
+        await exec("typeof require==='undefined'&&typeof process==='undefined'&&Object.isFrozen(window.markaloo)&&typeof window.markaloo?.exportPdf==='function'"),
       preferences);
     await exec("document.getElementById('openFile').click();true");
     await wait("native admitted fixture and completed highlight", `currentFilePath===${JSON.stringify(documentPath)}&&
@@ -386,12 +386,12 @@ async function browserChecks() {
     await exec("if(searchPanel.classList.contains('visible'))toggleSearchPanel();true");
     const themeResults = [];
     for (const scheme of ["default-light", "clarity", "parchment", "default-dark", "abyss", "ember"]) {
-      await exec(`window.foliaThemes.setScheme(${JSON.stringify(scheme)});true`);
+      await exec(`window.markalooThemes.setScheme(${JSON.stringify(scheme)});true`);
       await settle();
       themeResults.push(await exec(`(() => {
         const codes=[...viewer.querySelectorAll('pre code')],tokens=codes.flatMap(code=>[...code.querySelectorAll('.token')]);
         const inks=new Set(tokens.map(token=>getComputedStyle(token).color));
-        return {scheme:${JSON.stringify(scheme)},actual:window.foliaThemes.schemeFor(window.foliaThemes.storedMode()).id,
+        return {scheme:${JSON.stringify(scheme)},actual:window.markalooThemes.schemeFor(window.markalooThemes.storedMode()).id,
           dark:document.body.classList.contains('dark-mode'),inks:inks.size,
           exact:codes.every((code,i)=>code.textContent===${JSON.stringify(blocks.map(value => value.text))}[i]),
           visible:tokens.every(token=>getComputedStyle(token).visibility==='visible'&&getComputedStyle(token).color!=='rgba(0, 0, 0, 0)')};
@@ -423,7 +423,7 @@ async function browserChecks() {
           printing?.light && printing.scheme === null && printing.tokens > 0 &&
           JSON.stringify(printing.texts) === JSON.stringify(blocks.map(value => value.text)), printing);
     } finally { win.webContents.printToPDF = realPrint; }
-    await exec("window.foliaThemes.setScheme('default-light');document.getElementById('openEditorBtn').click();true");
+    await exec("window.markalooThemes.setScheme('default-light');document.getElementById('openEditorBtn').click();true");
     await wait("source editor with published correspondence", "isEditMode&&getEditorScrollDiagnostics().ready&&!getEditorScrollDiagnostics().pendingGeometry");
     check("syntax source editor remains a plain textarea containing the literal fences",
       await exec(`markdownEditor.tagName==='TEXTAREA'&&markdownEditor.value===${JSON.stringify(fixture.markdown)}&&

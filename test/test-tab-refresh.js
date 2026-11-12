@@ -204,8 +204,8 @@ const dialogExtraFocusedHarness = process.env.SEC08_DIALOG_EXTRA_FOCUSED_HARNESS
 const admissionConsumersOnly = dialogExtraFocusedHarness &&
   process.env.SEC08_ADMISSION_CONSUMERS_ONLY === "1";
 if ((ownedReadFocusedHarness || dialogExtraFocusedHarness || approvedRequestFocusedHarness || nativeAuthorityFocusedHarness || ownedMetadataFocusedHarness) &&
-    !process.argv.includes("--folia-test-preload")) {
-  process.argv.push("--folia-test-preload");
+    !process.argv.includes("--markaloo-test-preload")) {
+  process.argv.push("--markaloo-test-preload");
 }
 const companionSelfcheck = process.env.F22_COMPANION_SELFCHECK === "1";
 // One window-destroying teardown case per child process. See
@@ -224,7 +224,7 @@ if ((initialBoundaryHarness || earlyRefreshHarness) && (
     ownedReadFocusedHarness || approvedRequestFocusedHarness ||
     nativeAuthorityFocusedHarness || ownedMetadataFocusedHarness ||
     dialogExtraFocusedHarness || companionSelfcheck || teardownCase ||
-    finalizerSelfcheck || process.argv.includes("--folia-test-preload"))) {
+    finalizerSelfcheck || process.argv.includes("--markaloo-test-preload"))) {
   rejectHarnessConfiguration("Initial boundary and early refresh controls require separate unmarked production launches");
 }
 // SAMPLED BEFORE THE FALLBACK BELOW WRITES IT. "PORTABLE_EXECUTABLE_DIR is set"
@@ -783,7 +783,7 @@ function deriveDeletionContracts({
   const acknowledgedDelivery = /\bfile-deleted-ack\b/.test(mainSource);
   const rendererAcknowledgementSender =
     /ipcRenderer\.send\(\s*["']file-deleted-ack["']/.test(rendererSource) ||
-    /window\.folia\.acknowledgeFileDeletion\(/.test(rendererSource);
+    /window\.markaloo\.acknowledgeFileDeletion\(/.test(rendererSource);
   const rendererDeletionClassifier =
     sourceForNamedDeletionFunction(
       rendererSource,
@@ -1584,7 +1584,7 @@ if (initialBoundaryHarness || earlyRefreshHarness) {
     // Derive the expected spelling from the trusted canonical base instead.
     const trustedTempRoot = fs.realpathSync.native(require("os").tmpdir());
     const expectedProfileKey = nativePathKey(path.join(
-      trustedTempRoot, "folia-test-userdata", suite));
+      trustedTempRoot, "markaloo-test-userdata", suite));
     const ownedProfile = fs.realpathSync.native(USER_DATA_DIR);
     if (nativePathKey(ownedProfile) !== expectedProfileKey)
       throw new Error("Focused owned profile escaped its trusted base");
@@ -2065,7 +2065,7 @@ if (focusedFixturePreservation) {
 // is what test-startup-perf.js's clean-start oracle depends on, so the
 // companions get synthetic names and the parent keeps its real one.
 function checkCompanionProfileIsolation(label) {
-  const profile = global.__foliaTestUserData || "";
+  const profile = global.__markalooTestUserData || "";
   const suite = profile ? path.basename(profile) : "";
   check(
     `the ${label} companion runs in its own userData profile, not the parent's`,
@@ -2504,7 +2504,7 @@ async function runPortableUpdateScenarios(win) {
     return updaterFixture.prepare();
   };
   const startInstall = () =>
-    exec(`window.folia.installUpdate(); null;`);
+    exec(`window.markaloo.installUpdate(); null;`);
   const readPortableDocuments = () => exec(`(() => {
     const tabs = window.CustomTabs;
     const activeId = tabs.getActiveTabId();
@@ -2531,7 +2531,7 @@ async function runPortableUpdateScenarios(win) {
           deletionTombstone: state.deletionTombstone,
           live: tab.id === activeId
             ? isEditMode ? markdownEditor.value : window.originalMarkdown : tab.content,
-          deletion: owner && window.folia.queryDocumentDeletionState({
+          deletion: owner && window.markaloo.queryDocumentDeletionState({
             ...owner, filePath: tab.filePath }),
         };
       }),
@@ -2578,7 +2578,7 @@ async function runPortableUpdateScenarios(win) {
   };
   const inspectPortableFixture = async () => {
     await exec("window.CustomTabs.settleSessionLayout()");
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     const snapshot = await readPortableDocuments();
     const tab = snapshot.tabs.find(candidate => candidate.tabId === snapshot.activeId);
     if (snapshot.tabs.length !== 1 || !tab || snapshot.frozen || snapshot.question ||
@@ -2710,7 +2710,7 @@ async function runPortableUpdateScenarios(win) {
       if (!await waitForCondition(exec, "!window.CustomTabs.isDocumentFrozen()", 8000)) {
         throw new Error("Portable fixture did not receive its genuine Main thaw");
       }
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       const thawed = await readPortableDocuments();
       if (!samePortableBuffers(before, thawed)) {
         throw new Error("Portable thaw changed captured document buffers or identity");
@@ -2719,13 +2719,13 @@ async function runPortableUpdateScenarios(win) {
         const retained = mainPortableOwner(tab);
         const owner = Object.fromEntries(identityFields.map(field => [field, tab.owner[field]]));
         owner.selectionGeneration = retained.selectionGeneration;
-        await exec(`window.folia.registerDocumentOwner(${JSON.stringify({
+        await exec(`window.markaloo.registerDocumentOwner(${JSON.stringify({
           filePath: tab.filePath, pageSession: owner.pageSession,
           rendererGeneration: owner.rendererGeneration, owner,
           diskVersion: tab.diskVersion, modifiedTime: tab.mtimeMs,
         })}); null;`);
       }
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       const registered = await readPortableDocuments();
       if (!samePortableBuffers(before, registered) ||
           registered.tabs.some(tab =>
@@ -2824,7 +2824,7 @@ async function runPortableUpdateScenarios(win) {
     );
 
     restoreMkdtemp = replaceMethod(fs, "mkdtempSync", (prefix) => {
-      if (!String(prefix).includes("folia-update-")) {
+      if (!String(prefix).includes("markaloo-update-")) {
         return realMkdtemp(prefix);
       }
       batchDirectories += 1;
@@ -3066,7 +3066,7 @@ async function runPortableUpdateScenarios(win) {
     // on the exact command also pins the half of the contract that carries the
     // security argument: `for %%F ... %%~zF` is cmd's own size metadata, so the
     // file's bytes are never re-read as script.
-    const expectedLeaseRead = `for %%F in ("${leaseFile}") do set "FOLIA_HB=%%~zF"`;
+    const expectedLeaseRead = `for %%F in ("${leaseFile}") do set "MARKALOO_HB=%%~zF"`;
     const staleThreshold = /GEQ (\d+) goto orphaned/.exec(batchScript);
     // The PID half of the same liveness pair, asserted here as a shape and
     // proven to WORK by the live dead-parent case below. The two `find` and
@@ -3091,7 +3091,7 @@ async function runPortableUpdateScenarios(win) {
         // not mistaken for a dead one.
         Number(staleThreshold[1]) >= 10 &&
         Number(staleThreshold[1]) <= 120 &&
-        batchScript.includes("set /a FOLIA_MISS=FOLIA_MISS+1"),
+        batchScript.includes("set /a MARKALOO_MISS=MARKALOO_MISS+1"),
       JSON.stringify({
         leaseExists: fs.existsSync(leaseFile),
         leaseReferences,
@@ -5508,7 +5508,7 @@ async function runTeardownScenario(win, kase) {
     } else {
       // The integration-owned fixture must survive the consuming shutdown
       // attempt; a standalone update-downloaded event cannot grant readiness.
-      const eligibility = await exec("window.folia.getUpdateState()");
+      const eligibility = await exec("window.markaloo.getUpdateState()");
       if (eligibility.manualOnly) {
         check(`the ${kase} teardown case observes the actual manual-only updater boundary`,
           eligibility.canDownload === false && eligibility.canInstall === false &&
@@ -5541,7 +5541,7 @@ async function runTeardownScenario(win, kase) {
       const question = await ownerLossQuestions.observe("window-close");
       const asked = question.pendingReason === "window-close";
       const folded = await foldedEditor();
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const queued = await waitUntil(
         () => __shutdown.state().queuedReason === "update-install",
         15000,
@@ -5748,7 +5748,7 @@ async function runTeardownScenario(win, kase) {
         for (const listener of allWindowsClosed) app.on("window-all-closed", listener);
       };
       try {
-        await exec(`window.folia.installUpdate(); null;`);
+        await exec(`window.markaloo.installUpdate(); null;`);
         const updaterEntered = await waitUntil(() => installs === 1, 15000);
         const installedAttempt = __shutdown.state();
         initialInstallRequestId = installedAttempt.lastRequestId;
@@ -5845,7 +5845,7 @@ async function runTeardownScenario(win, kase) {
     if (kase === "poisoned") {
       rig.answer = 0;
       rig.driveQuitLifecycle = true;
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const attemptStarted = await waitUntil(
         () => installs === 1 && __shutdown.state().updaterInstallAttemptId > 0,
         15000,
@@ -5920,7 +5920,7 @@ async function runTeardownScenario(win, kase) {
     const pendingSetup = await prepareTeardownEditor(exec, fileT, textT, "\nTEARDOWN_PENDING_EDIT\n");
     ownerLossInstallationAttempted = true;
     ownerLossQuestions = installTeardownOwnerLossQuestions(win, questionTails);
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const pendingQuestion = await ownerLossQuestions.observe("update-install");
     const pendingAsked = pendingQuestion.pendingReason === "update-install";
     const pendingFolded = await foldedEditor();
@@ -8318,7 +8318,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
         };
         return null;
       })()`);
-      await exec("window.folia.openFileDialog(); null;");
+      await exec("window.markaloo.openFileDialog(); null;");
       if (!await waitForCondition(exec,
         `window.currentFilePath === ${JSON.stringify(filePath)} &&
          window.__ownedMetadataNativeOpen.completed === true &&
@@ -8462,12 +8462,12 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
           { ...request, diskVersion: { ...request.diskVersion, ctimeMs: Infinity } },
         ];
         const rejected = invalid.map(input => {
-          try { window.folia.checkOwnedTabDiskSnapshot(input); return false; }
+          try { window.markaloo.checkOwnedTabDiskSnapshot(input); return false; }
           catch (error) { return error.message.includes('Invalid'); }
         });
         const malformedCalls = calls;
         calls = 0;
-        const first = window.folia.checkOwnedTabDiskSnapshot({
+        const first = window.markaloo.checkOwnedTabDiskSnapshot({
           ...request, sourcePath: ${JSON.stringify(sourcePath)}, ignored: 'body',
           owner: { ...request.owner, ignored: 'body' },
           diskVersion: { ...request.diskVersion, ignored: 'body' },
@@ -8493,14 +8493,14 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
         ];
         const responses = malformedReplies.map(response => {
           ipc.sendSync = () => response;
-          try { window.folia.checkOwnedTabDiskSnapshot(request); return false; }
+          try { window.markaloo.checkOwnedTabDiskSnapshot(request); return false; }
           catch (error) { return error.message.includes('Invalid owned tab disk check response'); }
         });
         ipc.sendSync = () => ({ ...receipt,
           diskVersion: { ...receipt.diskVersion, ctimeMs: receipt.diskVersion.ctimeMs + 1 } });
-        const ctime = window.folia.checkOwnedTabDiskSnapshot(request);
+        const ctime = window.markaloo.checkOwnedTabDiskSnapshot(request);
         ipc.sendSync = () => ({ matches: false, why: 'binding' });
-        const refusal = window.folia.checkOwnedTabDiskSnapshot(request);
+        const refusal = window.markaloo.checkOwnedTabDiskSnapshot(request);
         return { rejected, malformedCalls, fields, first, responses, ctime, refusal,
           frozen: Object.isFrozen(ctime) && Object.isFrozen(ctime.diskVersion) };
       } finally { ipc.sendSync = sync; }
@@ -8535,7 +8535,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
       canceled: false, filePaths: [pendingPath],
     }));
     try {
-      await exec("window.folia.openFileDialog(); null;");
+      await exec("window.markaloo.openFileDialog(); null;");
       if (!await waitUntil(() => !!pendingDelivery?.document?.ref, 5000)) {
         throw new Error("Owned metadata native undelivered reference did not arrive");
       }
@@ -8591,18 +8591,18 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
       } });
       await foreign.loadURL("data:text/html,<p>Foreign metadata sender</p>");
       const foreignReply = await foreign.webContents.executeJavaScript(
-        `window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify(request)})`, true);
+        `window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify(request)})`, true);
       check("SEC-08 owned metadata actual isolated foreign sender cannot use the retained native owner",
         foreignReply.matches === false && probes.length === 0,
         JSON.stringify({ foreignReply, probes }));
       foreign.destroy(); foreign = null;
-      const first = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify(request)})`);
+      const first = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify(request)})`);
       const firstProbes = probes.splice(0);
-      const second = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+      const second = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
         ...request, sourcePath,
       })})`);
       const secondProbes = probes.splice(0);
-      const ctime = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+      const ctime = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
         ...request, diskVersion: { ...request.diskVersion, ctimeMs: request.diskVersion.ctimeMs + 1 },
       })})`);
       check("SEC-08 owned metadata positive witness freshly checks one retained stat and both bindings twice without consuming authority or reading bodies",
@@ -8622,7 +8622,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
         first, second, ctime, firstProbes, secondProbes, ctimeProbes: probes,
       }));
       probes.length = 0;
-      const normalised = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+      const normalised = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
         ...request, sourcePath: ownerAlias + path.sep + "." + path.sep + "document.md",
       })})`);
       check("SEC-08 owned metadata deduplicates only the exact case-preserving normalized logical binding",
@@ -8636,7 +8636,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
         const distinctCase = ownerPath.slice(0, index) +
           (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()) +
           ownerPath.slice(index + 1);
-        const reply = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+        const reply = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
           ...request, sourcePath: distinctCase,
         })})`);
         check("SEC-08 owned metadata case-distinct source is not deduplicated into an unapproved permission",
@@ -8646,7 +8646,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
       }
     } finally { for (const restore of restores.reverse()) restore(); }
 
-    await exec(`window.folia.pauseFileWatching(${JSON.stringify({
+    await exec(`window.markaloo.pauseFileWatching(${JSON.stringify({
       filePath: request.filePath, owner: retained,
       pageSession: request.pageSession, rendererGeneration: request.rendererGeneration,
     })}); null;`);
@@ -8665,7 +8665,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
       });
       let reply;
       try {
-        reply = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+        reply = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
           ...request, sourcePath,
         })})`);
         check(`SEC-08 owned metadata final ${name} binding fence observes a real move after its retained stat`,
@@ -8688,7 +8688,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
       const directoryStats = fs.statSync(target);
       const directoryVersion = Object.fromEntries(
         ["dev", "ino", "size", "mtimeMs", "ctimeMs"].map(key => [key, directoryStats[key]]));
-      const reply = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+      const reply = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
         ...request, diskVersion: directoryVersion,
       })})`);
       check("SEC-08 owned metadata refuses a real directory at its retained target even when the caller version matches",
@@ -8745,11 +8745,11 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
       });
       let reply, stale;
       try {
-        reply = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify({
+        reply = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify({
           ...currentRequest, sourcePath,
         })})`);
         const afterRetirement = { bindings, stats };
-        stale = await exec(`window.folia.checkOwnedTabDiskSnapshot(${JSON.stringify(currentRequest)})`);
+        stale = await exec(`window.markaloo.checkOwnedTabDiskSnapshot(${JSON.stringify(currentRequest)})`);
         check(`SEC-08 owned metadata ${phase} retirement setup deauthorizes the genuine native reference inside the real callback`,
           retirement?.retired === true &&
             !__shutdown.documentAdmissionIsCurrent(currentRequest.owner.documentRef),
@@ -8898,7 +8898,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
           __shutdown.documentAdmissionIsCurrent(selectedNativeOwner.documentRef),
         JSON.stringify({ preselection, postselection, selectedNativeOwner, oldNativeOwner,
           preselectionOwners, otherCalls: setup.otherCalls }));
-      const spent = await exec(`window.folia.checkCommittedDiskAdoption(${JSON.stringify(preselection[0]?.data)})`);
+      const spent = await exec(`window.markaloo.checkCommittedDiskAdoption(${JSON.stringify(preselection[0]?.data)})`);
       check(`SEC-08 owned metadata ${mode} postselection uses the actual owner after Main spends the capability`,
         spent.valid === false && postselection[0]?.reply.matches === true &&
           selectedNativeOwner?.documentGeneration !== oldNativeOwner?.documentGeneration,
@@ -8919,7 +8919,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
         await exec(`(() => {
           const probe = window.__ownedMetadataRender;
           const owner = probe.context.approvedOwner;
-          window.folia.pauseFileWatching({ filePath: probe.context.path, owner,
+          window.markaloo.pauseFileWatching({ filePath: probe.context.path, owner,
             pageSession: owner.pageSession, rendererGeneration: owner.rendererGeneration });
           return null;
         })()`);
@@ -9075,7 +9075,7 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
           if (channel === 'save-markdown-file') probe.saves.push(data);
           return probe.send.apply(this, arguments);
         };
-        probe.unsubscribe = window.folia.onSaveMarkdownResult(data => probe.replies.push(data));
+        probe.unsubscribe = window.markaloo.onSaveMarkdownResult(data => probe.replies.push(data));
         return null;
       })()`);
       try {
@@ -9201,9 +9201,9 @@ async function runOwnedMetadataScenarios(win, exec, dir, sentinel) {
           const request = { filePath: window.currentFilePath, sourcePath: window.currentFilePath,
             owner: identity, pageSession: identity.pageSession, rendererGeneration: identity.rendererGeneration };
           return {
-            current: window.folia.checkOwnedTabDiskSnapshot({ ...request,
+            current: window.markaloo.checkOwnedTabDiskSnapshot({ ...request,
               diskVersion: ${JSON.stringify(ordinary.tabVersion)} }),
-            earlier: window.folia.checkOwnedTabDiskSnapshot({ ...request,
+            earlier: window.markaloo.checkOwnedTabDiskSnapshot({ ...request,
               diskVersion: ${JSON.stringify(earlierSaveReceipt.diskVersion)} }),
           };
         })()`);
@@ -9379,7 +9379,7 @@ async function runIsolatedOrdinaryMetadataControls(win, exec, dir, controlId, co
       probe.begins.push({ path: data.path, approved: !!options.deletionAdoptionApproval, phase: probe.phase });
       return probe.begin.apply(this, arguments);
     };
-    probe.unsubscribe = window.folia.onSaveMarkdownResult(data => probe.replies.push(data));
+    probe.unsubscribe = window.markaloo.onSaveMarkdownResult(data => probe.replies.push(data));
     return null;
   })()`);
   try {
@@ -9440,9 +9440,9 @@ async function runIsolatedOrdinaryMetadataControls(win, exec, dir, controlId, co
       const request = { filePath: window.currentFilePath, sourcePath: window.currentFilePath,
         owner, pageSession: owner.pageSession, rendererGeneration: owner.rendererGeneration };
       return {
-        current: window.folia.checkOwnedTabDiskSnapshot({ ...request,
+        current: window.markaloo.checkOwnedTabDiskSnapshot({ ...request,
           diskVersion: ${JSON.stringify(ordinary.version)} }),
-        earlier: window.folia.checkOwnedTabDiskSnapshot({ ...request,
+        earlier: window.markaloo.checkOwnedTabDiskSnapshot({ ...request,
           diskVersion: ${JSON.stringify(earlierSaveReceipt.diskVersion)} }),
       };
     })()`);
@@ -9570,13 +9570,13 @@ async function runBrowserIsolationControls(win, exec, dir, controlId, openNative
   const globals = await exec(`({
     require: typeof require, process: typeof process, Buffer: typeof Buffer,
     fs: typeof window.fs, ipc: typeof window.ipcRenderer,
-    exports: typeof module, bridge: typeof window.folia.openFileDialog,
+    exports: typeof module, bridge: typeof window.markaloo.openFileDialog,
   })`);
   check("SEC-08 browser isolation actual page has no Node raw IPC filesystem or module globals",
     ["require", "process", "Buffer", "fs", "ipc", "exports"].every(key => globals[key] === "undefined") &&
       globals.bridge === "function", JSON.stringify(globals));
   const lexical = await exec(`(() => {
-    const normalise = window.FoliaUtils.normaliseDocumentPath;
+    const normalise = window.MarkalooUtils.normaliseDocumentPath;
     return { absolute: normalise(${JSON.stringify(path.join(dir, "nested", "..", "lexical.md"))}),
       relative: normalise('relative.md'), driveRelative: normalise('C:relative.md'),
       nul: normalise('bad\\0path'), empty: normalise('') };
@@ -9587,20 +9587,20 @@ async function runBrowserIsolationControls(win, exec, dir, controlId, openNative
     JSON.stringify(lexical));
   await exec(`(() => {
     window.__browserVisibility = { values: [], unsubscribe:
-      window.folia.onWindowVisibilityChanged(value => window.__browserVisibility.values.push(value)) };
+      window.markaloo.onWindowVisibilityChanged(value => window.__browserVisibility.values.push(value)) };
     return null;
   })()`);
   try {
     win.webContents.send("window-visibility-changed", { visible: true, private: "not-public" });
     win.webContents.send("window-visibility-changed", { visible: false });
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     const values = await exec("window.__browserVisibility.values");
     check("SEC-08 browser isolation visibility delivers only boolean fields from actual Main events",
       values.length === 2 && values[0].visible === true && values[1].visible === false &&
         values.every(value => Object.keys(value).join(",") === "visible"), JSON.stringify(values));
     await exec("window.__browserVisibility.unsubscribe(); window.__browserVisibility.unsubscribe(); null;");
     win.webContents.send("window-visibility-changed", { visible: true });
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     check("SEC-08 browser isolation visibility unsubscribe prevents subsequent actual Main delivery",
       await exec("window.__browserVisibility.values.length === 2"));
   } finally { await exec("delete window.__browserVisibility; null;"); }
@@ -9714,7 +9714,7 @@ async function runBrowserIsolationControls(win, exec, dir, controlId, openNative
   } finally { restoreStats(); restoreOpenPath(); restoreExternal(); }
   const observer = observeNativeDocumentPorts(win, ["query-document-disk-adoption-state"]);
   try {
-    const unknown = await exec(`window.folia.queryDocumentDiskAdoptionState({
+    const unknown = await exec(`window.markaloo.queryDocumentDiskAdoptionState({
       pageSession: window.getReloadRequestSession(),
       rendererGeneration: ${__shutdown.state().rendererGeneration},
       filePath: ${JSON.stringify(filePath)}, documentRef: 'f'.repeat(64),
@@ -9946,14 +9946,14 @@ async function runTabAuthorityReceiptScenarios(win, exec, dir, controlId, openNa
     canceled: false, filePaths: [primaryPath, extraPath],
   }));
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     if (!await waitUntil(() => !!primary?.extraReadGrants?.[0], 5000)) {
       throw new Error("Native receipt caller chooser did not issue the actual extras grant");
     }
   } finally { restoreChooser(); restoreDelivery(); }
   tabAuthorityPendingReceiptRefs.push(primary.document.ref);
   const generation = __shutdown.state().rendererGeneration;
-  const extra = await exec(`window.folia.readDialogExtra({
+  const extra = await exec(`window.markaloo.readDialogExtra({
     grant: ${JSON.stringify(primary.extraReadGrants[0])},
     pageSession: window.getReloadRequestSession(), rendererGeneration: ${generation},
   })`);
@@ -9992,7 +9992,7 @@ async function runTabAuthorityReceiptScenarios(win, exec, dir, controlId, openNa
     })()`); } finally { observer.restore(); }
     outcome.queries = observer.records.filter(record => record.channel === "query-document-disk-adoption-state");
     outcome.selections = observer.records.filter(record => record.channel === "select-file-tracking");
-    await exec("window.folia.getVersion(); null;");
+    await exec("window.markaloo.getVersion(); null;");
     const owner = __shutdown.documentSessionState().owners.find(candidate =>
       candidate.documentRef === entry.document.ref);
     check(`SEC-08 receipt ${label} uses one ref-bound native query and preserves the same inactive creation identity`,
@@ -10020,7 +10020,7 @@ async function runTabAuthorityReceiptScenarios(win, exec, dir, controlId, openNa
   const extraId = await createInactive(extra, "extras", false);
   if (!extraId) throw new Error("Actual native extra receipt could not create its inactive tab");
   await exec("window.CustomTabs.settleSessionLayout()");
-  const restored = await exec("window.folia.restoreSession()");
+  const restored = await exec("window.markaloo.restoreSession()");
   const restoredExtra = restored.entries.find(entry => entry.filePath === extraPath);
   tabAuthorityPendingReceiptRefs.push(...restored.entries.map(entry => entry.document.ref));
   check("SEC-08 receipt restoration actual Main producer reads a fresh body and keeps its strict descriptor version before local creation",
@@ -10034,7 +10034,7 @@ async function runTabAuthorityReceiptScenarios(win, exec, dir, controlId, openNa
   const restoredId = await createInactive(restoredExtra, "restoration", false);
   if (!restoredId) throw new Error("Actual native restoration receipt could not create its inactive tab");
   await exec("window.CustomTabs.settleSessionLayout()");
-  const staleBatch = await exec("window.folia.restoreSession()");
+  const staleBatch = await exec("window.markaloo.restoreSession()");
   const stale = staleBatch.entries.find(entry => entry.filePath === extraPath);
   tabAuthorityPendingReceiptRefs.push(...staleBatch.entries.map(entry => entry.document.ref));
   await closeOwnedMetadataFixtureTabs(exec, [restoredId],
@@ -10092,7 +10092,7 @@ async function runTabAuthorityReceiptScenarios(win, exec, dir, controlId, openNa
     completed();
     return result;
   });
-  await exec("window.__receiptPendingRestore = window.folia.restoreSession().catch(() => null); null;");
+  await exec("window.__receiptPendingRestore = window.markaloo.restoreSession().catch(() => null); null;");
   if (!await waitUntil(() => delayed.waiting, 5000)) {
     throw new Error("Actual delayed native restore continuation never reached its genuine post-read hold");
   }
@@ -10131,7 +10131,7 @@ async function runTabAuthorityCreateScenarios(win, exec, dir, controlId, openNat
     });
     ipcMain.on("open-file-dialog", observeRequest);
     try {
-      await exec("window.folia.openFileDialog(); null;");
+      await exec("window.markaloo.openFileDialog(); null;");
       if (!await waitUntil(() => !!delivery?.document?.openTicket, 5000)) {
         const nativeReadsAtTimeout = JSON.parse(JSON.stringify(ownedMetadataNativeReads.records));
         fs.writeFileSync(path.join(process.cwd(), ".context-viewport-evidence",
@@ -10160,7 +10160,7 @@ async function runTabAuthorityCreateScenarios(win, exec, dir, controlId, openNat
       content += "\nTICKET_ACTUAL_REREAD_VERSION\n";
       write(filePath, content);
     }
-    const copied = await exec(`window.folia.readOpenTicketSnapshot({
+    const copied = await exec(`window.markaloo.readOpenTicketSnapshot({
       openTicket: ${JSON.stringify(issued.document.openTicket)},
     })`);
     check(`SEC-08 tab authority create ${mode} actual ticket copies its body version into the strict native descriptor`,
@@ -10366,7 +10366,7 @@ async function runRendererOpenBoundaryScenarios(win, exec, dir, sentinel, openNa
               [mode === 'lexical-owner' ? 'ownerSpelling' : 'incomingSpelling']: filePath + '.foreign',
             } };
           } else if (mode === 'expired') {
-            window.folia.abandonDocumentDiskAdoption({
+            window.markaloo.abandonDocumentDiskAdoption({
               capability: probe.approval.capability, pageSession: window.getReloadRequestSession(),
               rendererGeneration: probe.approval.rendererGeneration,
             });
@@ -10604,15 +10604,15 @@ async function openPausedNativeMetadata(exec, filePath, openNative, marker, labe
     const retained = __shutdown.documentSessionState().owners.find(owner =>
       owner.tabId === id && owner.documentRef === identity.documentRef &&
       owner.documentGeneration === identity.documentGeneration);
-    await exec(`window.folia.pauseFileWatching({
+    await exec(`window.markaloo.pauseFileWatching({
       filePath: ${JSON.stringify(filePath)}, owner: ${JSON.stringify(identity)},
       pageSession: ${JSON.stringify(identity.pageSession)},
       rendererGeneration: ${identity.rendererGeneration},
-    }); window.folia.getVersion();`);
+    }); window.markaloo.getVersion();`);
     const paused = await waitUntil(() => watchers.some(watcher => watcher.pausedClose), 2000);
     const checked = await exec(`(() => {
       const tab = window.CustomTabs.getActiveTab();
-      return window.folia.checkOwnedTabDiskSnapshot({
+      return window.markaloo.checkOwnedTabDiskSnapshot({
         filePath: tab.filePath, sourcePath: tab.filePath, owner: ${JSON.stringify(identity)},
         pageSession: ${JSON.stringify(identity.pageSession)},
         rendererGeneration: ${identity.rendererGeneration}, diskVersion: tab.diskVersion,
@@ -10739,7 +10739,7 @@ async function runRendererReloadBoundaryScenarios(win, exec, dir, sentinel, open
         scroller.scrollTop = 140;
         probe.scroll = scroller.scrollTop;
         probe.overflows = scroller.scrollHeight > scroller.clientHeight;
-        window.__foliaTestDocumentControl.mark('reload-start',
+        window.__markalooTestDocumentControl.mark('reload-start',
           window.CustomTabs.getActiveDocumentIdentity(ownerPath, window.getReloadRequestSession()).documentGeneration);
         window.approvedOwnedReloadSnapshotMatches = function() {
           if (arguments[0] !== ownerPath) return probe.helper.apply(this, arguments);
@@ -10751,8 +10751,8 @@ async function runRendererReloadBoundaryScenarios(win, exec, dir, sentinel, open
             // inventing a second native selection or changing its owner.
             args[1] = ${JSON.stringify(sourcePath)};
             if (!probe.sourcePositive) {
-              window.__foliaTestDocumentControl.mark('reload-source-positive');
-              probe.sourcePositive = window.folia.checkOwnedTabDiskSnapshot({
+              window.__markalooTestDocumentControl.mark('reload-source-positive');
+              probe.sourcePositive = window.markaloo.checkOwnedTabDiskSnapshot({
                 filePath: args[0], sourcePath: args[1], owner: args[2],
                 pageSession: args[2].pageSession, rendererGeneration: args[2].rendererGeneration,
                 diskVersion: args[4],
@@ -10760,9 +10760,9 @@ async function runRendererReloadBoundaryScenarios(win, exec, dir, sentinel, open
             }
           }
           probe.helperCalls += 1;
-          window.__foliaTestDocumentControl.mark('reload-helper-enter');
+          window.__markalooTestDocumentControl.mark('reload-helper-enter');
           try { return probe.helper.apply(this, args); }
-          finally { window.__foliaTestDocumentControl.mark('reload-helper-exit'); }
+          finally { window.__markalooTestDocumentControl.mark('reload-helper-exit'); }
         };
         window.reportAdoptionTrackingConflict = function(file, owner) {
           probe.reports.push({ file, owner });
@@ -10893,7 +10893,7 @@ async function runRendererReloadBoundaryScenarios(win, exec, dir, sentinel, open
           scroll: window.CustomTabs.__getScroller().scrollTop };
           document.getElementById('notificationMessage').textContent = ${JSON.stringify(`HELD_RELOAD_BOUNDARY_${mode}`)};
           window.__rendererReloadBoundary.released = true;
-          window.__foliaTestDocumentControl.mark('reload-release');
+          window.__markalooTestDocumentControl.mark('reload-release');
           window.__rendererReloadBoundary.release(); null;`);
         const completed = await waitForCondition(exec, mode === "local-selection"
           ? "document.getElementById('notificationMessage').textContent.includes('reloaded')"
@@ -11085,28 +11085,28 @@ async function runTabAuthorityRollbackScenarios(win, exec, dir, sentinel, openNa
           const request = { capability: probe.approval.capability,
             pageSession: window.getReloadRequestSession(),
             rendererGeneration: ${__shutdown.state().rendererGeneration} };
-          window.__foliaTestDocumentControl.mark('rollback-replay');
-          probe.positive = window.folia.checkCommittedDiskAdoption(request);
+          window.__markalooTestDocumentControl.mark('rollback-replay');
+          probe.positive = window.markaloo.checkCommittedDiskAdoption(request);
           probe.staged = window.CustomTabs.getActiveTab().content;
           probe.stagedRef = window.CustomTabs.getDocumentDescriptor()?.ref;
           probe.thrown = true;
-          window.__foliaTestDocumentControl.mark('rollback-throw');
+          window.__markalooTestDocumentControl.mark('rollback-throw');
           throw new Error('CONTROLLED_NATIVE_ROLLBACK');
         };
-        window.folia.openFileDialog();
+        window.markaloo.openFileDialog();
         return null;
       })()`);
       if (!await waitForCondition(exec, "window.__tabAuthorityRollback.settled === true", 8000)) {
         throw new Error(`Native rollback ${mode} did not reach its actual terminal failure`);
       }
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       const consumerEvents = events.filter(item => item.phase !== "rollback-replay");
       const replay = consumerEvents.find(item => item.kind === "check" && item.rollback)?.data;
       const outcome = await exec(`(() => {
         const probe = window.__tabAuthorityRollback, tab = window.CustomTabs.getActiveTab();
         const replay = ${JSON.stringify(replay) || "null"};
-        window.__foliaTestDocumentControl.mark('rollback-replay');
-        const afterAbandon = replay && window.folia.checkCommittedDiskAdoption(replay);
+        window.__markalooTestDocumentControl.mark('rollback-replay');
+        const afterAbandon = replay && window.markaloo.checkCommittedDiskAdoption(replay);
         return { approval: probe.approval, positive: probe.positive,
           staged: probe.staged, stagedRef: probe.stagedRef, content: tab.content, original: tab.originalContent,
           state: window.CustomTabs.__documentState(tab), active: tab.id,
@@ -11202,13 +11202,13 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
       ];
       const rejected = [];
       for (const input of invalid) {
-        try { await window.folia.refreshOwnedTabDiskSnapshot(input); rejected.push(false); }
+        try { await window.markaloo.refreshOwnedTabDiskSnapshot(input); rejected.push(false); }
         catch (error) { rejected.push(error.message.includes('Invalid')); }
       }
       return rejected;
     })()`);
     const invalidCalls = observation.records.length;
-    const positive = await exec(`window.folia.refreshOwnedTabDiskSnapshot({
+    const positive = await exec(`window.markaloo.refreshOwnedTabDiskSnapshot({
       ...${JSON.stringify(request)}, ignored: true,
       owner: { ...${JSON.stringify(request.owner)}, ignored: true },
       diskVersion: { ...${JSON.stringify(request.diskVersion)}, ignored: true },
@@ -11265,7 +11265,7 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
       try {
         badResponses.push(await exec(`(async () => {
           try {
-            await window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(faultRequest)});
+            await window.markaloo.refreshOwnedTabDiskSnapshot(${JSON.stringify(faultRequest)});
             return false;
           } catch (error) {
             return error.message.includes('Invalid conditional tab disk refresh response');
@@ -11293,12 +11293,12 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
     let ctime;
     observation.fault = ctimeFault;
     try {
-      ctime = await exec(`window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(projectedRequest)})`);
+      ctime = await exec(`window.markaloo.refreshOwnedTabDiskSnapshot(${JSON.stringify(projectedRequest)})`);
     } finally { observation.fault = null; }
     const ctimeRecords = observation.records.slice(ctimeStart);
     const ctimeReceipt = ctimeRecords[0];
     const afterStart = observation.records.length;
-    const afterFault = await exec(`window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(projectedRequest)})`);
+    const afterFault = await exec(`window.markaloo.refreshOwnedTabDiskSnapshot(${JSON.stringify(projectedRequest)})`);
     const afterRecords = observation.records.slice(afterStart);
     const cacheUnchanged = await exec(`(() => {
       const tab = window.CustomTabs.findTabByPath(${JSON.stringify(filePath)});
@@ -11365,7 +11365,7 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
     canceled: false, filePaths: [pendingPath],
   }));
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     if (!await waitUntil(() => !!delivery?.document?.ref, 5000)) {
       throw new Error("Conditional unregistered native delivery did not arrive");
     }
@@ -11424,7 +11424,7 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
       },
     };
     const unknown = await exec(
-      `window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(unknownRequest)})`);
+      `window.markaloo.refreshOwnedTabDiskSnapshot(${JSON.stringify(unknownRequest)})`);
     // Missing documentRef is rejected by preload and cannot be sent through
     // the public port. Test Main's own parser directly, with the real caller.
     const refLessRequest = {
@@ -11434,7 +11434,7 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
     const refLess = await boundedDialogWork(Promise.resolve().then(() =>
       registration.handler(caller, refLessRequest)), "direct Main ref-less conditional refusal");
     const unregisteredResult = await exec(
-      `window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(unregistered)})`);
+      `window.markaloo.refreshOwnedTabDiskSnapshot(${JSON.stringify(unregistered)})`);
     const unregisteredRequest = {
       ...projectedRequest, filePath: unregistered.filePath,
       owner: { ...projectedRequest.owner, tabId: unregistered.owner.tabId,
@@ -11458,7 +11458,7 @@ async function runConditionalRefreshValidation(win, exec, dir, filePath) {
     };
     authority.refusedProbes = probes;
     authority.refusedOpens = opens;
-    authority.positive = await exec(`window.folia.refreshOwnedTabDiskSnapshot(${JSON.stringify(request)})`);
+    authority.positive = await exec(`window.markaloo.refreshOwnedTabDiskSnapshot(${JSON.stringify(request)})`);
     authority.positiveProbes = probes - authority.refusedProbes;
     authority.positiveOpens = opens - authority.refusedOpens;
     authority.positiveReceipts = observation.records.slice(2);
@@ -11503,7 +11503,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
   let tabId;
   let deletionEvidenceExpected = false;
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     if (!await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(filePath)} &&
        document.getElementById('viewer').textContent.includes('ADOPTION_CHECK_BASE')`, 8000)) {
@@ -11514,7 +11514,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${tabId});
       const owner = window.CustomTabs.getDocumentIdentityForTab(
         tab.id, tab.filePath, window.getReloadRequestSession());
-      const snapshot = await window.folia.readOwnedTabDiskSnapshot({
+      const snapshot = await window.markaloo.readOwnedTabDiskSnapshot({
         filePath: tab.filePath, pageSession: owner.pageSession,
         rendererGeneration: owner.rendererGeneration, owner,
       });
@@ -11525,7 +11525,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
         contentDigest: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join(''),
         modifiedTime: snapshot.modifiedTime, diskVersion: snapshot.diskVersion,
       };
-      const state = await window.folia.prepareDocumentDiskAdoption(request);
+      const state = await window.markaloo.prepareDocumentDiskAdoption(request);
       return { request: { ...request, capability: state.capability, revision: state.revision }, state };
     })()`);
     const prepared = await prepare();
@@ -11615,20 +11615,20 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
           { ...request, pageSession: request.pageSession + '-foreign' },
           { ...request, rendererGeneration: request.rendererGeneration + 1 },
           request,
-        ].map(input => window.folia.checkCommittedDiskAdoption(input));
+        ].map(input => window.markaloo.checkCommittedDiskAdoption(input));
       })()`);
       authority = { refused: authority, refusedProbes: probes };
-      const committed = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(prepared.request)})`);
+      const committed = await exec(`window.markaloo.commitDocumentDiskAdoption(${JSON.stringify(prepared.request)})`);
       check("SEC-08 committed-check positive setup commits the genuine pending grant",
         committed?.accepted === true && committed.capability === request.capability,
         JSON.stringify(committed));
       probes = 0;
       authority.positive = await exec(`(() => {
         const request = ${JSON.stringify(request)};
-        const first = window.folia.checkCommittedDiskAdoption({
+        const first = window.markaloo.checkCommittedDiskAdoption({
           ...request, filePath: 'not-authority', ignored: true,
         });
-        const second = window.folia.checkCommittedDiskAdoption(request);
+        const second = window.markaloo.checkCommittedDiskAdoption(request);
         return { first, second };
       })()`);
       authority.positive.firstFields = Object.keys(receipts[4]?.request || {}).sort();
@@ -11663,19 +11663,19 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
         authority.positive.fields.join(",") === "capability,pageSession,rendererGeneration" &&
         authority.positiveProbes > 0, JSON.stringify(authority));
     write(filePath, "# Committed adoption check\n\nLATE_CHANGED_AFTER_COMMIT\n");
-    const late = await exec(`window.folia.checkCommittedDiskAdoption(${JSON.stringify(request)})`);
+    const late = await exec(`window.markaloo.checkCommittedDiskAdoption(${JSON.stringify(request)})`);
     check("SEC-08 committed check refuses real disk changes after approval",
       late.valid === false && late.why === "disk-version-or-target-moved" &&
         fs.readFileSync(filePath, "utf8").includes("LATE_CHANGED_AFTER_COMMIT"),
       JSON.stringify(late));
-    await exec(`window.folia.abandonDocumentDiskAdoption(${JSON.stringify(request)}); null;`);
+    await exec(`window.markaloo.abandonDocumentDiskAdoption(${JSON.stringify(request)}); null;`);
 
     // A real missing-target query establishes consent, not an injected flag.
     fs.unlinkSync(filePath);
     const deletion = await exec(`(() => {
       const tab = window.CustomTabs.getTabs().find(tab => tab.id === ${tabId});
       const owner = window.CustomTabs.getDocumentIdentityForTab(tab.id, tab.filePath, window.getReloadRequestSession());
-      return window.folia.queryDocumentDeletionState({ ...owner, filePath: tab.filePath });
+      return window.markaloo.queryDocumentDeletionState({ ...owner, filePath: tab.filePath });
     })()`);
     deletionEvidenceExpected = deletion.known === true && deletion.ownDeletion === true;
     write(filePath, original);
@@ -11686,7 +11686,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
       JSON.stringify({ deletion, state: deletionGrant.state }));
     const positive = await exec(`(async () => {
       const request = ${JSON.stringify(deletionGrant.request)};
-      const pending = window.folia.commitDocumentDiskAdoption(request);
+      const pending = window.markaloo.commitDocumentDiskAdoption(request);
       const confirmation = pending?.confirmation;
       const descriptorValid = pending?.accepted === false &&
         pending.why === 'confirmation-required' &&
@@ -11700,7 +11700,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
         confirmation.owner?.documentGeneration === request.oldOwner.documentGeneration &&
         confirmation.owner?.documentRef === request.oldOwner.documentRef;
       const committed = descriptorValid
-        ? await window.folia.respondToDocumentReplacementConsent({
+        ? await window.markaloo.respondToDocumentReplacementConsent({
             id: confirmation.id, pageSession: confirmation.pageSession,
             rendererGeneration: confirmation.rendererGeneration, approved: true,
           })
@@ -11712,12 +11712,12 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
         positive.committed.confirmed === true &&
         positive.committed.capability === deletionGrant.state.capability,
       JSON.stringify(positive));
-    await exec(`window.folia.abandonDocumentDiskAdoption(${JSON.stringify({
+    await exec(`window.markaloo.abandonDocumentDiskAdoption(${JSON.stringify({
       ...request, capability: deletionGrant.state.capability,
     })}); null;`);
     const staleGrant = await prepare();
     write(filePath, "# Committed adoption check\n\nSTALE_BEFORE_DIALOG\n");
-    const stale = await exec(`window.folia.commitDocumentDiskAdoption(${JSON.stringify(staleGrant.request)})`);
+    const stale = await exec(`window.markaloo.commitDocumentDiskAdoption(${JSON.stringify(staleGrant.request)})`);
     check("SEC-08 Main refuses a stale prepared snapshot before asking replacement consent",
       stale.accepted === false && stale.why === "disk-version-or-target-moved" &&
         !Object.prototype.hasOwnProperty.call(stale, "confirmation"),
@@ -11731,7 +11731,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
         if (!tab) throw new Error('Committed fixture disappeared before owned cleanup');
         const identity = window.CustomTabs.getDocumentIdentityForTab(
           tab.id, tab.filePath, window.getReloadRequestSession());
-        const deletion = window.folia.queryDocumentDeletionState({
+        const deletion = window.markaloo.queryDocumentDeletionState({
           ...identity, filePath: tab.filePath,
         });
         if (deletion.known !== true) throw new Error('Committed cleanup cannot authenticate its owner');
@@ -11764,7 +11764,7 @@ async function runCommittedAdoptionChecks(win, exec, dir) {
               button => ({ id: button.dataset.dialogChoice, label: button.textContent })),
             owner: tab && window.CustomTabs.getDocumentIdentityForTab(
               tab.id, tab.filePath, window.getReloadRequestSession()),
-            deletion: tab && window.folia.queryDocumentDeletionState({
+            deletion: tab && window.markaloo.queryDocumentDeletionState({
               ...${JSON.stringify(owner)}, filePath: ${JSON.stringify(filePath)},
             }),
           };
@@ -11823,7 +11823,7 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
     }));
     let id;
     try {
-      await exec("window.folia.openFileDialog(); null;");
+      await exec("window.markaloo.openFileDialog(); null;");
       if (!await waitForCondition(exec,
         `window.currentFilePath === ${JSON.stringify(filePath)} &&
          document.getElementById('viewer').textContent.includes('EARLIER_COPY') &&
@@ -11855,7 +11855,7 @@ async function runConditionalMetadataJourneys(win, exec, dir, otherTabId, sentin
           const owner = window.CustomTabs.getDocumentIdentityForTab(
             tab.id, tab.filePath, window.getReloadRequestSession());
           const before = window.CustomTabs.__documentState(tab);
-          const result = await window.folia.refreshOwnedTabDiskSnapshot({
+          const result = await window.markaloo.refreshOwnedTabDiskSnapshot({
             filePath: tab.filePath, pageSession: owner.pageSession,
             rendererGeneration: owner.rendererGeneration, owner, diskVersion: tab.diskVersion,
           });
@@ -12133,13 +12133,13 @@ function runPreloadUnitProbe(source, { diagnostics = false } = {}) {
   let published;
   const context = vm.createContext({
     process: { isMainFrame: true, argv: diagnostics
-      ? ["--folia-newline-alignment-diagnostics"] : [] },
+      ? ["--markaloo-newline-alignment-diagnostics"] : [] },
     require(name) {
       if (name !== "electron") throw new Error(`Unexpected preload unit import: ${name}`);
       return {
         contextBridge: { exposeInMainWorld(name, api) {
-          if (name !== "folia" || published || !Object.isFrozen(api)) {
-            throw new Error("Preload unit fixture requires one frozen folia API");
+          if (name !== "markaloo" || published || !Object.isFrozen(api)) {
+            throw new Error("Preload unit fixture requires one frozen markaloo API");
           }
           published = api;
         } },
@@ -12150,7 +12150,7 @@ function runPreloadUnitProbe(source, { diagnostics = false } = {}) {
   });
   const filename = path.join(__dirname, "..", "src", "main-preload.js");
   vm.runInContext(fs.readFileSync(filename, "utf8"), context, { filename });
-  if (!published) throw new Error("Preload unit fixture did not expose folia");
+  if (!published) throw new Error("Preload unit fixture did not expose markaloo");
   context.preloadApi = published;
   // Keep the actual preload and its probes in one realm: serializing inputs or
   // borrowing page functions would lose special values and error identity.
@@ -12909,7 +12909,7 @@ function inspectCleanRefreshSource(source) {
   if (!unambiguous) return { valid: false, unambiguous, reason: "refresh region missing or ambiguous" };
   const region = source.slice(start, end);
   const calls = [...region.matchAll(
-    /snapshot\s*=\s*await\s+window\.folia\.refreshOwnedTabDiskSnapshot\s*\(\s*\{\s*filePath\s*,\s*pageSession:\s*session\s*,\s*rendererGeneration:\s*identity\.rendererGeneration\s*,\s*owner:\s*identity\s*,\s*diskVersion:\s*startingVersion\s*,?\s*\}\s*\)/g,
+    /snapshot\s*=\s*await\s+window\.markaloo\.refreshOwnedTabDiskSnapshot\s*\(\s*\{\s*filePath\s*,\s*pageSession:\s*session\s*,\s*rendererGeneration:\s*identity\.rendererGeneration\s*,\s*owner:\s*identity\s*,\s*diskVersion:\s*startingVersion\s*,?\s*\}\s*\)/g,
   )];
   const ownerBoundMainCall = calls.length === 1 &&
     (region.match(/\brefreshOwnedTabDiskSnapshot\s*\(/g) || []).length === 1 &&
@@ -12930,7 +12930,7 @@ function inspectCleanRefreshSource(source) {
 function verifyCleanRefreshSource() {
   // This is a source-architecture oracle, not an attempt to run forbidden
   // page filesystem code in a Node-free renderer.
-  const request = `      snapshot = await window.folia.refreshOwnedTabDiskSnapshot({
+  const request = `      snapshot = await window.markaloo.refreshOwnedTabDiskSnapshot({
         filePath,
         pageSession: session,
         rendererGeneration: identity.rendererGeneration,
@@ -13138,7 +13138,7 @@ async function runLargeRenderBoundary(win, isolatedWindow, sentinel, observation
     try {
       await call(`(() => {
         const state = window.__largeRenderBoundary = { settled: false };
-        Promise.resolve(${operation || `window.folia.confirmLargeRender(${JSON.stringify(payload)})`}).then(
+        Promise.resolve(${operation || `window.markaloo.confirmLargeRender(${JSON.stringify(payload)})`}).then(
           value => { state.value = value; state.settled = true; },
           error => { state.error = String(error.message || error); state.settled = true; });
         return true;
@@ -13248,7 +13248,7 @@ async function runLargeRenderBoundary(win, isolatedWindow, sentinel, observation
       { name: 'invalid\\0name', seconds: 1 }];
     const results = [];
     for (const request of invalid) {
-      try { results.push({ rejected: false, value: await window.folia.confirmLargeRender(request) }); }
+      try { results.push({ rejected: false, value: await window.markaloo.confirmLargeRender(request) }); }
       catch (error) { results.push({ rejected: true, message: String(error.message || error) }); }
     }
     return results;
@@ -13268,7 +13268,7 @@ async function runLargeRenderBoundary(win, isolatedWindow, sentinel, observation
     JSON.stringify({ malformed, noMalformedReceipt, projectionReceipts, bracketReceipts, bracket }));
   const before = dialogSafety.presentations;
   const foreign = await boundedDialogWork(isolatedWindow.webContents.executeJavaScript(
-    `window.folia.confirmLargeRender(${JSON.stringify(request)})`, true),
+    `window.markaloo.confirmLargeRender(${JSON.stringify(request)})`, true),
   "foreign-window large-render refusal");
   check("SEC-08 an actual isolated foreign window cannot open the main large-render modal",
     foreign === false && dialogSafety.presentations === before,
@@ -13334,7 +13334,7 @@ async function runEarlyLargeRenderFaults(win) {
       outcomes.push(await withEarlyLargeRenderFault(observation, request,
         { label: "nonboolean-" + index, reply }, () => call(`(async () => {
           try {
-            return { rejected: false, value: await window.folia.confirmLargeRender(${JSON.stringify(request)}) };
+            return { rejected: false, value: await window.markaloo.confirmLargeRender(${JSON.stringify(request)}) };
           } catch (error) {
             return { rejected: true, message: String(error.message || error) };
           }
@@ -13351,7 +13351,7 @@ async function runEarlyLargeRenderFaults(win) {
     const rejection = await withEarlyLargeRenderFault(observation, request,
       { label: "invoke-rejection", reject: token }, () => call(`(async () => {
         try {
-          return { rejected: false, value: await window.folia.confirmLargeRender(${JSON.stringify(request)}) };
+          return { rejected: false, value: await window.markaloo.confirmLargeRender(${JSON.stringify(request)}) };
         } catch (error) {
           return { rejected: true, message: String(error.message || error) };
         }
@@ -13398,7 +13398,7 @@ async function nativeInactiveFixtureReceipts(win, evaluate, filePaths, chooserOp
     restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
     // This is the existing receipt-authority route: Main creates the genuine
     // unbound receipt, but its activation delivery is deliberately not forwarded.
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     if (!await waitUntil(() => packets.length === 1, 5000)) {
       throw new Error("Inactive fixture did not receive its original native admission");
     }
@@ -13430,7 +13430,7 @@ async function nativeInactiveFixtureReceipts(win, evaluate, filePaths, chooserOp
   }
   const entries = [primary];
   for (const grant of primary.extraReadGrants) {
-    entries.push(await exec(`window.folia.readDialogExtra({
+    entries.push(await exec(`window.markaloo.readDialogExtra({
       grant: ${JSON.stringify(grant)}, pageSession: window.getReloadRequestSession(),
       rendererGeneration: ${ready.rendererGeneration},
     })`));
@@ -13549,8 +13549,8 @@ async function runNativeLazyTabSizeGuard(win, evaluate, question, chooserOptions
   try {
     selections = observeNativeDocumentPorts(win, ["select-file-tracking"]);
     const out = await exec(`({
-      bigIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(bigBody)}).large,
-      smallIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(smallBody)}).large,
+      bigIsLarge: window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(bigBody)}).large,
+      smallIsLarge: window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(smallBody)}).large,
     })`);
     if (!out.bigIsLarge || out.smallIsLarge) throw new Error("Lazy tab size fixtures do not prove their classifications");
     const small = await exec(`(() => {
@@ -13575,7 +13575,7 @@ async function runNativeLazyTabSizeGuard(win, evaluate, question, chooserOptions
     })()`);
     const before = await snapshot();
     const currentOwner = async page => {
-      await exec("window.folia.getVersion(); null;");
+      await exec("window.markaloo.getVersion(); null;");
       const fields = ["pageSession", "rendererGeneration", "tabId", "documentGeneration", "pathKey", "documentRef"];
       const current = __shutdown.state();
       const selection = selections.records.filter(record => record.reply?.accepted === true).at(-1);
@@ -13593,7 +13593,7 @@ async function runNativeLazyTabSizeGuard(win, evaluate, question, chooserOptions
       before.content === smallBody && before.original === smallBody && before.dirty === false &&
       before.viewer.includes("GUARD_SMALL_DOC") && await currentOwner(before);
     if (!out.smallOnScreen || out.askedForSmall !== 0) throw new Error("Native ordinary fixture has no clean painted Main owner");
-    const verdict = await exec(`window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(bigBody)})`);
+    const verdict = await exec(`window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(bigBody)})`);
     const request = { name: path.basename(fileBig), seconds: Math.round(verdict.estimatedMs / 1000) };
     const creation = await nativeLargeTabCreationQuestion(
       win, exec, observation, request, entries[1], created,
@@ -13680,7 +13680,7 @@ async function runEarlyNativeLargeTabGuard(win, sentinel, question, chooserOptio
     })`);
     if (clean.unsaved !== false || !Array.isArray(clean.dirtyTabs) || clean.dirtyTabs.length)
       throw new Error("Native large-tab admission requires clean documents: " + JSON.stringify(clean));
-    await call("window.folia.openFileDialog(); true");
+    await call("window.markaloo.openFileDialog(); true");
     const admitted = await boundedDialogWork(waitForCondition(call, `(() => {
       const tabs = window.CustomTabs.getTabs();
       const small = tabs.find(tab => tab.filePath === ${JSON.stringify(smallPath)});
@@ -13700,11 +13700,11 @@ async function runEarlyNativeLargeTabGuard(win, sentinel, question, chooserOptio
         small: small && { id: small.id, dirty: small.hasUnsavedChanges,
           matches: small.content === ${JSON.stringify(smallText)},
           document: window.CustomTabs.getDocumentDescriptor(small.id),
-          verdict: window.FoliaFileHelpers.isLargeDocument(small.content) },
+          verdict: window.MarkalooFileHelpers.isLargeDocument(small.content) },
         large: large && { id: large.id, dirty: large.hasUnsavedChanges,
           matches: large.content === ${JSON.stringify(largeText)},
           document: window.CustomTabs.getDocumentDescriptor(large.id),
-          verdict: window.FoliaFileHelpers.isLargeDocument(large.content) },
+          verdict: window.MarkalooFileHelpers.isLargeDocument(large.content) },
         painted: document.getElementById('viewer').textContent.includes('SEC08_NATIVE_SMALL'),
       };
     })()`);
@@ -13949,7 +13949,7 @@ async function runApprovedDocumentBoundary(win, exec) {
   let foreign;
   const restores = [];
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     const admitted = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(source)} &&
        document.getElementById('viewer').textContent.includes('APPROVED_REQUEST_V1') &&
@@ -13987,7 +13987,7 @@ async function runApprovedDocumentBoundary(win, exec) {
     restores.push(replaceMethod(shell, "showItemInFolder", target => { reveals.push(target); }));
     const relative = path.relative(process.cwd(), source);
     write(source, "# Approved source changed\n\nAPPROVED_REQUEST_V2\n");
-    await exec(`window.folia.openApprovedDocument({ filePath: ${JSON.stringify(relative)} }); null;`);
+    await exec(`window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(relative)} }); null;`);
     const reopened = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(source)} &&
        document.getElementById('viewer').textContent.includes('APPROVED_REQUEST_V2') &&
@@ -14008,13 +14008,13 @@ async function runApprovedDocumentBoundary(win, exec) {
       const beforeDenials = operationCount();
       await exec(`(() => {
         for (const filePath of ${JSON.stringify([unapproved, wrongCase, network])}) {
-          window.folia.openApprovedDocument({ filePath });
-          window.folia.revealApprovedDocument({ filePath });
+          window.markaloo.openApprovedDocument({ filePath });
+          window.markaloo.revealApprovedDocument({ filePath });
           window.ipcRenderer.send('request-open-file', { filePath });
         }
         return true;
       })()`);
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       const retained = await exec(`getRecentFiles().some(file => file.path === ${JSON.stringify(unapproved)})`);
       check("SEC-08 unapproved case-distinct and network paths reach neither filesystem nor shell through either open sink",
         probes.every(probe => !denied.has(probe.target)) &&
@@ -14025,17 +14025,17 @@ async function runApprovedDocumentBoundary(win, exec) {
         JSON.stringify({ retained, history: __shutdown.documentSessionState().history }));
       const correlation = await exec(`(async () => {
         const results = [], errors = [];
-        const stop = window.folia.onFileOpenResult(data => results.push(data));
-        const stopErrors = window.folia.onError(message => errors.push(message));
+        const stop = window.markaloo.onFileOpenResult(data => results.push(data));
+        const stopErrors = window.markaloo.onError(message => errors.push(message));
         const path = ${JSON.stringify(unapproved)};
         try {
-          window.folia.openApprovedDocument({ filePath: path,
+          window.markaloo.openApprovedDocument({ filePath: path,
             openRequest: { token: 440, path, targetIndex: 0 } });
-          window.folia.openApprovedDocument({ filePath: ${JSON.stringify(source)},
+          window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(source)},
             openRequest: { token: 441, path, targetIndex: 0 } });
           window.ipcRenderer.send('request-open-file', { filePath: path,
             openRequest: { token: 0, path, targetIndex: 0 } });
-          await window.folia.getVersion();
+          await window.markaloo.getVersion();
           for (let i = 0; i < 80 && (results.length < 2 ||
             !errors.some(message => message.includes('invalid navigation correlation'))); i++)
             await new Promise(resolve => setTimeout(resolve, 25));
@@ -14063,9 +14063,9 @@ async function runApprovedDocumentBoundary(win, exec) {
     await foreign.loadURL("data:text/html,<p>Foreign approved path</p>");
     const beforeForeign = operationCount(), revealBeforeForeign = reveals.length;
     await foreign.webContents.executeJavaScript(`(async () => {
-      window.folia.openApprovedDocument({ filePath: ${JSON.stringify(source)} });
-      window.folia.revealApprovedDocument({ filePath: ${JSON.stringify(source)} });
-      await window.folia.getVersion();
+      window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(source)} });
+      window.markaloo.revealApprovedDocument({ filePath: ${JSON.stringify(source)} });
+      await window.markaloo.getVersion();
     })()`, true);
     check("SEC-08 actual isolated foreign requests cannot use an owner's genuinely approved path",
       operationCount() === beforeForeign && reveals.length === revealBeforeForeign,
@@ -14080,7 +14080,7 @@ async function runApprovedDocumentBoundary(win, exec) {
       document.getElementById('ctxOpenFolder').click();
       return true;
     })()`);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     check("SEC-08 actual tab and recent folder commands capture approved targets before clearing their menus",
       reveals.length === revealBeforeMenus + 2 &&
         reveals.slice(revealBeforeMenus).every(target => target === source),
@@ -14147,7 +14147,7 @@ async function runNativeAuthorityBoundary(win, exec) {
   }));
   const restores = [];
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     const painted = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(source)} &&
        document.getElementById('viewer').textContent.includes('NATIVE_AUTHORITY_V1') &&
@@ -14195,7 +14195,7 @@ async function runNativeAuthorityBoundary(win, exec) {
       rendererGeneration: ${identity.rendererGeneration}, owner: ${JSON.stringify(fake)},
       diskVersion: ${JSON.stringify(version)}, modifiedTime: ${baseline.mtimeMs},
     }); null;`);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     check("SEC-08 fabricated same-page owner without native reference is refused before path probing or registration",
       probes.length === 0 && __shutdown.documentSessionState().owners.length === ownerCount,
       JSON.stringify({ probes, ownerCount, after: __shutdown.documentSessionState().owners.length }));
@@ -14204,13 +14204,13 @@ async function runNativeAuthorityBoundary(win, exec) {
       const identity = ${JSON.stringify(identity)};
       const filePath = ${JSON.stringify(unapproved)};
       const diskVersion = ${JSON.stringify(version)};
-      const query = window.folia.queryDocumentDiskAdoptionState({
+      const query = window.markaloo.queryDocumentDiskAdoptionState({
         filePath, ownerFilePath: ${JSON.stringify(source)},
         pageSession: identity.pageSession, rendererGeneration: identity.rendererGeneration,
         tabId: null, documentGeneration: null, pathKey: null,
         modifiedTime: diskVersion.mtimeMs, diskVersion,
       });
-      const prepared = await window.folia.prepareDocumentDiskAdoption({
+      const prepared = await window.markaloo.prepareDocumentDiskAdoption({
         filePath, ownerFilePath: ${JSON.stringify(source)},
         pageSession: identity.pageSession, rendererGeneration: identity.rendererGeneration,
         tabId: identity.tabId, documentGeneration: identity.documentGeneration,
@@ -14245,7 +14245,7 @@ async function runNativeAuthorityBoundary(win, exec) {
       await foreign.loadURL("data:text/html,<p>Native reference foreign sender</p>");
       const foreignResult = await foreign.webContents.executeJavaScript(`(async () => {
         const identity = ${JSON.stringify(identity)};
-        window.folia.requestReload({
+        window.markaloo.requestReload({
           filePath: ${JSON.stringify(source)}, reloadRequestSequence: 1,
           reloadRequestPath: identity.pathKey, reloadRequestSnapshot: ${JSON.stringify(initial)},
           reloadRequestSession: identity.pageSession, reloadRequestTabId: identity.tabId,
@@ -14255,11 +14255,11 @@ async function runNativeAuthorityBoundary(win, exec) {
           reloadRequestSelectionGeneration: ${selectionGeneration},
           reloadRequestDocumentRef: identity.documentRef,
         });
-        const query = window.folia.queryDocumentDiskAdoptionState({
+        const query = window.markaloo.queryDocumentDiskAdoptionState({
           ...identity, filePath: ${JSON.stringify(source)}, ownerFilePath: ${JSON.stringify(source)},
           modifiedTime: ${JSON.stringify(version.mtimeMs)}, diskVersion: ${JSON.stringify(version)},
         });
-        await window.folia.getVersion();
+        await window.markaloo.getVersion();
         return { query, isolated: typeof require === 'undefined' };
       })()`, true);
       const drained = await waitUntil(() => foreignCloses === foreignReads, 5000);
@@ -14297,8 +14297,8 @@ async function runNativeAuthorityBoundary(win, exec) {
     const missingReference = await exec(`(() => {
       const request = { ...${JSON.stringify(current)}, filePath: ${JSON.stringify(source)} };
       delete request.documentRef;
-      const query = window.folia.queryDocumentDeletionState(request);
-      const retirement = window.folia.retireDeletedDocumentOwner({
+      const query = window.markaloo.queryDocumentDeletionState(request);
+      const retirement = window.markaloo.retireDeletedDocumentOwner({
         ...request, acknowledgedDeletion: false,
       });
       return { query, retirement };
@@ -14319,12 +14319,12 @@ async function runNativeAuthorityBoundary(win, exec) {
         tabId: null, documentGeneration: null, pathKey: null,
         modifiedTime: ${stats.mtimeMs}, diskVersion: ${JSON.stringify(currentVersion)},
       };
-      const query = window.folia.queryDocumentDiskAdoptionState(request);
-      const prepared = await window.folia.prepareDocumentDiskAdoption({
+      const query = window.markaloo.queryDocumentDiskAdoptionState(request);
+      const prepared = await window.markaloo.prepareDocumentDiskAdoption({
         ...request, proposedOwner: ${JSON.stringify(current)},
         contentDigest: ${JSON.stringify(digest)}, replaceDocument: false,
       });
-      if (prepared.capability) window.folia.abandonDocumentDiskAdoption({
+      if (prepared.capability) window.markaloo.abandonDocumentDiskAdoption({
         capability: prepared.capability, pageSession: request.pageSession,
         rendererGeneration: request.rendererGeneration,
       });
@@ -14349,7 +14349,7 @@ async function runNativeAuthorityHeldRead(win, exec, operation) {
     canceled: false, filePaths: [source],
   }));
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     const opened = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(source)} &&
        document.getElementById('viewer').textContent.includes(${JSON.stringify(`NATIVE_HELD_${operation.toUpperCase()}`)}) &&
@@ -14380,7 +14380,7 @@ async function runNativeAuthorityHeldRead(win, exec, operation) {
   try {
     if (operation === "adoption") {
       const digest = require("crypto").createHash("sha256").update(body).digest("hex");
-      pending = exec(`window.folia.prepareDocumentDiskAdoption({
+      pending = exec(`window.markaloo.prepareDocumentDiskAdoption({
         filePath: ${JSON.stringify(source)}, ownerFilePath: ${JSON.stringify(source)},
         pageSession: ${JSON.stringify(identity.pageSession)}, rendererGeneration: ${identity.rendererGeneration},
         tabId: null, documentGeneration: null, pathKey: null,
@@ -14390,7 +14390,7 @@ async function runNativeAuthorityHeldRead(win, exec, operation) {
       })`);
     } else {
       await exec(`window.__nativeHeldReload = null;
-        window.__nativeHeldUnsubscribe = window.folia.onFileReloadResult(data => {
+        window.__nativeHeldUnsubscribe = window.markaloo.onFileReloadResult(data => {
           if (data.reloadRequest?.documentRef === ${JSON.stringify(identity.documentRef)})
             window.__nativeHeldReload = data;
         });
@@ -14413,7 +14413,7 @@ async function runNativeAuthorityHeldRead(win, exec, operation) {
     let result;
     if (operation === "adoption") {
       result = await pending;
-      if (result.capability) await exec(`window.folia.abandonDocumentDiskAdoption({
+      if (result.capability) await exec(`window.markaloo.abandonDocumentDiskAdoption({
         capability: ${JSON.stringify(result.capability)}, pageSession: ${JSON.stringify(identity.pageSession)},
         rendererGeneration: ${identity.rendererGeneration},
       }); null;`);
@@ -14461,7 +14461,7 @@ async function runNativeReloadRetarget(exec, duringOpen = false) {
   }));
   let identity;
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     const opened = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(source)} &&
        document.getElementById('viewer').textContent.includes('RETAINED_NATIVE_BODY') &&
@@ -14501,10 +14501,10 @@ async function runNativeReloadRetarget(exec, duringOpen = false) {
   });
   try {
     await exec(`window.__nativeRetargetResult = null;
-      window.__nativeRetargetUnsubscribe = window.folia.onFileReloadResult(data => {
+      window.__nativeRetargetUnsubscribe = window.markaloo.onFileReloadResult(data => {
         if (data.reloadRequest?.sequence === 987) window.__nativeRetargetResult = data;
       });
-      window.folia.requestReload({
+      window.markaloo.requestReload({
         filePath: ${JSON.stringify(source)}, reloadRequestSequence: 987,
         reloadRequestPath: ${JSON.stringify(identity.pathKey)}, reloadRequestSnapshot: ${JSON.stringify(original)},
         reloadRequestSession: ${JSON.stringify(identity.pageSession)}, reloadRequestTabId: ${identity.tabId},
@@ -14561,7 +14561,7 @@ async function runNativeDanglingReload(exec, stage = "before-dispatch") {
   }));
   let identity;
   try {
-    await exec("window.folia.openFileDialog(); null;");
+    await exec("window.markaloo.openFileDialog(); null;");
     const opened = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(link)} &&
        document.getElementById('viewer').textContent.includes('NATIVE_DANGLING_BODY') &&
@@ -14571,10 +14571,10 @@ async function runNativeDanglingReload(exec, stage = "before-dispatch") {
       ...window.CustomTabs.getActiveDocumentIdentity(${JSON.stringify(link)}, window.getReloadRequestSession()),
       selectionGeneration: activeFileSelectionGeneration,
     })`);
-    await exec(`window.folia.pauseFileWatching({
+    await exec(`window.markaloo.pauseFileWatching({
       filePath: ${JSON.stringify(link)}, pageSession: ${JSON.stringify(identity.pageSession)},
       rendererGeneration: ${identity.rendererGeneration}, owner: ${JSON.stringify(identity)},
-    }); window.folia.getVersion();`);
+    }); window.markaloo.getVersion();`);
     const paused = await waitUntil(() => watcherClosed, 5000);
     if (!paused) throw new Error("Dangling link control did not stop the actual watcher");
   } finally { chooser(); restoreWatch(); }
@@ -14610,17 +14610,17 @@ async function runNativeDanglingReload(exec, stage = "before-dispatch") {
   });
   try {
     if (stage === "close-retarget") {
-      const state = await exec(`window.folia.queryDocumentDeletionState({
+      const state = await exec(`window.markaloo.queryDocumentDeletionState({
         ...${JSON.stringify(identity)}, filePath: ${JSON.stringify(link)},
       })`);
       queriedDeletion = state?.ownDeletion === true && state.unresolved === true &&
         __shutdown.state().deletionTombstoneCount === before + 1;
     } else {
     await exec(`window.__nativeDanglingResult = null;
-      window.__nativeDanglingUnsubscribe = window.folia.onFileReloadResult(data => {
+      window.__nativeDanglingUnsubscribe = window.markaloo.onFileReloadResult(data => {
         if (data.reloadRequest?.sequence === 988) window.__nativeDanglingResult = data;
       });
-      window.folia.requestReload({
+      window.markaloo.requestReload({
         filePath: ${JSON.stringify(link)}, reloadRequestSequence: 988,
         reloadRequestPath: ${JSON.stringify(identity.pathKey)}, reloadRequestSnapshot: ${JSON.stringify(body)},
         reloadRequestSession: ${JSON.stringify(identity.pageSession)}, reloadRequestTabId: ${identity.tabId},
@@ -14698,7 +14698,7 @@ async function runApprovedOpenScopeFence(win, exec) {
     return handle;
   });
   try {
-    await exec(`window.folia.openApprovedDocument({ filePath: ${JSON.stringify(source)} }); null;`);
+    await exec(`window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(source)} }); null;`);
     const held = await waitUntil(() => release !== null, 8000);
     check("SEC-08 approved asynchronous open actually holds a successful old-page body read",
       held && claimed && !closed, JSON.stringify({ held, claimed, closed, source }));
@@ -14854,8 +14854,8 @@ async function runFixedLargeTabGuard(exec, dir, sentinel) {
         return originalSend.apply(this, arguments);
       };
       const smallText = ${JSON.stringify(smallText)}, bigText = '|'.repeat(260000) + '\\n';
-      const out = { smallIsLarge: window.FoliaFileHelpers.isLargeDocument(smallText).large,
-        bigIsLarge: window.FoliaFileHelpers.isLargeDocument(bigText).large };
+      const out = { smallIsLarge: window.MarkalooFileHelpers.isLargeDocument(smallText).large,
+        bigIsLarge: window.MarkalooFileHelpers.isLargeDocument(bigText).large };
       const created = [];
       try {
         const small = tabs.createTab(${JSON.stringify(smallPath)}, smallText);
@@ -14955,7 +14955,7 @@ async function runShutdownResponseCacheScenario(win, exec) {
       markdown: window.originalMarkdown };
   })()`);
   try {
-    const generation = await exec("window.folia.getQuitApprovalGeneration()");
+    const generation = await exec("window.markaloo.getQuitApprovalGeneration()");
     win.webContents.send("quit-approval-request", { id: 900000, reason: "ctrl-q", gen: generation });
     await waitUntil(() => responses.some(data => data && data.id === 900000));
     await exec(`(() => {
@@ -15120,12 +15120,12 @@ async function runControlEventBoundary(win) {
   const setup = await exec(`(() => {
     window.__controlEvents = []; window.__controlOther = 0;
     window.__controlOff = ${JSON.stringify(methods)}.map(([kind, method]) =>
-      window.folia[method](function(...args) {
+      window.markaloo[method](function(...args) {
         window.__controlEvents.push({ kind, argc: args.length, data: args[0] });
       }));
-    window.__controlOtherOff = window.folia.onFileDeleted(() => { window.__controlOther += 1; });
+    window.__controlOtherOff = window.markaloo.onFileDeleted(() => { window.__controlOther += 1; });
     return ${JSON.stringify(methods)}.every(([, method]) => {
-      try { window.folia[method](null); return false; }
+      try { window.markaloo[method](null); return false; }
       catch (error) { return error.message.includes('Invalid document event callback'); }
     });
   })()`);
@@ -15298,23 +15298,23 @@ async function runUiEventBoundary(win) {
   const setup = await exec(`(() => {
     window.__uiEvents = []; window.__pdfOnce = 0;
     window.__uiOff = [
-      window.folia.onPrepareForPdfExport(function(...args) {
+      window.markaloo.onPrepareForPdfExport(function(...args) {
         window.__uiEvents.push({ kind: 'prepare', argc: args.length, data: args[0] });
       }),
-      window.folia.onPdfExportResult(function(...args) {
+      window.markaloo.onPdfExportResult(function(...args) {
         window.__uiEvents.push({ kind: 'pdf', argc: args.length, data: args[0] });
       }),
-      window.folia.onImageSelected(function(...args) {
+      window.markaloo.onImageSelected(function(...args) {
         window.__uiEvents.push({ kind: 'image', argc: args.length, data: args[0] });
       }),
-      window.folia.oncePdfExportResult(function(...args) {
+      window.markaloo.oncePdfExportResult(function(...args) {
         window.__pdfOnce += 1;
         window.__uiEvents.push({ kind: 'once', argc: args.length, data: args[0] });
       }),
     ];
     const rejected = ['onPrepareForPdfExport', 'onPdfExportResult',
       'onImageSelected', 'oncePdfExportResult'].map(method => {
-      try { window.folia[method](null); return false; }
+      try { window.markaloo[method](null); return false; }
       catch (error) { return error.message.includes('Invalid document event callback'); }
     });
     return rejected;
@@ -15400,7 +15400,7 @@ function popupPdfRendererRegions(source) {
     region("const UI_STRINGS = {", "\nconst TIMING = {"),
     region("let exportThemeHold = 0;", "\n// A colour scheme"),
     region("function showNotification(", "\n// Loading screen functions"),
-    region("window.folia.onPdfExportResult(async (data) => {",
+    region("window.markaloo.onPdfExportResult(async (data) => {",
       "\n\n// The visible editor is shared"),
     region("// POPUP EXPORT HANDLER (BroadcastChannel)",
       "// Recent Files Context Menu"),
@@ -15413,7 +15413,7 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
   // Fault the transport below the real frozen API, never the isolated page.
   const run = runPreloadUnitProbe(`(async function(host, succeed) {
     const window = {};
-    Object.defineProperty(window, 'folia', { value: preloadApi });
+    Object.defineProperty(window, 'markaloo', { value: preloadApi });
     const errors = [], warnings = [], timers = [], channels = [], posted = [], responses = [];
     const console = { error: (...args) => errors.push(args),
       warn: (...args) => warnings.push(args), log() {} };
@@ -15436,7 +15436,7 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
     function setExportTheme() { throw new Error('Unexpected theme change'); }
     class BroadcastChannel {
       constructor(name) {
-        if (name !== 'folia-export') throw new Error('Unexpected export channel');
+        if (name !== 'markaloo-export') throw new Error('Unexpected export channel');
         const channel = new host.BroadcastChannel(name);
         const post = channel.postMessage.bind(channel);
         channel.postMessage = packet => { posted.push(packet); post(packet); };
@@ -15453,7 +15453,7 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
     }
     try {
       ${reloadRequestSource}
-      const reloadRequests = window.FoliaReloadRequest.create({ document, console, setTimeout });
+      const reloadRequests = window.MarkalooReloadRequest.create({ document, console, setTimeout });
       ${regions}
       if (channels.length !== 1 || typeof channels[0].onmessage !== 'function' ||
           warnings.length || preloadTransport.listenerCount('pdf-export-result') !== 1) {
@@ -15489,7 +15489,7 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
       const initialHold = exportThemeHold;
       beginExportThemeHold();
       const held = exportThemeHold;
-      const sender = new BroadcastChannel('folia-export');
+      const sender = new BroadcastChannel('markaloo-export');
       sender.onmessage = event => responses.push(event.data);
       sender.postMessage({ type: 'request-pdf-export' });
       await until(() => dispatches === 1);
@@ -15499,7 +15499,7 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
       await until(() => responses.some(packet => packet.type === 'control-drain'));
       const replies = responses.filter(packet => packet.type === 'export-result');
       const afterListeners = preloadTransport.listeners(channel);
-      const descriptor = Object.getOwnPropertyDescriptor(window, 'folia');
+      const descriptor = Object.getOwnPropertyDescriptor(window, 'markaloo');
       const result = {
         initialHold, held, after: exportThemeHold, dispatches, subscribedBeforeDispatch,
         cleanup, pending: afterListeners.includes(waiter) ? 1 : 0,
@@ -15507,7 +15507,7 @@ async function probePopupPdfConsumer(rendererSource, succeed = false) {
           ? afterListeners.length === 1 && baseline.includes(afterListeners[0])
           : afterListeners.length === baseline.length &&
             baseline.every(listener => afterListeners.includes(listener)),
-        frozen: window.folia === preloadApi && Object.isFrozen(preloadApi) &&
+        frozen: window.markaloo === preloadApi && Object.isFrozen(preloadApi) &&
           descriptor.writable === false && descriptor.configurable === false,
         replies, emissions, alerts, dialogs,
         logged: errors.length === 1 && errors[0][0] === 'PDF request delivery failed:' &&
@@ -15577,15 +15577,15 @@ async function runDocumentEventBoundary(win) {
     window.__documentEventOff = [];
     window.__documentEventSecondary = 0;
     const rejected = methods.map(method => {
-      try { window.folia[method](null); return false; }
+      try { window.markaloo[method](null); return false; }
       catch (error) { return error.message.includes('Invalid document event callback'); }
     });
     for (const method of methods) {
-      window.__documentEventOff.push(window.folia[method](function(...args) {
+      window.__documentEventOff.push(window.markaloo[method](function(...args) {
         window.__documentEventPackets.push({ method, argc: args.length, data: args[0] });
       }));
     }
-    window.__documentEventSecondaryOff = window.folia.onFileOpened(() => {
+    window.__documentEventSecondaryOff = window.markaloo.onFileOpened(() => {
       window.__documentEventSecondary += 1;
     });
     return rejected;
@@ -15706,7 +15706,7 @@ async function runDocumentEventBoundary(win) {
   await exec("window.__documentEventOff.forEach(off => off()); window.__documentEventSecondaryOff(); null;");
   await exec(fs.readFileSync(path.join(__dirname, "../src/document-events.js"), "utf8"));
   const local = await exec(`(() => {
-    const events = window.FoliaDocumentEvents;
+    const events = window.MarkalooDocumentEvents;
     const first = (_event, data) => {
       window.__registryCalls.push('first'); window.__registryObjects.push(data);
       data.sharedAnnotation = 'local';
@@ -15748,8 +15748,8 @@ async function runDocumentEventBoundary(win) {
   const nextDelivered = await waitForCondition(exec, "window.__registryCalls.length === 4");
   check("SEC-08 listener mutations affect only the next document delivery",
     nextDelivered && await exec("window.__registryCalls.join(',') === 'first,second,first,added'"));
-  await exec(`window.FoliaDocumentEvents.removeAllListeners('file-opened');
-    window.FoliaDocumentEvents.on('file-opened', () => { window.__registryClearedDelivery = true; }); null;`);
+  await exec(`window.MarkalooDocumentEvents.removeAllListeners('file-opened');
+    window.MarkalooDocumentEvents.on('file-opened', () => { window.__registryClearedDelivery = true; }); null;`);
   win.webContents.send("file-opened", { content: "", path: "registry-after-clear" });
   check("SEC-08 clearing local document listeners retains the fixed preload subscription",
     await waitForCondition(exec, "window.__registryClearedDelivery === true"));
@@ -15757,7 +15757,7 @@ async function runDocumentEventBoundary(win) {
     const callbacks = {}, subscriptions = [], received = [];
     let unload, cleanup = 0;
     const fake = {
-      folia: Object.fromEntries(${JSON.stringify(channels.map(([, method]) => method))}
+      markaloo: Object.fromEntries(${JSON.stringify(channels.map(([, method]) => method))}
         .map(method => [method, callback => {
           subscriptions.push(method); callbacks[method] = callback;
           return () => { cleanup += 1; };
@@ -15767,15 +15767,15 @@ async function runDocumentEventBoundary(win) {
     new Function('window', ${JSON.stringify(fs.readFileSync(path.join(__dirname, "../src/document-events.js"), "utf8"))})(fake);
     const nested = Object.freeze({ requestId: 7 });
     const input = Object.freeze({ savedContent: '', saveRequest: nested });
-    fake.FoliaDocumentEvents.on('save-markdown-result', (_event, data) => {
+    fake.MarkalooDocumentEvents.on('save-markdown-result', (_event, data) => {
       received.push(data); Reflect.set(data, 'annotation', 'shared');
     });
-    fake.FoliaDocumentEvents.on('save-markdown-result', (_event, data) => received.push(data));
+    fake.MarkalooDocumentEvents.on('save-markdown-result', (_event, data) => received.push(data));
     callbacks.onSaveMarkdownResult(input);
     const controlledError = new Error('controlled document listener failure');
     let threwSynchronously = false, laterListenerRan = false;
-    fake.FoliaDocumentEvents.on('file-opened', () => { throw controlledError; });
-    fake.FoliaDocumentEvents.on('file-opened', () => { laterListenerRan = true; });
+    fake.MarkalooDocumentEvents.on('file-opened', () => { throw controlledError; });
+    fake.MarkalooDocumentEvents.on('file-opened', () => { laterListenerRan = true; });
     try { callbacks.onFileOpened({ content: '', path: 'throwing-listener' }); }
     catch (error) { threwSynchronously = error === controlledError; }
     unload();
@@ -16027,7 +16027,7 @@ async function runDocumentControlCloseJourney(win, exec) {
   }));
   let opened;
   try {
-    await exec(`window.folia.openFileDialog(); null;`);
+    await exec(`window.markaloo.openFileDialog(); null;`);
     opened = await waitForCondition(exec, `
       window.currentFilePath === ${jsFile} &&
       document.getElementById('viewer').textContent.includes('CONTROL_CLOSE_FIXTURE') &&
@@ -16043,7 +16043,7 @@ async function runDocumentControlCloseJourney(win, exec) {
     filePath: ${jsFile},
     ...window.CustomTabs.getActiveDocumentIdentity(${jsFile}, window.getReloadRequestSession()),
   })`);
-  const initial = await exec(`window.folia.queryDocumentDeletionState(${JSON.stringify(request)})`);
+  const initial = await exec(`window.markaloo.queryDocumentDeletionState(${JSON.stringify(request)})`);
   check(
     "SEC-08 document close journey starts with an actual registered clean disk owner",
     opened && Number.isSafeInteger(request.tabId) && /^[a-f0-9]{64}$/.test(request.documentRef) &&
@@ -16054,11 +16054,11 @@ async function runDocumentControlCloseJourney(win, exec) {
   fs.unlinkSync(file);
   const deleted = await exec(`(() => {
     const request = ${JSON.stringify(request)};
-    const state = window.folia.queryDocumentDeletionState(request);
-    const refusal = window.folia.retireDeletedDocumentOwner({
+    const state = window.markaloo.queryDocumentDeletionState(request);
+    const refusal = window.markaloo.retireDeletedDocumentOwner({
       ...request, acknowledgedDeletion: false,
     });
-    const retained = window.folia.queryDocumentDeletionState(request);
+    const retained = window.markaloo.queryDocumentDeletionState(request);
     return { state, refusal, retained };
   })()`);
   check(
@@ -16106,7 +16106,7 @@ async function runDocumentControlCloseJourney(win, exec) {
         remains: window.CustomTabs.getTabs().some(tab => tab.id === ${request.tabId}),
         owner: window.CustomTabs.getDocumentIdentityForTab(
           ${request.tabId}, ${jsFile}, window.getReloadRequestSession()),
-        deletion: window.folia.queryDocumentDeletionState(${JSON.stringify(request)}),
+        deletion: window.markaloo.queryDocumentDeletionState(${JSON.stringify(request)}),
       })`);
       const expectedQuestion = confirmation.title === "Close this copy?" &&
         confirmation.message === "This tab may be the only remaining copy of the file. Close the tab?" &&
@@ -16142,7 +16142,7 @@ async function runDocumentControlCloseJourney(win, exec) {
           owner: window.CustomTabs.getDocumentIdentityForTab(
             ${request.tabId}, ${jsFile}, window.getReloadRequestSession()),
           dialogOpen: document.getElementById('appMessageDialog')?.open === true,
-          deletion: window.folia.queryDocumentDeletionState(${JSON.stringify(request)}),
+          deletion: window.markaloo.queryDocumentDeletionState(${JSON.stringify(request)}),
         };
       })()`);
       if (outcome.error) throw new Error("The deleted-copy close rejected: " + outcome.error);
@@ -16195,15 +16195,15 @@ async function runDocumentControlCloseJourney(win, exec) {
 async function installDialogBatchPageObservation(exec) {
   return exec(`(() => {
     if (window.__dialogBatchNative) throw new Error('Dialog batch observation already installed');
-    const events = window.FoliaDocumentEvents;
+    const events = window.MarkalooDocumentEvents;
     const listeners = events.listeners('file-opened');
     if (listeners.length !== 1 || typeof window.renderMarkdown !== 'function' ||
-        typeof window.folia.onFileNotFound !== 'function') {
+        typeof window.markaloo.onFileNotFound !== 'function') {
       throw new Error('Dialog batch needs its sole production processor and render function');
     }
     if (typeof require !== 'undefined' || typeof process !== 'undefined' ||
         typeof window.fs !== 'undefined' || typeof window.ipcRenderer !== 'undefined' ||
-        !Object.isFrozen(window.folia) || window.hasUnsavedWorkForReload() ||
+        !Object.isFrozen(window.markaloo) || window.hasUnsavedWorkForReload() ||
         window.CustomTabs.__shutdownFreeze().frozen !== false) {
       throw new Error('Dialog batch requires clean, isolated production capabilities');
     }
@@ -16242,7 +16242,7 @@ async function installDialogBatchPageObservation(exec) {
     state.missingListener = function(packet) {
       state.missing.push({ payloadOnly: arguments.length === 1, packet });
     };
-    state.unsubscribeMissing = window.folia.onFileNotFound(state.missingListener);
+    state.unsubscribeMissing = window.markaloo.onFileNotFound(state.missingListener);
     if (typeof state.unsubscribeMissing !== 'function') {
       throw new Error('Typed missing-file observation has no unsubscribe');
     }
@@ -16262,7 +16262,7 @@ async function restoreDialogBatchPageObservation(exec) {
     if (state.preparation?.release) state.preparation.release();
     const processors = await Promise.allSettled(state.processors.map(record => record.promise));
     const renders = await Promise.allSettled(state.renders.map(record => record.promise));
-    const events = window.FoliaDocumentEvents;
+    const events = window.MarkalooDocumentEvents;
     const failures = [];
     const restore = (label, operation) => {
       try { operation(); }
@@ -16395,8 +16395,8 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
     const openOperation = (filePath, chooser = false) => `(async () => {
       const state = window.__dialogBatchNative;
       const index = state.processors.length;
-      ${chooser ? "window.folia.openFileDialog();" :
-        `window.folia.openApprovedDocument({ filePath: ${JSON.stringify(filePath)} });`}
+      ${chooser ? "window.markaloo.openFileDialog();" :
+        `window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(filePath)} });`}
       const deadline = Date.now() + 8000;
       while (!state.processors[index] && Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 25));
@@ -16436,7 +16436,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
     const questionFor = async (choice, filePath, operation) => {
       const fixtureText = fs.readFileSync(filePath, "utf8");
       const request = await exec(`(() => {
-        const verdict = window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(fixtureText)});
+        const verdict = window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(fixtureText)});
         if (!verdict.large) throw new Error('Expected native large-document sample is no longer large');
         return { name: ${JSON.stringify(path.basename(filePath))},
           seconds: Math.round(verdict.estimatedMs / 1000) };
@@ -16515,7 +16515,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
           };
         });
       })()`);
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       const owners = __shutdown.documentSessionState().owners;
       const identityFields = ["pageSession", "rendererGeneration", "tabId",
         "documentGeneration", "pathKey", "documentRef"];
@@ -16573,7 +16573,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
   );
   let batch;
   {
-    await exec(`window.folia.openFileDialog(); null`);
+    await exec(`window.markaloo.openFileDialog(); null`);
     const primaryReceived = await waitForCondition(exec, `
       window.__dialogBatchNative.processors.length === 1 &&
       window.__dialogBatchNative.processors[0].packet.path === ${jsRestoreSmall}
@@ -16598,8 +16598,8 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
       scrollPosition: 0, anchor: null,
     }))`);
     batch = await exec(`({
-      bigIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(fs.readFileSync(restoreBigA, "utf8"))}).large,
-      smallIsLarge: window.FoliaFileHelpers.isLargeDocument(${JSON.stringify(fs.readFileSync(restoreSmall, "utf8"))}).large,
+      bigIsLarge: window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(fs.readFileSync(restoreBigA, "utf8"))}).large,
+      smallIsLarge: window.MarkalooFileHelpers.isLargeDocument(${JSON.stringify(fs.readFileSync(restoreSmall, "utf8"))}).large,
     })`);
     const clearRestoreFixture = async label => {
       await clearFixtureTabs(label);
@@ -16658,7 +16658,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
     batch.askedOnRevisitAfterRestore = -1;
     if (expensive.state.active === restoreBigA && restoredBig && otherTab) {
       await beginPhase("move away from expensive restore");
-      const needsQuestion = await exec(`window.FoliaFileHelpers.isLargeDocument(
+      const needsQuestion = await exec(`window.MarkalooFileHelpers.isLargeDocument(
         window.CustomTabs.findTabByPath(${JSON.stringify(otherTab.filePath)}).content).large`);
       if (needsQuestion) await questionFor("0", otherTab.filePath, switchOperation(otherTab.id));
       else await exec(switchOperation(otherTab.id));
@@ -16709,7 +16709,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
       await adoptedSnapshots([issuance[0], ...reads.map(record => record.reply)]);
     const rejectedRead = request => exec(`(async () => {
       try {
-        const value = await window.folia.readDialogExtra(${JSON.stringify(request)});
+        const value = await window.markaloo.readDialogExtra(${JSON.stringify(request)});
         return { rejected: false, value: { path: value.path, content: value.content } };
       } catch (error) {
         return { rejected: true, message: String(error.message || error) };
@@ -16921,7 +16921,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
     const phase = await beginPhase("preparation-held recovery");
     await armPreparationHold(recoveryFirst);
     const primaryIndex = await exec("window.__dialogBatchNative.processors.length");
-    await exec("window.folia.openFileDialog(); null");
+    await exec("window.markaloo.openFileDialog(); null");
     const preparationHeld = await waitForCondition(exec, `
       window.__dialogBatchNative.preparation.held === true &&
       window.__dialogBatchNative.processors[${primaryIndex}]?.packet.path === ${JSON.stringify(recoveryFirst)} &&
@@ -16954,7 +16954,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
     // primary preparation; neither extra invocation has started.
     fs.unlinkSync(recoveryMissing);
     const missingStart = observation.missing.length;
-    await exec(`window.folia.openApprovedDocument({ filePath: ${JSON.stringify(failedLaterOpen)} }); null`);
+    await exec(`window.markaloo.openApprovedDocument({ filePath: ${JSON.stringify(failedLaterOpen)} }); null`);
     const laterOpenFailed = await waitUntil(async () =>
       observation.missing.length === missingStart + 1 &&
       observation.missing[missingStart]?.path === failedLaterOpen &&
@@ -17069,7 +17069,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
   const supersession = await beginPhase("preparation-held supersession");
   await armPreparationHold(staleFirst);
   const supersededIndex = await exec("window.__dialogBatchNative.processors.length");
-  await exec("window.folia.openFileDialog(); null");
+  await exec("window.markaloo.openFileDialog(); null");
   const primaryHeld = await waitForCondition(exec, `
     window.__dialogBatchNative.preparation.held === true &&
     window.__dialogBatchNative.processors[${supersededIndex}]?.packet.path === ${JSON.stringify(staleFirst)} &&
@@ -17136,7 +17136,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
   };
   const retainedStart = observation.records.length;
   const retainedResult = await exec(`(async () => {
-    try { await window.folia.readDialogExtra(${JSON.stringify(retainedRequest)}); return { rejected: false }; }
+    try { await window.markaloo.readDialogExtra(${JSON.stringify(retainedRequest)}); return { rejected: false }; }
     catch (error) { return { rejected: true, message: String(error.message || error) }; }
   })()`);
   const retainedReads = observation.records.slice(retainedStart);
@@ -17209,7 +17209,7 @@ async function runDialogBatchScenarios(win, exec, sentinel, clearFixtureTabs,
   try {
     const phase = await beginPhase("descriptor-read supersession");
     const primaryIndex = await exec("window.__dialogBatchNative.processors.length");
-    await exec("window.folia.openFileDialog(); null");
+    await exec("window.markaloo.openFileDialog(); null");
     const secondStatHeld = await waitUntil(() => afterReadStatHeld && !afterReadStatReleased, 8000);
     const primaryStarted = secondStatHeld && await exec(`!!window.CustomTabs.findTabByPath(
       ${JSON.stringify(afterReadFirst)}) &&
@@ -17403,13 +17403,13 @@ async function runAdmissionConsumerScenarios(win, exec, clearFixtureTabs, sentin
           ...request.owner, tabId: request.owner.tabId + 100000,
         }};
         return {
-          missing: await window.folia.readOwnedTabDiskSnapshot(missing),
-          forged: await window.folia.readOwnedTabDiskSnapshot(forged),
-          owner: await window.folia.readOwnedTabDiskSnapshot(wrongOwner),
-          path: await window.folia.readOwnedTabDiskSnapshot({
+          missing: await window.markaloo.readOwnedTabDiskSnapshot(missing),
+          forged: await window.markaloo.readOwnedTabDiskSnapshot(forged),
+          owner: await window.markaloo.readOwnedTabDiskSnapshot(wrongOwner),
+          path: await window.markaloo.readOwnedTabDiskSnapshot({
             ...request, filePath: ${JSON.stringify(linked)},
           }),
-          spelling: await window.folia.readOwnedTabDiskSnapshot({
+          spelling: await window.markaloo.readOwnedTabDiskSnapshot({
             ...request, filePath: request.filePath.replace(
               'admission-native.md', 'ADMISSION-native.md'),
           }),
@@ -17419,8 +17419,8 @@ async function runAdmissionConsumerScenarios(win, exec, clearFixtureTabs, sentin
         };
       })()`);
       foreignResult = await foreign.webContents.executeJavaScript(`(async () => ({
-        owned: await window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(envelope)}),
-        ticket: await window.folia.readOpenTicketSnapshot({
+        owned: await window.markaloo.readOwnedTabDiskSnapshot(${JSON.stringify(envelope)}),
+        ticket: await window.markaloo.readOpenTicketSnapshot({
           openTicket: ${JSON.stringify(envelope.document.openTicket)},
         }),
       }))()`);
@@ -17434,16 +17434,16 @@ async function runAdmissionConsumerScenarios(win, exec, clearFixtureTabs, sentin
         descriptorAttempts.length === 0, JSON.stringify(descriptorAttempts));
       positive = await exec(`(async () => {
         const request = ${JSON.stringify(envelope)};
-        const owned = await window.folia.readOwnedTabDiskSnapshot(request);
-        const fresh = await window.folia.readOpenTicketSnapshot({
+        const owned = await window.markaloo.readOwnedTabDiskSnapshot(request);
+        const fresh = await window.markaloo.readOpenTicketSnapshot({
           openTicket: request.document.openTicket,
         });
-        const replay = await window.folia.readOpenTicketSnapshot({
+        const replay = await window.markaloo.readOpenTicketSnapshot({
           openTicket: request.document.openTicket,
         });
         let layoutRejected = false;
         try {
-          await window.folia.saveSessionLayout({
+          await window.markaloo.saveSessionLayout({
             entries: [{ id: '0'.repeat(32), scrollPosition: 0, anchor: null }],
             activeEntryId: null,
           });
@@ -17501,18 +17501,18 @@ async function runAdmissionConsumerScenarios(win, exec, clearFixtureTabs, sentin
             /^[a-f0-9]{64}$/.test(intent.documentOpenTicket),
           JSON.stringify(intent));
         const foreignAccept = await foreign.webContents.executeJavaScript(
-          `window.folia.acceptDocumentOpenTicket({
+          `window.markaloo.acceptDocumentOpenTicket({
             ticket: ${JSON.stringify(intent.documentOpenTicket)},
           })`);
         const ticketResults = await exec(`(async () => {
           const ticket = ${JSON.stringify(intent.documentOpenTicket)};
-          const forged = await window.folia.acceptDocumentOpenTicket({
+          const forged = await window.markaloo.acceptDocumentOpenTicket({
             ticket: '0'.repeat(64),
           });
           const missing = await window.ipcRenderer.invoke('accept-native-document-ticket', {});
-          const canceled = await window.folia.cancelDocumentOpenTicket({ ticket });
-          const replay = await window.folia.acceptDocumentOpenTicket({ ticket });
-          const recancel = await window.folia.cancelDocumentOpenTicket({ ticket });
+          const canceled = await window.markaloo.cancelDocumentOpenTicket({ ticket });
+          const replay = await window.markaloo.acceptDocumentOpenTicket({ ticket });
+          const recancel = await window.markaloo.cancelDocumentOpenTicket({ ticket });
           return { forged, missing, canceled, replay, recancel,
             selected: window.currentFilePath };
         })()`);
@@ -17776,7 +17776,7 @@ async function runPendingReopenTicketRefusals(win, exec, linked, selectNativePat
       })()`);
       const held = await __shutdown.saveGate.waitForHold(gate);
       selectNativePath(linked);
-      await exec("window.folia.openFileDialog(); null");
+      await exec("window.markaloo.openFileDialog(); null");
       const delivered = await waitForCondition(exec,
         "window.__admissionRefusalProbe.delivered", 8000);
       await sentinel.drain();
@@ -17930,7 +17930,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
     `window.currentFilePath === ${JSON.stringify(oldSource.filePath)} &&
       document.getElementById('viewer').textContent.includes('Admitted source')`, 8000);
   const freshSource = await capture();
-  const oldSourceRead = await exec(`window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(oldSource)})`);
+  const oldSourceRead = await exec(`window.markaloo.readOwnedTabDiskSnapshot(${JSON.stringify(oldSource)})`);
   check("SEC-08 admitted A to B then closing A permits a fresh history reopen without reviving A's old owner",
     reopened && freshSource.document.ref !== oldSource.document.ref && oldSourceRead === null,
     JSON.stringify({ reopened, freshSource, oldSourceRead }));
@@ -17946,19 +17946,19 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
     mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs };
   const refusal = await exec(`(async () => {
     const old = ${JSON.stringify(oldLinked)};
-    window.folia.registerDocumentOwner({ ...old,
+    window.markaloo.registerDocumentOwner({ ...old,
       owner: { ...old.owner, selectionGeneration: 1 },
       diskVersion: ${JSON.stringify(diskVersion)}, modifiedTime: ${diskVersion.mtimeMs},
     });
-    const read = await window.folia.readOwnedTabDiskSnapshot(old);
+    const read = await window.markaloo.readOwnedTabDiskSnapshot(old);
     let layoutRejected = false;
     try {
-      await window.folia.saveSessionLayout({
+      await window.markaloo.saveSessionLayout({
         entries: [{ id: old.document.entryId, documentRef: old.document.ref,
           scrollPosition: 0, anchor: null }], activeEntryId: old.document.entryId,
       });
     } catch (error) { layoutRejected = true; }
-    const fresh = await window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(freshSource)});
+    const fresh = await window.markaloo.readOwnedTabDiskSnapshot(${JSON.stringify(freshSource)});
     return { read, layoutRejected, fresh };
   })()`);
   check("SEC-08 a forgotten replaced reference cannot re-register or submit retired history as live layout",
@@ -18001,7 +18001,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
       return handle;
     });
     try {
-      const result = await exec(`window.folia.readOpenTicketSnapshot({
+      const result = await exec(`window.markaloo.readOpenTicketSnapshot({
         openTicket: ${JSON.stringify(currentLinked.document.openTicket)},
       })`);
       return { result, opens, triggered, queueCompletedInClose };
@@ -18241,7 +18241,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
     await exec("window.CustomTabs.settleSessionLayout()");
     const nativeCurrent = await capture();
     const nativeRead = await exec(
-      `window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(nativeCurrent)})`);
+      `window.markaloo.readOwnedTabDiskSnapshot(${JSON.stringify(nativeCurrent)})`);
     check("SEC-08 ordinary same-path native opening remains usable after delivered restore registration",
       newOpen && nativeRead?.content.includes("Admitted source") &&
         __shutdown.documentSessionState().entries.some(entry =>
@@ -18382,7 +18382,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
   const repeats = await exec(`(async () => {
     let success = 0;
     for (let index = 0; index < 520; index++) {
-      const result = await window.folia.restoreSession();
+      const result = await window.markaloo.restoreSession();
       if (result.entries.length === 1 && !result.entries[0].error) success++;
     }
     return success;
@@ -18405,7 +18405,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
     entries: fullHistory.map(entry => ({ id: entry.id, scrollPosition: 0, anchor: null })),
     activeEntryId: fullHistory[0].id,
   });
-  const fullBatch = await exec("window.folia.restoreSession()");
+  const fullBatch = await exec("window.markaloo.restoreSession()");
   check("SEC-08 full delivered batch setup has actual current unbound references without creating fixture tabs",
     fullBatch.entries.length === 512 &&
       fullBatch.entries.every(entry => entry.document &&
@@ -18458,7 +18458,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
   await exec("window.CustomTabs.settleSessionLayout()");
   const active = await capture();
   const restoredLayout = await exec(`(async () => {
-    const restored = await window.folia.restoreSession();
+    const restored = await window.markaloo.restoreSession();
     return restored.entries.map(entry => ({
       id: entry.id, error: entry.error || null, admitted: !!entry.document,
     }));
@@ -18559,7 +18559,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
         return invoke.apply(this, arguments);
       };
       try {
-        const positive = await window.folia.restoreSession();
+        const positive = await window.markaloo.restoreSession();
         const setup = positive.entries.length === 2 &&
           positive.entries.every(entry => !entry.error && entry.document) &&
           positive.entries.some(entry => entry.id === ${JSON.stringify(background.document.entryId)}) &&
@@ -18894,7 +18894,7 @@ async function runAdmissionCorrectionScenarios(win, exec, clearFixtureTabs,
     check("SEC-08 packaged README setup uses a real extra-resource outside the excluded app archive",
       app.isPackaged && fs.existsSync(packagedReadme) &&
         await exec("window.ipcRenderer.invoke('get-readme-path')") === packagedReadme);
-    await exec("window.folia.openReadme()");
+    await exec("window.markaloo.openReadme()");
     const landed = await waitForCondition(exec,
       `window.currentFilePath === ${JSON.stringify(packagedReadme)} &&
         document.getElementById('viewer').textContent.includes('PACKAGED_README_CONTROL')`, 8000);
@@ -19023,7 +19023,7 @@ async function closeOwnedFixtureTabs(exec, phase,
             tab.id, tab.filePath, window.getReloadRequestSession());
           const descriptor = window.CustomTabs.getDocumentDescriptor(tab.id);
           const state = window.CustomTabs.__documentState(tab);
-          const deletion = identity && window.folia.queryDocumentDeletionState({
+          const deletion = identity && window.markaloo.queryDocumentDeletionState({
             ...identity, filePath: tab.filePath,
           });
           const permissions = expectedDiscards.filter(item => item.tabId === tab.id);
@@ -19099,7 +19099,7 @@ async function closeOwnedFixtureTabs(exec, phase,
               const owner = current && window.CustomTabs.getDocumentIdentityForTab(
                 current.id, current.filePath, window.getReloadRequestSession());
               const currentState = current && window.CustomTabs.__documentState(current);
-              const currentDeletion = current && window.folia.queryDocumentDeletionState({
+              const currentDeletion = current && window.markaloo.queryDocumentDeletionState({
                 ...identity, filePath: tab.filePath,
               });
               const question = {
@@ -19228,7 +19228,7 @@ async function closeOwnedFixtureTabs(exec, phase,
         closeFixtureTabs(${capturedDiscardsSource === null
           ? JSON.stringify(expectedDiscards) : capturedDiscardsSource},
           ${JSON.stringify(target)}, ${JSON.stringify(cleanupKey)})`);
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
     } catch (error) {
       const failures = [error];
       let cleanupEvidence;
@@ -19313,18 +19313,18 @@ async function run(win) {
     try {
       await loaded;
       return {
-        methods: Object.keys(window.folia || {}),
-        pdfRestore: typeof window.__foliaTestPdfRestore?.signal,
-        subframePdfRestore: typeof iframe.contentWindow.__foliaTestPdfRestore,
-        diagnostic: typeof window.__foliaTestDocumentControl?.mark,
-        subframeDiagnostic: typeof iframe.contentWindow.__foliaTestDocumentControl,
-        frozen: Object.isFrozen(window.folia), require: typeof require,
+        methods: Object.keys(window.markaloo || {}),
+        pdfRestore: typeof window.__markalooTestPdfRestore?.signal,
+        subframePdfRestore: typeof iframe.contentWindow.__markalooTestPdfRestore,
+        diagnostic: typeof window.__markalooTestDocumentControl?.mark,
+        subframeDiagnostic: typeof iframe.contentWindow.__markalooTestDocumentControl,
+        frozen: Object.isFrozen(window.markaloo), require: typeof require,
         process: typeof process, rawIpc: typeof window.ipcRenderer,
       };
     } finally { iframe.remove(); }
   })()`);
   const expectsPdfSignal =
-    !app.isPackaged && process.argv.includes("--folia-test-preload");
+    !app.isPackaged && process.argv.includes("--markaloo-test-preload");
   const controlReady = await waitUntil(() => __shutdown.state().renderer === "ready", 5000);
   const controlState = __shutdown.state();
   const controlSession = await exec("window.getReloadRequestSession()");
@@ -19427,7 +19427,7 @@ async function run(win) {
       canceled: false, filePaths: [ordinaryPath],
     }));
     try {
-      await exec("window.folia.openFileDialog(); null");
+      await exec("window.markaloo.openFileDialog(); null");
       const ordinaryOpen = await waitForCondition(exec,
         `window.currentFilePath === ${JSON.stringify(ordinaryPath)} &&
           window.CustomTabs.getDocumentDescriptor()?.logicalPath === ${JSON.stringify(ordinaryPath)} &&
@@ -19497,9 +19497,9 @@ async function run(win) {
     const isolatedBoundary = await isolatedBridgeWindow.webContents.executeJavaScript(`
       (async () => {
         let rejected = false;
-        try { await window.folia.readOwnedTabDiskSnapshot(null); }
+        try { await window.markaloo.readOwnedTabDiskSnapshot(null); }
         catch (error) { rejected = error.message.includes('Invalid owned tab disk snapshot request'); }
-        const refused = await window.folia.readOwnedTabDiskSnapshot({
+        const refused = await window.markaloo.readOwnedTabDiskSnapshot({
           filePath: ${jsA},
           pageSession: 'foreign-window',
           rendererGeneration: 1,
@@ -19509,13 +19509,13 @@ async function run(win) {
           },
         });
         let dialogMalformedRejected = false;
-        try { await window.folia.readDialogExtra(null); }
+        try { await window.markaloo.readDialogExtra(null); }
         catch (error) {
           dialogMalformedRejected = error.message.includes('Invalid dialog extra request');
         }
         let dialogEmptyBatchRejected = false;
         try {
-          await window.folia.readDialogExtra({
+          await window.markaloo.readDialogExtra({
             grant: '1'.repeat(64), pageSession: 'foreign-window',
             rendererGeneration: 1,
           });
@@ -19528,16 +19528,16 @@ async function run(win) {
         document.body.appendChild(iframe);
         await loaded;
         return {
-          methods: Object.keys(window.folia || {}),
+          methods: Object.keys(window.markaloo || {}),
           require: typeof require,
           process: typeof process, rawIpc: typeof window.ipcRenderer,
-          frozen: Object.isFrozen(window.folia),
+          frozen: Object.isFrozen(window.markaloo),
           rejected,
           refused,
           dialogMalformedRejected,
           dialogEmptyBatchRejected,
-          pdfRestore: typeof window.__foliaTestPdfRestore,
-          subframePdfRestore: typeof iframe.contentWindow.__foliaTestPdfRestore,
+          pdfRestore: typeof window.__markalooTestPdfRestore,
+          subframePdfRestore: typeof iframe.contentWindow.__markalooTestPdfRestore,
         };
       })()
     `, true);
@@ -19574,7 +19574,7 @@ async function run(win) {
   await runEarlyLargeRenderFaults(win);
   if (initialBoundaryHarness) {
     check("SEC-08 initial boundary controls retain an unmarked ordinary production launch",
-      !expectsPdfSignal && !process.argv.includes("--folia-test-preload"));
+      !expectsPdfSignal && !process.argv.includes("--markaloo-test-preload"));
     const alive = await proveSentinelAlive(win, sentinel);
     check("the error sentinel was demonstrably watching both channels",
       alive.console === true && alive.dom === true, JSON.stringify(alive));
@@ -19588,7 +19588,7 @@ async function run(win) {
 
   const finishEarlyRefresh = async nodeUnavailable => {
     check("SEC-08 early refresh controls retain an unmarked Node-free production launch",
-      !expectsPdfSignal && !process.argv.includes("--folia-test-preload") && nodeUnavailable);
+      !expectsPdfSignal && !process.argv.includes("--markaloo-test-preload") && nodeUnavailable);
     const alive = await proveSentinelAlive(win, sentinel);
     check("the error sentinel was demonstrably watching both channels",
       alive.console === true && alive.dom === true, JSON.stringify(alive));
@@ -19603,7 +19603,7 @@ async function run(win) {
     console.log("SKIP  unsafe refresh operations and native large-tab switches: source architecture refused");
     const nodeUnavailable = await exec(`typeof require === 'undefined' && typeof process === 'undefined' &&
       typeof window.fs === 'undefined' && typeof window.ipcRenderer === 'undefined' &&
-      Object.isFrozen(window.folia)`);
+      Object.isFrozen(window.markaloo)`);
     await finishEarlyRefresh(nodeUnavailable);
     return;
   }
@@ -19671,7 +19671,7 @@ async function run(win) {
         };
         return true;
       })()`);
-      await earlyExec("window.folia.openFileDialog(); true");
+      await earlyExec("window.markaloo.openFileDialog(); true");
       const painted = await boundedDialogWork(waitForCondition(earlyExec,
         `window.currentFilePath === ${JSON.stringify(filePath)} &&
          window.__earlyNativeOpen.completed === true &&
@@ -19797,7 +19797,7 @@ async function run(win) {
           sequence: window.getReloadRequestDiagnostics().sequence + 1,
           replies: [], notified: false,
         };
-        probe.off = window.folia.onFileReloadResult(data => {
+        probe.off = window.markaloo.onFileReloadResult(data => {
           if (data?.path === ${JSON.stringify(filePath)} &&
               data.reloadRequest?.sequence === probe.sequence) {
             probe.replies.push(data);
@@ -20097,7 +20097,7 @@ async function run(win) {
           preparations: window.__earlyDiskRead.preparations,
           nodeUnavailable: typeof require === 'undefined' && typeof process === 'undefined' &&
             typeof window.fs === 'undefined' && typeof window.ipcRenderer === 'undefined' &&
-            Object.isFrozen(window.folia),
+            Object.isFrozen(window.markaloo),
         };
       })()`);
       return { page, records: observation.records, opens: observation.opens,
@@ -20153,11 +20153,11 @@ async function run(win) {
         filePath: target, pageSession: owner.pageSession,
         rendererGeneration: owner.rendererGeneration, owner, diskVersion: tab.diskVersion,
       };
-      const valid = await window.folia.readOwnedTabDiskSnapshot(validPayload);
-      const forgedPath = await window.folia.readOwnedTabDiskSnapshot({
+      const valid = await window.markaloo.readOwnedTabDiskSnapshot(validPayload);
+      const forgedPath = await window.markaloo.readOwnedTabDiskSnapshot({
         ...validPayload, filePath: ${jsA},
       });
-      const forgedOwner = await window.folia.readOwnedTabDiskSnapshot({
+      const forgedOwner = await window.markaloo.readOwnedTabDiskSnapshot({
         ...validPayload, owner: { ...owner, tabId: owner.tabId + 1000 },
       });
       return {
@@ -20251,7 +20251,7 @@ async function run(win) {
       const rejected = [];
       for (const input of invalid) {
         try {
-          await window.folia.readOwnedTabDiskSnapshot(input);
+          await window.markaloo.readOwnedTabDiskSnapshot(input);
           rejected.push(false);
         } catch (error) {
           rejected.push(error.message.includes('Invalid owned tab disk snapshot request'));
@@ -20260,7 +20260,7 @@ async function run(win) {
       return rejected;
     })()`);
     const malformedCalls = readObservation.records.length;
-    const positive = await exec(`window.folia.readOwnedTabDiskSnapshot({
+    const positive = await exec(`window.markaloo.readOwnedTabDiskSnapshot({
       ...${JSON.stringify(mainOwnedRefresh.validPayload)}, ignored: true,
       owner: { ...${JSON.stringify(mainOwnedRefresh.validPayload.owner)}, ignored: true },
     })`);
@@ -20294,7 +20294,7 @@ async function run(win) {
       try {
         badResponses.push(await exec(`(async () => {
           try {
-            await window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(readRequest)});
+            await window.markaloo.readOwnedTabDiskSnapshot(${JSON.stringify(readRequest)});
             return false;
           } catch (error) {
             return error.message.includes('Invalid owned tab disk snapshot response');
@@ -20312,7 +20312,7 @@ async function run(win) {
       });
     }
     const afterStart = readObservation.records.length;
-    const afterFault = await exec(`window.folia.readOwnedTabDiskSnapshot(${JSON.stringify(readRequest)})`);
+    const afterFault = await exec(`window.markaloo.readOwnedTabDiskSnapshot(${JSON.stringify(readRequest)})`);
     const afterRecords = readObservation.records.slice(afterStart);
     bridgeValidation = {
       rejected, malformedCalls, forwarding, badResponses, faults, afterFault, afterRecords,
@@ -20398,7 +20398,7 @@ async function run(win) {
     }));
     let casePayload;
     try {
-      await exec("window.folia.openFileDialog(); null;");
+      await exec("window.markaloo.openFileDialog(); null;");
       const painted = await waitForCondition(exec,
         `window.currentFilePath === ${JSON.stringify(casePreservedLogicalPath)} &&
          document.getElementById('viewer').textContent.includes('SEC08_MAIN_OWNED_READ') &&
@@ -20435,7 +20435,7 @@ async function run(win) {
       casePreservedRead = await exec(`
         (async () => {
           try {
-            const snapshot = await window.folia.readOwnedTabDiskSnapshot({
+            const snapshot = await window.markaloo.readOwnedTabDiskSnapshot({
                 ...${JSON.stringify(casePayload)},
               });
             return { status: "fulfilled", snapshot };
@@ -20814,7 +20814,7 @@ async function run(win) {
     await exec(`
       (() => {
         const probe = window.__sec08AtomicReadProbe = { settled: false };
-        probe.completion = window.folia.readOwnedTabDiskSnapshot(
+        probe.completion = window.markaloo.readOwnedTabDiskSnapshot(
           ${JSON.stringify(atomicReadRequest)},
         ).then(
           snapshot => {
@@ -21021,7 +21021,7 @@ async function run(win) {
         await exec("window.CustomTabs.settleSessionLayout()");
       } else {
         await runAdmissionConsumerScenarios(win, exec, clearFixtureTabs, sentinel);
-        await exec(`window.folia.openApprovedDocument({ filePath: ${jsA} }); null;`);
+        await exec(`window.markaloo.openApprovedDocument({ filePath: ${jsA} }); null;`);
         const ordinaryOpen = await waitForCondition(
           exec,
           `window.currentFilePath === ${jsA} &&
@@ -21955,7 +21955,7 @@ async function run(win) {
       a.content = '# Alpha\\n\\nSTRAY_GUARD\\n';
       a.hasUnsavedChanges = true;
       window.originalMarkdown = a.content;
-      const receivers = window.FoliaDocumentEvents.listeners('save-markdown-result');
+      const receivers = window.MarkalooDocumentEvents.listeners('save-markdown-result');
       if (receivers.length !== 1) throw new Error('Stray Save requires the installed document receiver');
       receivers[0](undefined, {
         success: true,
@@ -22329,7 +22329,7 @@ async function run(win) {
         identityFields.every(field => owner[field] === snapshot.owner[field]) &&
         owner.readTarget === snapshot.descriptor.readTarget);
     if (!retained) return false;
-    const current = await exec(`window.folia.queryDocumentDeletionState(
+    const current = await exec(`window.markaloo.queryDocumentDeletionState(
       ${JSON.stringify({ ...snapshot.owner, filePath: snapshot.path })})`);
     return current.known === true && current.unresolved === false;
   };
@@ -22393,7 +22393,7 @@ async function run(win) {
       await exec(`window.__dialogBatchNative.phase = 'default fixture'; true`);
       restoreChooser = replaceMethod(dialog, "showOpenDialog", chooseFixture);
       phase = "opening native chooser";
-      await exec("window.folia.openFileDialog()");
+      await exec("window.markaloo.openFileDialog()");
       phase = "waiting for original processor";
       const reached = await waitUntil(async () => {
         if (chooserFailure) throw chooserFailure;
@@ -22426,7 +22426,7 @@ async function run(win) {
       phase = "settling session layout";
       await exec("window.CustomTabs.settleSessionLayout()");
       phase = "flushing Main";
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       phase = "validating captured owner";
       localOwner = !(snapshot.path !== filePath || snapshot.original !== body ||
           snapshot.tab?.path !== filePath || snapshot.tab.content !== body ||
@@ -22678,7 +22678,7 @@ async function run(win) {
       const before = ${JSON.stringify(before)}, tab = window.CustomTabs.getActiveTab();
       const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
         tab.id, tab.filePath, window.getReloadRequestSession());
-      const query = owner && window.folia.queryDocumentDeletionState({
+      const query = owner && window.markaloo.queryDocumentDeletionState({
         ...owner, filePath: tab.filePath });
       const pending = window.getPendingSaveStatus();
       if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
@@ -22807,7 +22807,7 @@ async function run(win) {
       const buttons = Array.from(document.querySelectorAll(
         '#appMessageButtons [data-dialog-choice]'),
         button => [button.dataset.dialogChoice, button.textContent]);
-      const query = owner && window.folia.queryDocumentDeletionState({
+      const query = owner && window.markaloo.queryDocumentDeletionState({
         ...owner, filePath: tab.filePath });
       if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
           window.currentFilePath !== before.path ||
@@ -23767,7 +23767,7 @@ async function run(win) {
           return true;
         };
         window.__s9cFirstDeliveryProbe = probe;
-        probe.off = window.folia.onSaveMarkdownResult(onSaveResult);
+        probe.off = window.markaloo.onSaveMarkdownResult(onSaveResult);
         const tabs = window.CustomTabs.getTabs();
         const mine = window.CustomTabs.getActiveTab();
         const other = mine && tabs.find(tab => tab.filePath !== mine.filePath);
@@ -23779,7 +23779,7 @@ async function run(win) {
         const expected = ${JSON.stringify(bgPreSaveDocument)};
         const owner = window.CustomTabs.getDocumentIdentityForTab(
           mine.id, mine.filePath, window.getReloadRequestSession());
-        const query = owner && window.folia.queryDocumentDeletionState({
+        const query = owner && window.markaloo.queryDocumentDeletionState({
           ...owner, filePath: mine.filePath });
         if (mine.id !== ${saveTabB} || mine.filePath !== ${JSON.stringify(fileB)} ||
             window.currentFilePath !== mine.filePath || !isEditMode ||
@@ -24875,7 +24875,7 @@ async function run(win) {
 
     await clearFixtureTabs("layout teardown");
     await exec("window.CustomTabs.settleSessionLayout()");
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     check(
       "layout teardown retires every captured Main admission",
       layoutAdmissions.every(proof =>
@@ -24914,7 +24914,7 @@ async function run(win) {
     })()
   `);
   const reloadOwnerTab = reloadInactiveOwner.id;
-  await exec("window.folia.getVersion(); null;");
+  await exec("window.markaloo.getVersion(); null;");
   const reloadInactiveMainOwner = __shutdown.documentSessionState().owners.find(owner =>
     owner.documentRef === reloadOwnerReceipt.document.ref);
   const reloadInactiveAdmission = Number.isSafeInteger(reloadOwnerTab) &&
@@ -25030,7 +25030,7 @@ async function run(win) {
     })()`);
     const foreignAndConflict = await exec(`
       (() => {
-        const receivers = window.FoliaDocumentEvents.listeners("file-reload-result");
+        const receivers = window.MarkalooDocumentEvents.listeners("file-reload-result");
         if (receivers.length !== 1) throw new Error("Hostile reloads require the installed document receiver");
         const tab = window.CustomTabs.getActiveTab();
         const snapshot = () => ({
@@ -25644,7 +25644,7 @@ async function run(win) {
       };
       const restoreChooser = replaceMethod(dialog, "showOpenDialog", chooseFixture);
       try {
-        await exec("window.folia.openFileDialog()");
+        await exec("window.markaloo.openFileDialog()");
         const reached = await waitUntil(() => {
           if (chooserFailure) throw chooserFailure;
           return exec(`${racePage}.reached(${JSON.stringify(fixture)})`);
@@ -25653,7 +25653,7 @@ async function run(win) {
           throw new Error("Admitted race document did not finish its real render");
         }
         const snapshot = await exec(`${racePage}.snapshot()`);
-        await exec("window.folia.getVersion()");
+        await exec("window.markaloo.getVersion()");
         if (!(await defaultMainOwns(snapshot))) {
           throw new Error("File-open race document has no current Main owner: " +
             JSON.stringify(snapshot));
@@ -26059,7 +26059,7 @@ async function runF22SaveAndReloadScenarios(
     const f22DiskVersion = (filePath) => {
       const owner = f22ActiveOwner(filePath);
       const tab = owner && window.CustomTabs.getTabs().find(candidate => candidate.id === owner.tabId);
-      const checked = owner && tab && window.folia.checkOwnedTabDiskSnapshot({
+      const checked = owner && tab && window.markaloo.checkOwnedTabDiskSnapshot({
         filePath, pageSession: owner.pageSession,
         rendererGeneration: owner.rendererGeneration, owner,
         diskVersion: tab.diskVersion,
@@ -26477,7 +26477,7 @@ async function runF22SaveAndReloadScenarios(
       admitted = await boundedDialogWork(exec(`(async () => {
         const state = window.__dialogBatchNative;
         state.phase = 'F22 native fixture admission';
-        window.folia.openFileDialog();
+        window.markaloo.openFileDialog();
         const deadline = Date.now() + 6000;
         while (!state.processors.length && Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, 25));
@@ -26504,7 +26504,7 @@ async function runF22SaveAndReloadScenarios(
           selectionGeneration: window.getActiveFileSelectionGeneration(),
         };
       })()`), "F22 original file-open processor and render", 8000);
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       const current = __shutdown.state();
       const packet = packets[0];
       const fields = ["pageSession", "rendererGeneration", "tabId",
@@ -26591,7 +26591,7 @@ async function runF22SaveAndReloadScenarios(
       }
       return selected.owner;
     })()`);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     const fields = ["pageSession", "rendererGeneration", "tabId",
       "documentGeneration", "pathKey", "documentRef"];
     if (!__shutdown.documentAdmissionIsCurrent(restored.documentRef) ||
@@ -28878,7 +28878,7 @@ async function runF22SaveAndReloadScenarios(
   // The guards must remain narrow: an ordinary regular file and an existing
   // link whose target is still valid retain their normal save path.
   //
-  // "Genuinely new" is not what this can prove. Folia only saves a document it
+  // "Genuinely new" is not what this can prove. Markaloo only saves a document it
   // has opened, and a path with no file on disk never becomes the renderer's
   // selected owner, so a save of a file that does not yet exist has no
   // production route to reach. The narrowness being proved is therefore the
@@ -32365,7 +32365,7 @@ async function runF22SaveAndReloadScenarios(
           deletedASaveMute,
           deletedAFile,
           deletionSave && deletionSave.result,
-          `The file was deleted outside Folia and has not been restored: ${deletedAFile}`,
+          `The file was deleted outside Markaloo and has not been restored: ${deletedAFile}`,
         ),
         JSON.stringify({ deletedASaveMute, deletionSave }),
       );
@@ -32669,7 +32669,7 @@ async function runF22SaveAndReloadScenarios(
     if (focusedRendererDialogGuard) {
       throw new Error("F22 deleted-owner question has no focused-guard presentation permit");
     }
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     if (!closedMainCurrent(closedOwnerCapture.a, true) ||
         !closedMainCurrent(closedOwnerCapture.b, true)) {
       throw new Error("F22 deleted-owner close lacks its current Main owners");
@@ -32692,7 +32692,7 @@ async function runF22SaveAndReloadScenarios(
       const initialTab = JSON.parse(e.initial);
       delete initialTab.state;
       const { state: currentState, ...currentTab } = before.a;
-      e.deletion = window.folia.queryDocumentDeletionState({
+      e.deletion = window.markaloo.queryDocumentDeletionState({
         ...before.a.owner, filePath: e.a.filePath,
       });
       if (!tabs.getTabs().includes(e.a) || !tabs.getTabs().includes(e.b) ||
@@ -32714,7 +32714,7 @@ async function runF22SaveAndReloadScenarios(
         const now = read();
         const expected = JSON.parse(e.before);
         expected.freeze.dialogDecisionIntent += 1;
-        const deletion = window.folia.queryDocumentDeletionState({
+        const deletion = window.markaloo.queryDocumentDeletionState({
           ...before.a.owner, filePath: e.a.filePath,
         });
         return tabs.getTabs().includes(e.a) && tabs.getTabs().includes(e.b) &&
@@ -32767,7 +32767,7 @@ async function runF22SaveAndReloadScenarios(
         error => { e.error = String(error.stack || error); e.settled = true; });
       return null;
     })()`);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     if (!closedMainCurrent(closedOwnerCapture.a, true) ||
         !closedMainCurrent(closedOwnerCapture.b, true)) {
       throw new Error("F22 deleted-owner Main ownership changed before consent");
@@ -32807,7 +32807,7 @@ async function runF22SaveAndReloadScenarios(
       }
       return { gone: true, answered: e.answered, presentations: e.presentations.length };
     })()`);
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     if (!closedMainCurrent(closedOwnerCapture.a, false) ||
         !closedMainCurrent(closedOwnerCapture.b, true)) {
       throw new Error("F22 deleted-owner close did not retire only its captured Main owner");
@@ -33598,7 +33598,7 @@ async function runF22SaveAndReloadScenarios(
         tab => tab.id === ${inactiveDeletedB.id},
       ) || null;
       const expectedWarning =
-        ${JSON.stringify(`"${path.basename(inactiveDeletedFile)}" was deleted outside Folia. Close this in-memory copy anyway?`)};
+        ${JSON.stringify(`"${path.basename(inactiveDeletedFile)}" was deleted outside Markaloo. Close this in-memory copy anyway?`)};
       const beforeActive = tabs.getActiveTab() || null;
       const realConfirm = window.confirm;
       const asked = [];
@@ -33656,7 +33656,7 @@ async function runF22SaveAndReloadScenarios(
     !inactiveCleanupA.setupError &&
     inactiveCleanupA.asked.length === 1 &&
     inactiveCleanupA.asked[0] ===
-      `"${path.basename(inactiveDeletedFile)}" was deleted outside Folia. Close this in-memory copy anyway?` &&
+      `"${path.basename(inactiveDeletedFile)}" was deleted outside Markaloo. Close this in-memory copy anyway?` &&
     inactiveCleanupA.unexpected.length === 0 &&
     inactiveCleanupA.missingGone === true &&
     inactiveCleanupA.companionStillPresent === true &&
@@ -35511,7 +35511,7 @@ async function runF22SaveAndReloadScenarios(
   });
   // The shutdown dirty-list oracle is the real product call, and the product
   // deliberately REFUSES to answer it while a save is in flight: dirtyTabNames()
-  // throws FOLIA_PENDING_SAVE rather than return a list nothing can stand behind.
+  // throws MARKALOO_PENDING_SAVE rather than return a list nothing can stand behind.
   // Snapshots taken while this fixture is holding replies therefore have no array
   // to report. Absorbing that would make "nothing is dirty" and "the oracle
   // refused to answer" the same reading, so the refusal is recorded as a
@@ -35549,7 +35549,7 @@ async function runF22SaveAndReloadScenarios(
           } catch (error) {
             // Identified by code, never by message. Anything else is a different
             // failure and must reach the caller exactly as the product threw it.
-            if (!error || error.code !== "FOLIA_PENDING_SAVE") throw error;
+            if (!error || error.code !== "MARKALOO_PENDING_SAVE") throw error;
             const status = window.getPendingSaveStatus(${JSON.stringify(orderedSaveFile)});
             const errorStatus = error.status || null;
             return {
@@ -35654,7 +35654,7 @@ async function runF22SaveAndReloadScenarios(
       const state = tab && window.CustomTabs.__documentState(tab);
       const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
       const pending = window.getPendingSaveStatus(${JSON.stringify(orderedSaveFile)});
-      const deletion = identity && window.folia.queryDocumentDeletionState({
+      const deletion = identity && window.markaloo.queryDocumentDeletionState({
         ...identity, filePath: ${JSON.stringify(orderedSaveFile)},
       });
       if (tabs.length !== 1 || tab?.id !== ${orderedSaveTab.id} ||
@@ -35746,7 +35746,7 @@ async function runF22SaveAndReloadScenarios(
         };
         const notificationObserver = new MutationObserver(() =>
           probe.notifications.push(notificationMessage ? notificationMessage.textContent : ""));
-        window.addEventListener("folia-pending-save-status-changed", onPendingSaveStatusChange);
+        window.addEventListener("markaloo-pending-save-status-changed", onPendingSaveStatusChange);
         ipc.on("save-markdown-result", onSaveResult);
         if (notificationMessage) {
           notificationObserver.observe(notificationMessage, {
@@ -35756,7 +35756,7 @@ async function runF22SaveAndReloadScenarios(
         window.__f22OrderedSaveCleanup = () => {
           ipc.send = originalSend;
           window.alert = originalAlert;
-          window.removeEventListener("folia-pending-save-status-changed", onPendingSaveStatusChange);
+          window.removeEventListener("markaloo-pending-save-status-changed", onPendingSaveStatusChange);
           ipc.removeListener("save-markdown-result", onSaveResult);
           notificationObserver.disconnect();
         };
@@ -36099,10 +36099,10 @@ async function runF22SaveAndReloadScenarios(
     orderedSaveDetail,
   );
   check(
-    "F22 shutdown dirty-list oracle refuses with FOLIA_PENDING_SAVE for exactly the one held A save, and answers with a list once A settles",
+    "F22 shutdown dirty-list oracle refuses with MARKALOO_PENDING_SAVE for exactly the one held A save, and answers with a list once A settles",
     orderedSaveEvidence && orderedSaveEvidence.afterNewerSuccess.shutdownDirty &&
       orderedSaveEvidence.afterNewerSuccess.shutdownDirty.pending === true &&
-      orderedSaveEvidence.afterNewerSuccess.shutdownDirty.code === "FOLIA_PENDING_SAVE" &&
+      orderedSaveEvidence.afterNewerSuccess.shutdownDirty.code === "MARKALOO_PENDING_SAVE" &&
       orderedSaveEvidence.afterNewerSuccess.shutdownDirty.expected === 1 &&
       orderedSaveEvidence.afterNewerSuccess.shutdownDirty.count === 1 &&
       orderedSaveEvidence.afterNewerSuccess.shutdownDirty.matchesExpected === true &&
@@ -36229,7 +36229,7 @@ async function runF22SaveAndReloadScenarios(
     "F22 shutdown dirty-list oracle refuses for exactly the two held D and E saves, then for D alone, then answers once D settles",
     orderedSaveEvidence && orderedSaveEvidence.beforeEFailure.shutdownDirty &&
       orderedSaveEvidence.beforeEFailure.shutdownDirty.pending === true &&
-      orderedSaveEvidence.beforeEFailure.shutdownDirty.code === "FOLIA_PENDING_SAVE" &&
+      orderedSaveEvidence.beforeEFailure.shutdownDirty.code === "MARKALOO_PENDING_SAVE" &&
       orderedSaveEvidence.beforeEFailure.shutdownDirty.expected === 2 &&
       orderedSaveEvidence.beforeEFailure.shutdownDirty.count === 2 &&
       orderedSaveEvidence.beforeEFailure.shutdownDirty.matchesExpected === true &&
@@ -36242,7 +36242,7 @@ async function runF22SaveAndReloadScenarios(
         JSON.stringify(orderedSaveEvidence.beforeEFailure.pending.paths) &&
       orderedSaveEvidence.afterNewerFailure.shutdownDirty &&
       orderedSaveEvidence.afterNewerFailure.shutdownDirty.pending === true &&
-      orderedSaveEvidence.afterNewerFailure.shutdownDirty.code === "FOLIA_PENDING_SAVE" &&
+      orderedSaveEvidence.afterNewerFailure.shutdownDirty.code === "MARKALOO_PENDING_SAVE" &&
       orderedSaveEvidence.afterNewerFailure.shutdownDirty.expected === 1 &&
       orderedSaveEvidence.afterNewerFailure.shutdownDirty.count === 1 &&
       orderedSaveEvidence.afterNewerFailure.shutdownDirty.matchesExpected === true &&
@@ -36396,7 +36396,7 @@ async function runF22SaveAndReloadScenarios(
       const descriptor = tab && window.CustomTabs.getDocumentDescriptor(tab.id);
       const state = tab && window.CustomTabs.__documentState(tab);
       const pending = tab && window.getPendingSaveStatus(tab.filePath);
-      const deletion = owner && window.folia.queryDocumentDeletionState({
+      const deletion = owner && window.markaloo.queryDocumentDeletionState({
         ...owner, filePath: ${JSON.stringify(filePath)},
       });
       if (!tab || tab.filePath !== ${JSON.stringify(filePath)} ||
@@ -36575,7 +36575,7 @@ async function runF22SaveAndReloadScenarios(
         const owner = tabs.getDocumentIdentityForTab(
           target.tabId, target.filePath, window.getReloadRequestSession());
         const state = tabs.__documentState(tab);
-        const deletion = window.folia.queryDocumentDeletionState({
+        const deletion = window.markaloo.queryDocumentDeletionState({
           ...target.owner, filePath: target.filePath,
         });
         const descriptor = tabs.getDocumentDescriptor(target.tabId);
@@ -36738,7 +36738,7 @@ async function runF22SaveAndReloadScenarios(
         JSON.stringify({ target, failure: String(error.stack || error), evidence }));
       throw new AggregateError(failures, "F22 pair deleted close failed; owned evidence retained");
     }
-    await exec("window.folia.getVersion()");
+    await exec("window.markaloo.getVersion()");
     if (!close?.gone || __shutdown.documentAdmissionIsCurrent(target.descriptor.ref) ||
         __shutdown.documentSessionState().owners.some(owner =>
           backgroundPairFields.every(field => owner[field] === target.owner[field]))) {
@@ -36962,7 +36962,7 @@ async function runF22SaveAndReloadScenarios(
     await closeBackgroundPairDeletedOwner(backgroundDeletedOwner);
 
     async function closeDeletedReloadOrigin(tabId, filePath, description) {
-      const warning = `"${path.basename(filePath)}" was deleted outside Folia. ` +
+      const warning = `"${path.basename(filePath)}" was deleted outside Markaloo. ` +
         "Close this in-memory copy anyway?";
       const close = await exec(`
         (async () => {
@@ -37565,9 +37565,9 @@ async function runF22QueueFocusedScenario(exec) {
       const alerts = [];
       const sentinel = "__f22_queue_alert_sentinel__";
       window.alert = (message) => alerts.push(String(message));
-      const originalApi = window.folia;
+      const originalApi = window.markaloo;
       const dispatches = [], acknowledgements = [];
-      window.folia = {
+      window.markaloo = {
         ...originalApi,
         saveMarkdown(request) {
           dispatches.push({
@@ -37611,7 +37611,7 @@ async function runF22QueueFocusedScenario(exec) {
         });
       } finally {
         window.alert = realAlert;
-        window.folia = originalApi;
+        window.markaloo = originalApi;
       }
     })()
   `));
@@ -37680,11 +37680,11 @@ async function runF22QueueFocusedScenario(exec) {
   if (!failureOpened) throw new Error("Save dispatch fixture did not open");
   const diskBeforeFailure = fs.readFileSync(failureFile, "utf8");
   const failure = await exec(`(async () => {
-    const originalApi = window.folia, originalAlert = window.alert;
+    const originalApi = window.markaloo, originalAlert = window.alert;
     const alerts = [];
     let pendingBeforeFailure = 0;
     window.alert = message => alerts.push(String(message));
-    window.folia = { ...originalApi, saveMarkdown() {
+    window.markaloo = { ...originalApi, saveMarkdown() {
       pendingBeforeFailure = window.getPendingSaveStatus().count;
       throw new Error('controlled Save dispatch failure');
     } };
@@ -37694,7 +37694,7 @@ async function runF22QueueFocusedScenario(exec) {
       const saved = await saveMarkdownFile();
       return { saved, pendingBeforeFailure, pending: window.getPendingSaveStatus().count,
         dirty: hasUnsavedChanges, editor: markdownEditor.value, alerts };
-    } finally { window.folia = originalApi; window.alert = originalAlert; }
+    } finally { window.markaloo = originalApi; window.alert = originalAlert; }
   })()`);
   check("SEC-08 an actual Save dispatch throw settles its pending entry without writing or losing edits",
     failure.saved === false && failure.pendingBeforeFailure === 1 &&
@@ -37822,7 +37822,7 @@ async function openShutdownLifecycleFixture(exec, filePath, text, paintMarker) {
     })()`));
     observed = true;
     restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
-    await exec("window.folia.openFileDialog(); null");
+    await exec("window.markaloo.openFileDialog(); null");
     if (!await waitForCondition(exec,
       "window.__dialogBatchNative.processors.length === 1", 8000)) {
       throw new Error("Shutdown lifecycle native file was not delivered");
@@ -38372,7 +38372,7 @@ async function runShutdownGenerationScenarios(win, exec) {
     // bridge; that exposure check is not a native subframe sender test.
     __shutdown.reset();
     const generationBefore = __shutdown.state().rendererGeneration;
-    const ownerGeneration = await exec("window.folia.getQuitApprovalGeneration()");
+    const ownerGeneration = await exec("window.markaloo.getQuitApprovalGeneration()");
     const impostor = new BrowserWindow({
       show: false,
       webPreferences: {
@@ -38388,7 +38388,7 @@ async function runShutdownGenerationScenarios(win, exec) {
     try {
       await impostor.loadFile(bareFile);
       impostorGeneration = await impostor.webContents.executeJavaScript(`
-        window.folia.getQuitApprovalGeneration()
+        window.markaloo.getQuitApprovalGeneration()
           .then(value => ({ resolved: true, value }))
           .catch(error => ({ resolved: false, message: String(error && error.message) }))
       `);
@@ -38407,7 +38407,7 @@ async function runShutdownGenerationScenarios(win, exec) {
               require: typeof child.require,
               process: typeof child.process,
               ipcRenderer: typeof child.ipcRenderer,
-              folia: typeof child.folia,
+              markaloo: typeof child.markaloo,
             };
           } finally {
             frame.remove();
@@ -38432,7 +38432,7 @@ async function runShutdownGenerationScenarios(win, exec) {
     );
     check(
       "an owner subframe has no generation bridge or Node capability",
-      frameGeneration && ["require", "process", "ipcRenderer", "folia"].every(
+      frameGeneration && ["require", "process", "ipcRenderer", "markaloo"].every(
         name => frameGeneration[name] === "undefined",
       ),
       JSON.stringify(frameGeneration),
@@ -38482,7 +38482,7 @@ async function runShutdownGenerationScenarios(win, exec) {
       // This arrives after successor READY; it must not disturb that successor.
       const staleReadyBefore = __shutdown.state().staleReadyCount;
       await exec(`
-        window.folia.announceQuitApprovalReady({
+        window.markaloo.announceQuitApprovalReady({
           gen: ${first ? first.gen : -1},
           pageSession: window.getReloadRequestSession(),
         });
@@ -39666,7 +39666,7 @@ function createInstalledUpdaterFixture(exec, updater, artifactPath) {
     throw new AggregateError(failures, "Updater fixture installation failed");
   }
   const packagedBorrow = Object.getOwnPropertyDescriptor(app, "isPackaged");
-  const read = () => exec("window.folia.getUpdateState()");
+  const read = () => exec("window.markaloo.getUpdateState()");
   return {
     read,
     async prepare({ holdDownload = false } = {}) {
@@ -39687,7 +39687,7 @@ function createInstalledUpdaterFixture(exec, updater, artifactPath) {
         throw new Error("Updater fixture could not derive a strictly newer candidate");
       }
       const checksBefore = checkCalls;
-      await exec("window.folia.checkForUpdates()");
+      await exec("window.markaloo.checkForUpdates()");
       if (!await waitUntil(async () => {
         const state = await read();
         return checkCalls === checksBefore + 1 && state.availableVersion === candidate &&
@@ -39700,7 +39700,7 @@ function createInstalledUpdaterFixture(exec, updater, artifactPath) {
         const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
         heldDownload = { promise, resolve, reject };
       }
-      await exec("window.folia.downloadUpdate()");
+      await exec("window.markaloo.downloadUpdate()");
       if (!await waitUntil(async () => {
         const state = await read();
         return downloadCalls === downloadsBefore + 1 &&
@@ -39752,7 +39752,7 @@ function createInstalledUpdaterFixture(exec, updater, artifactPath) {
 }
 
 async function runInstalledUpdateCommitScenarios(win, exec) {
-  const updateMode = await exec("window.folia.getUpdateState()");
+  const updateMode = await exec("window.markaloo.getUpdateState()");
   if (actualHostPlatform === "darwin") {
     const manualOnly = updateMode.manualOnly === true &&
       updateMode.canDownload === false && updateMode.canInstall === false;
@@ -39875,7 +39875,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     "documentGeneration", "pathKey", "documentRef"];
   const expectedDiscards = new Map();
   const readInstalledDocument = () => exec(`(() => {
-    const bridge = window.folia;
+    const bridge = window.markaloo;
     if (typeof bridge?.onMainDialogVisibility !== 'function')
       throw new Error('Installed snapshot Main dialog visibility capability is missing');
     let mainVisible, mainVisibilitySeen = false, unsubscribe;
@@ -39923,7 +39923,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
         !__shutdown.documentSessionState().owners.some(owner =>
           identityFields.every(field => owner[field] === snapshot.owner[field]) &&
           owner.readTarget === snapshot.descriptor.readTarget)) return false;
-    const deletion = await exec(`window.folia.queryDocumentDeletionState(
+    const deletion = await exec(`window.markaloo.queryDocumentDeletionState(
       ${JSON.stringify({ ...snapshot.owner, filePath: snapshot.path })})`);
     return deletion.known === true && deletion.unresolved === false;
   };
@@ -39943,7 +39943,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
           cachedContent: tab.content, original: tab.originalContent,
           dirty: state.dirty || active && hasUnsavedChanges,
           pendingSave: window.getPendingSaveStatus(tab.filePath),
-          deletion: owner && window.folia.queryDocumentDeletionState({
+          deletion: owner && window.markaloo.queryDocumentDeletionState({
             ...owner, filePath: tab.filePath }),
         };
       }),
@@ -40011,7 +40011,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       })()`));
       await exec("window.__dialogBatchNative.phase = 'installed fixture'; true");
       restoreDialog = replaceMethod(dialog, "showOpenDialog", choose);
-      await exec("window.folia.openFileDialog()");
+      await exec("window.markaloo.openFileDialog()");
       const reached = await waitUntil(async () => {
         if (chooserFailure) throw chooserFailure;
         return exec("window.__dialogBatchNative.processors.length > 0");
@@ -40035,7 +40035,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
         return true;
       })()`), "installed fixture original processor and render", 10000);
       await exec("window.CustomTabs.settleSessionLayout()");
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.getVersion()");
       snapshot = await readInstalledDocument();
       const body = fs.readFileSync(commitFile, "utf8");
       if (snapshot.path !== commitFile || snapshot.original !== body ||
@@ -40088,7 +40088,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       const before = ${JSON.stringify(before)}, tab = window.CustomTabs.getActiveTab();
       const owner = tab && window.CustomTabs.getDocumentIdentityForTab(
         tab.id, tab.filePath, window.getReloadRequestSession());
-      const deletion = owner && window.folia.queryDocumentDeletionState({
+      const deletion = owner && window.markaloo.queryDocumentDeletionState({
         ...owner, filePath: tab.filePath });
       if (!tab || tab.id !== before.tab.id || tab.filePath !== before.path ||
           !${JSON.stringify(identityFields)}.every(field => owner?.[field] === before.owner[field]) ||
@@ -40205,7 +40205,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
     const immediateBeforeRequestId = __shutdown.state().lastRequestId;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const immediateCommitted = await waitUntil(
       () => installs === 1 && rig.quits === 1,
       10000,
@@ -40251,7 +40251,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const enteredDeferredGap = await waitUntil(() => installs === 1, 10000);
     const gapState = __shutdown.state();
     const exactGapEdit = "gap edit that nobody has been asked about";
@@ -40386,7 +40386,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     rig.answer = 0;
     await admitInstalledFixture();
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const initialApprovalEnteredUpdater = await waitUntil(
       () => installs === 1 && __shutdown.state().authorized === false,
       10000,
@@ -40462,7 +40462,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       },
     );
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const refusalReturned = await waitUntil(
         () =>
           installs === 1 &&
@@ -40470,7 +40470,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
           __shutdown.state().authorized === false,
         10000,
       );
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const refusalRetried = await waitUntil(() => installs === 2, 10000);
       check(
         "an installed synchronous refusal clears its attempt and leaves a later install request possible",
@@ -40505,7 +40505,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const installedAttemptPendingCommit = await waitUntil(() => installs === 1);
     const requestBeforeLateCommit = __shutdown.state().lastRequestId;
     updater.emit("error", new Error("controlled installed updater failure"));
@@ -40550,7 +40550,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const failedAttemptStarted = await waitUntil(
       () => installs === 1 && __shutdown.state().updaterInstallAttemptId > 0,
       10000,
@@ -40605,7 +40605,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     afterBaseUpdaterBoundary = () => {
       if (restoreRetryBoundaryImmediate) restoreRetryBoundaryImmediate();
     };
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const retryBoundaryQueued = await waitUntil(
       () =>
         installs === 2 &&
@@ -40700,7 +40700,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     installs = 0;
     commitMode = "manual";
     setLatch(false);
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const unrelatedErrorAttemptStarted = await waitUntil(
       () => installs === 1 && __shutdown.state().updaterInstallAttemptId > 0,
       10000,
@@ -40759,7 +40759,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       if (restoreMissingPairImmediate) restoreMissingPairImmediate();
     };
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const missingPairBoundaryArmed = await waitUntil(
         () =>
           baseUpdaterPairedQuitCalls === 1 &&
@@ -40844,7 +40844,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
     baseUpdaterAttemptAtQueue = null;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const queuedBoundaryErrorWasBlocked = await waitUntil(
       () =>
         installs === 1 &&
@@ -40874,7 +40874,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     await clearDocuments();
     rig.answer = 0;
     commitMode = "manual";
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const failedAttemptRetried = await waitUntil(
       () =>
         installs === 2 &&
@@ -40932,7 +40932,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
     await admitInstalledFixture();
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const ordinaryAttemptStarted = await waitUntil(() => installs === 1, 10000);
     await editInstalledFixture("# Installed commit fixture\nPOISONED_BOUNDARY_DIRTY\n",
       "discard the exact edit beside the quarantined updater failure");
@@ -41008,7 +41008,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     rig.answer = 0;
     rig.driveQuitLifecycle = true;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const retryAttemptStarted = await waitUntil(
       () => installs === 1 && __shutdown.state().updaterInstallAttemptId > poisonedAttemptId,
       10000,
@@ -41064,7 +41064,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     setLatch(false);
     const heldUpdateApproval = holdRendererMessage("quit-approval-request");
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const updateApprovalHeld = await waitUntil(
         () =>
           heldUpdateApproval.held !== null &&
@@ -41136,7 +41136,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     let beforeCommitError;
     let afterCommitError;
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const updateCommitHeld = await waitUntil(
         () =>
           heldUpdateCommit.held !== null &&
@@ -41239,7 +41239,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     ipcMain.on("quit-approval-committed", captureConfirmedUpdateCommit);
     ipcMain.on("quit-approval-verified", failAfterVerifiedUpdateCommit);
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const enteredUpdater = await waitUntil(() => installs === 1, 10000);
       electronAutoUpdater.emit("before-quit-for-update");
       app.emit("before-quit", guardEvent());
@@ -41406,7 +41406,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       updater.emit("error", new Error("controlled error after continuation started"));
     });
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const startedUpdaterBeforeQuit = await waitUntil(() => installs === 1, 10000);
       electronAutoUpdater.emit("before-quit-for-update");
       app.emit("before-quit", guardEvent());
@@ -41458,7 +41458,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     await admitInstalledFixture();
     // Start a clean update attempt first, leaving only its public commit
     // outstanding; then make the document dirty and hold a close dialog.
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const waitingForCommit = await waitUntil(() => installs === 1);
     await editInstalledFixture("pending close exact edit",
       "discard the exact edit from the queued commit question");
@@ -41514,7 +41514,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     commitMode = "manual";
     setLatch(false);
     rig.answer = 0;
-    await exec(`window.folia.installUpdate(); null;`);
+    await exec(`window.markaloo.installUpdate(); null;`);
     const commitAwaitingDeadRenderer = await waitUntil(() => installs === 1);
     wc.forcefullyCrashRenderer();
     const rendererDead = await waitUntil(
@@ -41614,7 +41614,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
                   descriptor: window.CustomTabs.getDocumentDescriptor(tab.id),
                   content: tab.content, original: tab.originalContent,
                   dirty: window.CustomTabs.__documentState(tab).dirty,
-                  deletion: identity && window.folia.queryDocumentDeletionState({
+                  deletion: identity && window.markaloo.queryDocumentDeletionState({
                     ...identity, filePath: tab.filePath }),
                 };
               }),
@@ -41751,7 +41751,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
       ipcMain.on("quit-approval-committed", captureCommit);
       let result;
       try {
-        await exec(`window.folia.installUpdate(); null;`);
+        await exec(`window.markaloo.installUpdate(); null;`);
         const updaterRequestHeld = await waitUntil(() => held.held.length === 1, 10000);
         const gestures = [];
         for (const arrival of arrivals) {
@@ -41896,7 +41896,7 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
     ipcMain.on("quit-approval-committed", captureSuccessfulCommit);
     let successfulFinalApproval = null;
     try {
-      await exec(`window.folia.installUpdate(); null;`);
+      await exec(`window.markaloo.installUpdate(); null;`);
       const updateRequestHeld = await waitUntil(() => heldSuccessfulUpdate.held.length === 1, 10000);
       const absorbedClose = guardEvent();
       win.emit("close", absorbedClose);
@@ -42132,6 +42132,314 @@ async function runInstalledUpdateCommitScenarios(win, exec) {
   }
 }
 
+async function expectWindowsAdmissionRejection({ win, exec, updater, expectedError,
+  readUpdate, readEffects }) {
+  const wc = win.webContents;
+  const mainPath = path.resolve(__dirname, "..", "src", "main.js");
+  const main = fs.readFileSync(mainPath, "utf8").replace(/\r\n/g, "\n");
+  const start = 'ipcMain.on("install-update", (event) => {';
+  const end = "\n  updateSchedule.beginManualAction();";
+  const from = main.indexOf(start), to = main.indexOf(end, from);
+  const statement = 'updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));';
+  const admission = main.slice(from, to), offset = admission.indexOf(statement);
+  if (from < 0 || to < 0 || main.indexOf(start, from + start.length) >= 0 ||
+      offset < 0 || admission.indexOf(statement, offset + statement.length) >= 0) {
+    throw new Error("Windows admission witness needs its unique current Main catch");
+  }
+  const line = main.slice(0, from + offset).split("\n").length;
+  const file = mainPath.replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const callsite = new RegExp("(?:\\(|\\s)" + file + ":" + line + ":\\d+(?:\\)|$)", "m");
+  const indexURL = require("node:url").pathToFileURL(path.join(path.dirname(mainPath), "index.html")).href;
+  const issues = [], restores = [], protections = [], publications = [], invocations = [];
+  const owner = require("node:crypto").randomUUID();
+  const cleanupKey = "__windowsAdmissionCleanup_" + owner;
+  const now = () => require("node:perf_hooks").performance.now();
+  const deadline = now() + 5000;
+  const expiresAt = Date.now() + 5000;
+  const bounded = async (work, label, until = deadline) => {
+    const expired = () => new Error("Admission " + label + " timed out");
+    const remaining = until - now();
+    if (remaining <= 0) throw expired();
+    let timer;
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(work),
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => reject(expired()), remaining);
+        }),
+      ]);
+      if (now() >= until) throw expired();
+      return result;
+    } finally { clearTimeout(timer); }
+  };
+  let active = null, rendererAttempted = false, rendererOwned = false, bodyError = null, outcome, before;
+  const fault = error => { issues.push(error); };
+  const observe = work => { try { return work(); } catch (error) { fault(error); } };
+  const fields = ["lastRequestId", "renderer", "rendererGeneration", "rendererPageSession",
+    "pendingId", "pendingReason", "queuedReason", "authorized", "authorizationGeneration",
+    "commitPendingId", "commitSequence", "lastDispatchToken", "continuationEpoch",
+    "updaterContinuationEpoch", "shutdownPendingContinuationCount", "updaterFreezeRetained",
+    "updateInstallStarted", "updaterDownloadInFlight", "updaterPendingCommitAttemptId",
+    "updaterAutoInstallOnAppQuit",
+    "updaterInstallAttemptId", "updaterInstallAttemptLaunchPhase", "updaterQuitBoundaryAttemptId",
+    "updaterInstallAttemptPoisoned", "updaterInstallAttemptExpiryAttemptId",
+    "updaterInstallAttemptLaunchOwner", "updaterInstallAttemptLaunchMethod",
+    "updaterInstallAttemptPositiveLaunchObserved", "updaterInstallAttemptRetrySafe",
+    "updaterInstallAttemptLaunchChildUnrefed", "updaterInstallAttemptFinalApprovalCommitted",
+    "updaterInstallAttemptFailureWhy", "updaterLastInstallAttempt", "updaterLiveAttemptIds",
+    "absorbedUserIntentId", "absorbedUserReplayScheduled", "sendFailureCount"];
+  const snapshot = () => {
+    const state = __shutdown.state();
+    return JSON.parse(JSON.stringify({ main: Object.fromEntries(fields.map(key => [key, state[key]])),
+      effects: readEffects(), latch: updater.quitAndInstallCalled,
+      helperFile: updater.downloadedUpdateHelper?.file,
+      candidate: updater.downloadedUpdateHelper?.versionInfo?.version,
+      directory: updater.installDirectory, packageFile: updater.downloadedUpdateHelper?.packageFile }));
+  };
+  const frame = wc.mainFrame;
+  const node = frame.frameTreeNodeId;
+  const currentFrame = event => {
+    const sender = event?.sender, incoming = event?.senderFrame, current = wc.mainFrame;
+    const senderMain = sender && !sender.isDestroyed() && sender.mainFrame;
+    return !win.isDestroyed() && !wc.isDestroyed() && sender && !sender.isDestroyed() &&
+      sender.id === wc.id && incoming && !incoming.isDestroyed() && current &&
+      !current.isDestroyed() && current.frameTreeNodeId === node && senderMain &&
+      !senderMain.isDestroyed() && senderMain.frameTreeNodeId === node &&
+      (incoming === senderMain || incoming.frameTreeNodeId === senderMain.frameTreeNodeId) &&
+      incoming.parent === null && current.parent === null &&
+      incoming.url === indexURL && current.url === indexURL;
+  };
+  const installRenderer = (pageSession, owner, cleanupKey, expiresAt) => {
+    // Epoch time is shared across processes; performance.now() origins are not.
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0 || remaining > 5000 || window[cleanupKey] === false) return { owned: false };
+    if (Object.prototype.hasOwnProperty.call(window, cleanupKey)) {
+      throw new Error("Admission cleanup handle already exists");
+    }
+    if (window.__windowsAdmissionWitness) return { owned: false };
+    const state = { receipts: [], errors: [], off: [], pageSession, owner, closed: false };
+    const capture = () => ({
+      pageSession: window.getReloadRequestSession(),
+      generation: window.CustomTabs.getApprovalRendererGeneration(),
+      freeze: window.CustomTabs.__shutdownFreeze(),
+    });
+    const dispose = () => {
+      if (state.closed) return;
+      state.closed = true;
+      clearTimeout(state.timer);
+      if (window.__windowsAdmissionWitness !== state) state.errors.push("Admission renderer ownership changed");
+      for (const off of state.off.splice(0)) {
+        try { off(); } catch (error) { state.errors.push(String(error)); }
+      }
+      if (window.__windowsAdmissionWitness === state) delete window.__windowsAdmissionWitness;
+    };
+    const cleanup = () => {
+      dispose();
+      clearTimeout(state.retirement);
+      const errors = state.errors.slice();
+      if (window[cleanupKey] === cleanup) delete window[cleanupKey];
+      else errors.push("Admission renderer cleanup handle changed");
+      if (errors.length) throw new Error(errors.join("; "));
+    };
+    cleanup.read = () => {
+      if (window[cleanupKey] !== cleanup || window.__windowsAdmissionWitness !== state) {
+        throw new Error("Admission renderer ownership changed");
+      }
+      return { owner, before: state.before, ...capture(),
+        receipts: state.receipts.slice(), errors: state.errors.slice() };
+    };
+    window[cleanupKey] = cleanup;
+    window.__windowsAdmissionWitness = state;
+    try {
+      state.timer = setTimeout(() => {
+        dispose();
+        // Keep disposal errors available to a delayed cleanup RPC, then retire.
+        state.retirement = setTimeout(() => {
+          if (window[cleanupKey] === cleanup) delete window[cleanupKey];
+        }, 5000);
+      }, remaining);
+      state.before = capture();
+      if (state.before.pageSession !== pageSession) throw new Error("Admission renderer page changed");
+      for (const [method, kind] of [["onUpdateStatus", "status"], ["onQuitApprovalThaw", "thaw"]]) {
+        const off = window.markaloo[method](value => {
+          try {
+            if (state.receipts.length >= 64) throw new Error("Admission renderer receipts overflowed");
+            state.receipts.push({ kind, value: value && {
+              revision: value.revision, status: value.status, error: value.error,
+              readyVersion: value.readyVersion, availableVersion: value.availableVersion,
+            }, ...capture() });
+          } catch (error) { state.errors.push(String(error)); }
+        });
+        state.off.push(off);
+        if (typeof off !== "function") throw new Error("Admission renderer disposer unavailable");
+      }
+    } catch (error) { state.errors.push(String(error)); }
+    return { owned: true, ...cleanup.read() };
+  };
+  const rendererRead = `(() => {
+    const cleanup = window[${JSON.stringify(cleanupKey)}];
+    if (typeof cleanup?.read !== "function") throw new Error("Admission renderer handle disappeared");
+    return cleanup.read();
+  })()`;
+  const wrap = (target, key, build) => {
+    const original = target[key], replacement = build(original);
+    const restore = replaceMethod(target, key, replacement);
+    protections.push(() => target[key] === replacement);
+    restores.push(() => {
+      if (target[key] !== replacement) throw new Error("Admission witness ownership changed: " + key);
+      restore();
+    });
+  };
+  try {
+    before = snapshot();
+    if (!currentFrame({ sender: wc, senderFrame: frame }) ||
+        before.main.renderer !== "ready" || !before.main.rendererPageSession ||
+        before.main.pendingId !== 0 || before.main.commitPendingId !== 0 ||
+        before.main.authorized !== false || before.main.updateInstallStarted !== false ||
+        before.main.updaterInstallAttemptId !== 0 || before.latch !== false) {
+      throw new Error("Admission witness requires a ready idle current document");
+    }
+    wrap(ipcMain, "emit", original => function (channel, ...args) {
+      let invocation = null;
+      observe(() => {
+        if (/^quit-approval-/.test(channel)) throw new Error("Unexpected admission approval ingress");
+        if (channel !== "install-update") return;
+        invocation = { authenticated: currentFrame(args[0]), returned: false };
+        invocations.push(invocation);
+        if (active || !invocation.authenticated) throw new Error("Invalid or nested admission ingress");
+        active = invocation;
+      });
+      try {
+        const result = Reflect.apply(original, this, arguments);
+        observe(() => { if (invocation) invocation.returned = true; });
+        return result;
+      } catch (error) {
+        observe(() => { if (invocation) throw new Error("Admission ingress threw", { cause: error }); });
+        throw error;
+      } finally {
+        if (invocation && active === invocation) active = null;
+      }
+    });
+    wrap(wc, "send", original => function (channel, ...args) {
+      try {
+        const result = Reflect.apply(original, this, arguments);
+        observe(() => {
+          if (/^quit-approval-/.test(channel)) throw new Error("Unexpected admission approval or thaw");
+          if (!active || channel !== "update-status") return;
+          const value = args[0], trace = {};
+          // Leave observer frames out of the bounded stack so it still reaches Main.
+          Error.captureStackTrace(trace, observe);
+          const stack = trace.stack;
+          publications.push({ invocation: active, origin: typeof stack === "string" &&
+            callsite.test(stack.replace(/\\/g, "/")), value: value && {
+              revision: value.revision, status: value.status, error: value.error,
+              readyVersion: value.readyVersion, availableVersion: value.availableVersion,
+            } });
+        });
+        return result;
+      } catch (error) {
+        observe(() => {
+          if (active && channel === "update-status") {
+            throw new Error("Admission publication did not return", { cause: error });
+          }
+        });
+        throw error;
+      }
+    });
+    rendererAttempted = true;
+    const armed = await bounded(() => exec(`(${installRenderer.toString()})(${
+      JSON.stringify(before.main.rendererPageSession)}, ${JSON.stringify(owner)}, ${JSON.stringify(cleanupKey)}, ${expiresAt})`),
+    "renderer setup");
+    rendererOwned = armed.owned === true;
+    if (armed.owned !== true || armed.owner !== owner || armed.errors.length || armed.freeze.frozen !== false ||
+        armed.generation !== before.main.rendererGeneration ||
+        !isDeepStrictEqual(armed.before.freeze, armed.freeze) ||
+        armed.before.pageSession !== armed.pageSession || armed.before.generation !== armed.generation ||
+        !Number.isSafeInteger(node)) {
+      throw new Error("Admission renderer witness did not arm cleanly: " + JSON.stringify(armed));
+    }
+    const baseline = await bounded(readUpdate, "update baseline");
+    const candidate = before.candidate;
+    if (typeof candidate !== "string" || baseline.readyVersion !== candidate ||
+        baseline.availableVersion !== candidate || baseline.canInstall !== true ||
+        !Number.isSafeInteger(baseline.revision)) {
+      throw new Error("Admission witness has no current ready candidate");
+    }
+    const publication = () => {
+      const admissionPublications = publications.filter(record => record.origin);
+      if (invocations.length !== 1 || !invocations[0].authenticated || !invocations[0].returned ||
+          admissionPublications.length !== 1 || publications.length !== 1) return null;
+      const record = admissionPublications[0], value = record.value;
+      return record.invocation === invocations[0] && record.origin &&
+        value?.status === "error" && value.error === expectedError &&
+        value.readyVersion === candidate && value.availableVersion === candidate &&
+        Number.isSafeInteger(value.revision) && value.revision > baseline.revision ? value : null;
+    };
+    if (!currentFrame({ sender: wc, senderFrame: wc.mainFrame }) ||
+        !isDeepStrictEqual(before, snapshot()) || !protections.every(owned => owned())) {
+      throw new Error("Admission dispatch lost its current document or Main protections");
+    }
+    if (now() >= deadline || Date.now() >= expiresAt) throw new Error("Admission dispatch timed out");
+    // These two metadata legs cover live Main and renderer receipts, not install IPC transport.
+    ipcMain.emit("install-update", portableInstallEvent(win));
+    if (!publication() || issues.length) throw new Error("Admission dispatch did not complete its authenticated publication");
+    let received = null;
+    const matched = await bounded(() => waitUntil(async () => {
+      received = await bounded(() => exec(rendererRead), "renderer receipt");
+      const published = publication();
+      if (issues.length || received.errors.length) return true;
+      return !!published && received.receipts.some(record => record.kind === "status" &&
+        record.pageSession === before.main.rendererPageSession &&
+        isDeepStrictEqual(record.value, published));
+    }, 5000), "receipt join");
+    const published = publication(), after = snapshot();
+    const exactReceipts = received?.receipts.filter(record => record.kind === "status" &&
+      isDeepStrictEqual(record.value, published)) || [];
+    if (!matched || !published || exactReceipts.length !== 1 || issues.length ||
+        received.errors.length || received.receipts.some(record => record.kind === "thaw") ||
+        received.owner !== owner || received.pageSession !== before.main.rendererPageSession ||
+        received.generation !== before.main.rendererGeneration ||
+        !isDeepStrictEqual(received.freeze, armed.freeze) ||
+        exactReceipts.some(record => record.pageSession !== before.main.rendererPageSession ||
+          record.generation !== before.main.rendererGeneration ||
+          !isDeepStrictEqual(record.freeze, armed.freeze)) ||
+        !currentFrame({ sender: wc, senderFrame: wc.mainFrame }) ||
+        !isDeepStrictEqual(before, after)) {
+      throw new Error("Windows admission rejection was not proven: " +
+        JSON.stringify({ invocations, publications, before, after, received, issues: issues.map(String) }));
+    }
+    outcome = { rejected: true, candidate, revision: published.revision, error: published.error };
+  } catch (error) { bodyError = error; }
+  finally {
+    for (const restore of restores.reverse()) {
+      try { restore(); } catch (error) { fault(error); }
+    }
+    if (rendererAttempted) {
+      try {
+        await bounded(() => exec(`(() => {
+          const cleanup = window[${JSON.stringify(cleanupKey)}];
+          if (cleanup === undefined) {
+            if (${JSON.stringify(rendererOwned)}) throw new Error("Admission renderer cleanup handle disappeared");
+            const remaining = ${expiresAt} - Date.now();
+            if (remaining > 0 && remaining <= 5000) {
+              window[${JSON.stringify(cleanupKey)}] = false;
+              setTimeout(() => {
+                if (window[${JSON.stringify(cleanupKey)}] === false) delete window[${JSON.stringify(cleanupKey)}];
+              }, remaining);
+            }
+            return;
+          }
+          if (typeof cleanup !== "function") throw new Error("Admission cleanup handle changed");
+          return cleanup();
+        })()`), "renderer cleanup", now() + 5000);
+      } catch (error) { fault(error); }
+    }
+  }
+  if (bodyError || issues.length) throw new AggregateError(
+    [...(bodyError ? [bodyError] : []), ...issues], "Windows admission rejection witness failed");
+  return outcome;
+}
+
 async function runWindowsInstalledLauncherScenarios(win, exec) {
   const updater = require("electron-updater").autoUpdater;
   const childProcess = require("child_process");
@@ -42157,6 +42465,43 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
   let launcherDiagnostic = null;
   // Passive route evidence, never a completion join or a replacement oracle.
   const createLauncherDiagnostic = () => {
+    const mainPath = path.resolve(__dirname, "..", "src", "main.js");
+    const mainSource = fs.readFileSync(mainPath, "utf8").replace(/\r\n/g, "\n");
+    const section = (start, end) => {
+      const from = mainSource.indexOf(start);
+      const to = mainSource.indexOf(end, from + start.length);
+      if (from < 0 || to < 0 || mainSource.indexOf(start, from + start.length) >= 0) {
+        throw new Error("Launcher diagnostic source section is missing or ambiguous: " + start);
+      }
+      return mainSource.slice(from, to);
+    };
+    const callsite = (body, statement) => {
+      const offset = body.indexOf(statement);
+      if (offset < 0 || body.indexOf(statement, offset + statement.length) >= 0) {
+        throw new Error("Launcher diagnostic callsite is missing or ambiguous: " + statement);
+      }
+      const line = mainSource.slice(0, mainSource.indexOf(body) + offset).split("\n").length;
+      const file = mainPath.replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const frame = new RegExp("(?:\\(|\\s)" + file + ":" + line + ":\\d+(?:\\)|$)", "m");
+      return stack => typeof stack === "string" && frame.test(stack.replace(/\\/g, "/"));
+    };
+    const falseStart = section("} else if (started === false) {", "\n      }\n");
+    const installedPreflight = section("function performWindowsInstalledUpdate(",
+      "\n  const attempt = watchUpdaterInstallCommit(updater);");
+    const admission = section('ipcMain.on("install-update", (event) => {',
+      "\n  updateSchedule.beginManualAction();");
+    const thawCallsite = callsite(falseStart, "releaseShutdownFreeze();");
+    const preflightCallsite = callsite(installedPreflight,
+      'updateState.fail(new Error("The update could not start: " + err.message));');
+    const admissionCallsite = callsite(admission,
+      'updateState.fail(new Error(\n        "The update could not start: " + error.message,\n      ));');
+    const failures = section("function windowsInstalledUpdateLaunchPlan(",
+      "\nfunction reportInstalledUpdateLaunchFailure(") +
+      section("function assertWindowsUpdateAdmission(", "\nfunction performWindowsInstalledUpdate(");
+    const preflightErrors = new Set(Array.from(failures.matchAll(
+      /throw new Error\(\s*("(?:[^"\\]|\\.)*")\s*,?\s*\);/g),
+    match => "The update could not start: " + JSON.parse(match[1])));
+    if (!preflightErrors.size) throw new Error("Launcher diagnostic preflight errors are unavailable");
     const records = [], invocations = [], errors = [], routes = [], assertions = [];
     let sequence = 0, epoch = 0, cleanup = false, resetting = false, dropped = 0;
     let prepared = null, stage = "setup", enabledTiming = false;
@@ -42206,17 +42551,17 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
         ...data, ...snapshot(), stack: stack === null ? null : text(stack) };
       append(records, record);
       if (kind === "assertion" && data.ok === false && assertions.length < 8) assertions.push(record);
-      // These source locations are pinned by the existing Main binding and Source controls.
-      // Thaw has no wire id: only this exact post-return route can be correlated.
+      // Thaw has no wire id. Admission failure cannot stand in for a failed continuation.
       if (!cleanup && !resetting && kind === "send:return" && data.channel === "quit-approval-thaw" &&
-          /[\\/]src[\\/]main\.js:12736:\d+/.test(record.stack)) {
+          thawCallsite(record.stack)) {
         const id = record.state.lastRequestId;
         const entry = record.timing.find(item => item.id === id && item.reason === "update-install" &&
           Number.isFinite(item.continuationInvokedAt));
         const publication = records.find(item => item.epoch === epoch && !item.cleanup && !item.resetting &&
           item.kind === "send:return" && item.channel === "update-status" &&
-          item.payload?.error === "The downloaded update is incomplete. Download it again." &&
-          item.state.lastRequestId === id && /[\\/]src[\\/]main\.js:14141:\d+/.test(item.stack) &&
+          item.payload?.status === "error" && preflightErrors.has(item.payload?.error) &&
+          item.state.lastRequestId === id && preflightCallsite(item.stack) &&
+          !admissionCallsite(item.stack) &&
           item.state.rendererGeneration === record.state.rendererGeneration &&
           item.state.rendererPageSession === record.state.rendererPageSession &&
           item.timing.some(clock => clock.id === id &&
@@ -42262,7 +42607,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
             }
             if (!ingress && (channel === "quit-approval-thaw" ||
                 (channel === "update-status" && args[0]?.status === "error" &&
-                  args[0]?.error === "The downloaded update is incomplete. Download it again."))) {
+                  preflightErrors.has(args[0]?.error)))) {
               stack = new Error().stack;
             }
             note(ingress ? "emit:return" : "send:return", { channel,
@@ -42380,7 +42725,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
         return value;
       };
       for (const [method, kind] of [["onQuitApprovalThaw", "thaw"], ["onUpdateStatus", "status"]]) {
-        const off = window.folia[method](value => record(kind, value));
+        const off = window.markaloo[method](value => record(kind, value));
         state.off.push(off);
         if (typeof off !== "function") throw new Error("Renderer diagnostic disposer unavailable");
       }
@@ -42470,7 +42815,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     let prefix = "";
     try { prefix = `(${observeLauncherRenderer.toString()})(${JSON.stringify(launcherDiagnosticToken)});`; }
     catch { launcherDiagnostic?.note("renderer installation unavailable"); }
-    return exec(prefix + `window.folia.installUpdate(); null;`);
+    return exec(prefix + `window.markaloo.installUpdate(); null;`);
   };
 
   let launcherFailure = null;
@@ -42493,7 +42838,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     setField("autoRunAppAfterInstall", true);
     setField("installDirectory", "");
     // runShutdownScenarios temporarily exercises BaseUpdater as Linux; restore
-    // the Windows production configuration before testing Folia's launcher.
+    // the Windows production configuration before testing Markaloo's launcher.
     setField("autoInstallOnAppQuit", false);
 
     // update-downloaded occurs before downloadUpdate's promise tail. Its path
@@ -42545,15 +42890,14 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
     await reset();
     launcherDiagnostic?.stage("unsupported-directory");
     setField("installDirectory", "C:\\Unsupported Directory");
-    const directoryRequestBefore = __shutdown.state().lastRequestId;
-    await start();
-    const unsupportedDirectoryRejected = await waitUntil(
-      () =>
-        launcherPoll("unsupported-directory",
-          __shutdown.state().lastRequestId > directoryRequestBefore &&
-          __shutdown.state().updaterInstallAttemptId === 0),
-      5000,
-    );
+    const admissionEffects = () => ({
+      children: children.length, spawns: spawnCalls.length, quits: rig.quits,
+      closes: rig.closes, quitEvents: rig.quitEvents.length, dialogs: rig.dialogs.length,
+    });
+    const unsupportedDirectoryRejected = (await expectWindowsAdmissionRejection({
+      win, exec, updater, readUpdate: updaterFixture.read, readEffects: admissionEffects,
+      expectedError: "The update could not start: custom NSIS install directories are unsupported by the verified launcher",
+    })).rejected;
     const afterUnsupportedDirectory = __shutdown.state();
     launcherDiagnostic?.stage("unsupported-package");
     setField("installDirectory", "");
@@ -42562,15 +42906,10 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
       downloadedFileInfo: { isAdminRightsRequired: false },
       packageFile: packagePath,
     });
-    const packageRequestBefore = __shutdown.state().lastRequestId;
-    await start();
-    const unsupportedPackageRejected = await waitUntil(
-      () =>
-        launcherPoll("unsupported-package",
-          __shutdown.state().lastRequestId > packageRequestBefore &&
-          __shutdown.state().updaterInstallAttemptId === 0),
-      5000,
-    );
+    const unsupportedPackageRejected = (await expectWindowsAdmissionRejection({
+      win, exec, updater, readUpdate: updaterFixture.read, readEffects: admissionEffects,
+      expectedError: "The update could not start: NSIS web-installer packages are unsupported by the verified launcher",
+    })).rejected;
     const afterUnsupportedPackage = __shutdown.state();
     const ordinaryHelper = { ...updater.downloadedUpdateHelper };
     delete ordinaryHelper.packageFile;
@@ -42627,7 +42966,7 @@ async function runWindowsInstalledLauncherScenarios(win, exec) {
             "--updated",
             "--force-run",
           ]) &&
-        directBeforeSpawn.updaterInstallAttemptLaunchOwner === "folia" &&
+        directBeforeSpawn.updaterInstallAttemptLaunchOwner === "markaloo" &&
         directBeforeSpawn.updaterInstallAttemptLaunchMethod === "direct" &&
         directBeforeSpawn.updaterInstallAttemptPositiveLaunchObserved === false &&
         directBeforeSpawn.updaterInstallAttemptFinalApprovalCommitted === true &&
@@ -43672,7 +44011,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       const state = {
         owner: ${JSON.stringify(requestCounterOwner)}, count: 0, off: null,
       };
-      state.off = window.folia.onQuitApprovalRequest(() => { state.count += 1; });
+      state.off = window.markaloo.onQuitApprovalRequest(() => { state.count += 1; });
       window.__ordinaryShutdownRequestCounter = state;
       return true;
     })()`);
@@ -43887,7 +44226,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     const frozenMutationMatrix = await exec(`
       (() => {
         const deliver = (channel, data) => {
-          const receivers = window.FoliaDocumentEvents.listeners(channel);
+          const receivers = window.MarkalooDocumentEvents.listeners(channel);
           if (receivers.length !== 1) throw new Error('Frozen mutation requires one installed ' + channel + ' receiver');
           receivers[0](undefined, data);
         };
@@ -44499,7 +44838,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
 
     // Reset does not make the controller cold or grant download readiness.
     // Keep the genuine initial public state before borrowing any providers.
-    const initialUpdateState = await exec("window.folia.getUpdateState()");
+    const initialUpdateState = await exec("window.markaloo.getUpdateState()");
     automaticUpdatesAvailable = actualHostPlatform !== "darwin" &&
       initialUpdateState.manualOnly !== true;
     if (!automaticUpdatesAvailable) {
@@ -44516,8 +44855,8 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       installs = 0;
       if (!initialUpdateState.readyVersion && !initialUpdateState.canInstall) {
         const beforePreflight = __shutdown.state().lastRequestId;
-        await exec("window.folia.installUpdate(); null");
-        await exec("window.folia.getVersion()");
+        await exec("window.markaloo.installUpdate(); null");
+        await exec("window.markaloo.getVersion()");
         check(
           "an install press with nothing downloaded asks nothing and starts nothing",
           installs === 0 && rig.dialogs.length === 0 &&
@@ -44550,7 +44889,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       await prepareUpdateCase("ORDINARY_INSTALL_CANCEL_RETRY");
       const firstInstallDialog = holdDialog();
       rig.answer = () => firstInstallDialog.promise;
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       const installAsked = await waitUntil(() => rig.dialogs.length === 1, 10000);
       check(
         "an update install is deferred behind the same approval, installing nothing first",
@@ -44571,13 +44910,13 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       );
       rig.answer = 0;
       const retryAfter = __shutdown.state().lastRequestId;
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       await waitForOrdinaryShutdownContinuation("update-install", retryAfter);
       const beforeRepeatedInstall = {
         dialogs: rig.dialogs.length, lastRequestId: __shutdown.state().lastRequestId,
       };
-      await exec("window.folia.installUpdate(); null");
-      await exec("window.folia.getVersion()");
+      await exec("window.markaloo.installUpdate(); null");
+      await exec("window.markaloo.getVersion()");
       check(
         "an approved update installs exactly once, however often it is asked for",
         installs === 1,
@@ -44602,7 +44941,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       installEmitsPublicCommit = true;
       rig.driveQuitLifecycle = true;
       rig.answer = 0;
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       if (!await waitUntil(() => rig.quits === 2, 10000)) {
         throw new Error("Ordinary public updater boundary did not reach its approved quit");
       }
@@ -44625,7 +44964,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       setUpdaterLatch(true);
       rig.answer = 0;
       const refusedAfter = __shutdown.state().lastRequestId;
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       const refusedInvocation = await waitForOrdinaryShutdownContinuation(
         "update-install", refusedAfter);
       await joinDialogs();
@@ -44662,7 +45001,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       if (!await waitUntil(() => rig.dialogs.length === 1, 10000)) {
         throw new Error("Ordinary queued-update fixture did not hold its first close question");
       }
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       const installQueued = await waitUntil(
         () => __shutdown.state().queuedReason === "update-install", 5000);
       check(
@@ -44703,7 +45042,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       if (!await waitUntil(() => rig.dialogs.length === 1, 10000)) {
         throw new Error("Ordinary declined-close fixture did not hold its first question");
       }
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       if (!await waitUntil(() => __shutdown.state().queuedReason === "update-install", 5000)) {
         throw new Error("Ordinary declined-close fixture did not queue its real install request");
       }
@@ -44725,7 +45064,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       installThrows = true;
       rig.answer = 0;
       const throwingAfter = __shutdown.state().lastRequestId;
-      await exec("window.folia.installUpdate(); null");
+      await exec("window.markaloo.installUpdate(); null");
       await waitForOrdinaryShutdownContinuation("update-install", throwingAfter);
       await joinDialogs();
       installThrows = false;
@@ -45053,7 +45392,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       ipcMain.prependListener("open-mermaid-popup", capturePopupReceipt);
       app.on("browser-window-created", capturePopupCreation);
       await exec(`
-        window.folia.openMermaidPopup(${JSON.stringify(popupPayload)});
+        window.markaloo.openMermaidPopup(${JSON.stringify(popupPayload)});
         null;
       `);
       const newWindows = () => BrowserWindow.getAllWindows().filter(
@@ -45162,9 +45501,9 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
       }
     };
     const sendApproval = payload =>
-      exec(`window.folia.respondToQuitApproval(${JSON.stringify(payload)}); null`);
+      exec(`window.markaloo.respondToQuitApproval(${JSON.stringify(payload)}); null`);
     const sendCommitted = payload =>
-      exec(`window.folia.respondToQuitCommit(${JSON.stringify(payload)}); null`);
+      exec(`window.markaloo.respondToQuitCommit(${JSON.stringify(payload)}); null`);
     const requestFinished = async () => {
       await joinDialogs();
       if (!await waitUntil(() => __shutdown.state().pendingId === 0 &&
@@ -45190,7 +45529,7 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
           readyBefore.rendererPageSession.length <= 128,
         JSON.stringify({ request: stale.request, readyBefore, wrongReadyGeneration }),
       );
-      await exec(`window.folia.announceQuitApprovalReady({
+      await exec(`window.markaloo.announceQuitApprovalReady({
         gen: ${wrongReadyGeneration},
         pageSession: ${JSON.stringify(readyBefore.rendererPageSession)}
       }); null`);
@@ -45691,17 +46030,17 @@ async function runShutdownScenarios(win, exec, sentinel, consoleAttribution = nu
     };
     await withOrdinaryShutdownCleanup(async () => {
       await impostor.loadFile(impostorFile);
-      await impostor.webContents.executeJavaScript("typeof window.folia.respondToQuitApproval");
+      await impostor.webContents.executeJavaScript("typeof window.markaloo.respondToQuitApproval");
       foreignApproval = await beginHeldApproval();
       const before = __shutdown.state();
       ipcMain.on("quit-approval-ready", observeForeignReady);
       ipcMain.on("quit-approval-response", observeForeignResponse);
       await impostor.webContents.executeJavaScript(`
-        window.folia.announceQuitApprovalReady({
+        window.markaloo.announceQuitApprovalReady({
           gen: ${before.rendererGeneration},
           pageSession: ${JSON.stringify(before.rendererPageSession)}
         });
-        window.folia.respondToQuitApproval(${JSON.stringify(foreignApproval.response)});
+        window.markaloo.respondToQuitApproval(${JSON.stringify(foreignApproval.response)});
         null;
       `);
       const delivered = await waitUntil(() => foreignReady === 1 && foreignResponse === 1, 5000);
@@ -46028,7 +46367,7 @@ async function runSameDocumentShutdownScenarios(win, exec) {
             observed = true;
             await installDialogBatchPageObservation(exec);
             restoreChooser = replaceMethod(dialog, "showOpenDialog", chooser);
-            await exec("window.folia.openFileDialog(); null");
+            await exec("window.markaloo.openFileDialog(); null");
             if (!await waitForCondition(exec, `
               window.__dialogBatchNative.processors.length === 1
             `, 8000)) throw new Error("Semantic native primary was not delivered");

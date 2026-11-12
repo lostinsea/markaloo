@@ -48,12 +48,27 @@ Both the portable exe and the unpacked binary take their name from
 `build.productName`, so the running process appears as **`Markaloo`** in Task
 Manager and `Get-Process`.
 
-New Windows installations default to `C:\Program Files\lostinsea\Markaloo`.
-An upgrade keeps the previous selected folder, even if it is named `Folia`;
-the installer does not add a nested `Markaloo` folder or move an existing app.
-The app ID and private profile stay unchanged so settings and tabs survive.
-Before replacing files, the installer checks for both `Markaloo.exe` and the
-previous `Folia.exe`, including when PowerShell process detection is unavailable.
+- Windows uses the normal electron-builder installer and mode/directory selection.
+- Markaloo registers `io.github.lostinsea.markaloo`; its default profile is
+  `%APPDATA%\Markaloo`. Development uses `%APPDATA%\Markaloo-dev`.
+- On the first normal packaged Windows startup, saved Folia settings are copied
+  before Main or browser storage opens. Existing Markaloo state is never merged
+  or overwritten. Folia data stays unchanged.
+- A busy source, malformed settings or incomplete copy stops startup with a
+  warning. Close Folia and retry; do not delete the original profile.
+- Where the pre-write hook runs, setup first tries the registered Folia
+  uninstaller with stock data-preserving flags. Removal may happen before
+  settings-copy success. No uninstaller is launched by Markaloo after installation.
+- Elevated setup skips per-user Folia removal. Removal also refuses an install
+  folder that overlaps the current user's default Folia/Markaloo profiles.
+  Setup cannot discover an arbitrary profile relocation.
+- Failed or unsupported removal shows a warning; setup can continue with Folia
+  still installed. Retained Folia settings are still considered on first launch.
+- The custom running-app hook refuses busy Markaloo/Folia processes without
+  closing them. Ordinary assisted all-users elevation skips this hook in both
+  instances and warns that Folia removal was skipped. Save work and close those
+  applications yourself before running setup.
+- The source checks do not qualify an installed upgrade or a native Windows run.
 
 ## Alternative Build Options
 
@@ -236,8 +251,8 @@ proxy's CA into the trust store instead.
   toggle is gated, because the renderer runs with `nodeIntegration: true` and so
   the console is a Node REPL with the user's full filesystem rights — a shipped
   build should not hand that to whoever is at the keyboard on one keystroke.
-- Start the installed app with `FOLIA_DEVTOOLS=1` in the environment to re-enable
-  it: `$env:FOLIA_DEVTOOLS="1"; & "C:\path\to\Markaloo.exe"`.
+- Start the installed app with `Markaloo_devtools=1` in the environment to re-enable
+  it: `$env:Markaloo_devtools="1"; & "C:\path\to\Markaloo.exe"`.
 - Electron's default application menu is removed at startup as well. It is never
   displayed — every window already calls `setMenu(null)` — but its `View` submenu
   binds Toggle Developer Tools to `Ctrl+Shift+I`, which was measured to work on a
@@ -256,15 +271,14 @@ file temporarily, close any existing Markaloo process and set the exact value `1
 in the terminal that starts the new process:
 
 ```powershell
-$env:FOLIA_DIAGNOSTIC_LOG = "1"
+$env:MARKALOO_DIAGNOSTIC_LOG = "1"
 & "C:\path\to\Markaloo.exe"
 ```
 
 The file is in the process's actual `userData` directory: normally
-`%APPDATA%\Folia\debug.log` for an installed app and
-`%APPDATA%\Folia-dev\debug.log` for `npm start`; an explicitly relocated profile
-keeps its own location. These old directory names intentionally keep existing
-settings, tabs and the single-instance lock when the display name changes.
+`%APPDATA%\Markaloo\debug.log` for an installed app and
+`%APPDATA%\Markaloo-dev\debug.log` for `npm start`; an explicitly relocated profile
+keeps its own location.
 Opt-in appends rather than erasing an existing log.
 This is an unbounded, unredacted troubleshooting log: it can contain local
 paths, arguments and raw updater errors. Review it before sharing; Markaloo adds
@@ -273,7 +287,7 @@ no automatic log-upload path. Rotation and redaction remain separate work.
 Reproduce the issue, close Markaloo, then remove the switch from that terminal:
 
 ```powershell
-Remove-Item Env:\FOLIA_DIAGNOSTIC_LOG -ErrorAction SilentlyContinue
+Remove-Item Env:\MARKALOO_DIAGNOSTIC_LOG -ErrorAction SilentlyContinue
 ```
 
 Restart without the switch to stop file logging; removing it cannot change
@@ -349,8 +363,8 @@ installers. `electron-updater` reads the former at runtime and fetches the
 latter from the release assets. Verified on a real build: `app-update.yml`
 resolves to `github.com/lostinsea/markaloo`. The former
 `github.com/lostinsea/folia` feed still redirects to this repository, so
-existing installers can find their updates. The installed app keeps the
-`folia-updater` channel to retain update compatibility.
+existing installers can find their updates. This is a release-feed URL,
+not an Electron IPC channel.
 
 **It must never point at a parent repo.** `OmniCoreST/omnicore-markdown-viewer`
 and `yumedzi/markdown-viewer` publish their own releases; aiming the feed at

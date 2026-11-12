@@ -85,6 +85,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = contextMenuUtils;
 }
 if (typeof window !== 'undefined') {
-  window.FoliaContextMenu = contextMenuUtils;
+  window.MarkalooContextMenu = contextMenuUtils;
 }
 })();

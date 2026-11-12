@@ -30,7 +30,7 @@ function prepare(workspace, outputRoot, run) {
     fs.copyFileSync(path.join(__dirname, name), path.join(outputRoot, name),
       fs.constants.COPYFILE_EXCL);
   }
-  const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "folia-sec08-ci-fixtures-"));
+  const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-sec08-ci-fixtures-"));
   const owner = `${randomUUID()}\n`;
   fs.writeFileSync(path.join(storageRoot, "owner.txt"), owner, { flag: "wx" });
   const storage = fs.statSync(storageRoot);
@@ -65,7 +65,7 @@ if (require.main === module) {
   assert.equal(process.env.GITHUB_ACTIONS, "true", "hosted execution must run in Actions");
   assert.equal(process.env.GITHUB_RUN_ATTEMPT, "1", "this unit does not authorize workflow reruns");
   assert.match(process.env.GITHUB_RUN_ID || "", /^[0-9]+$/);
-  const outputRoot = path.join(process.env.RUNNER_TEMP, "folia-sec08-ci-results");
+  const outputRoot = path.join(process.env.RUNNER_TEMP, "markaloo-sec08-ci-results");
   const declaration = prepare(process.env.GITHUB_WORKSPACE, outputRoot, {
     runId: process.env.GITHUB_RUN_ID, attempt: 1, runner: "windows-latest",
     job: process.env.GITHUB_JOB,

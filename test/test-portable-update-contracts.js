@@ -33,7 +33,7 @@ const fixtureSource = between(source, "function createInstalledUpdaterFixture(",
 const closerSource = between(closerInputSource, "async function closeOwnedFixtureTabs(",
   "\nasync function run(win)");
 assert.equal(createHash("sha256").update(closerSource).digest("hex"),
-  "8771b1324757f3f6cc88e98cfc66cc0cbbf7fc8a70d628a4d91494f6ffa33aef",
+  "25299256f98a6872bbba85a33065b786ed112ab4188918d1283241ff8dc44844",
   "portable controls use the actual selected captured-target supplier");
 const installSource = between(actorSource, "  const startInstall =",
   "\n\n  try {");
@@ -44,7 +44,7 @@ const rigSource = between(source, "function replaceMethod(",
 const validatorSource = between(mainSource, "  validateReady: artifact => {",
   "\n  onDownloadStart:").slice("  validateReady: ".length).trim().replace(/,$/, "");
 assert.equal(createHash("sha256").update(fixtureSource).digest("hex"),
-  "7d15a9ac97e54fac695054382e9649ec21a510348c4baf90b6bf058d6a97b92c",
+  "4f867f646e1c3c584d852796918f0abcf36aae0723ef50be22c5be522d64ffde",
   "portable uses the exact selected supplier, including both separating LFs");
 const producerModule = { exports: {} };
 vm.runInNewContext(producer, { require: projectRequire, module: producerModule });
@@ -84,7 +84,7 @@ function harness({ platform = "darwin", override = {}, rendererReady = true } = 
   });
   controller.attach(updater);
   updater.on("update-available", controller.observeAvailable);
-  const window = { folia: {
+  const window = { markaloo: {
     getUpdateState() {
       trace.push("read");
       return { ...controller.snapshot(), ...override };
@@ -215,7 +215,7 @@ function documents() {
         }
       },
     },
-    folia: {
+    markaloo: {
       queryDocumentDeletionState: () => ({
         known: options.known, unresolved: options.unresolved, revision: 1,
       }),
@@ -406,8 +406,8 @@ function automatic({ pendingTail = false, initialOwner = null } = {}) {
   });
   controller.attach(updater);
   updater.on("update-available", controller.observeAvailable);
-  const folia = h.context.window.folia;
-  Object.assign(folia, {
+  const markaloo = h.context.window.markaloo;
+  Object.assign(markaloo, {
     getUpdateState() { h.trace.push("read-update"); return controller.snapshot(); },
     checkForUpdates() { h.trace.push("public-check"); void controller.check(); },
     downloadUpdate() { h.trace.push("public-download"); void controller.download(); },
@@ -677,7 +677,7 @@ async function main() {
   });
   await check("a rejected eligibility read still restores the unused selected fixture once", async () => {
     const h = harness();
-    h.context.window.folia.getUpdateState = () => { throw new Error("ELIGIBILITY_READ"); };
+    h.context.window.markaloo.getUpdateState = () => { throw new Error("ELIGIBILITY_READ"); };
     await assert.rejects(h.run(), error => /ELIGIBILITY_READ/.test(messages(error)));
     h.assertRestored();
   });
@@ -702,14 +702,14 @@ async function main() {
       exec: async code => {
         calls.push(code);
         const page = vm.createContext({
-          window: { folia: { installUpdate() { calls.push("public-install"); } } },
+          window: { markaloo: { installUpdate() { calls.push("public-install"); } } },
         });
         return vm.runInContext(code, page);
       },
     });
     vm.runInContext(installSource + "\nglobalThis.start = startInstall;", context);
     await context.start();
-    assert.deepEqual(calls, ["window.folia.installUpdate(); null;", "public-install"]);
+    assert.deepEqual(calls, ["window.markaloo.installUpdate(); null;", "public-install"]);
   });
   await check("portable cleanup captures the actual lazy editor text without changing its older cache", async () => {
     const h = documents();

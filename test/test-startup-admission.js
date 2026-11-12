@@ -43,7 +43,7 @@ const os = require("os");
 const { randomBytes } = require("crypto");
 const { pathToFileURL } = require("url");
 const { prepareOwnedRestartDirectory } = require("./test-restart-directory");
-if (process.env.FOLIA_DIAGNOSTIC_LOG === "1" || process.env.PORTABLE_EXECUTABLE_DIR) {
+if (process.env.MARKALOO_DIAGNOSTIC_LOG === "1" || process.env.PORTABLE_EXECUTABLE_DIR) {
   fatal(new Error("Startup does not admit raw diagnostics or a portable-install override"));
 }
 const token = randomBytes(32).toString("hex");
@@ -53,12 +53,12 @@ const batch = path.join(runs, "run-" + token);
 fs.mkdirSync(batch);
 const temp = prepareOwnedRestartDirectory(root, "files", batch, "temp");
 const profile = prepareOwnedRestartDirectory(root, "files", batch,
-  path.join("temp", "folia-test-userdata", "test-startup-perf"));
+  path.join("temp", "markaloo-test-userdata", "test-startup-perf"));
 const beforeIsolation = prepareOwnedRestartDirectory(root, "files", batch, "before-isolation");
 const appData = prepareOwnedRestartDirectory(root, "files", batch, "app-data");
 // Exercise the real legacy dev redirect safely if it regresses. The original
 // path assertions must see that move, not a fabricated failure after refusal.
-const devProfile = prepareOwnedRestartDirectory(root, "files", batch, path.join("app-data", "Folia-dev"));
+const devProfile = prepareOwnedRestartDirectory(root, "files", batch, path.join("app-data", "Markaloo-dev"));
 const ownerPath = path.join(batch, ".startup-owner");
 fs.writeFileSync(ownerPath, token, { flag: "wx" });
 const ownerIdentity = fs.lstatSync(ownerPath);
@@ -257,7 +257,7 @@ app.on("web-contents-created", (_event, contents) => {
     new MutationObserver(() => { if (!clear()) refuse(); }).observe(document, {
       childList: true, subtree: true, attributes: true, attributeFilter: ["open", "class"]
     });
-    Object.defineProperty(window, "__foliaStartupGuard", { value: Object.freeze({ inspect }) });
+    Object.defineProperty(window, "__markalooStartupGuard", { value: Object.freeze({ inspect }) });
     if (!clear()) refuse();
   })()`;
   contents.on("console-message", details => {
@@ -334,7 +334,7 @@ async function inspectPage() {
     throw new Error("Startup no longer owns its Main document");
   }
   const frame = mainContents.mainFrame;
-  const result = await mainContents.executeJavaScript("window.__foliaStartupGuard?.inspect()");
+  const result = await mainContents.executeJavaScript("window.__markalooStartupGuard?.inspect()");
   if (!result || result.token !== token || result.contentsId !== mainContents.id ||
       result.url !== indexURL || result.topFrame !== true || result.guarded !== true ||
       result.clear !== true || mainContents.mainFrame !== frame || frame.isDestroyed()) {
@@ -349,7 +349,7 @@ async function execute(code) {
       owner.renderer !== "ready" || !Number.isSafeInteger(owner.rendererGeneration) ||
       owner.rendererGeneration <= 0) throw new Error("Startup owner is not ready");
   await inspectPage();
-  const generation = await mainContents.executeJavaScript("window.folia.getQuitApprovalGeneration()");
+  const generation = await mainContents.executeJavaScript("window.markaloo.getQuitApprovalGeneration()");
   const sameOwner = () => {
     const current = shutdown.state();
     if (!page.acknowledged || page.epoch !== epoch || page.frame !== mainContents.mainFrame ||

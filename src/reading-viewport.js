@@ -110,5 +110,5 @@
 
   const readingViewport = Object.freeze({ createReadingViewport });
   if (typeof module !== "undefined" && module.exports) module.exports = readingViewport;
-  if (typeof window !== "undefined") window.FoliaReadingViewport = readingViewport;
+  if (typeof window !== "undefined") window.MarkalooReadingViewport = readingViewport;
 })();

@@ -83,10 +83,10 @@ const CLOSE_MENU = `(() => { document.body.click(); return true; })()`;
 // are only trustworthy if the real path is what put them there.
 function applyState(mode, scheme) {
   return `(() => {
-    const K = window.foliaThemes.SCHEME_KEYS;
+    const K = window.markalooThemes.SCHEME_KEYS;
     if (${JSON.stringify(!!scheme)}) {
       localStorage.setItem('themeMode', ${JSON.stringify(mode)});
-      window.foliaThemes.setScheme(${JSON.stringify(scheme)});
+      window.markalooThemes.setScheme(${JSON.stringify(scheme)});
     } else {
       localStorage.removeItem(K.light);
       localStorage.removeItem(K.dark);

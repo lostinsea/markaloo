@@ -92,7 +92,7 @@ function fixture(options = {}) {
   page.window = page;
   const context = vm.createContext(page);
   const exec = code => vm.runInContext(code, context, { timeout: 1000 });
-  page.folia = {
+  page.markaloo = {
     async openFileDialog() {
       const selected = await dialog.showOpenDialog({}, { properties: ["multiSelections"] });
       assert.deepEqual(selected.filePaths, [filePath]);
@@ -185,7 +185,7 @@ async function activeCloseLayoutContracts() {
           retired.add(owner.documentRef);
           return { retired: true };
         },
-        folia: { saveSessionLayout: async layout => {
+        markaloo: { saveSessionLayout: async layout => {
           calls.push(layout);
           if (calls.length === 1) await durable.promise;
           else if (layout.entries.some(entry => retired.has(entry.documentRef))) {

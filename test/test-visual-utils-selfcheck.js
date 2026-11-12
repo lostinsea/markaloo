@@ -1028,9 +1028,9 @@ app.whenReady().then(async () => {
     const childHome = tempDir("mdv-selfcheck-child-");
     // Stable basename: test-userdata-isolation derives the child's profile
     // directory from the script name, so a randomised name would leak a fresh
-    // profile under folia-test-userdata on every run - the same class of leak
+    // profile under markaloo-test-userdata on every run - the same class of leak
     // this section exists to close.
-    const childScript = pathx.join(childHome, "folia-temp-sweep-child.js");
+    const childScript = pathx.join(childHome, "markaloo-temp-sweep-child.js");
     const childReport = pathx.join(childHome, "report.json");
     // NOTE FOR EDITORS: assembled line by line rather than as a template
     // literal. A backtick or a dollar-brace inside a nested literal terminates
@@ -1186,7 +1186,7 @@ app.whenReady().then(async () => {
     // is registered AFTER the utils require on purpose, the mirror image of
     // the discriminator above: here the hook must have run FIRST.
     const nodeHome = tempDir("mdv-selfcheck-node-");
-    const nodeScript = pathx.join(nodeHome, "folia-temp-sweep-node.js");
+    const nodeScript = pathx.join(nodeHome, "markaloo-temp-sweep-node.js");
     const nodeReport = pathx.join(nodeHome, "report.json");
     // NOTE FOR EDITORS: no backtick and no dollar-brace inside this array.
     fsx.writeFileSync(
@@ -1265,7 +1265,7 @@ app.whenReady().then(async () => {
     const failedSweepHome = tempDir("mdv-selfcheck-failed-sweep-");
     const failedSweepScript = pathx.join(
       failedSweepHome,
-      "folia-temp-sweep-failure-child.js",
+      "markaloo-temp-sweep-failure-child.js",
     );
     const failedSweepReport = pathx.join(failedSweepHome, "report.json");
     fsx.writeFileSync(

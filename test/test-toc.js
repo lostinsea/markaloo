@@ -121,7 +121,7 @@ app.once("browser-window-created", (_event, created) => {
 });
 require("../src/main.js");
 
-directory = tempDir("folia-toc-");
+directory = tempDir("markaloo-toc-");
 // Both shared sweeps run too early for a still-watched fixture. Re-register
 // only after the observed owner and its webContents are verifiably destroyed.
 registeredTempDirs.delete(directory);

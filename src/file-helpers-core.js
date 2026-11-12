@@ -236,6 +236,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = fileHelpersCore;
 }
 if (typeof window !== 'undefined') {
-  window.FoliaFileHelpers = fileHelpersCore;
+  window.MarkalooFileHelpers = fileHelpersCore;
 }
 })();

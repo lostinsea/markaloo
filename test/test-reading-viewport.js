@@ -329,9 +329,14 @@ check("ownership never certifies arrival, travel or a history commit",
 const browser = { window: {} };
 vm.runInNewContext(fs.readFileSync(require.resolve("../src/reading-viewport"), "utf8"), browser);
 check("the classic browser export matches the CommonJS factory contract",
-  typeof browser.window.FoliaReadingViewport?.createReadingViewport === "function" &&
-  Object.isFrozen(browser.window.FoliaReadingViewport));
+  typeof browser.window.MarkalooReadingViewport?.createReadingViewport === "function" &&
+  Object.isFrozen(browser.window.MarkalooReadingViewport));
 
-const passed = results.filter(Boolean).length;
-console.log(`=== ${passed}/${results.length} passed ===`);
-if (passed !== results.length) process.exitCode = 1;
+require("./reading-viewport-lifecycle-controls")(check).catch(error => {
+  console.log(error.stack);
+  check("actual-source lifecycle controls complete without unexpected faults", false);
+}).finally(() => {
+  const passed = results.filter(Boolean).length;
+  console.log(`=== ${passed}/${results.length} passed ===`);
+  if (passed !== results.length) process.exitCode = 1;
+});

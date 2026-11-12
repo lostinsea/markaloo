@@ -20,9 +20,10 @@
  *      by an ancestor. These become ordinary deterministic assertions.
  *
  *   2. captureScreenshot() - screenshots as *artifacts*, never as baselines.
- *      Written to a gitignored screenshots/ directory on every run and on
- *      failure, so a human (or an agent that can read images) can look at them
- *      when something breaks. Nothing asserts on their contents.
+ *      Written to a gitignored screenshots/ directory by default, or a
+ *      caller-owned evidence directory, so a human (or an agent that can read
+ *      images) can look at them when something breaks. Nothing asserts on
+ *      their contents.
  *
  * Anything discovered via (2) should be converted into an assertion in (1) so
  * that the same bug can never need a screenshot again.
@@ -448,6 +449,7 @@ async function settleFrame(win) {
 
 /**
  * Capture a screenshot as a debugging artifact.
+ * The optional directory keeps captures in a caller-owned evidence root.
  *
  * Never compared against a baseline - see the module comment. Capture failures
  * are swallowed deliberately: a harness must not fail because a screenshot
@@ -464,7 +466,7 @@ async function settleFrame(win) {
  *     having produced a frame yet, not a permanent condition);
  *   - if every attempt fails, DELETE the destination so the gap is visible.
  */
-async function captureScreenshot(win, name, ownedHidden = false) {
+async function captureScreenshot(win, name, ownedHidden = false, directory = SHOT_DIR) {
   let safe = "unnamed";
   let file = null;
   let lastErr = null;
@@ -473,7 +475,7 @@ async function captureScreenshot(win, name, ownedHidden = false) {
     // A hostile or non-string name is a capture failure rather than a harness
     // failure, matching the ordinary capture-error contract.
     safe = String(name).replace(/[^a-z0-9._-]+/gi, "-");
-    file = path.join(SHOT_DIR, safe + ".png");
+    file = path.join(directory, safe + ".png");
 
     for (let attempt = 0; attempt < CAPTURE_RETRIES; attempt++) {
       try {
@@ -481,7 +483,7 @@ async function captureScreenshot(win, name, ownedHidden = false) {
           lastErr = new Error("window already destroyed");
           break;
         }
-        fs.mkdirSync(SHOT_DIR, { recursive: true });
+        fs.mkdirSync(directory, { recursive: true });
         let img;
         if (ownedHidden === true) {
           img = await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
@@ -654,6 +656,7 @@ function withTimeout(p, ms, tag) {
  * @param {BrowserWindow} win
  * @param {object} [opts]
  * @param {string} [opts.label]      prefix for screenshot filenames
+ * @param {string} [opts.screenshotDirectory] caller-owned capture directory; defaults to screenshots/
  * @param {RegExp[]} [opts.ignore]   console messages that are expected noise
  * @param {string[]} [opts.ignoreKinds] whole categories to skip, e.g.
  *        "broken-image" for a suite whose fixtures point at paths that are
@@ -718,7 +721,7 @@ function startErrorSentinel(win, opts) {
       shots += 1;
       // Capture before anything else can repaint over it. The screenshot is an
       // artifact for a human; the hit itself is what the assertion reads.
-      hit.shot = await captureScreenshot(win, `${label}-error-${shots}`);
+      hit.shot = await captureScreenshot(win, `${label}-error-${shots}`, false, o.screenshotDirectory);
     }
   };
 
@@ -1189,7 +1192,7 @@ process.on("exit", () => {
 try {
   const electron = require("electron");
   const app = electron && typeof electron === "object" ? electron.app : null;
-  if (app && typeof app.exit === "function" && !app.__foliaTempSweepWrapped) {
+  if (app && typeof app.exit === "function" && !app.__markalooTempSweepWrapped) {
     const realExit = app.exit.bind(app);
     app.exit = function (...args) {
       let cleanupFailed = false;
@@ -1205,7 +1208,7 @@ try {
       // green process result after its suite already printed a success footer.
       return realExit(cleanupFailed ? 1 : args[0]);
     };
-    app.__foliaTempSweepWrapped = true;
+    app.__markalooTempSweepWrapped = true;
   }
 } catch {
   // Required from plain Node - that tier is covered by the hook above.

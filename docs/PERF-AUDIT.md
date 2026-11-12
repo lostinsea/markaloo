@@ -863,7 +863,7 @@ app.whenReady().then(async () => {
 - These are local programmatic-scroll measurements, not a 60fps certificate
   or a measurement of cache rebuilds. Native-wheel behavior has a separate
   functional check.
-- Repeat the bounded probe with `FOLIA_READING_PERF=1` and
+- Repeat the bounded probe with `MARKALOO_READING_PERF=1` and
   `node test\test-reading.js`. Raw paired samples are retained in the reading
   feature session's `reading-performance.json`.
 
@@ -899,7 +899,7 @@ app.whenReady().then(async () => {
   do not prove all document sizes, rebuild costs or native-wheel frame rates.
 - Evidence: the reading session's `mermaid-boundary-performance-final.json`
   (unconditional parse) and `mermaid-boundary-performance-fast.json` (2px/3px source).
-  The bounded probe uses `FOLIA_READING_PERF=1 node test\test-reading.js`.
+  The bounded probe uses `MARKALOO_READING_PERF=1 node test\test-reading.js`.
 
 ## Left TOC tracking
 

@@ -183,11 +183,11 @@ check("missing arrival classification is an explicit error",
 
 const browserSource = fs.readFileSync(require.resolve("../src/reading-history"), "utf8");
 const browser = vm.runInNewContext(browserSource + `\n(() => {
-  const history = window.FoliaReadingHistory.createReadingHistory();
+  const history = window.MarkalooReadingHistory.createReadingHistory();
   history.commit(history.stageJump({top:0}), {top:10}, true);
   return history.snapshot().entries.length === 2 && history.snapshot().canBack;
 })()`, { window: {} });
 check("the same source exports the working browser API without Node globals", browser);
-check("CommonJS import does not create a browser global", !Object.hasOwn(globalThis, "FoliaReadingHistory"));
+check("CommonJS import does not create a browser global", !Object.hasOwn(globalThis, "MarkalooReadingHistory"));
 console.log(`=== ${results.filter(Boolean).length}/${results.length} passed ===`);
 process.exitCode = results.every(Boolean) ? 0 : 1;

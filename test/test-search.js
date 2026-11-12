@@ -690,8 +690,8 @@ function assertOwner() {
 const READ_GUARD = `(async () => ({
   guard: typeof window[${JSON.stringify(guardKey)}] === 'function'
     ? window[${JSON.stringify(guardKey)}]() : null,
-  generation: typeof window.folia?.getQuitApprovalGeneration === 'function'
-    ? await window.folia.getQuitApprovalGeneration() : null,
+  generation: typeof window.markaloo?.getQuitApprovalGeneration === 'function'
+    ? await window.markaloo.getQuitApprovalGeneration() : null,
   pageSession: typeof window.getReloadRequestSession === 'function'
     ? window.getReloadRequestSession() : null
 }))()`;
@@ -2013,7 +2013,7 @@ async function readyMain() {
     if (state.renderer !== "ready") return false;
     const probe = await bounded(ownedContents.executeJavaScript(`(async () => {
       if (document.readyState !== 'complete' ||
-          !window.CustomTabs || typeof window.folia?.getQuitApprovalGeneration !== 'function' ||
+          !window.CustomTabs || typeof window.markaloo?.getQuitApprovalGeneration !== 'function' ||
           !document.getElementById('openFile') || !document.getElementById('viewer') ||
           !document.getElementById('searchInput') || !document.getElementById('loadingScreen')) {
         return null;

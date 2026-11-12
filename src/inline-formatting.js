@@ -1,7 +1,7 @@
 "use strict";
 
 // Source offsets remain UTF-16, like textarea selections and DOM ranges.
-window.FoliaInlineFormatting = (() => {
+window.MarkalooInlineFormatting = (() => {
   const normalise = text => text.replace(/\r\n?/g, '\n');
   const fail = key => { throw new Error(key); };
 
@@ -47,7 +47,7 @@ window.FoliaInlineFormatting = (() => {
 
   // Only edited cells are serialized. Original Markdown spelling belongs to
   // unchanged cells; HTML entities keep new text inert inside Markdown tables.
-  const cellPartAttribute = 'data-folia-cell-part';
+  const cellPartAttribute = 'data-markaloo-cell-part';
   const inlineTags = new Set(['A', 'B', 'STRONG', 'I', 'EM', 'DEL', 'S', 'CODE', 'SPAN',
     'SUB', 'SUP', 'BR', 'IMG', 'KBD', 'MARK', 'U', 'SMALL', 'ABBR', 'Q', 'CITE']);
   const inlineAttributes = ['href', 'src', 'alt', 'title', 'style', 'class', 'width', 'height',
@@ -213,8 +213,8 @@ window.FoliaInlineFormatting = (() => {
 
   function prepareRaw(element, source, marked, context) {
     const fragments = new Map(), origin = crypto.randomUUID();
-    const partAttribute = context.partAttribute || 'data-folia-inline-part-' + crypto.randomUUID();
-    const codeAttribute = context.codeAttribute || 'data-folia-inline-history-' + crypto.randomUUID();
+    const partAttribute = context.partAttribute || 'data-markaloo-inline-part-' + crypto.randomUUID();
+    const codeAttribute = context.codeAttribute || 'data-markaloo-inline-history-' + crypto.randomUUID();
     const policy = context.policy;
     const attributes = node => [...node.attributes].filter(attr =>
       attr.name !== partAttribute && attr.name !== codeAttribute).map(attr => [attr.name, attr.value]);
@@ -273,8 +273,8 @@ window.FoliaInlineFormatting = (() => {
     };
     // Authored data attributes remain source. Generated fragments share their
     // cell's collision-free metadata names, including native history markers.
-    const cellPartAttribute = captureContext?.partAttribute || privateAttribute('data-folia-cell-part');
-    const codeAttribute = captureContext?.codeAttribute || privateAttribute('data-folia-cell-code');
+    const cellPartAttribute = captureContext?.partAttribute || privateAttribute('data-markaloo-cell-part');
+    const codeAttribute = captureContext?.codeAttribute || privateAttribute('data-markaloo-cell-code');
     const { expanded, replacements, sourceOffset } = expandCellText(text, transform);
     const ranges = new WeakMap(), bodies = new WeakMap();
     const locate = (tokens, source, offsets) => {
