@@ -511,6 +511,10 @@ async function restorationNavigation() {
     w.observer.observe(viewer);
     return true;
   })()`);
+  const searchReady = `searchPanel.classList.contains('visible')&&searchInput.value==='Scroll correspondence'&&
+    searchDebounceTimer===null&&pendingSearchTerm===null&&pendingSearchRequest===null&&
+    searchMatches.length===1&&currentMatchEl===searchMatches[0]&&currentMatchEl.isConnected&&
+    currentMatchEl.closest('h1')===viewer.querySelector('h1')&&!searchNextBtn.disabled`;
   const legs = [];
   try {
     for (const navigate of [false, "TOC", "search"]) {
@@ -518,7 +522,22 @@ async function restorationNavigation() {
         if(searchPanel.classList.contains('visible'))toggleSearchPanel();
         ${navigate === "search" ? "toggleSearchPanel();" : ""}
         true`);
+      if (navigate === "search") {
+        // The cancellation mutants can leave the preceding TOC restore alive.
+        await nativeWheel("editor", -1);
+        const pending = await exec("window.CustomTabs.__scrollRestorePending()");
+        check("search preparation has no preceding tab restoration", !pending, { pending });
+        if (pending) throw new Error("Preceding restoration survived native editor input");
+      }
       await nativeWheel("preview", -1);
+      if (navigate === "search") {
+        // Typing retires restoration; finish it before arming the Next-click leg.
+        await exec(`searchInput.value='Scroll correspondence';
+          searchInput.dispatchEvent(new Event('input',{bubbles:true}));true`);
+        await wait("settled search preparation before restoration", `(${searchReady})&&
+          currentFilePath===${JSON.stringify(first)}&&originalMarkdown===markdownEditor.value&&
+          getEditorScrollDiagnostics().ready&&!getEditorScrollDiagnostics().pendingGeometry&&viewer.scrollTop<1`);
+      }
       await exec("viewer.scrollTop=400;true");
       await frames();
       const saved = await exec("viewer.scrollTop");
@@ -532,19 +551,27 @@ async function restorationNavigation() {
       await wait("controlled tab restoration", `currentFilePath===${JSON.stringify(first)}&&
         viewer.querySelector('h1')?.textContent==='Scroll correspondence'&&isEditMode&&
         getEditorScrollDiagnostics().ready&&!getEditorScrollDiagnostics().pendingGeometry&&
-        window.CustomTabs.__scrollRestorePending()&&Math.abs(viewer.scrollTop-${saved})<1`);
+        window.CustomTabs.__scrollRestorePending()&&Math.abs(viewer.scrollTop-${saved})<1
+        ${navigate === "search" ? `&&(${searchReady})` : ""}`);
       const setup = await exec(`({pending:window.CustomTabs.__scrollRestorePending(),
-        scroller:window.CustomTabs.__getScroller()===viewer,...window.__restoreNavigation.position()})`);
+        scroller:window.CustomTabs.__getScroller()===viewer,
+        searchReady:${navigate === "search" ? `(${searchReady})` : "null"},...window.__restoreNavigation.position()})`);
       const armed = saved > 300 && setup.pending && setup.scroller && setup.source &&
-        setup.matchesSource && setup.selection === setup.mappedSelection && Math.abs(setup.top - saved) < 1;
+        setup.matchesSource && setup.selection === setup.mappedSelection && Math.abs(setup.top - saved) < 1 &&
+        (navigate !== "search" || setup.searchReady);
       check(`controlled ${navigate || "restoration"} leg has the real current-source restore armed`, armed, setup);
       if (!armed) throw new Error("Controlled restoration setup was not reached");
       await exec(`(() => {
         const w=window.__restoreNavigation;w.writes=[];w.resized=false;w.stopped=false;w.phase='navigation';
         w.completed=false;w.reached=null;w.current=false;w.pendingAfterNavigation=null;
         w.heading=viewer.querySelector('h1');w.start=w.position();w.progress=false;w.trustedClick=false;
+        w.match=${navigate === "search" ? "currentMatchEl" : "null"};w.beforeNavigation=null;w.matchBeforeNavigation=null;
         w.target=${navigate === "search" ? "searchNextBtn" : "indexList.querySelector('.index-item')"};
-        w.beforeClick=()=>{w.pendingBeforeNavigation=window.CustomTabs.__scrollRestorePending();};
+        w.beforeClick=()=>{
+          w.pendingBeforeNavigation=window.CustomTabs.__scrollRestorePending();w.beforeNavigation=w.position();
+          w.matchBeforeNavigation=${navigate === "search" ? `(${searchReady})&&
+            currentMatchEl===w.match&&w.match.closest('h1')===w.heading` : "null"};
+        };
         w.clicked=event=>{w.trustedClick=event.isTrusted;w.pendingAfterNavigation=window.CustomTabs.__scrollRestorePending();};
         w.moved=event=>{if(event.target===viewer&&event.isTrusted)w.progress=true;};
         w.ended=event=>{
@@ -568,9 +595,6 @@ async function restorationNavigation() {
           w.target.addEventListener('click',w.clicked,{once:true});
           viewer.addEventListener('scroll',w.moved);
           viewer.addEventListener('scrollend',w.ended,{once:true});
-          if(${navigate === "search"}){
-            searchInput.value='Scroll correspondence';searchInput.dispatchEvent(new Event('input',{bubbles:true}));
-          }
         }else w.resize();
         return true;
       })()`);
@@ -583,7 +607,8 @@ async function restorationNavigation() {
       const result = await exec(`(() => {const w=window.__restoreNavigation;return {
         beforeWidth:w.beforeWidth,afterWidth:viewer.getBoundingClientRect().width,withinWindow:w.withinWindow,
         pendingAtResize:w.pendingAtResize,pendingAfterNavigation:w.pendingAfterNavigation,
-        pendingBeforeNavigation:w.pendingBeforeNavigation,
+        pendingBeforeNavigation:w.pendingBeforeNavigation,beforeNavigation:w.beforeNavigation,
+        matchBeforeNavigation:w.matchBeforeNavigation,
         progress:w.progress,trustedClick:w.trustedClick,current:w.current,reached:w.reached,
         writes:w.writes,position:w.position()};})()`);
       const restoreWrites = result.writes.filter(write => write.phase === "resize" &&
@@ -599,6 +624,9 @@ async function restorationNavigation() {
         const reached = result.reached;
         check(`${navigate} navigation completes native travel to its current-source heading before resize`,
           result.pendingBeforeNavigation && result.trustedClick && result.progress && result.current && reached.source &&
+          result.beforeNavigation.source && result.beforeNavigation.path === first &&
+          result.beforeNavigation.sequence === setup.sequence && result.beforeNavigation.generation === setup.generation &&
+          Math.abs(result.beforeNavigation.top - saved) < 1 && (navigate !== "search" || result.matchBeforeNavigation) &&
           reached.path === first && reached.owner === "preview" && reached.matchesSource &&
           reached.selection === reached.mappedSelection &&
           Math.abs(reached.top - saved) > 200 &&
