@@ -44,6 +44,21 @@ This approach means after an upstream merge, you only need to ensure these files
   and Reader correspondence.
 - This does not add width metadata, autosave or a new Save interface.
 
+### Filtered table popup wrapping
+
+- The footer's **Wrap text** checkbox starts off and applies to current and
+  later pages, including responsive collapsed values.
+- Wrapping leaves filters, sorting, page size, source values and exports alone.
+  Header resizing recalculates wrapped row heights.
+- The merged native fixture and exact revert remain pending integration checks.
+
+### Search visibility and focus
+
+- Reader and Split search stay above sticky table headers.
+- A closed search panel is inert and releases its own focused input.
+  Closing it still cancels pending search and clears matches.
+- Focus outside the search panel stays where it is.
+
 ### Windows Folia settings import
 
 - Normal profiles use Markaloo/Markaloo-dev. An explicit relocation stays selected.

@@ -6,6 +6,22 @@ const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
 
+let app;
+process.on("uncaughtException", fatal);
+process.on("unhandledRejection", fatal);
+process.stdout.on("error", fatal);
+process.stderr.on("error", fatal);
+function fatal(error) {
+  try {
+    fs.writeSync(2, String(error.stack || error) + "\n");
+    if (app?.isReady())
+      fs.writeSync(2, "OWNED_ELECTRON_PIDS=" + JSON.stringify(app.getAppMetrics().map(metric => metric.pid)) + "\n");
+  } finally {
+    if (app) app.exit(1);
+    else process.exit(1);
+  }
+}
+
 if (!process.versions.electron) {
   const runtime = fs.mkdtempSync(path.join(__dirname, ".popup-wrap-"));
   const result = spawnSync(require("electron"), [__filename, ...process.argv.slice(2)], {
@@ -21,18 +37,11 @@ if (!process.versions.electron) {
     console.error("Popup child did not exit normally; runtime retained:", runtime, result.error || result.signal);
     process.exit(1);
   }
-  fs.rmSync(runtime, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  if (result.status === 0)
+    fs.rmSync(runtime, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   process.exit(result.status === 0 ? 0 : 1);
 }
 
-let app;
-process.on("uncaughtException", fatal);
-process.on("unhandledRejection", fatal);
-function fatal(error) {
-  fs.writeSync(2, String(error.stack || error) + "\n");
-  if (app) app.exit(1);
-  else process.exit(1);
-}
 const electron = require("electron");
 ({ app } = electron);
 const { BrowserWindow, session } = electron;
@@ -368,5 +377,6 @@ app.whenReady().then(async () => {
   check("popup wrap produces no renderer warnings errors or external requests", errors.length === 0, errors);
   clearTimeout(watchdog);
   console.log(`\n${passed} passed, ${failed} failed`);
+  console.log("OWNED_ELECTRON_PIDS=" + JSON.stringify(app.getAppMetrics().map(metric => metric.pid)));
   app.exit(failed ? 1 : 0);
 }).catch(fatal);

@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v014-rendered-tables` - **F4 IMPLEMENTATION ACTIVE; F3 DEFERRED**.
+- `v014-rendered-tables` - **SOURCE INTEGRATED; FINAL GATES OPEN; F3 DEFERRED**.
   - Base: canonical `lostinsea/markaloo` main `41dd78df`; the primary checkout
     and its branches remain unchanged.
   - Astra mapped rendered-table sizing, exact source editing, Prism scheduling,
@@ -51,9 +51,14 @@ section is kept here so the register has a visible edge.
     receipt race; Sol also found a preformatted-code CSS regression. Both were
     corrected with focused cases. Native fixture and revert execution are open;
     the second review is reserved for the integrated seams.
-  - Peer streams own Edit/Insert movement and popup sizing, filtered-popup
-    wrapping, and search visibility/focus. Shared source seams are coordinated;
-    this checkout owns eventual serialized integration and documentation.
+  - F4 `1c7b278d`, editor `36623f41`, search `22ac2650` and popup `6fb813d0`
+    are assembled serially in this integration checkout. Shared proof registries
+    retain each stream's entries and their exact ordered prefix.
+  - F1/F2/B1 provide Edit/Insert movement, side-edge resizing and initial width.
+    F5 adds filtered-popup wrapping; B2/B3 repair search stacking and focus.
+    The bounded merged editor source suite passed. Root accepted the editor's
+    owned native run and search's author runs; merged popup and search/F4 seam
+    checks remain open under serialized native permission.
   - Node syntax, loaded-language gates and focused scroll-state checks passed.
     The owned-file, safe Node-parent fixture passed its focused F4 checks,
     including literal setup, Reader receipts and both search orderings.
@@ -63,7 +68,7 @@ section is kept here so the register has a visible edge.
     markup was rejected by Reader and is not broader source authority.
     Selected F4 reverts produced exactly their named failures with surviving
     controls, exact source restoration and owned-process closure. The restored
-    fixture passed. Peer integration and final integrated review remain open.
+    fixture passed. Merged native checks and final integrated review remain open.
     No release, visual or performance acceptance claimed.
 - `v013-routine-profile-gates` - **INTEGRATED; FOCUSED LOCAL CHECKS PASSED**.
   - The reviewed release selection is assembled in an isolated worktree.
