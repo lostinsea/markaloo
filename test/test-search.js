@@ -1,3 +1,8 @@
+if (process.env.MARKALOO_SEARCH_VISIBILITY_FIXTURE === "1") {
+  require("./test-search-visibility");
+  return;
+}
+
 // Regression harness for in-document search (PERF-02 and its correctness risk).
 // Run with: npm run test:search
 //

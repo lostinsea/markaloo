@@ -6902,6 +6902,11 @@ function previousMatch(intent = null) {
 
 function toggleSearchPanel() {
   const isVisible = searchPanel.classList.toggle('visible');
+  // The retracted panel stays in the DOM but must not keep typing focus.
+  if (!isVisible && searchPanel.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
+  searchPanel.inert = !isVisible;
   if (isVisible) {
     searchInput.focus();
     searchInput.select();

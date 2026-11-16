@@ -1943,13 +1943,13 @@ html {
  *
  * The screen host shares main-content's remaining grid row; search remains
  * an overlay rather than taking a row away from either reading scroller.
- * Its unclipped, pointer-transparent host lets the retracted panel remain a
- * hit-test candidate below the higher-stacked header.
+ * The host sits above sticky document headers but below drawers and the toolbar.
+ * Closed controls are inert while the panel retracts behind the toolbar.
  */
 .search-anchor {
   position: relative;
   height: 0;
-  z-index: 1;
+  z-index: 20;
 }
 
 .search-panel {

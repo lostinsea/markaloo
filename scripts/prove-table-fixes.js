@@ -178,6 +178,10 @@ const VIRTUAL_SUITES = Object.freeze({
     npmScript: "test:table-cells-source",
     environment: Object.freeze({ MARKALOO_CELL_MOVEMENT_ONLY: "1" }),
   }),
+  "test:search-visibility": Object.freeze({
+    npmScript: "test:search",
+    environment: Object.freeze({ MARKALOO_SEARCH_VISIBILITY_FIXTURE: "1" }),
+  }),
   ...Object.fromEntries(["high-water", "reservation", "metadata", "claim", "join", "stale-timer",
     "claimed-zone", "startup-park", "teardown", "toast", "projection", "slot-stability", "main-ports",
     "download-preflight", "manual-failure", "startup-delay", "manual-action", "manual-target", "release-failure",
@@ -2194,6 +2198,51 @@ const REVERTS = [
       /^the bounded estimator genuinely reads displayed lengths within its row and cell budgets$/],
     mustPass: [/^the comfort cap applies only to initial width and the current viewport gutter$/],
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "0140-SEARCH-STACKING",
+    what: "sticky table headers cover and intercept the open search input",
+    file: CSS, suite: "test:search-visibility",
+    from: ".search-anchor {\n  position: relative;\n  height: 0;\n  z-index: 20;",
+    to: ".search-anchor {\n  position: relative;\n  height: 0;\n  z-index: 1;",
+    expect: [/^(Reader|Split): search paints above the sticky header$/,
+      /^(Reader|Split): overlap click reaches and focuses search$/],
+    mustPass: [/^(Reader|Split): sticky header really overlaps the search input$/,
+      /^(Reader|Split): visible search still highlights text$/,
+      /^Ctrl\+F: hidden search cannot receive typing$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+  },
+  {
+    id: "0140-SEARCH-INITIAL-INERT",
+    what: "closed search accepts focus before it has ever been opened",
+    file: HTML, suite: "test:search-visibility",
+    from: '<div id="searchPanel" class="search-panel" inert>',
+    to: '<div id="searchPanel" class="search-panel">',
+    expect: [/^initially closed search is skipped by Tab$/,
+      /^initially closed search rejects focus$/],
+    mustPass: [/^Ctrl\+F: opening focuses search$/,
+      /^Ctrl\+F: hidden search cannot receive typing$/,
+      /^(Reader|Split): search paints above the sticky header$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "0140-SEARCH-TOGGLE-FOCUS",
+    what: "closing search leaves its invisible controls focusable and receiving typing",
+    file: RENDERER, suite: "test:search-visibility",
+    from: "  if (!isVisible && searchPanel.contains(document.activeElement)) {\n" +
+      "    document.activeElement.blur();\n  }\n  searchPanel.inert = !isVisible;",
+    to: "  if (isVisible) searchPanel.inert = false;",
+    expect: [/^(Ctrl\+F|Escape|Close button): closing releases panel focus$/,
+      /^(Ctrl\+F|Escape|Close button): hidden search cannot receive typing$/,
+      /^(Ctrl\+F|Escape|Close button): hidden input cannot regain focus$/,
+      /^(Ctrl\+F|Escape|Close button): Tab skips closed search$/,
+      /^rapid final close releases search focus$/],
+    mustPass: [/^initially closed search rejects focus$/,
+      /^(Ctrl\+F|Escape|Close button): opening focuses search$/,
+      /^(Ctrl\+F|Escape|Close button): close clears and cancels search$/,
+      /^closing search preserves focus outside its panel$/,
+      /^(Reader|Split): search paints above the sticky header$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 13,
   },
   ...READING_CONSUMER_REVERTS,
   ...READING_CONTROL_REVERTS,
@@ -31394,6 +31443,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") ===
         "0140-RENDER-HIGHLIGHT,0140-RENDER-SEARCH-RUNS,0140-RENDER-TABLE-RECEIPT,0140-RENDER-SEAL,0140-RENDER-STALE-SEAL,0140-RENDER-PRE-WHITESPACE," +
         "0140-EDITOR-ROW-SEPARATORS,0140-EDITOR-COLUMN-SOURCE,0140-EDITOR-ROW-UPDATE,0140-EDITOR-EDGE-RESIZE,0140-EDITOR-EDGE-RELEASE,0140-EDITOR-INITIAL-WIDTH," +
+        "0140-SEARCH-STACKING,0140-SEARCH-INITIAL-INERT,0140-SEARCH-TOGGLE-FOCUS," +
         "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
         "R1329," +
         "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1243,R1244,R1245,R1246,R1247,R1248,R1249,R1250,R1251,R1252,R1253,R1254,R1255,R1256,R1257,R1258,R1259,R1260,R1261,R1262,R1263,R1264,R1265,R1266,R1267,R1268,R1269,R1270,R1271,R1272,R1273,R1274,R1275,R1276,R1277,R1278,R1279,R1280,R1281,R1282,R1283,R1284,R1285,R1286,R1287,R1288,R1289,R1290,R1291,R1292,R1293,R1294,R1295,R1296,R1297,R1298,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1524,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +
