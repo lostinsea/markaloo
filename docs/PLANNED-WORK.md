@@ -38,9 +38,128 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v014-release` - **ROOT-OWNED HOSTED STAGING; EDITOR ORACLE CORRECTION**.
-  - Root staged `6dc9b897` on the release-candidate branch and owns workflow
-    execution and publication. Main and the release tag remain unchanged.
+- `windows-update-visibility` - **SOURCE INTEGRATED; NATIVE PARTIAL; ENVIRONMENT BLOCKED**.
+  - Make Windows interactive updates visible, including installer-side
+    compatibility with old 0.13/0.14 clients. Remove the unconditional,
+    unverified Folia warning.
+  - Owner: session `58ac1ec8-ec9c-45ea-8206-18b743f3c7eb`,
+    branch `users/vinma-microsoft/windows-update-visibility`.
+  - Root reproduced a hidden `#32770` wizard during a public 0.13-to-0.14
+    update. Diagnostic reveal completed installation; this was not a normal
+    update pass. Removal without replacement was not reproduced.
+  - Reviewed commit `09e7bcc9` is integrated as `6bb6917d`.
+    Fresh independent Sol/Luna reviews found no issues or disagreement.
+  - Root reports a changed-feed UI E2E pass from actual 0.13 app code:
+    Download, Restart and Install, automatically visible installer, all-users
+    completion and 0.14 relaunch. Download and installed-app hashes matched the
+    candidate; the synthetic profile marker was preserved. No manual reveal.
+  - Root restored the public 0.14 all-users baseline, then replayed the old
+    launch options with explicit `/allusers`. Setup became visible without
+    reveal, installed the matching candidate, preserved the profile marker
+    and relaunched normally through Finish. Normal app close/exit was verified.
+    This is exact-options native replay, not original-UI E2E or UAC proof.
+  - On the corrected baseline, default arguments showed installation options
+    with all-users selected. The Cancel action was refused after the Sandbox
+    desktop became noninteractive; no alternative UI route was used.
+    Cancellation did not pass.
+  - The guest had `EnableLUA=0`: real UAC inner-instance/refusal checks are
+    environment-blocked. Current-user, completed default 0.14 update, cancel,
+    `/S` and ordinary no-Folia controls have not passed.
+  - Root preserved receipts and the viewed image before verified Sandbox
+    teardown. A fresh software-graphics start failed; status then confirmed
+    no running Sandbox. There was no blind restart.
+  - Evidence: Root's `files\updater-correction\result.json` and
+    `files\updater-correction\controls-through-014-replay`.
+    No untouched public-GitHub pass or completed qualification is claimed.
+    Root alone owns native proof; combined qualification remains pending.
+- `table-editor-controls-and-selection` - **SOURCE INTEGRATED; SEAM REVIEW PASSED**.
+  - Put Move controls on the same row, immediately right of the prior controls.
+    Make the whole cell selectable, including blank and padded areas.
+  - Scope: the owned visual table editor, not Reader or the table popup.
+  - Owner: session `46430547-3c94-40a3-b6e5-42000a1b90f2`,
+    branch `users/vinma-microsoft/table-toolbar-alignment`.
+  - Reviewed commit `a8c16e40` is integrated as `b9c1ff53`.
+    Fresh independent Sol/Luna reviews found no issues or disagreement.
+  - Root reports the owned fixture passed 53/53 and source checks 813/813.
+    The child viewed all eight screenshots; all owned host processes exited.
+    Root also viewed the initial wide/narrow/empty-cell images and result
+    artifact, confirming toolbar layout and selected empty cells.
+  - The owner reports both exact toolbar/cell-hit proofs passed through the
+    shipping virtual-suite dispatcher with their named failures, all required
+    controls, exact byte restoration and a restored 813/813 positive.
+    This evidence is not qualification of the combined candidate.
+- `saved-table-code-rendering` - **SOURCE INTEGRATED; SEAM REVIEW PASSED**.
+  - Correct saved table-cell fenced-JSON rendering in Reader.
+    No combined-candidate or release acceptance yet.
+  - Owner: session `92de363c-daf1-4d9f-8d16-f719dbcb2ba5`,
+    branch `users/vinma-microsoft/saved-table-code-rendering`.
+  - The owner's Astra trace attributes the synthetic plain-paste failure to
+    missing table-only fenced-cell conversion: serialization encodes fence
+    punctuation, and reopening through the inline lexer produces no labelled
+    code element for F4. This is not evidence of clipboard corruption.
+  - A closed, whole-cell explicit fence uses the existing
+    language-bearing code form with safe escaping and preserved newlines.
+    Keep literal encoded input as a separate control; no toolbar/layout changes.
+    Coordinate renderer/test changes with the table UI owner.
+  - The owner reports 22 offscreen cases, the existing F4 fixture 31/31 and
+    syntax-source checks 30/30 passed. Viewed baseline/candidate images show
+    literal fences before and multiline colored JSON after. This is not
+    combined-candidate acceptance.
+  - A first-draft escaped-fence conversion was found and corrected.
+    Escape-provenance controls and already-encoded raw input stay literal.
+  - First independent review: Sol found no issues; Luna found that trimming
+    accepted padded fences and discarded surrounding spaces. The owner
+    reproduced the loss and removed trimming. Conversion must consume the
+    exact cell text; padded and trailing-break controls now stay literal.
+    Raw complete fences keep their intended behavior.
+  - Final fresh independent Sol/Luna reviews found no blockers after the
+    correction; no unresolved disagreement remains.
+    Reviewed `ce469706` is integrated as `eac71d8a`.
+  - The owner reports exact narrow-revert failures, complete case inventory
+    and surviving controls, byte restoration and no remaining owned windows
+    or processes. The fixture covers the shipping popup/Update, disk readback
+    and offscreen parser/Reader/Prism. Main Save, `renderMarkdown`, owner and
+    history boundaries use adapters; no full-app or installed qualification.
+  - No register edits in the implementation stream, global proof harness,
+    installer/sandbox work, release changes or pushes.
+  - The normal `test:table-cells-source` route also hashes excluded installer
+    sources through `productFiles`; the owner did not run that route.
+- `post-release-integration` - **SOURCE REVIEWED; UNSIGNED CANDIDATE BUILD PENDING**.
+  - Published 0.14.0 remains `f79df9d28bf9c37f8af70099f6e141ca962134e5`.
+    These corrections do not change that release.
+  - Updater, table UI and saved-rendering commits were integrated serially
+    without conflicts. Proof-record additions, customization notes and
+    focused package commands are retained.
+    The register was preserved separately and restaged.
+  - Combined checks at `eac71d8a`: saved code 22/22, F4 31/31,
+    syntax source 30/30, movement 813/813 through the shipping virtual npm
+    dispatcher, Windows updater source/VM 11/11 and installer contracts 7/7.
+    Syntax and diff checks passed. The combined saved-code image was viewed;
+    all eight recorded owned Electron PIDs were absent after the fixtures.
+  - Evidence: this integration session's
+    `files\combined-postrelease-eac71d8a`. Earlier F4 runtime evidence was
+    copied there before the unchanged fixture ran.
+  - Fresh independent Sol 6.1/high and Luna 6/high seam reviews found no
+    significant issues or blockers. There was no reviewer disagreement.
+    No material correction or second review round was needed.
+  - Root authorized an unsigned, same-version installer build after review.
+    That build remains pending.
+    Building does not clear native, UAC, cancel or full Main Save gates.
+    No version bump, push, tag, release or PR.
+  - Existing source exclusions remain. The global `prove-table-fixes` harness
+    is blocked because `failFormatterLines` unconditionally scans excluded
+    tests. Do not run it or present targeted checks as its replacement.
+  - The movement-command caveat was disproven: `test:table-cells-movement`
+    is an intentional virtual-suite key, dispatched to `test:table-cells-source`
+    with `MARKALOO_CELL_MOVEMENT_ONLY=1`. No package alias or source fix is
+    needed. The owner's bounded proof evidence does not clear the separate
+    global-initialization exclusion block.
+  - No primary-checkout writes, tests or builds. Preserve existing evidence
+    and unrelated work.
+- `v014-release` - **PUBLISHED; SOURCE UNCHANGED**.
+  - Root published 0.14.0 at `f79df9d28bf9c37f8af70099f6e141ca962134e5`.
+    The staging and correction evidence below remains separate from the
+    pending post-release work.
   - Package/root-lock versions are 0.14.0. Customer changes are grouped by
     capability without version, publication-status or time-based labels.
   - Hosted run `43943597522` stopped before builds on one packaging oracle:
@@ -98,8 +217,9 @@ section is kept here so the register has a visible edge.
     produced only its named failures with every registered control passing.
     Main bytes were restored exactly; the restored positive passed and all
     logged owned processes closed. No popup production correction was needed.
-  - Customer-facing changes from `e848d391` are integrated. They mark 0.14.0
-    upcoming and omit F3 persistence. Final independent Sol/Luna review covered
+  - Customer-facing changes from `e848d391` are integrated; release preparation
+    consolidated them by capability and omitted F3 persistence.
+    Final independent Sol/Luna review covered
     the complete source, fixtures, scripts and customer document. Luna found
     that an authored Prism marker could suppress explicit highlighting; Sol
     confirmed the finding. Both accepted the renderer-owned WeakSet correction
