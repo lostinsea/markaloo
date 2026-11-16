@@ -49,8 +49,8 @@ section is kept here so the register has a visible edge.
     or new Save interface. Existing session-only sizing stays unchanged.
   - First independent Sol/Luna review agreed on a deferred-highlighting/search
     receipt race; Sol also found a preformatted-code CSS regression. Both were
-    corrected with focused cases. Native fixture and revert execution are open;
-    the second review is reserved for the integrated seams.
+    corrected with focused cases. F4 native checks and selected reverts passed;
+    the second review is reserved for the complete integrated output.
   - F4 `1c7b278d`, editor `36623f41`, search `22ac2650` and popup `6fb813d0`
     are assembled serially in this integration checkout. Shared proof registries
     retain each stream's entries and their exact ordered prefix.
@@ -58,11 +58,16 @@ section is kept here so the register has a visible edge.
     F5 adds filtered-popup wrapping; B2/B3 repair search stacking and focus.
     The bounded merged editor source suite passed. Root accepted the editor's
     owned native run and search's author runs.
-  - The merged F4 and isolated search seam runs passed. The merged popup run
-    passed both narrow footer checks but did not establish responsive collapse:
-    the fixture changed actual column widths, while fitColumns uses width
-    definitions/minimums to decide collapse. Its source revert was not run.
-    Corrected collapse setup and final integrated reviews remain open.
+  - The merged F4 and isolated search seam runs passed. Popup wide/data and
+    narrow footer checks passed. The final bounded popup attempt still did not
+    place its required long-token witness in the collapsed body, even with
+    explicit public width definitions and Token collapse priority. Captured
+    collapsed cells wrapped without overflow, but this is not acceptance of
+    the missing scenario. Popup qualification is blocked; its source revert
+    was not run. No further fixture/runtime cycle is authorized.
+  - Customer-facing changes from `e848d391` are integrated. They mark 0.14.0
+    upcoming and omit F3 persistence. Final independent Sol/Luna review now
+    covers the complete source, fixtures, scripts and customer document.
   - Node syntax, loaded-language gates and focused scroll-state checks passed.
     The owned-file, safe Node-parent fixture passed its focused F4 checks,
     including literal setup, Reader receipts and both search orderings.
@@ -72,7 +77,7 @@ section is kept here so the register has a visible edge.
     markup was rejected by Reader and is not broader source authority.
     Selected F4 reverts produced exactly their named failures with surviving
     controls, exact source restoration and owned-process closure. The restored
-    fixture passed. Merged native checks and final integrated review remain open.
+    fixture passed. Popup qualification and final integrated review remain open.
     No release, visual or performance acceptance claimed.
 - `v013-routine-profile-gates` - **INTEGRATED; FOCUSED LOCAL CHECKS PASSED**.
   - The reviewed release selection is assembled in an isolated worktree.

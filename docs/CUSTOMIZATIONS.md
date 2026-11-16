@@ -46,7 +46,7 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ### Filtered table popup wrapping
 
-- The footer's **Wrap text** checkbox starts off and applies to current and
+- The footer's **Word wrap** checkbox starts off and applies to current and
   later pages, including responsive collapsed values.
 - Wrapping leaves filters, sorting, page size, source values and exports alone.
   Header resizing recalculates wrapped row heights.
