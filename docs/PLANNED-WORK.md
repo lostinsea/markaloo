@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v014-release` - **ROOT-OWNED HOSTED STAGING; SOURCE ORACLE CORRECTION**.
+- `v014-release` - **ROOT-OWNED HOSTED STAGING; EDITOR ORACLE CORRECTION**.
   - Root staged `6dc9b897` on the release-candidate branch and owns workflow
     execution and publication. Main and the release tag remain unchanged.
   - Package/root-lock versions are 0.14.0. Customer changes are grouped by
@@ -55,6 +55,20 @@ section is kept here so the register has a visible edge.
     confirmation and stale-hint controls are rejected; an unrelated Move
     selection change does not determine the Delete result. Syntax passes.
     Focused independent Sol/Luna review found no issues or disagreement.
+  - Retry `43944905413` passed packaging on all platforms and Linux/macOS
+    builds. Windows found editor checks that still required the old column
+    hint and compact opening, despite the approved Move controls and readable
+    opening. Editor-scroll passed. No unrelated failures are in this fix.
+  - Update both affected hint predicates and check all five selected-row column
+    controls. Replace the tiny-table compact cap with readable opening, actual
+    data allocation and narrow-viewport checks. Existing overflow, label,
+    source and Cancel checks remain. Isolated actual predicates reproduce the
+    old failures against reported geometry and current scope text, accept the
+    correction and reject changed-state, control and geometry regressions.
+    The 400px case is a synthetic predicate control, not new native evidence.
+    Syntax passes. Fresh focused Sol/Luna reviews found no significant issues
+    or disagreement. Native qualification and release operations remain with
+    Root; no local native run is claimed.
   - Focused independent Sol/Luna review of only these release changes is
     complete. Sol found no issue; Luna requested a neutral release-history
     link label, now corrected. Neither found version or retained-change issues.

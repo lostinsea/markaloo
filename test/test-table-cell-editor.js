@@ -5340,7 +5340,7 @@ require("./test-userdata-isolation");
       layout.counts.visible && layout.counts.rects.length>0 && layout.countsLive === 'polite' &&
       layout.counts.content === `Data rows: ${dataRows} | Columns: ${columns}` &&
       layout.columnScope.visible === selectedRows && (!selectedRows || layout.columnScope.rects.length>0 &&
-        layout.columnScope.content === 'Columns change every row. Edit the whole table to insert or delete a column.') &&
+        layout.columnScope.content === 'Columns change every row. Edit the whole table to insert, delete or move a column.') &&
       layout.bandOrder && JSON.stringify(layout.rowButtons.map(button=>button.id)) === JSON.stringify(buttons) &&
       layout.rowButtons.every((button,index)=>button.tag==='BUTTON'&&button.visible&&button.svg&&button.usable&&
         button.name===names[index]&&button.title===names[index]) &&
@@ -9231,11 +9231,12 @@ require("./test-userdata-isolation");
       await fresh("shared-column-selected-refusal", columnSource); await open(0, tableModes.UPDATE_ROWS, 1, 1);
       const selectedColumnDraft = await draft();
       await exec("changeTableCellColumns('remove');true");
-      check("selected-row native mode keeps all three column icons visible disabled and scope-described",
+      check("selected-row native mode keeps all five column controls visible disabled and scope-described",
         JSON.stringify(await draft()) === JSON.stringify(selectedColumnDraft) &&
-        await exec(`[tableCellInsertLeft,tableCellInsertRight,tableCellDeleteColumn].every(button=>
+        await exec(`[tableCellInsertLeft,tableCellInsertRight,tableCellDeleteColumn,
+          tableCellMoveLeft,tableCellMoveRight].every(button=>
           button.disabled&&button.getClientRects().length>0&&button.getAttribute('aria-describedby')==='tableCellColumnScope')&&
-          !tableCellColumnScope.hidden&&tableCellColumnScope.textContent==='Columns change every row. Edit the whole table to insert or delete a column.'`));
+          !tableCellColumnScope.hidden&&tableCellColumnScope.textContent==='Columns change every row. Edit the whole table to insert, delete or move a column.'`));
       await cancel();
     } finally {
       await cancel();
@@ -9343,7 +9344,16 @@ require("./test-userdata-isolation");
           geometry.overflow <= 1, geometry);
         check("the initial row-label allocation contains its actual header text " + name + "/" + viewport,
           geometry.labelOverflow <= 1, geometry);
-        if (name === "tiny") check("tiny source stays compact " + viewport, geometry.popup <= 480.6, geometry);
+        if (name === "tiny") {
+          const expectedPopup = Math.min(geometry.viewport - 24,
+            Math.max(480, Math.min(800, geometry.viewport - 48)));
+          const share = (geometry.client - geometry.fixed) / rows[0].length;
+          check("tiny source opens readably within the viewport " + viewport,
+            Math.abs(geometry.popup - expectedPopup) <= .6 &&
+            geometry.data.length === rows[0].length &&
+            geometry.data.every(width => Math.abs(width - share) < 1) &&
+            geometry.lines === 1 && geometry.splitWords === 0, geometry);
+        }
         if (name === "heavy" && viewport === 1650) {
           const share = (geometry.client - geometry.fixed) / geometry.data.length;
           check("substantial prose gains initial data width rather than widening only its outer dialog",
