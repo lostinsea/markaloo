@@ -50,7 +50,8 @@ This approach means after an upstream merge, you only need to ensure these files
   later pages, including responsive collapsed values.
 - Wrapping leaves filters, sorting, page size, source values and exports alone.
   Header resizing recalculates wrapped row heights.
-- The merged native fixture and exact revert remain pending integration checks.
+- The bounded Windows fixture and exact toggle revert passed, including narrow
+  footer and collapsed long-token checks in both themes.
 
 ### Search visibility and focus
 

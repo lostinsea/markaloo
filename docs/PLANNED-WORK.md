@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v014-rendered-tables` - **SOURCE REVIEWED; POPUP GATE BLOCKED; F3 DEFERRED**.
+- `v014-rendered-tables` - **SOURCE REVIEWED; FOCUSED GATES PASSED; F3 DEFERRED**.
   - Base: canonical `lostinsea/markaloo` main `41dd78df`; the primary checkout
     and its branches remain unchanged.
   - Astra mapped rendered-table sizing, exact source editing, Prism scheduling,
@@ -57,13 +57,13 @@ section is kept here so the register has a visible edge.
     F5 adds filtered-popup wrapping; B2/B3 repair search stacking and focus.
     The bounded merged editor source suite passed. Root accepted the editor's
     owned native run and search's author runs.
-  - The merged F4 and isolated search seam runs passed. Popup wide/data and
-    narrow footer checks passed. The final bounded popup attempt still did not
-    place its required long-token witness in the collapsed body, even with
-    explicit public width definitions and Token collapse priority. Captured
-    collapsed cells wrapped without overflow, but this is not acceptance of
-    the missing scenario. Popup qualification is blocked; its source revert
-    was not run. No further fixture/runtime cycle is authorized.
+  - The merged F4 and isolated search seam runs passed. The bounded popup fixture
+    passed both themes, wide/data controls, narrow footer and exact collapsed
+    long-token wrapping. It configures Token first so intermediate public column
+    replacements cannot lose that witness. The exact wrap-toggle source revert
+    produced only its named failures with every registered control passing.
+    Main bytes were restored exactly; the restored positive passed and all
+    logged owned processes closed. No popup production correction was needed.
   - Customer-facing changes from `e848d391` are integrated. They mark 0.14.0
     upcoming and omit F3 persistence. Final independent Sol/Luna review covered
     the complete source, fixtures, scripts and customer document. Luna found
@@ -82,7 +82,7 @@ section is kept here so the register has a visible edge.
     markup was rejected by Reader and is not broader source authority.
     Selected F4 reverts produced exactly their named failures with surviving
     controls, exact source restoration and owned-process closure. The restored
-    fixture passed. Popup qualification remains open; final review is complete.
+    fixture passed. Bounded popup qualification and final review are complete.
     No release, visual or performance acceptance claimed.
 - `v013-routine-profile-gates` - **INTEGRATED; FOCUSED LOCAL CHECKS PASSED**.
   - The reviewed release selection is assembled in an isolated worktree.
