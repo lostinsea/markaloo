@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v014-rendered-tables` - **SOURCE INTEGRATED; FINAL GATES OPEN; F3 DEFERRED**.
+- `v014-rendered-tables` - **SOURCE REVIEWED; POPUP GATE BLOCKED; F3 DEFERRED**.
   - Base: canonical `lostinsea/markaloo` main `41dd78df`; the primary checkout
     and its branches remain unchanged.
   - Astra mapped rendered-table sizing, exact source editing, Prism scheduling,
@@ -49,8 +49,7 @@ section is kept here so the register has a visible edge.
     or new Save interface. Existing session-only sizing stays unchanged.
   - First independent Sol/Luna review agreed on a deferred-highlighting/search
     receipt race; Sol also found a preformatted-code CSS regression. Both were
-    corrected with focused cases. F4 native checks and selected reverts passed;
-    the second review is reserved for the complete integrated output.
+    corrected with focused cases. F4 native checks and selected reverts passed.
   - F4 `1c7b278d`, editor `36623f41`, search `22ac2650` and popup `6fb813d0`
     are assembled serially in this integration checkout. Shared proof registries
     retain each stream's entries and their exact ordered prefix.
@@ -66,8 +65,14 @@ section is kept here so the register has a visible edge.
     the missing scenario. Popup qualification is blocked; its source revert
     was not run. No further fixture/runtime cycle is authorized.
   - Customer-facing changes from `e848d391` are integrated. They mark 0.14.0
-    upcoming and omit F3 persistence. Final independent Sol/Luna review now
-    covers the complete source, fixtures, scripts and customer document.
+    upcoming and omit F3 persistence. Final independent Sol/Luna review covered
+    the complete source, fixtures, scripts and customer document. Luna found
+    that an authored Prism marker could suppress explicit highlighting; Sol
+    confirmed the finding. Both accepted the renderer-owned WeakSet correction
+    and existing Rust regression witness, with no other new blockers.
+    The corrected F4 positive, exact marker-guard revert with surviving controls
+    and restored positive passed their required outcomes. Source bytes were
+    restored exactly and all logged owned processes closed.
   - Node syntax, loaded-language gates and focused scroll-state checks passed.
     The owned-file, safe Node-parent fixture passed its focused F4 checks,
     including literal setup, Reader receipts and both search orderings.
@@ -77,7 +82,7 @@ section is kept here so the register has a visible edge.
     markup was rejected by Reader and is not broader source authority.
     Selected F4 reverts produced exactly their named failures with surviving
     controls, exact source restoration and owned-process closure. The restored
-    fixture passed. Popup qualification and final integrated review remain open.
+    fixture passed. Popup qualification remains open; final review is complete.
     No release, visual or performance acceptance claimed.
 - `v013-routine-profile-gates` - **INTEGRATED; FOCUSED LOCAL CHECKS PASSED**.
   - The reviewed release selection is assembled in an isolated worktree.

@@ -147,7 +147,8 @@ async function run() {
             tokenized: !!canonical};
         });
       const rows = entries.map(entry =>
-        '| ' + entry.language + ' | <code class="language-' + entry.language + '">' + encode(entry.source) + '</code> |');
+        '| ' + entry.language + ' | <code class="language-' + entry.language +
+        (entry.language === 'rust' ? ' prism-highlighted' : '') + '">' + encode(entry.source) + '</code> |');
       rows.push('| plain | \`const answer = 42;\` |',
         '| unknown | <code class="language-not-supported">const answer = 42;</code> |',
         '| inherited | <span class="language-rust"><code>fn plain() {}</code></span> |',
@@ -169,7 +170,8 @@ async function run() {
       highlightSearchTerm(searchInput.value, {navigate: false});
       editorScroll.commit(source, {textPending: true});
       test('table code fixture has real source-bound table and unprocessed candidates',
-        !!editorScroll.tableSource(table) && pendingTableCodeElements().length === entries.length + 1,
+        !!editorScroll.tableSource(table) && !!table.querySelector('code.language-rust.prism-highlighted') &&
+        pendingTableCodeElements().length === entries.length + 1,
         {candidates: pendingTableCodeElements().length, entries: entries.length});
       const authoredCodes = [...table.querySelectorAll('tbody tr')].slice(0, entries.length).map(row => row.querySelector('code'));
       test('table code fixture literals survive Markdown parsing',

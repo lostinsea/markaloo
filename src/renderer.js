@@ -8707,10 +8707,14 @@ function explicitTableCodeLanguage(element) {
     Prism.languages[language] && typeof Prism.languages[language] === 'object' ? language : null;
 }
 
+// Authored classes cannot prove that Prism has processed a node.
+const highlightedTableCodeElements = new WeakSet();
+
 function pendingTableCodeElements() {
   if (typeof Prism === 'undefined') return [];
-  return [...viewer.querySelectorAll('th code:not(.prism-highlighted), td code:not(.prism-highlighted)')]
-    .filter(element => !element.closest('pre') && explicitTableCodeLanguage(element));
+  return [...viewer.querySelectorAll('th code, td code')]
+    .filter(element => !highlightedTableCodeElements.has(element) &&
+      !element.closest('pre') && explicitTableCodeLanguage(element));
 }
 
 function highlightNewElements(scrollSource) {
@@ -8740,6 +8744,7 @@ function highlightNewElements(scrollSource) {
     if (!produced) continue;
     for (const element of elements) {
       Prism.highlightElement(element);
+      highlightedTableCodeElements.add(element);
       element.classList.add('prism-highlighted');
       noteReadingAttribute(element, 'class');
       produced.decorations.push(...element.querySelectorAll('span'));

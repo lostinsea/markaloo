@@ -2115,6 +2115,16 @@ const RENDERED_TABLE_CODE_REVERTS = [
     to: 'code:is([class*="language-"], [class*="lang-"]) {',
     expect: [/^table code leaves nested preformatted block whitespace unchanged$/],
   },
+  {
+    id: "0140-RENDER-AUTHORED-MARKER", what: "trust an authored Prism marker instead of processed-node identity",
+    file: RENDERER,
+    from: "!highlightedTableCodeElements.has(element)",
+    to: "!element.classList.contains('prism-highlighted')",
+    expect: [
+      /^table code fixture has real source-bound table and unprocessed candidates$/,
+      /^table code supported language witnesses produce Prism tokens$/,
+    ],
+  },
 ].map(revert => ({
   ...revert, suite: "test:rendered-table-code", requireExactFailures: true,
   requireMustPassAssertions: true, expectedFailureCount: revert.expect.length,
@@ -31441,7 +31451,7 @@ function proveCompanionTranscriptRoles() {
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
       .join(",") ===
-        "0140-RENDER-HIGHLIGHT,0140-RENDER-SEARCH-RUNS,0140-RENDER-TABLE-RECEIPT,0140-RENDER-SEAL,0140-RENDER-STALE-SEAL,0140-RENDER-PRE-WHITESPACE," +
+        "0140-RENDER-HIGHLIGHT,0140-RENDER-SEARCH-RUNS,0140-RENDER-TABLE-RECEIPT,0140-RENDER-SEAL,0140-RENDER-STALE-SEAL,0140-RENDER-PRE-WHITESPACE,0140-RENDER-AUTHORED-MARKER," +
         "0140-EDITOR-ROW-SEPARATORS,0140-EDITOR-COLUMN-SOURCE,0140-EDITOR-ROW-UPDATE,0140-EDITOR-EDGE-RESIZE,0140-EDITOR-EDGE-RELEASE,0140-EDITOR-INITIAL-WIDTH," +
         "0140-SEARCH-STACKING,0140-SEARCH-INITIAL-INERT,0140-SEARCH-TOGGLE-FOCUS," +
         "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
