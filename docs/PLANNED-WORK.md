@@ -38,7 +38,86 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `windows-update-visibility` - **SOURCE INTEGRATED; NATIVE PARTIAL; ENVIRONMENT BLOCKED**.
+- `v0141-release` - **SOURCE PREPARATION ACCEPTED; LOCAL BUILD PENDING**.
+  - Publish as 0.14.1 only after all fixes are done and relevant targeted tests
+    pass. Authorization does not waive native, full-app or exclusion blockers.
+  - The reviewed search-viewport/padding commit is integrated as `ae3313e8`.
+    Relevant safe combined checks passed. Fresh independent final Sol 6.1/high
+    and Luna 6/high seam reviews found no significant findings or blockers.
+    Both accepted the integration and evidence limits; no disagreement.
+  - Minimal synchronized 0.14.1 changes in package/root-lock passed fresh
+    independent Sol 6.1/high and Luna 6/high preparation reviews. Both found no
+    significant findings or blockers; no disagreement. Only the three root
+    version fields changed; dependency, script and packaging data are unchanged.
+  - Root authorized a new unsigned 0.14.1 candidate for native testing after
+    those reviews. Native checks need that candidate; they do not block
+    creating it. Main, tag and publication remain held for required gates.
+    No push, tag, dispatch or publication has happened.
+  - Root now owns a fresh Sandbox for native checks and will request actual UAC
+    approval if needed. No new native or offscreen runtime is launched here.
+  - Use the established release path: matching package/root-lock versions,
+    reviewed release preparation, then the normal hosted `release.yml`
+    staging/build gates. Dispatch the eventual tag ref for publication;
+    a branch-ref dispatch builds without publishing.
+  - The workflow retains packaging/licence checks, Windows table/editor-scroll
+    checks, platform builds, strict Windows archive checks, artifact
+    completeness checks and tag-only attestation/publication.
+  - Global proof initialization and broad local table-source inventory remain
+    exclusion-blocked. Native/UAC/cancel and full Main Save limits remain open;
+    report blockers rather than weaken gates or treat unrun checks as passes.
+  - Preserve the unsigned 0.14.0 candidate as prior-three-fix evidence only.
+    It is not a 0.14.1 release artifact and does not include the viewport fix.
+- `search-bar-readable-viewport` - **SOURCE INTEGRATED; COMBINED CHECKS PASSED**.
+  - While search is visible, the readable area starts below its bar.
+    Sticky table headings and other content must not hide behind it.
+  - Owner: session `16aa6ad3-eabd-41a1-8a3e-a4e11509683d`,
+    branch `users/vinma-microsoft/search-bar-readable-viewport`,
+    based on `9968782851308be834e0eb7f83ca1093035064ae`.
+  - The owner reports Astra traced the overlap to absolute search positioning
+    in the document grid row. A naturally sized separate row now lets sticky
+    and navigation consumers use the real scrollport.
+  - The owner also reports receiving a compact-spacing addition through Root
+    and viewing its screenshot: reduce outer vertical padding, not controls.
+    Baseline/candidate evidence and both final reviews cover it.
+  - The owner reproduced overlap in Reader and Split with the shipping fixture.
+    The correction uses CSS layout and an explanatory HTML comment: an
+    intrinsic search row, no closed-row allocation and 6px outer padding
+    instead of 12px. Sticky and scroll algorithms remain unchanged.
+  - The focused matrix covers Reader/Split at 100%/200%, horizontal alignment,
+    both table edges, dynamic toggles, narrow/short layouts and print.
+    Coupled old overlay assertions and proof anchors were updated.
+  - The owner reports the same fixture produced 76 passes/27 failures with
+    original CSS and 103 passes/no failures after restoration. Exact bounded
+    viewport, padding, inert and focus proofs detected their named failures
+    with required controls intact. No global harness was invoked.
+  - The owner viewed all original baseline/candidate PNGs: overlap before,
+    headings and Source controls below the thinner bar after, no closed gap.
+    Reader at 100% measured search height 61px to 49px; input/button heights
+    stayed 37px/30px. Header/scrollport top moved from 33px to search bottom 82px.
+  - The owner released the offscreen fixture slot after checking closure.
+    A recorded PID had been reused by unrelated Edge and was left untouched.
+  - The owner's first reviews found one valid proof issue: Sol identified an
+    overridden old mutation with removed expectations. It was retired and the
+    exact inventory corrected. Luna found no blockers. Fresh final Sol/Luna
+    reviews accepted the corrections with no remaining disagreement.
+  - Reviewed `b3cd5da2` is integrated as `ae3313e8`; all changed blobs match.
+    The staged register was preserved in recovery stash `cd532c5c`.
+    Owner evidence: session `16aa6ad3` under
+    `files\search-viewport\verification-summary.json` and `proof-results.json`.
+  - Combined checks at `ae3313e8`: search viewport 103/103, saved code 22/22,
+    F4 31/31, movement 813/813 through the shipping virtual dispatcher,
+    syntax source 30/30, updater source/VM 11/11 and installer contracts 7/7.
+    Changed JavaScript sources parse. Reader/Split 100% and narrow candidate
+    images were viewed; all twelve recorded owned Electron PIDs were absent.
+    The integration fixture slot is released.
+  - Combined evidence: integration session `files\combined-viewport-ae3313e8`.
+    This remains owned offscreen evidence with explicit adapters, not installed,
+    full-app, Main Save, physical-keyboard or cross-platform qualification.
+    Changed full-app search/tab predicates have source/syntax checks only.
+  - The existing unsigned candidate covers only the prior three fixes.
+    It does not include this correction. Preserve its artifacts and all
+    native, full-app and exclusion blockers; no new candidate has been built.
+- `windows-update-visibility` - **SOURCE INTEGRATED; NATIVE PARTIAL; ENVIRONMENT RECHECK PENDING**.
   - Make Windows interactive updates visible, including installer-side
     compatibility with old 0.13/0.14 clients. Remove the unconditional,
     unverified Folia warning.
@@ -62,9 +141,13 @@ section is kept here so the register has a visible edge.
     with all-users selected. The Cancel action was refused after the Sandbox
     desktop became noninteractive; no alternative UI route was used.
     Cancellation did not pass.
-  - The guest had `EnableLUA=0`: real UAC inner-instance/refusal checks are
-    environment-blocked. Current-user, completed default 0.14 update, cancel,
-    `/S` and ordinary no-Folia controls have not passed.
+  - `EnableLUA=0` was measured only in the previous, now-destroyed Sandbox
+    guest. Real UAC checks were blocked there; this says nothing about the
+    host or a fresh guest. Root will recheck the actual test environment.
+    The user offered to approve real UAC prompts when needed; Root will ask
+    at an actual approval step. Do not change settings or bypass prompts.
+    Current-user, completed default 0.14 update, cancel, `/S` and ordinary
+    no-Folia controls have not passed.
   - Root preserved receipts and the viewed image before verified Sandbox
     teardown. A fresh software-graphics start failed; status then confirmed
     no running Sandbox. There was no blind restart.
@@ -124,7 +207,7 @@ section is kept here so the register has a visible edge.
     installer/sandbox work, release changes or pushes.
   - The normal `test:table-cells-source` route also hashes excluded installer
     sources through `productFiles`; the owner did not run that route.
-- `post-release-integration` - **UNSIGNED CANDIDATE BUILT; NOT NATIVE QUALIFIED**.
+- `post-release-integration` - **PRIOR THREE-FIX CANDIDATE BUILT; NOT NATIVE QUALIFIED**.
   - Published 0.14.0 remains `f79df9d28bf9c37f8af70099f6e141ca962134e5`.
     These corrections do not change that release.
   - Updater, table UI and saved-rendering commits were integrated serially
@@ -154,7 +237,7 @@ section is kept here so the register has a visible edge.
     Build log, source/candidate manifests and unsigned-status receipts persist
     beside the candidate. The final register update changes no build input.
     Building does not clear native, UAC, cancel or full Main Save gates.
-    No version bump, push, tag, release or PR.
+    That candidate used no version bump, push, tag, release or PR.
   - Existing source exclusions remain. The global `prove-table-fixes` harness
     is blocked because `failFormatterLines` unconditionally scans excluded
     tests. Do not run it or present targeted checks as its replacement.
