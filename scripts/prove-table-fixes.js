@@ -2141,6 +2141,59 @@ const RENDERED_TABLE_CODE_REVERTS = [
 }));
 
 const REVERTS = [
+  {
+    id: "WINDOWS-SETUP-HIDDEN-CLIENT",
+    what: "leave setup hidden when an older updater suppresses its initial window",
+    file: path.join(ROOT, "build", "installer.nsh"),
+    from: "    System::Call 'user32::PostMessageW(p $HWNDPARENT, i 0x0112, p 0xF120, p 0) i.r0'",
+    to: "    StrCpy $0 1",
+    suite: "test:windows-update-launch",
+    expect: [/^interactive setup queues one pointer-safe restore from its installer-only GUI callback$/],
+    mustPass: [
+      /^setup restore queue failure reports an error and exits with its scratch register restored$/,
+      /^setup retains both busy-process refusals and the real cleanup failure warning$/,
+      /^setup does not invent a Folia removal result or promise a settings copy$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "WINDOWS-UPDATER-GUI-VISIBILITY",
+    what: "hide the interactive NSIS wizard launched after update approval",
+    file: MAIN,
+    from: '    child = spawn(plan.installerPath, plan.args, {\n' +
+      '      detached: true,\n      stdio: "ignore",\n      windowsHide: false,\n    });',
+    to: '    child = spawn(plan.installerPath, plan.args, {\n' +
+      '      detached: true,\n      stdio: "ignore",\n      windowsHide: true,\n    });',
+    suite: "test:windows-update-launch",
+    expect: [/^interactive Windows updater permits a visible wizard without silent arguments$/],
+    mustPass: [
+      /^Windows launcher retains final approval and waits for spawn before quitting$/,
+      /^Windows launcher blocks duplicates and ignores late child events after spawn$/,
+      /^Windows synchronous and pre-spawn errors remain visible and retry-safe without elevation$/,
+      /^Windows ambiguous pre-spawn close keeps the freeze and duplicate latch$/,
+      /^Windows stale or pending startup admission cannot launch the installer$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "WINDOWS-SETUP-FOLIA-WARNING",
+    what: "show an unsupported Folia removal and settings-copy claim on every elevated setup",
+    file: path.join(ROOT, "build", "installer.nsh"),
+    from: "!macro customCheckAppRunning",
+    to: "!macro customInit\n" +
+      "  ${If} ${UAC_IsInnerInstance}\n" +
+      '    DetailPrint "Folia removal was skipped on this elevated setup path."\n' +
+      '    MessageBox MB_OK|MB_ICONEXCLAMATION "Folia removal was skipped on this elevated setup path. Its installation and settings are kept. Markaloo will still copy retained settings on first launch."\n' +
+      "  ${EndIf}\n!macroend\n\n!macro customCheckAppRunning",
+    suite: "test:windows-update-launch",
+    expect: [/^setup does not invent a Folia removal result or promise a settings copy$/],
+    mustPass: [
+      /^interactive Windows updater permits a visible wizard without silent arguments$/,
+      /^setup retains both busy-process refusals and the real cleanup failure warning$/,
+      /^Windows launcher blocks duplicates and ignores late child events after spawn$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
   ...RENDERED_TABLE_CODE_REVERTS,
   {
     id: "0140-EDITOR-ROW-SEPARATORS", what: "move physical row terminators instead of retaining destination separators",

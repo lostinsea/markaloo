@@ -62,12 +62,19 @@ Manager and `Get-Process`.
 - Elevated setup skips per-user Folia removal. Removal also refuses an install
   folder that overlaps the current user's default Folia/Markaloo profiles.
   Setup cannot discover an arbitrary profile relocation.
-- Failed or unsupported removal shows a warning; setup can continue with Folia
+- A cleanup attempt that fails shows a warning; setup can continue with Folia
   still installed. Retained Folia settings are still considered on first launch.
 - The custom running-app hook refuses busy Markaloo/Folia processes without
   closing them. Ordinary assisted all-users elevation skips this hook in both
-  instances and warns that Folia removal was skipped. Save work and close those
-  applications yourself before running setup.
+  instances. Setup does not infer a Folia installation or settings-copy result
+  from elevation alone. Save work and close those applications yourself before
+  running setup.
+- In-app updates launch the interactive setup with a visible wizard, not `/S`.
+  The app quits only after the installer process reports that it started.
+  That handoff does not prove installation completed.
+- Interactive setup also queues one window restore for older clients that hide
+  its initial window. Silent setup and the uninstaller do not use this callback.
+  Failure to queue the restore reports an error and stops setup.
 - The source checks do not qualify an installed upgrade or a native Windows run.
 
 ## Alternative Build Options

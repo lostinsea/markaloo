@@ -80,15 +80,28 @@ This approach means after an upstream merge, you only need to ensure these files
   current user's default Folia/Markaloo profiles, including development profiles.
   Arbitrary profile relocations and other users' profiles are not discoverable
   by this setup hook.
-- Failed or unsupported removal warns and leaves first-start import enabled.
+- A cleanup attempt that fails warns and leaves first-start import enabled.
   No post-quit waiter or installed-app uninstall path remains.
 - Installer helpers/native transaction providers are not required by normal
   startup. The installer uses electron-builder's normal flow. Its custom
   running-app check never closes apps, but ordinary assisted all-users elevation
-  skips that check in both instances and warns that Folia removal was skipped.
+  skips that check in both instances. Elevation alone does not show a migration
+  warning or promise that settings will be copied.
 - `test-legacy-install.js` exercises disposable copy output and closed startup/
   process mocks. Its PowerShell source checks are not a real Windows lock,
   registry, uninstaller or installed-upgrade qualification.
+
+### Windows update setup visibility
+
+- The installed updater launches interactive NSIS with `--updated` and optional
+  `--force-run`. It does not add `/S` or hide the setup window.
+- Setup queues one standard window restore from the MUI GUI callback, after
+  initialization, so older clients can hand off a hidden interactive setup.
+  Silent setup and the uninstaller skip this callback. A queue failure reports
+  an error and stops setup before installation.
+- Detachment, process-start acknowledgement, document approval and duplicate
+  prevention stay unchanged. A started process is not a completed installation.
+- Source/VM checks cannot qualify a visible wizard or a completed upgrade.
 
 ### Reading history foundation
 

@@ -17,21 +17,19 @@ const templates = process.env.MARKALOO_NSIS_TEMPLATES ||
 const read = file => fs.readFileSync(path.join(templates, file), "utf8");
 const include = fs.readFileSync(path.join(root, "build", "installer.nsh"), "utf8");
 
-test("installer keeps the stock non-killing check and warns on the unsupported inner path", () => {
-  assert.match(include, /!macro customCheckAppRunning/);
-  assert.equal((include.match(/^!macro /gm) || []).length, 2);
-  assert.match(include, /\$\{nsProcess::FindProcess\} "\$\{APP_EXECUTABLE_FILENAME\}" \$R0/);
-  assert.match(include, /\$\{nsProcess::FindProcess\} "Folia\.exe" \$R0/);
-  assert.equal((include.match(/\$\{If\} \$R0 != 603/g) || []).length, 2);
-  assert.equal((include.match(/SetErrorLevel 2/g) || []).length, 2);
-  assert.equal((include.match(/^\s+Quit$/gm) || []).length, 2);
+test("installer keeps the stock non-killing check without an unconditional migration warning", () => {
+  const check = /!macro customCheckAppRunning\b([\s\S]*?)!macroend/.exec(include)?.[1];
+  assert(check, "The existing running-app and cleanup hook must remain");
+  assert.match(check, /\$\{nsProcess::FindProcess\} "\$\{APP_EXECUTABLE_FILENAME\}" \$R0/);
+  assert.match(check, /\$\{nsProcess::FindProcess\} "Folia\.exe" \$R0/);
+  assert.equal((check.match(/\$\{If\} \$R0 != 603/g) || []).length, 2);
+  assert.equal((check.match(/SetErrorLevel 2/g) || []).length, 2);
+  assert.equal((check.match(/^\s+Quit$/gm) || []).length, 2);
   assert.doesNotMatch(include,
     /KILL_PROCESS|KillProcess|taskkill|Stop-Process|legacy-install\.nsh|InstallBridge|customInstall|customFinish/);
-  const init = /!macro customInit\b([\s\S]*?)!macroend/.exec(include)?.[1];
-  assert(init);
-  assert.match(init, /\$\{If\} \$\{UAC_IsInnerInstance\}/);
-  assert.match(init, /MessageBox MB_OK\|MB_ICONEXCLAMATION "Folia removal was skipped/);
-  assert.doesNotMatch(init, /Exec|BeforeInstallCleanup/);
+  const init = /!macro customInit\b([\s\S]*?)!macroend/.exec(include)?.[1] || "";
+  assert.doesNotMatch(init, /MessageBox|Exec|BeforeInstallCleanup/);
+  assert.doesNotMatch(include, /Folia removal was skipped|will still copy retained settings/);
 });
 
 test("supported public hook attempts cleanup before new installation writes", () => {
@@ -57,7 +55,7 @@ test("supported public hook attempts cleanup before new installation writes", ()
   assert.doesNotMatch(check.slice(check.indexOf("BeforeInstallCleanup")), /SetErrorLevel|Quit/);
 });
 
-test("ordinary assisted elevation misses the hook, but always reaches the visible skip warning", () => {
+test("ordinary assisted elevation still skips the running-app hook without a fabricated removal result", () => {
   const assisted = read("assistedInstaller.nsh");
   assert.match(assisted, /!insertmacro PAGE_INSTALL_MODE[\s\S]+!insertmacro MUI_PAGE_INSTFILES/);
   const mode = read("multiUserUi.nsh");
@@ -66,9 +64,7 @@ test("ordinary assisted elevation misses the hook, but always reaches the visibl
     /\$\{ifNot\} \$\{UAC_IsInnerInstance\}\s+!insertmacro CHECK_APP_RUNNING/);
   const installer = read("installer.nsi");
   assert.match(installer, /Function \.onInit[\s\S]+!insertmacro initMultiUser[\s\S]+!insertmacro customInit[\s\S]+FunctionEnd/);
-  assert(installer.indexOf("!insertmacro customInit") < installer.indexOf('Section "install"'));
-  const init = /!macro customInit\b([\s\S]*?)!macroend/.exec(include)?.[1];
-  assert.match(init || "", /UAC_IsInnerInstance[\s\S]+MessageBox/);
+  assert.doesNotMatch(include, /UAC_IsInnerInstance[\s\S]+Folia removal was skipped/);
 });
 
 test("data preservation flags and synchronous old-uninstaller invocation match pinned stock source", () => {

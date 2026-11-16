@@ -1,12 +1,23 @@
 ; Keep electron-builder's installer, elevation and uninstall safeguards.
 ; Override its shared running check: never close an app or discard unsaved work.
-!macro customInit
-  ; Assisted elevation never reaches customCheckAppRunning in either instance.
-  ${If} ${UAC_IsInnerInstance}
-    DetailPrint "Folia removal was skipped on this elevated setup path."
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Folia removal was skipped on this elevated setup path. Its installation and settings are kept. Markaloo will still copy retained settings on first launch."
-  ${EndIf}
-!macroend
+!ifndef BUILD_UNINSTALLER
+  !define MUI_CUSTOMFUNCTION_GUIINIT MarkalooRestoreInteractiveSetup
+  Function MarkalooRestoreInteractiveSetup
+    IfSilent done
+    Push $0
+    ; Old clients hide setup. Restore after NSIS applies its startup show state.
+    System::Call 'user32::PostMessageW(p $HWNDPARENT, i 0x0112, p 0xF120, p 0) i.r0'
+    StrCmp $0 0 failed
+    Pop $0
+    Return
+    failed:
+    Pop $0
+    MessageBox MB_OK|MB_ICONSTOP "Markaloo setup could not show its window. Run setup again."
+    SetErrorLevel 2
+    Quit
+    done:
+  FunctionEnd
+!endif
 
 !macro customCheckAppRunning
   Push $R0

@@ -14656,10 +14656,11 @@ function performWindowsInstalledUpdate(updater, admissionPause) {
     assertWindowsUpdateAdmission(admissionPause);
     // No accepted work can enter between this check and the synchronous spawn.
     attempt.retrySafe = false;
+    // This is an interactive NSIS wizard, not a console helper.
     child = spawn(plan.installerPath, plan.args, {
       detached: true,
       stdio: "ignore",
-      windowsHide: true,
+      windowsHide: false,
     });
   } catch (err) {
     reportInstalledUpdateLaunchFailure(
