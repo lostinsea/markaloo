@@ -1219,6 +1219,41 @@ window.MarkalooInlineFormatting = (() => {
     };
   }
 
+  function tableFenceSurface(input, provenance, dependencies, resolveLanguage) {
+    if (provenance.policy?.raw || typeof resolveLanguage !== 'function') return null;
+    const pieces = [];
+    const collect = parent => {
+      for (const node of parent.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) pieces.push(node.data);
+        else if (node.nodeType === Node.ELEMENT_NODE && !provenance.attributes(node).length) {
+          if (node.tagName === 'BR') pieces.push('\n');
+          else {
+            const fragment = provenance.fragments.get(node.getAttribute(provenance.partAttribute));
+            if (node.tagName !== 'SPAN' || !['text', 'emoji'].includes(fragment?.kind) ||
+                !collect(node)) return false;
+          }
+        } else return false;
+      }
+      return true;
+    };
+    if (!collect(input)) return null;
+    const text = normalise(pieces.join(''));
+    const fence = /^(`{3,})([\w-]+)[ \t]*\n([\s\S]*?)\n(`{3,})$/.exec(text);
+    if (!fence || fence[0] !== text || fence[4].length < fence[1].length) return null;
+    const language = resolveLanguage(fence[2]);
+    if (!language) return null;
+    const { marked, transform, sanitize } = dependencies;
+    const tokens = marked.lexer(text);
+    if (tokens.length !== 1 || tokens[0].type !== 'code' || tokens[0].raw !== text) return null;
+    // Keep a physical table row single-line, without expanding emoji inside code.
+    const source = '<code class="language-' + language + ' table-fenced-code">' +
+      encodeCellText(fence[3]).replace(/:/g, '&#58;') + '</code>';
+    const surface = document.createElement('div');
+    const ownership = prepareCell(surface, source, source, marked, provenance.links, transform, sanitize);
+    if (surface.querySelector('code')?.textContent !== fence[3]) fail('tableCells.cellType');
+    return { surface, ownership };
+  }
+
   function attachInlineEditor({ element, ownership, sourcePolicy = {}, marked, transform, sanitize,
     isCurrent, reportError, clearError = () => {}, documentEditor }) {
     const cell = { input: element, provenance: ownership }, listeners = [];
@@ -1749,7 +1784,12 @@ window.MarkalooInlineFormatting = (() => {
       }
     }, true);
     return {
-      readSource() { if (!current()) fail('tableCells.stale'); return serializeSurface(element, ownership, dependencies); },
+      readSource() {
+        if (!current()) fail('tableCells.stale');
+        const projected = tableFenceSurface(element, ownership, dependencies, sourcePolicy.resolveTableFenceLanguage);
+        return projected ? serializeSurface(projected.surface, projected.ownership, dependencies) :
+          serializeSurface(element, ownership, dependencies);
+      },
       reset() { pendingHistory = null; cell.activeCode = null; cell.composing = false; cell.compositionRevision = (cell.compositionRevision || 0) + 1; },
       dispose() { disposed = true; pendingHistory = null; historyCarets = new WeakMap(); listeners.splice(0).forEach(remove => remove()); },
     };

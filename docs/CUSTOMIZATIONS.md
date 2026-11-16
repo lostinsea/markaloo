@@ -42,6 +42,11 @@ This approach means after an upstream merge, you only need to ensure these files
 - Inline cell code wraps. Preformatted code keeps its existing whitespace
   and block behavior. Deferred highlighting preserves source-bound editing
   and Reader correspondence.
+- In the Table edit popup, Update turns a complete whole-cell backtick fence
+  with a bundled language (for example, `json`) into highlighted cell code.
+  Line breaks, indentation and literal punctuation survive Save and reopening.
+- Unknown, unlabelled, unfinished, padded and mixed-content fences stay literal.
+  Already-encoded text is not decoded again. This is not a live typing preview.
 - This does not add width metadata, autosave or a new Save interface.
 
 ### Filtered table popup wrapping

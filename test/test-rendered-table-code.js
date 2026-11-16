@@ -43,7 +43,7 @@ function slice(from, to) {
   if (start < 0 || end < 0) throw new Error("Missing renderer test boundary: " + from);
   return renderer.slice(start, end);
 }
-const functions = slice("function explicitTableCodeLanguage(", "// Smart render dispatcher");
+const functions = slice("function bundledTableCodeLanguage(", "// Smart render dispatcher");
 const searchFunctions = slice("// Search functionality", "function toggleSearchPanel()");
 const sanitizer = slice("const SANITIZE_CONFIG = {", "// DOMPurify's default URI") +
   slice("function sanitizeHtml(html) {", "// The table dialogs");

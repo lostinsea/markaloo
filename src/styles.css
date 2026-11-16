@@ -4615,6 +4615,10 @@ code[class*="language-"] ::selection {
   overflow-wrap: anywhere;
 }
 
+.markdown-body :is(th, td) code.table-fenced-code:not(pre code) {
+  white-space: pre-wrap;
+}
+
 /* Code blocks */
 pre[class*="language-"] {
   padding: 1em;

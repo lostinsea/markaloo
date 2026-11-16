@@ -2140,6 +2140,62 @@ const RENDERED_TABLE_CODE_REVERTS = [
   ],
 }));
 
+const SAVED_TABLE_CODE_REVERTS = [
+  {
+    id: "0140-SAVED-CELL-FENCE", what: "save a complete explicitly labelled cell fence as literal text",
+    file: RENDERER,
+    from: "      resolveTableFenceLanguage: bundledTableCodeLanguage,",
+    to: "      resolveTableFenceLanguage: undefined,",
+    expect: [
+      /^saved cell reader has explicit JSON tokens after disk readback$/,
+      /^saved cell reader preserves multiline code whitespace and source authority$/,
+      /^saved cell neighbor edit does not reescape code or lose linebreaks$/,
+      /^saved cell reopened code edit preserves literal payload and source authority$/,
+      /^saved cell bundled language and alias JS survive CRLF input$/,
+      /^saved cell bundled language and alias rust survive CRLF input$/,
+    ],
+  },
+  {
+    id: "0140-SAVED-CELL-LINES", what: "collapse saved fenced-code line breaks in Reader",
+    file: CSS,
+    from: ".markdown-body :is(th, td) code.table-fenced-code:not(pre code) {\n  white-space: pre-wrap;\n}",
+    to: ".markdown-body :is(th, td) code.table-fenced-code:not(pre code) {\n  white-space: normal;\n}",
+    expect: [/^saved cell reader preserves multiline code whitespace and source authority$/],
+  },
+  {
+    id: "0140-SAVED-CELL-LITERAL", what: "reinterpret an intentionally escaped fence after editing",
+    file: path.join(SRC, "inline-formatting.js"),
+    from: "!['text', 'emoji'].includes(fragment?.kind)",
+    to: "!['text', 'escape', 'emoji'].includes(fragment?.kind)",
+    expect: [/^saved cell escaped literal fence stays literal after an edit$/],
+  },
+  {
+    id: "0140-SAVED-CELL-PADDING", what: "discard cell text outside a complete fence",
+    file: path.join(SRC, "inline-formatting.js"),
+    from: "    const text = normalise(pieces.join(''));",
+    to: "    const text = normalise(pieces.join('')).trim();",
+    expect: [/^saved cell padded fence stays literal$/, /^saved cell trailing-break fence stays literal$/],
+  },
+].map(revert => ({
+  ...revert, suite: "test:saved-table-code", requireExactFailures: true,
+  requireMustPassAssertions: true, expectedFailureCount: revert.expect.length,
+  mustPass: [
+    /^saved cell console sentinel is alive$/,
+    /^saved cell raw paste reaches shipping popup as multiline literal$/,
+    /^saved cell Update keeps outside bytes table shape and one undo$/,
+    /^saved cell never executes code payload$/,
+    /^saved cell reopened unchanged Update keeps exact saved bytes$/,
+    /^saved cell unknown fence stays literal$/,
+    /^saved cell unlabelled fence stays literal$/,
+    /^saved cell unclosed fence stays literal$/,
+    /^saved cell mixed fence stays literal$/,
+    /^saved cell multiple fence stays literal$/,
+    /^saved cell already encoded literal input is not decoded as markup or a fence$/,
+    /^saved cell guest has no external requests or unexpected errors$/,
+    /^saved cell owned windows are closed$/,
+  ],
+}));
+
 const REVERTS = [
   {
     id: "WINDOWS-SETUP-HIDDEN-CLIENT",
@@ -2195,6 +2251,7 @@ const REVERTS = [
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   ...RENDERED_TABLE_CODE_REVERTS,
+  ...SAVED_TABLE_CODE_REVERTS,
   {
     id: "0140-EDITOR-TOOLBAR-ROW", what: "stack the Move controls below the structure controls even when both fit",
     file: CSS, suite: "test:table-cells-movement",

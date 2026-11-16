@@ -8697,14 +8697,18 @@ function renderLightFormat(content, generation, viewportPermit, modeReading = nu
 // used to call Prism.highlightAll(), which walks the whole document; narrowing
 // to #viewer would silently stop highlighting code blocks that live in dialogs
 // and preview panes.
+function bundledTableCodeLanguage(label) {
+  if (typeof Prism === 'undefined' || typeof label !== 'string' || !/^[\w-]+$/.test(label)) return null;
+  const language = label.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(Prism.languages, language) &&
+    Prism.languages[language] && typeof Prism.languages[language] === 'object' ? language : null;
+}
+
 function explicitTableCodeLanguage(element) {
-  if (typeof Prism === 'undefined') return null;
   const labels = [...element.classList].map(name => /^(?:language|lang)-([\w-]+)$/i.exec(name))
     .filter(Boolean).map(match => match[1].toLowerCase());
   if (!labels.length || new Set(labels).size !== 1) return null;
-  const language = labels[0];
-  return Object.prototype.hasOwnProperty.call(Prism.languages, language) &&
-    Prism.languages[language] && typeof Prism.languages[language] === 'object' ? language : null;
+  return bundledTableCodeLanguage(labels[0]);
 }
 
 // Authored classes cannot prove that Prism has processed a node.
@@ -15708,6 +15712,7 @@ function attachTableCellInput(cell, session) {
       !session.applied && !session.confirmation && session.selection.isCurrent(),
     reportError: showTableCellError, clearError: () => { tableCellError.textContent = ''; },
     sourcePolicy: {
+      resolveTableFenceLanguage: bundledTableCodeLanguage,
       keydown(event) {
         if (session.confirmation) { event.preventDefault(); return; }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
