@@ -73,6 +73,16 @@ section is kept here so the register has a visible edge.
     Root received the exact path and hashes for native testing.
     This candidate is **NOT NATIVE QUALIFIED**. Building clears no native,
     full-app, Main Save, exclusion or hosted release gate.
+  - Nonpublishing hosted branch staging is **BLOCKED: WRITE ACCESS**.
+    Requested staging SHA: `d2be6986025e11af036d4e370df2e6a7587989e9`;
+    branch: `users/vinma-microsoft/markaloo-table-rendering`.
+    Canonical `lostinsea/markaloo` and the active `release.yml` were verified.
+  - The single explicit branch-only push failed HTTP 403. Active account
+    `vinma_microsoft` has repository `pull: true`, `push: false`.
+    No force, credential switch, shared remote change or alternate path was used.
+    The remote integration branch remains absent; main remains `f79df9d2`.
+    No dispatch, run URL or hosted artifacts exist; required hosted checks
+    are **NOT RUN**, not passed. Root received the access blocker.
   - Use the established release path: matching package/root-lock versions,
     reviewed release preparation, then the normal hosted `release.yml`
     staging/build gates. Dispatch the eventual tag ref for publication;
