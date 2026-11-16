@@ -190,6 +190,7 @@ async function sourceTests(core = false) {
     sharedTableSourceTests(cells, marked, protect);
     movementTableSourceTests(cells, marked, protect);
     await rowRemovalSessionSourceTests(cells);
+    tableCellHitSourceTests();
     if (movementOnly) await columnSizingSourceTests(cells, true);
     return;
   }
@@ -927,6 +928,160 @@ function structuralRowSourceTests(cells, marked, protect) {
   const ragged = cells.index("A | B | C\n--- | --- | ---\na | b |", marked, protect);
   check("padded pipe-less empty trailing cells retain their existing unsupported-shape boundary",
     ragged.tables.length === 1 && !ragged.tables[0].writable);
+}
+
+function tableCellHitSourceTests() {
+  const renderer = lf(fs.readFileSync(path.join(ROOT, "src", "renderer.js"), "utf8"));
+  const listeners = new Map(), inputs = new WeakMap();
+  let focused = null, current = true, collapsed = true, composing = false;
+  const node = tag => ({
+    tagName: tag.toUpperCase(), dataset: {}, attributes: {}, children: [], parentElement: null,
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { delete this.attributes[name]; },
+    appendChild(child) { child.parentElement = this; this.children.push(child); },
+    contains(target) { for (let at = target; at; at = at.parentElement) if (at === this) return true; return false; },
+    closest(selector) {
+      for (let at = this; at; at = at.parentElement) {
+        if (selector === "a" ? at.tagName === "A" :
+          selector.split(",").some(part => part.trim() === "[data-table-cell]"
+            ? Object.hasOwn(at.dataset, "tableCell") : at.tagName === part.trim().toUpperCase())) return at;
+      }
+      return null;
+    },
+    focus(options) { focused = { node: this, options }; },
+  });
+  const grid = { addEventListener(type, handler) { listeners.set("grid-" + type, handler); } };
+  const dialog = { addEventListener(type, handler) { listeners.set("dialog-" + type, handler); } };
+  const row = { editable: true }, session = { ready: true, rows: [row], model: { links: {} },
+    selection: { isCurrent: () => current }, sizing: { isComposing: () => composing } };
+  const context = vm.createContext({
+    document: { createElement: node, getElementById: () => ({ addEventListener() {} }) },
+    window: { getSelection: () => ({ isCollapsed: collapsed }) },
+    tableCellInputs: inputs, tableCellSession: session, tableCellGrid: grid, tableCellDialog: dialog,
+    MarkalooTableCells: { prepareCell: () => ({}) }, marked: {}, parseEmojis() {}, sanitizeTableHtml() {},
+    serializeSafeTableCell() {}, refreshTableCellRowActions() {}, closeTableCellEditor() {},
+    selectTableCell(owner, cell) { owner.selectedCell = cell; }, queueMicrotask,
+  });
+  const creation = renderer.slice(renderer.indexOf("function createTableCell("),
+    renderer.indexOf("\nfunction createTableCellRow("));
+  const hit = renderer.slice(renderer.indexOf("function tableCellForEvent("),
+    renderer.indexOf("\nfunction attachTableCellInput("));
+  const clicks = renderer.slice(renderer.indexOf("// Noneditable header cells still contain authored links."),
+    renderer.indexOf("\n// Delete Mermaid", renderer.indexOf("function tableCellForEvent(")));
+  if (!creation || !hit || !clicks) throw new Error("Missing table cell hit-test bindings");
+  vm.runInContext(creation + "\n" + hit + "\n" + clicks, context);
+  context.row = row; context.session = session;
+  const cell = vm.runInContext("createTableCell(session, row, {}, 0, '', null)", context);
+  row.cells = [cell];
+  const child = node("strong");
+  cell.input.appendChild(child);
+  const event = (target, overrides = {}) => ({ target, isTrusted: true, button: 0,
+    preventDefault() { this.prevented = true; }, ...overrides });
+  check("cell hit setup registers the real input and its actual owning container",
+    inputs.get(cell.input) === cell && inputs.get(cell.container) === cell);
+  check("cell hit resolution accepts text descendants and unused owned cell space",
+    context.tableCellForEvent(event(child)) === cell &&
+    context.tableCellForEvent(event(cell.container)) === cell);
+  check("cell hit resolution rejects row labels unrelated cells and grid background",
+    [node("th"), node("td"), node("div")].every(target => !context.tableCellForEvent(event(target))));
+  const down = listeners.get("grid-pointerdown"), click = listeners.get("dialog-click");
+  for (const target of [cell.input, cell.container]) {
+    session.selectedCell = null; focused = null;
+    const pointer = event(target);
+    down(pointer);
+    check("trusted pointer selection accepts the owned " + (target === cell.input ? "text" : "blank cell"),
+      session.selectedCell === cell && focused === null && !pointer.prevented);
+  }
+  const blank = event(cell.container);
+  click(blank);
+  check("completed blank cell click focuses its selected input without suppressing native defaults",
+    focused?.node === cell.input && focused.options.preventScroll === true && !blank.prevented);
+  for (const [label, change, target = cell.container] of [
+    ["untrusted", () => ({ isTrusted: false })], ["right button", () => ({ button: 2 })],
+    ["stale", () => { current = false; }], ["confirmation", () => { session.confirmation = {}; }],
+    ["composition", () => { composing = true; }], ["submitting", () => { session.submitting = true; }],
+    ["applied", () => { session.applied = true; }], ["unready", () => { session.ready = false; }],
+    ["unselected", () => { session.selectedCell = null; }],
+    ["text drag", () => { collapsed = false; }], ["text target", () => {}, child],
+    ["outside cell", () => {}, node("th")],
+  ]) {
+    current = true; collapsed = true; composing = false; focused = null;
+    Object.assign(session, { selectedCell: cell, ready: true, submitting: false, applied: false, confirmation: null });
+    click(event(target, change()));
+    check("blank cell focus leaves " + label + " gestures untouched", focused === null);
+  }
+  const link = node("a"); cell.input.appendChild(link);
+  const linkClick = event(link);
+  click(linkClick);
+  check("cell link activation remains blocked without replacing its native text focus",
+    linkClick.prevented && focused === null);
+  const styles = lf(fs.readFileSync(path.join(ROOT, "src", "styles.css"), "utf8"));
+  const html = lf(fs.readFileSync(path.join(ROOT, "src", "index.html"), "utf8"));
+  const toolbar = styles.match(/\.table-cell-toolbar \{([^}]*)\}/)?.[1];
+  check("table toolbar shares a wrapping horizontal layout without changing its named groups",
+    toolbar?.includes("display: flex;") && toolbar.includes("flex-wrap: wrap;") &&
+    !toolbar.includes("flex-direction: column") &&
+    /<div class="table-cell-toolbar">[\s\S]*id="tableCellRowActions"[\s\S]*id="tableCellMoveActions"[\s\S]*<\/div>\s*<\/div>\s*<p id="tableCellCounts"/.test(html));
+}
+
+async function tableCellToolbarLayoutChecks(page, check, wrapped) {
+  const layout = await page(() => {
+    const rect = node => node.getBoundingClientRect().toJSON();
+    const toolbar = document.querySelector(".table-cell-toolbar");
+    const groups = ["tableCellRowActions", "tableCellMoveActions"].map(id => document.getElementById(id));
+    return { viewport: { width: innerWidth, height: innerHeight },
+      dialog: rect(document.getElementById("tableCellDialog")), toolbar: rect(toolbar),
+      counts: rect(document.getElementById("tableCellCounts")),
+      gap: parseFloat(getComputedStyle(toolbar).columnGap),
+      groups: groups.map(group => ({
+        bounds: rect(group), role: group.getAttribute("role"), name: group.getAttribute("aria-label"),
+        gap: parseFloat(getComputedStyle(group).columnGap),
+        children: [...group.children].map(node => {
+          const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return { id: node.id, tag: node.tagName, text: node.textContent.trim(), bounds: rect(node),
+            name: node.getAttribute("aria-label"), title: node.title, disabled: !!node.disabled,
+            margin: parseFloat(style.marginLeft) + parseFloat(style.marginRight),
+            visible: style.visibility === "visible" && node.getClientRects().length > 0,
+            hit: !!hit && node.contains(hit) };
+        }),
+      })) };
+  });
+  const [structure, move] = layout.groups;
+  const inside = (box, outer) => box.width > 0 && box.height > 0 &&
+    box.left >= outer.left - 1 && box.right <= outer.right + 1 &&
+    box.top >= outer.top - 1 && box.bottom <= outer.bottom + 1;
+  const ids = ["tableCellInsertAbove", "tableCellInsertBelow", "tableCellRemoveAdded",
+    "tableCellInsertLeft", "tableCellInsertRight", "tableCellDeleteColumn",
+    "tableCellMoveUp", "tableCellMoveDown", "tableCellMoveLeft", "tableCellMoveRight"];
+  const children = layout.groups.flatMap(group => group.children);
+  const buttons = children.filter(child => child.tag === "BUTTON");
+  const singleLine = group => group.children.every(child =>
+    Math.abs((child.bounds.top + child.bounds.bottom) / 2 -
+      (group.children[0].bounds.top + group.children[0].bounds.bottom) / 2) <= 1);
+  const demand = layout.groups.map(group => group.children.reduce((sum, child) =>
+    sum + child.bounds.width + child.margin, 0) + group.gap * (group.children.length - 1));
+  check("table toolbar retains ordered named structure and Move groups",
+    structure.role === "group" && structure.name === "Table structure" &&
+    move.role === "group" && move.name === "Move" && move.children[0].text === "Move" &&
+    JSON.stringify(buttons.map(button => button.id)) === JSON.stringify(ids) &&
+    buttons.every(button => button.name && button.title === button.name), layout);
+  check("table toolbar controls stay visible hit-testable and inside the dialog and viewport",
+    inside(layout.dialog, { left: 0, top: 0, right: layout.viewport.width, bottom: layout.viewport.height }) &&
+    inside(layout.toolbar, layout.dialog) && layout.counts.top >= layout.toolbar.bottom &&
+    layout.groups.every(group => inside(group.bounds, layout.toolbar) &&
+      group.children.every(child => child.visible && child.hit && inside(child.bounds, group.bounds))), layout);
+  check("table toolbar fixture proves " + (wrapped ? "insufficient" : "sufficient") + " horizontal space",
+    demand.every(width => width <= layout.toolbar.width) &&
+    (wrapped ? demand[0] + layout.gap + demand[1] > layout.toolbar.width :
+      demand[0] + layout.gap + demand[1] <= layout.toolbar.width), { demand, layout });
+  check(wrapped ? "table toolbar wraps Move below structure only when needed" :
+    "table toolbar places Move immediately right of structure on the same line",
+    singleLine(structure) && singleLine(move) && (wrapped
+      ? move.bounds.top >= structure.bounds.bottom &&
+        Math.abs(move.bounds.left - structure.bounds.left) <= 1
+      : Math.abs(move.bounds.top - structure.bounds.top) <= 1 &&
+        Math.abs(move.bounds.left - structure.bounds.right - layout.gap) <= 1), layout);
 }
 
 function movementTableSourceTests(cells, marked, protect) {
@@ -5269,6 +5424,7 @@ require("./test-userdata-isolation");
       const footer = tableCellDialog.querySelector('.note-dialog-footer');
       const copy = footer.querySelector('.table-cell-footer-copy');
       const actions = footer.querySelector('.table-cell-footer-actions');
+      const toolbar = tableCellDialog.querySelector('.table-cell-toolbar');
       const rowActions = document.getElementById('tableCellRowActions');
       const setup = document.getElementById('tableCellSetup');
       const counts = document.getElementById('tableCellCounts');
@@ -5282,7 +5438,7 @@ require("./test-userdata-isolation");
           rects: [...range.getClientRects()].map(box => box.toJSON()) };
       };
       const buttons = [tableCellUpdate, document.getElementById('tableCellCancel')];
-      return { dialog: rect(tableCellDialog), header: rect(header), rowActions: rect(rowActions), grid: rect(tableCellGrid),
+      return { dialog: rect(tableCellDialog), header: rect(header), toolbar: rect(toolbar), rowActions: rect(rowActions), grid: rect(tableCellGrid),
         mode: tableCellSession.mode, setupHidden: setup.hidden && !setup.getClientRects().length,
         counts: text(counts), columnScope: text(columnScope), rowActionsVisible: text(rowActions).visible,
         rowActionsRole: rowActions.getAttribute('role'), rowActionsName: rowActions.getAttribute('aria-label'),
@@ -5303,7 +5459,7 @@ require("./test-userdata-isolation");
             usable:box.width>0&&box.height>0&&!!hit&&node.contains(hit),
             visible:node.getClientRects().length>0,disabled:node.disabled };
         }),
-        bandOrder: [header,rowActions,counts,columnScope,tableCellGrid].every((node,index,all) =>
+        bandOrder: [header,toolbar,counts,columnScope,tableCellGrid].every((node,index,all) =>
           !index || !!(all[index-1].compareDocumentPosition(node)&Node.DOCUMENT_POSITION_FOLLOWING)),
         footer: rect(footer), copy: rect(copy), actions: rect(actions),
         buttons: buttons.map(rect),
@@ -5333,8 +5489,8 @@ require("./test-userdata-isolation");
     const names = ['Insert row above','Insert row below','Remove row',
       'Insert column left','Insert column right','Delete column'];
     const bands = selectedRows
-      ? [layout.header,layout.rowActions,layout.counts.bounds,layout.columnScope.bounds,layout.grid]
-      : [layout.header,layout.rowActions,layout.counts.bounds,layout.grid];
+      ? [layout.header,layout.toolbar,layout.counts.bounds,layout.columnScope.bounds,layout.grid]
+      : [layout.header,layout.toolbar,layout.counts.bounds,layout.grid];
     return layout.setupHidden && layout.rowActionsVisible && layout.rowActionsRole === 'group' &&
       layout.rowActionsName === 'Table structure' &&
       layout.counts.visible && layout.counts.rects.length>0 && layout.countsLive === 'polite' &&
@@ -5482,6 +5638,7 @@ require("./test-userdata-isolation");
             layout.copy.height <= layout.actions.height + 2 &&
             layout.scopeFont === 12 && layout.helpFont === 12 &&
             cellControlBands(layout,3,3), layout);
+          await tableCellToolbarLayoutChecks(page, check, false);
           if (!isolated) await gridLinkStyles(theme);
         }
       });
@@ -9345,6 +9502,7 @@ require("./test-userdata-isolation");
         check("the initial row-label allocation contains its actual header text " + name + "/" + viewport,
           geometry.labelOverflow <= 1, geometry);
         if (name === "tiny") {
+          await tableCellToolbarLayoutChecks(page, check, viewport <= 400);
           const expectedPopup = Math.min(geometry.viewport - 24,
             Math.max(480, Math.min(800, geometry.viewport - 48)));
           const share = (geometry.client - geometry.fixed) / rows[0].length;

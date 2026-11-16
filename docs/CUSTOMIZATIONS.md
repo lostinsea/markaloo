@@ -501,6 +501,10 @@ flowchart LR
 - The separate **Move** toolbar group moves the selected body row up/down or
   the selected column left/right. The header stays first; selected-row editing
   keeps movement inside its selected rows and cannot move whole columns.
+- Move follows the structure controls on the same line when space allows.
+  The groups wrap inside narrow dialogs.
+- Clicking unused space inside a cell selects and focuses that cell.
+  Text clicks and drag selection keep their normal behavior.
 - Movement keeps cell source, column alignment and editor state together.
   Draft changes reach the document only through Update, as one Undo step.
 - Editing opens at least 800px wide when the viewport allows it. Both vertical

@@ -14985,6 +14985,7 @@ function createTableCell(session, row, columnState, column, raw, original) {
   const cell = { cell: original, input, container, provenance, initial: input.innerHTML,
     rowState: row, columnState, column };
   tableCellInputs.set(input, cell);
+  tableCellInputs.set(container, cell);
   container.appendChild(input);
   return cell;
 }
@@ -15664,7 +15665,7 @@ tableCellMoveDown.addEventListener('click', () => moveTableCell('row', 1));
 tableCellMoveLeft.addEventListener('click', () => moveTableCell('column', -1));
 tableCellMoveRight.addEventListener('click', () => moveTableCell('column', 1));
 function tableCellForEvent(event) {
-  return tableCellInputs.get(event.target.closest?.('[data-table-cell]'));
+  return tableCellInputs.get(event.target.closest?.('[data-table-cell], td, th'));
 }
 tableCellGrid.addEventListener('focusin', event => {
   const session = tableCellSession;
@@ -15727,7 +15728,17 @@ function attachTableCellInput(cell, session) {
   });
 }
 // Noneditable header cells still contain authored links.
-tableCellDialog.addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault(); });
+tableCellDialog.addEventListener('click', event => {
+  if (event.target.closest('a')) event.preventDefault();
+  const session = tableCellSession, cell = tableCellForEvent(event);
+  // Let native text gestures finish before focusing a click on unused cell space.
+  if (event.isTrusted && event.button === 0 && cell && event.target === cell.container &&
+      session?.ready && session.selectedCell === cell && session.selection.isCurrent() &&
+      !session.submitting && !session.applied && !session.confirmation &&
+      !session.sizing?.isComposing() && window.getSelection()?.isCollapsed) {
+    cell.input.focus({ preventScroll: true });
+  }
+});
 tableCellDialog.addEventListener('auxclick', event => event.preventDefault());
 
 // Delete Mermaid — remove mermaid block from source
