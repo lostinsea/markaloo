@@ -24804,12 +24804,7 @@ async function run(win) {
     await exec(`window.toggleSearchPanel(); null`);
     await sleep(600);
 
-    // The CLOSED state is a separate failure mode and needs its own assertion.
-    // The retracted panel translates up and lands exactly over the bar, so the
-    // bar is only clickable because `.header` establishes a stacking context
-    // that paints above it. `.header` carried `z-index: 100` with NO
-    // `position`, where z-index is ignored outright - it painted on top purely
-    // by DOM order, which the `.search-anchor` wrapper reversed.
+    // Closed search must release its row without covering the toolbar.
     const closed = await exec(`(() => {
       const rect = (el) => el.getBoundingClientRect();
       const reachable = (el) => {
@@ -24822,16 +24817,19 @@ async function run(win) {
       const hr = rect(document.querySelector('.header'));
       return {
         panelClosed: !document.getElementById('searchPanel').classList.contains('visible'),
-        // The whole point: retracted, it really is on top of the bar.
-        retractedOverBar: !(sr.top >= hr.bottom || sr.bottom <= hr.top),
+        overlapsBar: !(sr.top >= hr.bottom || sr.bottom <= hr.top),
+        hostHeight: document.querySelector('.search-anchor').getBoundingClientRect().height,
+        mainTop: document.querySelector('.main-content').getBoundingClientRect().top,
+        toolbarBottom: hr.bottom,
         activeTabReachable: reachable(document.querySelector('.tab.active')),
         reloadReachable: reachable(document.getElementById('refreshBtn')),
         menuReachable: reachable(document.getElementById('menuBtn')),
       };
     })()`);
     check(
-      "the retracted search panel really does overlap the bar, so this bites",
-      closed.panelClosed === true && closed.retractedOverBar === true,
+      "closed search releases its row without overlapping the toolbar",
+      closed.panelClosed === true && closed.overlapsBar === false &&
+        closed.hostHeight === 0 && Math.abs(closed.mainTop - closed.toolbarBottom) < 1,
       JSON.stringify(closed),
     );
     check(
@@ -24842,29 +24840,20 @@ async function run(win) {
       JSON.stringify(closed),
     );
 
-    // Overlap alone cannot distinguish a real covered candidate from a panel
-    // removed from hit testing. Keep this separate from the toolbar contracts.
+    // The generated panel must be clipped, not painted over document content.
     const retractedStack = await exec(`(() => {
       const shell = document.querySelector('body > .container');
-      const header = shell.querySelector(':scope > .header');
       const panel = shell.querySelector(':scope > .search-anchor > #searchPanel');
-      const h = header.getBoundingClientRect(), p = panel.getBoundingClientRect();
-      const overlap = {
-        left: Math.max(h.left,p.left), right: Math.min(h.right,p.right),
-        top: Math.max(h.top,p.top), bottom: Math.min(h.bottom,p.bottom)
-      };
-      const x = (overlap.left+overlap.right)/2, y = (overlap.top+overlap.bottom)/2;
-      const usable = overlap.right>overlap.left && overlap.bottom>overlap.top &&
-        x>=0 && x<innerWidth && y>=0 && y<innerHeight &&
-        !panel.classList.contains('visible');
-      const stack = usable ? document.elementsFromPoint(x,y) : [];
-      return {overlap,x,y,usable,headerOnTop:!!stack[0]&&header.contains(stack[0]),
-        panelBelow:stack.findIndex(element=>panel.contains(element))>0,
+      const p = panel.getBoundingClientRect();
+      const host = panel.parentElement.getBoundingClientRect();
+      const stack = document.elementsFromPoint(p.left + p.width / 2, p.top + p.height / 2);
+      return {generated:p.width>0&&p.height>0,hostHeight:host.height,
+        panelAbsent:!stack.some(element=>panel.contains(element)),
         stack:stack.map(element=>({tag:element.localName,id:element.id,classes:element.className}))};
     })()`);
     check(
-      "the retracted search panel remains a real lower hit-test candidate beneath the bar",
-      retractedStack.usable && retractedStack.headerOnTop && retractedStack.panelBelow,
+      "closed search keeps its generated panel out of document hit testing",
+      retractedStack.generated && retractedStack.hostHeight === 0 && retractedStack.panelAbsent,
       JSON.stringify(retractedStack),
     );
 

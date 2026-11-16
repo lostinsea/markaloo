@@ -18,7 +18,7 @@ function fatal(error) {
 }
 process.on("uncaughtException", fatal);
 process.on("unhandledRejection", fatal);
-const deadline = setTimeout(() => fatal(new Error("Search visibility fixture exceeded 45s")), 45000);
+const deadline = setTimeout(() => fatal(new Error("Search visibility fixture exceeded 90s")), 90000);
 const { app: electronApp, BrowserWindow, session } = require("electron");
 app = electronApp;
 const root = path.join(__dirname, "..");
@@ -47,6 +47,10 @@ const styles = ["styles.css", "custom-styles.css"]
 const searchMarkup = between(index, '      <div class="search-anchor">', '      <div class="main-content">');
 const searchSource = between(renderer, "// Search functionality\n", "// Index/TOC functionality");
 const scrollSource = between(renderer, "function getViewerScroller() {", "// Scroll a rendered element into view.");
+const navigationSource = between(renderer, "function captureReadingJump(target) {", "// Current file tracking");
+const viewportSource = fs.readFileSync(path.join(root, "src", "reading-viewport.js"), "utf8");
+const lifecycleSource = between(renderer, "function createReadingViewportLifecycle() {",
+  "window.readingViewport = readingViewport;");
 const trackerSource = between(renderer, "const tableHeaderTracking = (() => {", "// Collapsed state, persisted");
 const shortcuts = between(renderer, "document.addEventListener('keydown', (e) => {\n  if (handleReadingHistoryShortcut(e))",
   "// Mouse wheel zoom");
@@ -69,11 +73,10 @@ async function waitFor(code, label) {
 }
 async function settled() {
   await waitFor(`(() => {
-    const transform = new DOMMatrixReadOnly(getComputedStyle(searchPanel).transform);
-    const targetY = searchPanel.classList.contains('visible') ? 0 : -searchPanel.getBoundingClientRect().height;
-    return Math.abs(transform.m42 - targetY) < 0.1 &&
-      !searchPanel.getAnimations().some(animation => animation.playState === 'running');
+    return ![searchPanel, document.getElementById('indexPanel')].some(element =>
+      element.getAnimations().some(animation => animation.playState === 'running'));
   })()`, "search transition completion");
+  await exec("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
 }
 async function key(keyCode, modifiers = []) {
   win.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
@@ -137,14 +140,38 @@ async function closedCase(route) {
   check(`${route}: Shift+Tab skips closed search`, await exec("document.activeElement.id === 'beforeSearch'"),
     await exec("document.activeElement.id"));
 }
-async function stickyCase(split) {
-  const label = split ? "Split" : "Reader";
+async function geometry() {
+  return exec(`(() => {
+    const box = element => {
+      const r = element.getBoundingClientRect();
+      return { top:r.top, bottom:r.bottom, left:r.left, right:r.right, height:r.height, width:r.width };
+    };
+    const s = getViewerScroller(), header = viewer.querySelector('thead');
+    return { panel:box(searchPanel), main:box(document.querySelector('.main-content')),
+      toolbar:box(document.querySelector('.header')), port:box(s), header:box(header),
+      table:box(viewer.querySelector('table')), host:box(document.querySelector('.search-anchor')),
+      input:box(searchInput), scroll:s.scrollTop, owner:s===viewer?'viewer':'wrapper',
+      translation:new DOMMatrixReadOnly(getComputedStyle(header).transform).m42,
+      sameHeader:header===window.fixtureOriginalHeader };
+  })()`);
+}
+async function capture(name) {
+  if (artifactArg) await fs.promises.writeFile(path.join(runDir, `${name}.png`),
+    (await win.webContents.capturePage()).toPNG());
+}
+async function stickyCase(split, zoom) {
+  const label = `${split ? "Split" : "Reader"} ${zoom}%`;
   await exec(`if (searchPanel.classList.contains('visible')) toggleSearchPanel();
     contentWrapper.classList.toggle('split-view', ${split});
+    viewer.style.zoom = ${zoom / 100};
     contentWrapper.scrollTop = 0; viewer.scrollTop = 0;
     tableHeaderTracking.invalidate(); true`);
   await settled();
-  await exec(`getViewerScroller().scrollTop = 240; true`);
+  const natural = await geometry();
+  check(`${label}: natural header and actual scroll owner are established`,
+    natural.translation === 0 && natural.header.top > natural.port.top &&
+    natural.owner === (split ? "viewer" : "wrapper"), JSON.stringify(natural));
+  await exec(`getViewerScroller().scrollTop = 600; true`);
   await waitFor(`(() => {
     const header = viewer.querySelector('thead');
     return getViewerScroller().scrollTop > 100 && header.getAnimations().length > 0 &&
@@ -152,41 +179,188 @@ async function stickyCase(split) {
   })()`, `${label} production sticky header`);
   await ctrlF();
   await settled();
-  const overlap = await exec(`(() => {
-    const header = viewer.querySelector('thead'), h = header.getBoundingClientRect();
-    const input = searchInput.getBoundingClientRect();
-    const left = Math.max(h.left, input.left), right = Math.min(h.right, input.right);
-    const top = Math.max(h.top, input.top), bottom = Math.min(h.bottom, input.bottom);
-    const x = (left + right) / 2, y = (top + bottom) / 2;
-    return { width: right - left, height: bottom - top, x, y,
-      top: document.elementFromPoint(x, y)?.id,
-      scroll: getViewerScroller().scrollTop,
-      translation: new DOMMatrixReadOnly(getComputedStyle(header).transform).m42 };
+  const pinned = await geometry();
+  check(`${label}: original sticky header is active at the real scrollport`,
+    pinned.scroll > 100 && pinned.translation > 100 && pinned.sameHeader &&
+    Math.abs(pinned.header.top - pinned.port.top) < 2, JSON.stringify(pinned));
+  check(`${label}: readable viewport and sticky header start below search`,
+    Math.abs(pinned.main.top - pinned.panel.bottom) < 1 &&
+    pinned.port.top >= pinned.panel.bottom - 1 && pinned.header.top >= pinned.panel.bottom - 1,
+    JSON.stringify(pinned));
+  await capture(`search-sticky-${split ? "split" : "reader"}-${zoom}`);
+  const padding = await exec(`({
+    top:parseFloat(getComputedStyle(searchPanel).paddingTop),
+    bottom:parseFloat(getComputedStyle(searchPanel).paddingBottom),
+    input:searchInput.getBoundingClientRect().height,
+    buttons:[searchPrevBtn,searchNextBtn,searchCloseBtn].map(button=>button.getBoundingClientRect().height)
+  })`);
+  check(`${label}: compact bar reduces outer padding without shrinking controls`,
+    padding.top <= 6 && padding.bottom <= 6 && padding.input >= 34 &&
+    padding.buttons.every(height => height >= 30), JSON.stringify(padding));
+  check(`${label}: search and sticky header are independently hit-testable`, await exec(`(() => {
+    const input=searchInput.getBoundingClientRect(), h=viewer.querySelector('thead').getBoundingClientRect();
+    return document.elementFromPoint(input.left+input.width/2,input.top+input.height/2)===searchInput &&
+      !!document.elementFromPoint(Math.max(h.left,getViewerScroller().getBoundingClientRect().left)+20,
+        h.top+h.height/2)?.closest('thead');
+  })()`));
+  const aligned = await exec(`(() => {
+    const wrap=viewer.querySelector('.table-container');wrap.scrollLeft=80;
+    const h=viewer.querySelector('th').getBoundingClientRect(), d=viewer.querySelector('td').getBoundingClientRect();
+    return {offset:wrap.scrollLeft,overflow:wrap.scrollWidth>wrap.clientWidth,
+      delta:Math.abs(h.left-d.left),width:Math.abs(h.width-d.width)};
   })()`);
-  check(`${label}: sticky header really overlaps the search input`,
-    overlap.width > 8 && overlap.height > 8 && overlap.scroll > 100 && overlap.translation > 100,
-    JSON.stringify(overlap));
-  if (!(overlap.width > 8 && overlap.height > 8)) throw new Error("Sticky overlap prerequisite failed");
-  check(`${label}: search paints above the sticky header`, overlap.top === "searchInput", JSON.stringify(overlap));
+  check(`${label}: horizontal overflow keeps original header and cells aligned`,
+    aligned.overflow && aligned.offset > 0 && aligned.delta < 1 && aligned.width < 1, JSON.stringify(aligned));
+  await exec("viewer.querySelector('.table-container').scrollLeft=0; true");
+  const work = await exec(`(async () => {
+    const original=Element.prototype.getBoundingClientRect, query=Element.prototype.querySelectorAll;
+    let geometry=0,scans=0;
+    Element.prototype.getBoundingClientRect=function(...args){geometry++;return original.apply(this,args)};
+    Element.prototype.querySelectorAll=function(...args){if(this===viewer)scans++;return query.apply(this,args)};
+    try { for(let i=0;i<12;i++){
+      getViewerScroller().scrollTop=620+i*10;
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    } return {geometry,scans}; }
+    finally {Element.prototype.getBoundingClientRect=original;Element.prototype.querySelectorAll=query;}
+  })()`);
+  check(`${label}: settled scrolling adds no geometry reads or viewer scans`,
+    work.geometry === 0 && work.scans === 0, JSON.stringify(work));
   await exec("document.getElementById('beforeSearch').focus(); window.fixtureClicks = []; true");
-  await click(overlap.x, overlap.y);
-  check(`${label}: overlap click reaches and focuses search`, await exec(`document.activeElement === searchInput &&
+  await centerClick("searchInput");
+  check(`${label}: click reaches and focuses search`, await exec(`document.activeElement === searchInput &&
     window.fixtureClicks.includes('searchInput')`), await exec("JSON.stringify(window.fixtureClicks)"));
   await exec("searchInput.focus(); true");
   await win.webContents.insertText("needle");
   await waitFor("searchMatches.length > 0 && pendingSearchTerm === null", "search highlights");
   check(`${label}: visible search still highlights text`, await exec(`viewer.querySelectorAll('.search-highlight').length === 1`));
+  const navigation = await exec(`(() => {
+    const s=getViewerScroller(), r=s.getBoundingClientRect(), hit=searchMatches[0].getBoundingClientRect();
+    return {portTop:r.top,portBottom:r.bottom,hitTop:hit.top,hitBottom:hit.bottom,
+      panelBottom:searchPanel.getBoundingClientRect().bottom,jumps:window.fixtureJumps};
+  })()`);
+  check(`${label}: shipping search navigation centers inside the readable viewport`,
+    navigation.jumps > 0 && navigation.hitTop >= navigation.panelBottom &&
+    Math.abs((navigation.hitTop+navigation.hitBottom)/2 -
+      (navigation.portTop+navigation.portBottom+20*(split ? zoom/100 : 1))/2) < 2,
+    JSON.stringify(navigation));
+  await exec("scrollElementIntoView(document.getElementById('destination')); true");
+  const destination = await exec(`(() => {
+    const s=getViewerScroller(), h=document.getElementById('destination').getBoundingClientRect();
+    return {top:h.top,port:s.getBoundingClientRect().top,panel:searchPanel.getBoundingClientRect().bottom};
+  })()`);
+  check(`${label}: shipping heading navigation respects the same readable top and gap`,
+    destination.top >= destination.panel &&
+    Math.abs(destination.top-destination.port-20*(split ? zoom/100 : 1)) < 2, JSON.stringify(destination));
+  await exec(`getViewerScroller().scrollTop=600; true`);
+  await settled();
   await exec("toggleSearchPanel(); true");
   await settled();
-  if (artifactArg) {
-    await fs.promises.writeFile(path.join(runDir, `search-closed-${label.toLowerCase()}.png`),
-      (await win.webContents.capturePage()).toPNG());
-  }
-  await ctrlF();
+  const hidden = await geometry();
+  check(`${label}: closing while scrolled restores the full viewport without a gap`,
+    hidden.scroll === 600 && hidden.host.height === 0 &&
+    Math.abs(hidden.main.top-hidden.toolbar.bottom) < 1 &&
+    Math.abs(hidden.header.top-hidden.port.top) < 2, JSON.stringify(hidden));
+  await capture(`search-closed-${split ? "split" : "reader"}-${zoom}`);
+  await exec(`toggleSearchPanel(); toggleSearchPanel(); toggleSearchPanel(); true`);
   await settled();
-  if (artifactArg) {
-    await fs.promises.writeFile(path.join(runDir, `search-sticky-${label.toLowerCase()}.png`),
-      (await win.webContents.capturePage()).toPNG());
+  const reopened = await geometry();
+  check(`${label}: rapid reopen updates the pinned readable boundary`,
+    Math.abs(reopened.header.top-reopened.panel.bottom) < 2, JSON.stringify(reopened));
+  await exec(`{ const s=getViewerScroller(), head=viewer.querySelector('thead').getBoundingClientRect();
+    s.scrollTop+=(viewer.querySelector('table').getBoundingClientRect().bottom-
+      s.getBoundingClientRect().top-head.height/2)/scrollerScale(s); } true`);
+  await settled();
+  const edge = await geometry();
+  check(`${label}: lower table edge pushes the sticky header out without overrun`,
+    edge.translation > 0 && edge.header.top < edge.port.top &&
+    Math.abs(edge.header.bottom-edge.table.bottom) < 2, JSON.stringify(edge));
+  await exec(`{ const s=getViewerScroller();
+    s.scrollTop+=(viewer.querySelector('table').getBoundingClientRect().bottom-
+      s.getBoundingClientRect().top)/scrollerScale(s)+50; } true`);
+  await settled();
+  const end = await geometry();
+  check(`${label}: sticky header releases after the table bottom`,
+    end.table.bottom < end.port.top && end.translation === 0 && end.header.bottom < end.port.top,
+    JSON.stringify(end));
+  await exec("getViewerScroller().scrollTop=0; true");
+  await settled();
+  check(`${label}: returning above the table restores its natural header`, (await geometry()).translation === 0);
+}
+
+async function responsiveCases() {
+  await exec(`contentWrapper.classList.remove('split-view'); viewer.style.zoom=1;
+    if(!searchPanel.classList.contains('visible'))toggleSearchPanel();
+    getViewerScroller().scrollTop=600; true`);
+  await settled();
+  const wide = await geometry();
+  win.setContentSize(240, 600);
+  await settled();
+  const narrow = await geometry();
+  check("narrow layout wraps controls and moves the real readable boundary",
+    narrow.panel.height > wide.panel.height && narrow.port.height > 100 &&
+    Math.abs(narrow.panel.bottom-narrow.port.top) < 1 &&
+    Math.abs(narrow.header.top-narrow.port.top) < 2, JSON.stringify({wide,narrow}));
+  await capture("search-narrow");
+  await exec("document.getElementById('indexPanel').classList.add('visible'); true");
+  await settled();
+  await exec("document.getElementById('indexPanel').classList.remove('visible'); toggleSearchPanel(); true");
+  const midClose = await exec(`new Promise(resolve=>requestAnimationFrame(()=>{
+    toggleSearchPanel();
+    const drawer=document.getElementById('indexPanel'), animation=drawer.getAnimations()[0];
+    resolve({running:animation?.playState==='running',
+      inset:searchPanel.getBoundingClientRect().left,edge:drawer.getBoundingClientRect().right});
+  }))`);
+  check("search reopening during a real drawer close retains its live horizontal inset",
+    midClose.running && midClose.inset >= midClose.edge - 1, JSON.stringify(midClose));
+  await settled();
+  check("drawer closure releases its search inset without leaving a vertical gap", await exec(`(() => {
+    const p=searchPanel.getBoundingClientRect(), main=document.querySelector('.main-content').getBoundingClientRect();
+    return p.left===0 && Math.abs(main.top-p.bottom)<1;
+  })()`));
+  await exec("contentWrapper.classList.add('split-view'); true");
+  await settled();
+  check("source controls and textarea start below the actual search bar", await exec(`(() => {
+    const p=searchPanel.getBoundingClientRect(), editor=document.querySelector('.editor-panel');
+    editor.querySelector('textarea').focus();
+    return editor.getBoundingClientRect().top>=p.bottom &&
+      editor.querySelector('.editor-header').getBoundingClientRect().top>=p.bottom &&
+      document.activeElement===editor.querySelector('textarea');
+  })()`));
+  win.setContentSize(240, 90);
+  await settled();
+  const short = await exec(`({
+    height:searchPanel.clientHeight,overflow:searchPanel.scrollHeight>searchPanel.clientHeight,
+    bottom:searchPanel.getBoundingClientRect().bottom,viewport:innerHeight
+  })`);
+  check("very short windows keep search overflow inside the available workspace",
+    short.height >= 37 && short.overflow && short.bottom <= short.viewport + 1, JSON.stringify(short));
+  const reached = [];
+  for (const id of ["searchInput", "searchPrev", "searchNext", "searchClose"]) {
+    reached.push(await exec(`(() => {
+      const el=document.getElementById(${JSON.stringify(id)}), r=el.getBoundingClientRect(),
+        p=searchPanel.getBoundingClientRect();
+      const before=[contentWrapper.scrollTop,viewer.scrollTop,scrollY];
+      searchPanel.scrollTop+=r.top<p.top?r.top-p.top:r.bottom>p.bottom?r.bottom-p.bottom:0;
+      const box=el.getBoundingClientRect(), port=searchPanel.getBoundingClientRect();
+      return box.top>=port.top-1 && box.bottom<=port.bottom+1 &&
+        before.every((value,i)=>value===[contentWrapper.scrollTop,viewer.scrollTop,scrollY][i]) &&
+        el.contains(document.elementFromPoint(box.left+box.width/2,box.top+box.height/2));
+    })()`));
+  }
+  check("short-window local search scrolling reaches every complete control", reached.every(Boolean), JSON.stringify(reached));
+  win.setContentSize(1000, 720);
+  await settled();
+  win.webContents.debugger.attach("1.3");
+  try {
+    await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { media:"print" });
+    check("print retains the non-grid shell and hides search chrome", await exec(`(() => {
+      return getComputedStyle(document.querySelector('body > .container')).display==='flex' &&
+        getComputedStyle(searchPanel).display==='none' &&
+        document.querySelector('.search-anchor').getBoundingClientRect().height===0;
+    })()`));
+  } finally {
+    await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { media:"" });
+    win.webContents.debugger.detach();
   }
 }
 
@@ -216,10 +390,12 @@ app.whenReady().then(async () => {
       ${searchMarkup}
       <div class="main-content"><div class="content-wrapper">
         <aside id="indexPanel" class="index-panel"></aside>
-        <div class="editor-panel"><textarea aria-label="Fixture source"></textarea></div>
+        <div class="editor-panel"><div class="editor-header">Source controls</div><textarea aria-label="Fixture source"></textarea></div>
         <div id="viewer" class="markdown-body"><button id="afterSearch">Document control</button>
-          <p>needle</p><table><thead><tr><th>Sticky table header</th><th>Details</th></tr></thead>
-          <tbody>${rows}</tbody></table></div>
+          <p>Owned synthetic document</p><div class="table-container"><table style="min-width:1200px">
+          <thead><tr><th>Sticky table header</th><th>Details</th></tr></thead>
+          <tbody>${rows}</tbody></table></div><h2 id="destination">Navigation destination</h2>
+          <p>needle</p><div style="height:1200px">Document end</div></div>
       </div></div>
     </div>`;
   // No scripts, links, app preload or production Main can run in this document.
@@ -235,8 +411,17 @@ app.whenReady().then(async () => {
     const searchNextBtn = document.getElementById('searchNext');
     const searchCloseBtn = document.getElementById('searchClose');
     const TIMING = { searchDebounceDelay: 150 };
-    const readingViewport = { beginIntent() {}, isIntentCurrent() { return false; } };
-    const readingHistory = { endSearch() {}, beginTyping() {}, sync() {} };
+    ${viewportSource}
+    ${lifecycleSource}
+    const editorScroll = { previewNavigation() {} };
+    window.fixtureJumps = 0;
+    const readingHistory = { endSearch() {}, beginTyping() {}, sync() {},
+      async jump(target, block, intent) {
+        window.fixtureJumps++;
+        const request=scrollElementIntoView(target,block,intent);
+        if(request?.completion) await request.completion;
+      }
+    };
     const tableColumnSizing = { refresh() {} };
     function handleReadingHistoryShortcut() { return false; }
     function reportReadingHistoryError(error) { throw error; }
@@ -247,9 +432,11 @@ app.whenReady().then(async () => {
     searchInput.addEventListener('input', () => window.fixtureInputs++);
     document.addEventListener('click', event => window.fixtureClicks.push(event.target.id));
     ${scrollSource}
+    ${navigationSource}
     ${searchSource}
     ${trackerSource}
     ${shortcuts}
+    window.fixtureOriginalHeader=viewer.querySelector('thead');
     true;
   `);
   win.webContents.focus();
@@ -276,8 +463,8 @@ app.whenReady().then(async () => {
   await ctrlF();
   check("closing search preserves focus outside its panel", await exec(`!searchPanel.classList.contains('visible') &&
     document.activeElement === document.getElementById('beforeSearch')`));
-  await stickyCase(false);
-  await stickyCase(true);
+  for (const split of [false, true]) for (const zoom of [100, 200]) await stickyCase(split, zoom);
+  await responsiveCases();
   check("fixture has no unexpected renderer errors", errors.length === 0, JSON.stringify(errors));
   await fs.promises.writeFile(path.join(runDir, "results.json"), JSON.stringify(results, null, 2));
   console.log(`Artifacts: ${runDir}`);

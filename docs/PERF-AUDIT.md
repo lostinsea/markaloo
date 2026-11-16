@@ -1,5 +1,18 @@
 # Performance Audit
 
+## Search readable viewport - bounded scroll-work check
+
+- Search now occupies its own naturally sized row. Reader and Split use the
+  remaining height; no scroll-handler code or JavaScript offsets were added.
+- The same owned offscreen Electron document ran before and after the change,
+  at 100% and 200% zoom in each mode. During twelve settled scroll updates per
+  case, both versions made zero `getBoundingClientRect()` calls and zero
+  viewer `querySelectorAll()` calls.
+- This checks those two kinds of repeated scroll work only. It is not a
+  frame-time, layout-cost, startup, full-app or cross-platform performance result.
+- Evidence: session `16aa6ad3`, `files\search-viewport\proof-results.json`;
+  `baseline` and `restored` contain the per-case measurements.
+
 ## On-demand release notes - defined compositor-surface gates qualified
 
 - New post-correction R3 pair: exact released `8fe` reference 30/30 and frozen

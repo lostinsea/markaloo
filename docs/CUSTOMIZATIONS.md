@@ -60,7 +60,11 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ### Search visibility and focus
 
-- Reader and Split search stay above sticky table headers.
+- Visible search reserves its actual height above Reader and Split.
+  Sticky table headers, heading jumps and search navigation use the remaining
+  viewport below it. Closing search restores the full reading area.
+- Search uses thinner vertical padding without shrinking its input or buttons.
+  Wrapped controls and window resizing update the reading boundary through layout.
 - A closed search panel is inert and releases its own focused input.
   Closing it still cancels pending search and clears matches.
 - Focus outside the search panel stays where it is.

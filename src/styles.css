@@ -1941,10 +1941,10 @@ html {
 
 /* Search Panel
  *
- * The screen host shares main-content's remaining grid row; search remains
- * an overlay rather than taking a row away from either reading scroller.
+ * The screen host reserves the visible panel's actual height so every reading
+ * scroller and navigation helper uses the area below it.
  * The host sits above sticky document headers but below drawers and the toolbar.
- * Closed controls are inert while the panel retracts behind the toolbar.
+ * Closed controls stay inert in a clipped, zero-height host.
  */
 .search-anchor {
   position: relative;
@@ -1958,7 +1958,7 @@ html {
   left: 0;
   right: 0;
   background: var(--panel-bg);
-  padding: 12px 20px;
+  padding: 6px 20px;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -2296,7 +2296,7 @@ body > .container > .main-content > .content-wrapper > #indexPanel {
     --workspace-toc-inset: 0px;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, max-content) minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
   }
@@ -2310,36 +2310,47 @@ body > .container > .main-content > .content-wrapper > #indexPanel {
     min-width: 0;
   }
 
-  body > .container > .search-anchor,
   body > .container > .main-content {
-    grid-area: 2 / 1;
+    grid-area: 3 / 1;
     min-width: 0;
     min-height: 0;
   }
 
   body > .container > .search-anchor {
-    height: auto;
-    overflow: visible;
+    grid-area: 2 / 1;
+    min-width: 0;
+    min-height: 0;
+    height: 0;
+    overflow: hidden;
     pointer-events: none;
+  }
+
+  body > .container > .search-anchor:has(> .search-panel.visible) {
+    height: auto;
   }
 
   body > .container > .search-anchor > .search-panel {
     --search-toc-exposure: 0;
     /* Opening reserves full width. Closing keeps a conservative live-width
        inset for at most 0.3s after the last close, including rapid reversals. */
-    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));
+    position: relative;
+    left: auto;
+    margin-left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));
+    /* Keep the box generated while closed so the drawer inset can finish.
+       The readable boundary changes atomically, never during a slide overlay. */
+    transform: none;
     max-height: 100%;
     overflow-y: auto;
     align-items: flex-start;
     pointer-events: auto;
     padding-inline: min(20px, 3vw);
-    transition: transform 0.3s ease, --search-toc-exposure 0.3s ease;
+    transition: --search-toc-exposure 0.3s ease;
   }
 
   body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) > .search-anchor > .search-panel {
     --search-toc-exposure: 1;
     /* Reset the proxy while the full opening inset already covers the drawer. */
-    transition: transform 0.3s ease;
+    transition: none;
   }
 
   body > .container > .search-anchor > .search-panel > .search-container {

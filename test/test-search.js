@@ -1543,10 +1543,10 @@ async function runSearchLayoutCases(win) {
     return Math.abs(state.toc.width-state.physicalWidth)<1 &&
       Math.abs(state.panel.left-state.main.left-inset)<1 &&
       Math.abs(state.content.left-state.main.left-inset)<1 &&
-      Math.abs(state.host.top-state.main.top)<1 &&
-      Math.abs(state.main.top-state.header.bottom)<1 &&
+      Math.abs(state.host.top-state.header.bottom)<1 &&
+      Math.abs(state.main.top-state.panel.bottom)<1 &&
       Math.abs(state.main.bottom-state.height)<1 &&
-      state.panel.top>=state.header.bottom-1 && state.panel.bottom<=state.main.bottom+1 &&
+      state.panel.top>=state.header.bottom-1 && state.panel.bottom<=state.main.top+1 &&
       Math.abs(state.panel.right-state.main.right)<1;
   };
   const movingFrame = async (action, minimumFraction = 0, previousSize = null) => exec(`(async () => {
@@ -1576,7 +1576,7 @@ async function runSearchLayoutCases(win) {
     state.toc.right>state.main.left+1&&state.toc.right<state.main.left+state.toc.width-1;
   const beside = state => state.panel.left>=Math.max(state.main.left,state.toc.right)-1&&
     state.panel.right<=state.main.right+1&&state.panel.top>=state.header.bottom-1&&
-    state.panel.bottom<=state.main.bottom+1&&exposed(state);
+    state.panel.bottom<=state.main.top+1&&exposed(state);
   const closedReservation = state => !state.visible&&!state.drawerMotion&&!state.motionRunning&&state.toc.width>0&&
     Math.abs(state.toc.width-state.physicalWidth)<1&&Math.abs(state.toc.right-state.main.left)<1&&
     state.reservedInset===0&&Math.abs(state.panel.left-state.main.left)<1&&
@@ -1775,7 +1775,7 @@ async function runSearchLayoutCases(win) {
     const beforeZoom=await sample("preview-after-edit");
     await exec(`zoomLevel=150;updateZoom({persist:false});true`);
     const zoomed=await sample("reading-zoom");
-    check("reading zoom leaves the search overlay in unzoomed workspace coordinates",
+    check("reading zoom leaves the search row in unzoomed workspace coordinates",
       Math.abs(zoomed.panel.left-beforeZoom.panel.left)<1&&
       Math.abs(zoomed.panel.width-beforeZoom.panel.width)<1&&
       await exec(`Number(getComputedStyle(viewer).zoom)===1.5`), JSON.stringify({beforeZoom,zoomed}));

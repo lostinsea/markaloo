@@ -2343,15 +2343,39 @@ const REVERTS = [
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
-    id: "0140-SEARCH-STACKING",
-    what: "sticky table headers cover and intercept the open search input",
+    id: "0140-SEARCH-READABLE-VIEWPORT",
+    what: "share the search row with the reading scroller instead of reserving its height",
     file: CSS, suite: "test:search-visibility",
-    from: ".search-anchor {\n  position: relative;\n  height: 0;\n  z-index: 20;",
-    to: ".search-anchor {\n  position: relative;\n  height: 0;\n  z-index: 1;",
-    expect: [/^(Reader|Split): search paints above the sticky header$/,
-      /^(Reader|Split): overlap click reaches and focuses search$/],
-    mustPass: [/^(Reader|Split): sticky header really overlaps the search input$/,
-      /^(Reader|Split): visible search still highlights text$/,
+    from: "    grid-template-rows: auto minmax(0, max-content) minmax(0, 1fr);",
+    to: "    grid-template-rows: auto minmax(0, 1fr);",
+    also: [{
+      from: "  body > .container > .main-content {\n    grid-area: 3 / 1;",
+      to: "  body > .container > .main-content {\n    grid-area: 2 / 1;",
+    }],
+    expect: [/^(Reader|Split) (100|200)%: readable viewport and sticky header start below search$/,
+      /^(Reader|Split) (100|200)%: search and sticky header are independently hit-testable$/,
+      /^(Reader|Split) (100|200)%: shipping heading navigation respects the same readable top and gap$/,
+      /^(Reader|Split) (100|200)%: rapid reopen updates the pinned readable boundary$/,
+      /^narrow layout wraps controls and moves the real readable boundary$/,
+      /^drawer closure releases its search inset without leaving a vertical gap$/,
+      /^source controls and textarea start below the actual search bar$/],
+    mustPass: [/^(Reader|Split) (100|200)%: original sticky header is active at the real scrollport$/,
+      /^(Reader|Split) (100|200)%: horizontal overflow keeps original header and cells aligned$/,
+      /^(Reader|Split) (100|200)%: closing while scrolled restores the full viewport without a gap$/,
+      /^(Reader|Split) (100|200)%: settled scrolling adds no geometry reads or viewer scans$/,
+      /^(Reader|Split) (100|200)%: sticky header releases after the table bottom$/,
+      /^Ctrl\+F: hidden search cannot receive typing$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 19,
+  },
+  {
+    id: "0140-SEARCH-COMPACT-PADDING",
+    what: "restore excess vertical padding around otherwise unchanged search controls",
+    file: CSS, suite: "test:search-visibility",
+    from: "  padding: 6px 20px;\n  display: flex;\n  justify-content: center;",
+    to: "  padding: 12px 20px;\n  display: flex;\n  justify-content: center;",
+    expect: [/^(Reader|Split) (100|200)%: compact bar reduces outer padding without shrinking controls$/],
+    mustPass: [/^(Reader|Split) (100|200)%: readable viewport and sticky header start below search$/,
+      /^(Reader|Split) (100|200)%: horizontal overflow keeps original header and cells aligned$/,
       /^Ctrl\+F: hidden search cannot receive typing$/],
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
   },
@@ -2365,7 +2389,7 @@ const REVERTS = [
       /^initially closed search rejects focus$/],
     mustPass: [/^Ctrl\+F: opening focuses search$/,
       /^Ctrl\+F: hidden search cannot receive typing$/,
-      /^(Reader|Split): search paints above the sticky header$/],
+      /^(Reader|Split) (100|200)%: readable viewport and sticky header start below search$/],
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
@@ -2384,7 +2408,7 @@ const REVERTS = [
       /^(Ctrl\+F|Escape|Close button): opening focuses search$/,
       /^(Ctrl\+F|Escape|Close button): close clears and cancels search$/,
       /^closing search preserves focus outside its panel$/,
-      /^(Reader|Split): search paints above the sticky header$/],
+      /^(Reader|Split) (100|200)%: readable viewport and sticky header start below search$/],
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 13,
   },
   ...READING_CONSUMER_REVERTS,
@@ -5735,8 +5759,8 @@ const REVERTS = [
     suite: "test:search",
     what: "let the whole search panel overlap the actual TOC again",
     file: CSS,
-    from: "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));",
-    to: "    left: 0;",
+    from: "    margin-left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));",
+    to: "    margin-left: 0;",
     expect: [
       // Fresh Welcome starts closed, but the unchanged real chooser admission
       // applies the pending TOC default before this original visibility check.
@@ -5811,24 +5835,8 @@ const REVERTS = [
       /^the complete search scenario sequence reached its terminal path$/],
     requireMustPassAssertions: true, requireExactFailures: true,
   },
-  {
-    id: "R1150",
-    suite: "test:search",
-    what: "make the full-height search host swallow the workspace pointer",
-    file: CSS,
-    from: "    height: auto;\n    overflow: visible;\n    pointer-events: none;",
-    to: "    height: auto;\n    overflow: visible;\n    pointer-events: auto;",
-    expect: [
-      /^closed search host leaves the workspace pointer-transparent$/,
-      /^open search host leaves below-panel workspace pointer-transparent$/,
-    ],
-    mustPass: [...SEARCH_LAYOUT_CONTROLS,
-      /^search layout shared allocation and control exposure$/,
-      /^native input text changes the actual rendered search result to one match$/,
-      /^native close click cancels a genuinely pending term without late highlights$/,
-      /^the complete search scenario sequence reached its terminal path$/],
-    requireMustPassAssertions: true, requireExactFailures: true,
-  },
+  // R1150/R1154's full-height overlay and toolbar-retraction contracts are
+  // replaced by 0140-SEARCH-READABLE-VIEWPORT's allocated row and closed controls.
   {
     id: "R1151",
     suite: "test:tabs",
@@ -5838,12 +5846,11 @@ const REVERTS = [
     to: "    align-items: flex-start;\n    pointer-events: none;",
     expect: [
       /^the search panel really opened, so the overlay assertions are not vacuous$/,
-      /^the retracted search panel remains a real lower hit-test candidate beneath the bar$/,
     ],
     mustPass: [
       /^the search panel opens below the bar rather than covering it$/,
       /^the tabs, reload and hamburger stay usable while search is open$/,
-      /^the retracted search panel really does overlap the bar, so this bites$/,
+      /^closed search releases its row without overlapping the toolbar$/,
       /^the bar stays clickable underneath the retracted search panel$/,
       /^the toolbar is a single row and the tab strip lives inside it$/,
       /^the error sentinel was demonstrably watching both channels$/,
@@ -5878,27 +5885,6 @@ const REVERTS = [
       /^native input text changes the actual rendered search result to one match$/,
       /^native close click cancels a genuinely pending term without late highlights$/,
       /^the complete search scenario sequence reached its terminal path$/],
-    requireMustPassAssertions: true, requireExactFailures: true,
-  },
-  {
-    id: "R1154",
-    suite: "test:tabs",
-    what: "clip the retracted panel out of the header hit-test stack",
-    file: CSS,
-    from: "    height: auto;\n    overflow: visible;\n    pointer-events: none;",
-    to: "    height: auto;\n    overflow: hidden;\n    pointer-events: none;",
-    expect: [/^the retracted search panel remains a real lower hit-test candidate beneath the bar$/],
-    mustPass: [
-      /^the search panel really opened, so the overlay assertions are not vacuous$/,
-      /^the search panel opens below the bar rather than covering it$/,
-      /^the tabs, reload and hamburger stay usable while search is open$/,
-      /^the retracted search panel really does overlap the bar, so this bites$/,
-      /^the bar stays clickable underneath the retracted search panel$/,
-      /^the toolbar is a single row and the tab strip lives inside it$/,
-      /^the error sentinel was demonstrably watching both channels$/,
-      /^nothing rendered a visible error at any point during the suite$/,
-      /^the suite's registered temp-directory cleanup completed before its definitive footer$/,
-    ],
     requireMustPassAssertions: true, requireExactFailures: true,
   },
   {
@@ -5965,21 +5951,23 @@ const REVERTS = [
     also: [{
       from: "    --search-toc-exposure: 0;\n" +
         "    /* Opening reserves full width. Closing keeps a conservative live-width\n" +
-        "       inset for at most 0.3s after the last close, including rapid reversals. */\n" +
-        "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));",
-      to: "    left: var(--workspace-toc-inset);",
+        "       inset for at most 0.3s after the last close, including rapid reversals. */",
+      to: "    --search-toc-exposure: 0;",
     }, {
-      from: "    transition: transform 0.3s ease, --search-toc-exposure 0.3s ease;",
+      from: "    margin-left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));",
+      to: "    margin-left: var(--workspace-toc-inset);",
+    }, {
+      from: "    transition: --search-toc-exposure 0.3s ease;",
       to: "    /* Closing follows the retreating drawer instead of jumping under it. */\n" +
-        "    transition: transform 0.3s ease, left 0.3s ease;",
+        "    transition: margin-left 0.3s ease;",
     }, {
       from: "  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) > .search-anchor > .search-panel {\n" +
         "    --search-toc-exposure: 1;\n" +
         "    /* Reset the proxy while the full opening inset already covers the drawer. */\n" +
-        "    transition: transform 0.3s ease;\n  }",
+        "    transition: none;\n  }",
       to: "  body > .container:has(> .main-content > .content-wrapper > #indexPanel.visible) > .search-anchor > .search-panel {\n" +
         "    /* Opening and visible width changes must reserve the new width at once. */\n" +
-        "    transition: transform 0.3s ease;\n  }",
+        "    transition: none;\n  }",
     }],
     expect: [
       /^closing viewport enlargement keeps the whole search panel and exposed controls beside the live drawer$/,
@@ -6000,8 +5988,8 @@ const REVERTS = [
     suite: "test:search",
     what: "undersize the search panel without overflowing the workspace's right edge",
     file: CSS,
-    from: "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));\n    max-height: 100%;",
-    to: "    left: max(var(--workspace-toc-inset), calc(var(--toc-panel-width) * var(--search-toc-exposure)));\n    right: 4px;\n    max-height: 100%;",
+    from: "    transform: none;\n    max-height: 100%;",
+    to: "    transform: none;\n    margin-right: 4px;\n    max-height: 100%;",
     expect: [
       /^search spans the workspace at actual 15 50 and 85 percent split ratios$/,
       /^search layout shared allocation and control exposure$/,
@@ -13236,42 +13224,8 @@ const REVERTS = [
       /the active tab is scrolled into view/,
     ],
   },
-  {
-    id: "R245",
-    suite: "test:tabs",
-    // The original positioning. Survivable while the toolbar was two rows - a
-    // 58px panel over a 38px row still left the tab row showing - and fatal
-    // against one bar, which it covers entirely. The vacuity guard is listed
-    // as an EXPECTED failure rather than in mustPass because it stops being
-    // satisfiable under this revert for the right reason: the toolbar paints
-    // over the panel, so the search input the reader is meant to type into is
-    // itself unreachable. That is the defect, not a broken precondition.
-    what: "pin the search panel to the top of the viewport again, covering the bar",
-    file: CSS,
-    from: ".search-panel {\n  position: absolute;\n  top: 0;",
-    to: ".search-panel {\n  position: fixed;\n  top: 0;\n  z-index: 200;",
-    expect: [
-      /the search panel opens below the bar rather than covering it/,
-      /the search panel really opened, so the overlay assertions are not vacuous/,
-      /the retracted search panel really does overlap the bar, so this bites/,
-      /^the retracted search panel remains a real lower hit-test candidate beneath the bar$/,
-    ],
-    mustPass: [
-      /the tabs, reload and hamburger stay usable while search is open/,
-      /the toolbar is a single row and the tab strip lives inside it/,
-    ],
-  },
-  // There is deliberately NO revert entry for `.header { position: relative }`.
-  // One was written, came back VACUOUS, and the reason was measured rather than
-  // assumed: the toolbar wins the hit test over the retracted search panel with
-  // the header static, with the tab strip static as well, and with the panel at
-  // `position: fixed; z-index: 200`. `elementsFromPoint` at the bar's centre
-  // returns [.tabs-container, .header, .search-input, .search-container,
-  // .search-panel], so the panel genuinely IS a candidate there and the
-  // assertion is not vacuous - but nothing in this stylesheet decides the
-  // outcome, so nothing here can be reverted to break it. Project precedent
-  // (R110b) is to delete a permanently vacuous entry rather than keep one that
-  // implies a proof it does not have; the assertion stays as a contract.
+  // R245's base-position mutation is overridden by the scoped in-flow panel.
+  // Its toolbar-retraction contract is replaced by the allocated-row proof.
   {
     id: "R247",
     suite: "test:sec08-owned-read-evidence",
@@ -31586,7 +31540,7 @@ function proveCompanionTranscriptRoles() {
       .join(",") ===
         "0140-RENDER-HIGHLIGHT,0140-RENDER-SEARCH-RUNS,0140-RENDER-TABLE-RECEIPT,0140-RENDER-SEAL,0140-RENDER-STALE-SEAL,0140-RENDER-PRE-WHITESPACE,0140-RENDER-AUTHORED-MARKER," +
         "0140-EDITOR-ROW-SEPARATORS,0140-EDITOR-COLUMN-SOURCE,0140-EDITOR-ROW-UPDATE,0140-EDITOR-EDGE-RESIZE,0140-EDITOR-EDGE-RELEASE,0140-EDITOR-INITIAL-WIDTH," +
-        "0140-SEARCH-STACKING,0140-SEARCH-INITIAL-INERT,0140-SEARCH-TOGGLE-FOCUS," +
+        "0140-SEARCH-READABLE-VIEWPORT,0140-SEARCH-COMPACT-PADDING,0140-SEARCH-INITIAL-INERT,0140-SEARCH-TOGGLE-FOCUS," +
         "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
         "R1329," +
         "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1243,R1244,R1245,R1246,R1247,R1248,R1249,R1250,R1251,R1252,R1253,R1254,R1255,R1256,R1257,R1258,R1259,R1260,R1261,R1262,R1263,R1264,R1265,R1266,R1267,R1268,R1269,R1270,R1271,R1272,R1273,R1274,R1275,R1276,R1277,R1278,R1279,R1280,R1281,R1282,R1283,R1284,R1285,R1286,R1287,R1288,R1289,R1290,R1291,R1292,R1293,R1294,R1295,R1296,R1297,R1298,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1524,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +

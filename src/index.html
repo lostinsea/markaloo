@@ -350,18 +350,10 @@
       <!--
         Search Panel
 
-        The anchor shares the screen's remaining workspace row with main-content,
-        below the naturally sized header. It used to
-        be `position: fixed; top: 0`, which was survivable while the toolbar was
-        two rows tall - the 58px panel covered the first row and left the tab
-        strip below it visible. With one 55px bar the panel covered the whole
-        thing, so opening search hid every tab, the reload button and the menu,
-        and gave no indication which document was being searched.
-
-        The panel stays an absolute overlay, not a reserved search row. Its host
-        passes pointer events through except on the panel itself and does not
-        clip the panel as it retracts behind the higher-stacked header. The
-        search and document share the real TOC drawer's reserved screen inset.
+        The visible panel gets its own naturally sized screen row below the
+        header. Reader and Split use the remaining area, so sticky headers and
+        navigation cannot land behind search. The closed host takes no space.
+        Search and document share the real TOC drawer's reserved screen inset.
       -->
       <div class="search-anchor">
         <div id="searchPanel" class="search-panel" inert>
