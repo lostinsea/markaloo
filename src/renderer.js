@@ -929,7 +929,7 @@ const UI_STRINGS = {
   'tableCells.update': 'Update the document',
   'tableCells.createTitle': 'Insert table',
   'tableCells.mode': 'This table action has an unsupported mode. Close the popup and try again.',
-  'tableCells.columnsScope': 'Columns change every row. Edit the whole table to insert or delete a column.',
+  'tableCells.columnsScope': 'Columns change every row. Edit the whole table to insert, delete or move a column.',
   'tableCells.columnProjection': 'These combined changes cannot preserve the original table source. Your draft is unchanged. Adjust the changes or edit the Markdown directly.',
   'tableCells.insertLeft': 'Insert column left',
   'tableCells.insertRight': 'Insert column right',
@@ -964,6 +964,11 @@ const UI_STRINGS = {
   'tableCells.removeCreateMessage': 'Remove ${row}? The document changes only when you choose Insert into the document.',
   'tableCells.headerMessage': 'This is the header. Header row removal is not allowed.',
   'tableCells.rowActions': 'Table structure',
+  'tableCells.moveActions': 'Move',
+  'tableCells.moveUp': 'Move row up',
+  'tableCells.moveDown': 'Move row down',
+  'tableCells.moveLeft': 'Move column left',
+  'tableCells.moveRight': 'Move column right',
   'tableCells.addedRow': 'New row ${row}',
   'tableCells.draftScope': '${rows} original rows, ${added} new rows, ${removed} removed rows, ${columns} columns. Update applies only this scope.',
   'tableCells.emptyScope': 'No data rows remain in this scope. Select the header, then add a row in the selected scope.',
@@ -9704,13 +9709,13 @@ function createTableColumnSizing({
     position();
   }
 
-  function changeColumn(index, anchor, transaction, remove) {
+  function changeColumn(index, anchor, transaction, remove, move = false) {
     reconcileResizeLayout();
     if (!current()) throw new Error('tableCells.stale');
     if (composing.size) throw new Error('tableCells.composing');
     const table = controls?.table, count = table?.rows[0]?.cells.length - firstColumn;
     if (!fitOnResize || !table || !Number.isSafeInteger(count) || count < (remove ? 2 : 1) ||
-        !Number.isSafeInteger(index) || index < 0 || index >= count + (remove ? 0 : 1) ||
+        !Number.isSafeInteger(index) || index < 0 || index >= count + (remove || move ? 0 : 1) ||
         !Number.isSafeInteger(anchor) || anchor < 0 || anchor >= count ||
         typeof transaction?.apply !== 'function' || typeof transaction?.rollback !== 'function') {
       throw new Error('tableCells.invalid');
@@ -9726,14 +9731,17 @@ function createTableColumnSizing({
       [...fixed, ...Array.from({ length: count }, (_, i) => initialWeights?.[i] ?? 1)];
     if (proportions.some(weight => !Number.isFinite(weight) || weight <= 0)) throw new Error('tableCells.invalid');
     const next = proportions.slice();
-    if (remove) next.splice(firstColumn + index, 1);
+    if (move) next.splice(firstColumn + anchor, 0, ...next.splice(firstColumn + index, 1));
+    else if (remove) next.splice(firstColumn + index, 1);
     else next.splice(firstColumn + index, 0, proportions[firstColumn + anchor]);
     const widths = previous?.widths.slice() || [...fixed, ...Array(count).fill(minimumWidth)];
-    if (remove) widths.splice(firstColumn + index, 1);
+    if (move) widths.splice(firstColumn + anchor, 0, ...widths.splice(firstColumn + index, 1));
+    else if (remove) widths.splice(firstColumn + index, 1);
     else widths.splice(firstColumn + index, 0, minimumWidth);
     const fitted = fitWidths(widths, next, root.clientWidth), beforeWeights = initialWeights;
     const resetWeights = Array.from({ length: count }, (_, i) => initialWeights?.[i] ?? 1);
-    if (remove) resetWeights.splice(index, 1);
+    if (move) resetWeights.splice(anchor, 0, ...resetWeights.splice(index, 1));
+    else if (remove) resetWeights.splice(index, 1);
     else resetWeights.splice(index, 0, resetWeights[anchor]);
     try {
       transaction.apply();
@@ -9763,6 +9771,10 @@ function createTableColumnSizing({
 
   function removeColumn(index, transaction) {
     changeColumn(index, index, transaction, true);
+  }
+
+  function moveColumn(index, destination, transaction) {
+    changeColumn(index, destination, transaction, false, true);
   }
 
   function reset() {
@@ -9827,7 +9839,7 @@ function createTableColumnSizing({
 
   return {
     cancel: () => finish(false),
-    refresh, reset, dispose, insertColumn, removeColumn,
+    refresh, reset, dispose, insertColumn, removeColumn, moveColumn,
     isComposing: () => composing.size > 0,
     isDragging: container => drag?.table.parentElement === container,
     wanted: table => states.has(table)
@@ -9839,7 +9851,7 @@ function estimateTableCellOpening(rows, viewportWidth) {
   const maxRows = 24, maxCells = 128, maxCharacters = 8192, maxCellCharacters = 256;
   const frameWidth = 65 + 40 + 2; // Row label, grid margins and dialog borders.
   const columns = rows[0].cells.length;
-  const fit = width => Math.min(Math.max(0, viewportWidth - 48), Math.min(960, Math.max(480, width)));
+  const fit = width => Math.min(Math.max(0, viewportWidth - 48), Math.min(960, Math.max(800, width)));
   // Unknown content is not compact content. Saturate every demand without more cell reads.
   const fallback = () => ({ width: fit(960), weights: null });
   // Only the opening estimate is bounded; parsing and rendering still cover the displayed scope.
@@ -9894,6 +9906,32 @@ function createTableCellSizing({
     firstColumn: 1, initialFixedWidths: [labelWidth], fitOnResize: true, initialWeights, keyboardRoot: dialog,
     focusOnPointer: false, cancelOnScroll: true, isCurrent: current, onDragChange,
   });
+  const edges = ['left', 'right'].map(side => {
+    const edge = document.createElement('span');
+    edge.className = `table-cell-width-edge table-cell-width-${side}`;
+    edge.setAttribute('aria-hidden', 'true');
+    dialog.appendChild(edge);
+    listen(edge, 'pointerdown', event => {
+      if (!current() || !event.isTrusted || event.button !== 0 || !event.isPrimary || columns.isComposing()) return;
+      if (gesture) settle();
+      columns.cancel();
+      event.preventDefault();
+      event.stopPropagation();
+      gesture = {
+        edge, side, pointerId: event.pointerId, clientX: event.clientX,
+        bounds: dialog.getBoundingClientRect(),
+        viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+      };
+      edge.setPointerCapture(event.pointerId);
+    });
+    listen(edge, 'lostpointercapture', event => {
+      if (gesture?.edge === edge && gesture.pointerId === event.pointerId) {
+        gesture.end = null;
+        settle();
+      }
+    });
+    return edge;
+  });
 
   function current() {
     if (disposed) return false;
@@ -9914,16 +9952,21 @@ function createTableCellSizing({
     timer = 0;
     const before = gesture;
     gesture = null;
+    if (before?.edge?.hasPointerCapture(before.pointerId)) before.edge.releasePointerCapture(before.pointerId);
     if (!before || !current()) return;
     if (before.end?.commit && !before.invalid &&
         before.viewportWidth === window.innerWidth && before.viewportHeight === window.innerHeight) {
-      const bounds = dialog.getBoundingClientRect();
-      const changed = (axis, coordinate) =>
-        dialog.style[axis] !== before[axis] && dialog.style[axis].endsWith('px') &&
-        Math.abs(before.end[coordinate] - before[coordinate]) > .5 &&
-        Math.abs(bounds[axis] - before.bounds[axis]) > .5;
-      if (changed('width', 'clientX')) width = bounds.width / before.viewportWidth;
-      if (changed('height', 'clientY')) height = bounds.height / before.viewportHeight;
+      if (before.edge) {
+        if (before.previewWidth !== undefined) width = before.previewWidth / before.viewportWidth;
+      } else {
+        const bounds = dialog.getBoundingClientRect();
+        const changed = (axis, coordinate) =>
+          dialog.style[axis] !== before[axis] && dialog.style[axis].endsWith('px') &&
+          Math.abs(before.end[coordinate] - before[coordinate]) > .5 &&
+          Math.abs(bounds[axis] - before.bounds[axis]) > .5;
+        if (changed('width', 'clientX')) width = bounds.width / before.viewportWidth;
+        if (changed('height', 'clientY')) height = bounds.height / before.viewportHeight;
+      }
     }
     // Native width-only resizing can write a pixel height without height intent.
     restorePreferences();
@@ -9937,9 +9980,21 @@ function createTableCellSizing({
       viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
     };
   });
+  listen(window, 'pointermove', event => {
+    if (!current() || !gesture?.edge || gesture.pointerId !== event.pointerId || gesture.invalid) return;
+    const maximum = Math.max(0, window.innerWidth - 24), minimum = Math.min(480, maximum);
+    // The modal stays centered, so each edge travels half the width change.
+    const wanted = gesture.bounds.width + (gesture.side === 'right' ? 2 : -2) * (event.clientX - gesture.clientX);
+    gesture.previewWidth = Math.max(minimum, Math.min(maximum, wanted));
+    dialog.style.width = `${gesture.previewWidth}px`;
+    columns.refresh();
+    event.preventDefault();
+  });
   const end = (event, commit) => {
     if (!current() || !gesture || event.pointerId !== gesture.pointerId) return;
     gesture.end = { commit, clientX: event.clientX, clientY: event.clientY };
+    // Implicit capture release follows pointerup before a deferred timer can run.
+    if (gesture.edge) { settle(); return; }
     clearTimeout(timer);
     const transaction = gesture;
     // Settle after native dispatch, even when a hidden window does not paint.
@@ -9955,20 +10010,40 @@ function createTableCellSizing({
     if (!current() || !gesture) return;
     if (gesture.viewportWidth !== window.innerWidth || gesture.viewportHeight !== window.innerHeight) {
       gesture.invalid = true;
+      if (gesture.edge) { gesture.end = null; settle(); }
     }
+  });
+  listen(dialog, 'keydown', event => {
+    if (event.key !== 'Escape' || !gesture?.edge) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    gesture.end = null;
+    settle();
   });
   function dispose() {
     if (disposed) return;
     disposed = true;
     clearTimeout(timer);
     timer = 0;
+    const before = gesture;
     gesture = null;
+    if (before?.edge) {
+      if (before.edge.hasPointerCapture(before.pointerId)) before.edge.releasePointerCapture(before.pointerId);
+      restorePreferences();
+    }
     for (const remove of listeners) remove();
     listeners.length = 0;
+    for (const edge of edges) edge.remove();
     columns.dispose();
   }
   return {
     ...columns, dispose,
+    cancel() {
+      if (!gesture?.edge) return columns.cancel();
+      gesture.end = null;
+      settle();
+      return true;
+    },
     refresh() { if (current()) columns.refresh(); },
   };
 }
@@ -14763,12 +14838,18 @@ const tableCellStart = document.getElementById('tableCellStart');
 const tableCellInsertLeft = document.getElementById('tableCellInsertLeft');
 const tableCellInsertRight = document.getElementById('tableCellInsertRight');
 const tableCellDeleteColumn = document.getElementById('tableCellDeleteColumn');
+const tableCellMoveUp = document.getElementById('tableCellMoveUp');
+const tableCellMoveDown = document.getElementById('tableCellMoveDown');
+const tableCellMoveLeft = document.getElementById('tableCellMoveLeft');
+const tableCellMoveRight = document.getElementById('tableCellMoveRight');
 const tableCellCounts = document.getElementById('tableCellCounts');
 const tableCellColumnScope = document.getElementById('tableCellColumnScope');
 for (const [button, key] of [[tableCellInsertAbove, 'tableCells.insertAbove'],
   [tableCellInsertBelow, 'tableCells.insertBelow'], [tableCellRemoveAdded, 'tableCells.removeAdded'],
   [tableCellInsertLeft, 'tableCells.insertLeft'], [tableCellInsertRight, 'tableCells.insertRight'],
-  [tableCellDeleteColumn, 'tableCells.deleteColumn']]) {
+  [tableCellDeleteColumn, 'tableCells.deleteColumn'],
+  [tableCellMoveUp, 'tableCells.moveUp'], [tableCellMoveDown, 'tableCells.moveDown'],
+  [tableCellMoveLeft, 'tableCells.moveLeft'], [tableCellMoveRight, 'tableCells.moveRight']]) {
   labelTableCellAction(button, key);
 }
 function labelTableCellAction(button, key) {
@@ -14777,6 +14858,7 @@ function labelTableCellAction(button, key) {
   button.title = label;
 }
 document.getElementById('tableCellRowActions').setAttribute('aria-label', i18n('tableCells.rowActions'));
+document.getElementById('tableCellMoveActions').setAttribute('aria-label', i18n('tableCells.moveActions'));
 MarkalooInlineFormatting.attachDialogContainment({
   element: tableCellDialog, documentEditor: markdownEditor, isCurrent: () => tableCellDialog.open,
 });
@@ -14954,6 +15036,15 @@ function refreshTableCellRowActions() {
     disabled || session.mode === TableCellMode.UPDATE_ROWS;
   tableCellDeleteColumn.disabled = disabled || session.mode === TableCellMode.UPDATE_ROWS ||
     !session.selectedCell || session.columns <= 1;
+  const rowIndex = session?.rows.indexOf(row), column = session?.selectedCell?.column;
+  tableCellMoveUp.disabled = disabled || !row?.editable || row.header ||
+    !session.rows[rowIndex - 1]?.editable || session.rows[rowIndex - 1].header;
+  tableCellMoveDown.disabled = disabled || !row?.editable || row.header ||
+    !session.rows[rowIndex + 1]?.editable || session.rows[rowIndex + 1].header;
+  tableCellMoveLeft.disabled = disabled || session.mode === TableCellMode.UPDATE_ROWS ||
+    !session.selectedCell || column <= 0;
+  tableCellMoveRight.disabled = disabled || session.mode === TableCellMode.UPDATE_ROWS ||
+    !session.selectedCell || column >= session.columns - 1;
   tableCellColumnScope.hidden = session?.mode !== TableCellMode.UPDATE_ROWS;
 }
 
@@ -15255,6 +15346,49 @@ function changeTableCellColumns(action) {
   }
 }
 
+function moveTableCell(axis, direction) {
+  const session = tableCellSession;
+  if (!session || !session.ready || session.submitting || session.applied || session.confirmation) return;
+  try {
+    requireTableCellMutation(session, 'table-cell-move');
+    if (!['row', 'column'].includes(axis) || ![-1, 1].includes(direction)) throw new Error('tableCells.invalid');
+    const cell = currentSelectedTableCell(session), row = cell.rowState;
+    session.sizing?.cancel();
+    if (axis === 'row') {
+      const index = session.rows.indexOf(row), destination = index + direction;
+      const neighbor = session.rows[destination];
+      if (!row.editable || row.header || !neighbor?.editable || neighbor.header) throw new Error('tableCells.invalid');
+      session.body.insertBefore(row.element, direction < 0 ? neighbor.element : session.rows[destination + 1]?.element || null);
+      session.rows.splice(index, 1);
+      session.rows.splice(destination, 0, row);
+    } else {
+      if (session.mode === TableCellMode.UPDATE_ROWS) throw new Error('tableCells.columnsScope');
+      const index = cell.column, destination = index + direction;
+      if (destination < 0 || destination >= session.columns) throw new Error('tableCells.invalid');
+      const columns = session.columnOrder.slice(), rows = session.rows.map(row => ({ row, cells: row.cells.slice() }));
+      session.sizing.moveColumn(index, destination, {
+        apply() {
+          session.columnOrder.splice(destination, 0, ...session.columnOrder.splice(index, 1));
+          for (const { row } of rows) {
+            row.cells.splice(destination, 0, ...row.cells.splice(index, 1));
+            row.element.insertBefore(row.cells[destination].container, row.cells[destination + 1]?.container || null);
+          }
+        },
+        rollback() {
+          session.columnOrder.splice(0, session.columns, ...columns);
+          for (const { row, cells } of rows) {
+            row.cells.splice(0, row.cells.length, ...cells);
+            for (const item of cells) row.element.appendChild(item.container);
+          }
+        },
+      });
+    }
+    finishTableCellDraftChange(session, cell, cell);
+  } catch (error) {
+    showTableCellError(error);
+  }
+}
+
 function populateTableCellGrid(session, displayRows) {
   const table = document.createElement('table'), head = table.createTHead(), body = table.createTBody();
   const opening = estimateTableCellOpening(displayRows.map(row => row.original ||
@@ -15273,6 +15407,7 @@ function populateTableCellGrid(session, displayRows) {
   tableCellGrid.hidden = false;
   tableCellSetup.hidden = true;
   document.getElementById('tableCellRowActions').hidden = false;
+  document.getElementById('tableCellMoveActions').hidden = false;
   tableCellDialog.classList.remove('table-cell-setup-open');
   tableCellError.textContent = '';
   tableCellUpdate.disabled = false;
@@ -15368,6 +15503,7 @@ function openTableCellEditor(mode) {
       tableCellSetup.hidden = false;
       tableCellCounts.textContent = '';
       document.getElementById('tableCellRowActions').hidden = true;
+      document.getElementById('tableCellMoveActions').hidden = true;
       tableCellDialog.style.removeProperty('width');
       tableCellDialog.classList.add('table-cell-setup-open');
       tableCellColumns.value = '3';
@@ -15436,7 +15572,8 @@ async function updateTableCells() {
     const order = session.rows.filter(row => row.editable).map(row => row.original
       ? { original: row.original } : { id: row.id, cells: row.cells.map(cell => cell.engine.readSource()) });
     if (session.mode !== TableCellMode.INSERT && !columnsChanged &&
-        !edits.length && !session.deletedRows.size && order.every(row => row.original)) {
+        !edits.length && !session.deletedRows.size && order.length === session.target.rows.length &&
+        order.every((row, i) => row.original === session.target.rows[i])) {
       closeTableCellEditor();
       return;
     }
@@ -15512,6 +15649,10 @@ tableCellRemoveAdded.addEventListener('click', () => changeTableCellRows('remove
 tableCellInsertLeft.addEventListener('click', () => changeTableCellColumns('left'));
 tableCellInsertRight.addEventListener('click', () => changeTableCellColumns('right'));
 tableCellDeleteColumn.addEventListener('click', () => changeTableCellColumns('remove'));
+tableCellMoveUp.addEventListener('click', () => moveTableCell('row', -1));
+tableCellMoveDown.addEventListener('click', () => moveTableCell('row', 1));
+tableCellMoveLeft.addEventListener('click', () => moveTableCell('column', -1));
+tableCellMoveRight.addEventListener('click', () => moveTableCell('column', 1));
 function tableCellForEvent(event) {
   return tableCellInputs.get(event.target.closest?.('[data-table-cell]'));
 }

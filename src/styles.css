@@ -4792,6 +4792,11 @@ pre[class*="language-"] {
 .table-cell-dialog h2 { margin: 0; font-size: 18px; }
 .table-cell-dialog > p { margin: 8px 20px; font-size: 13px; }
 .table-cell-row-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 20px 0; flex-shrink: 0; }
+.table-cell-move-actions { align-items: center; border-top: 1px solid var(--border-color); padding-top: 8px; }
+.table-cell-move-actions > span { margin-right: 4px; font-size: 12px; color: var(--text-secondary); }
+.table-cell-width-edge { position: absolute; top: 8px; bottom: 20px; width: 6px; cursor: ew-resize; touch-action: none; z-index: 3; }
+.table-cell-width-left { left: 0; }
+.table-cell-width-right { right: 0; }
 .table-cell-row-actions > .note-dialog-btn {
   display: inline-flex;
   align-items: center;

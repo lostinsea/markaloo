@@ -392,12 +392,14 @@ window.MarkalooTableCells = (() => {
           edited.has(edit.cell) || !validCellSource(edit.text)) fail('tableCells.invalid');
       edited.set(edit.cell, edit.text);
     }
-    let original = 0;
+    const retained = new Set();
     for (const entry of order) {
       if (!entry || typeof entry !== 'object') fail('tableCells.invalid');
       if (entry.original) {
-        while (deleted.has(rows[original])) original++;
-        if (entry.original !== rows[original++]) fail('tableCells.invalid');
+        if (!rows.includes(entry.original) || deleted.has(entry.original) || retained.has(entry.original)) {
+          fail('tableCells.invalid');
+        }
+        retained.add(entry.original);
       } else {
         if (typeof entry.id !== 'string' || !entry.id || ids.has(entry.id) ||
             !Array.isArray(entry.cells) || entry.cells.length !== table.rows[0].cells.length) fail('tableCells.invalid');
@@ -405,10 +407,13 @@ window.MarkalooTableCells = (() => {
         ids.add(entry.id);
       }
     }
-    while (deleted.has(rows[original])) original++;
-    if (original !== rows.length || first === 0 && order[0]?.original !== table.rows[0]) {
+    if (retained.size !== rows.length - deleted.size ||
+        first === 0 && order[0]?.original !== table.rows[0]) {
       fail('tableCells.invalid');
     }
+    const originals = order.filter(entry => entry.original).map(entry => entry.original);
+    const expectedOriginals = rows.filter(row => !deleted.has(row));
+    const reordered = originals.some((row, i) => row !== expectedOriginals[i]);
     const { source, view } = model;
     const physicalEnd = (row, text = view.text) => {
       const newline = text.indexOf('\n', row.start);
@@ -432,6 +437,7 @@ window.MarkalooTableCells = (() => {
       if (row) {
         // Keep physical row bytes; only its edited cell spans may change.
         // Attaching the delimiter to the header also forbids inserting before it.
+        if (!separated) chunks.push(endingAt(row.start));
         let cursor = view.offsets[row.start];
         for (const cell of row.cells) {
           if (!edited.has(cell)) continue;
@@ -440,9 +446,16 @@ window.MarkalooTableCells = (() => {
           chunks.push(source.slice(cursor, start), edited.get(cell));
           cursor = finish;
         }
-        const finish = afterLine(row === table.rows[0] ? table.delimiter : row);
+        const physical = row === table.rows[0] ? table.delimiter : row;
+        const finish = reordered ? physicalEnd(physical) : afterLine(physical);
         chunks.push(source.slice(cursor, view.offsets[finish]));
         separated = view.text[finish - 1] === '\n';
+        if (reordered && (i < order.length - 1 || terminated)) {
+          // Separators belong to destination slots, including an unterminated EOF.
+          const slot = rows[Math.min(i, rows.length - 1)];
+          chunks.push(endingAt(physicalEnd(slot === table.rows[0] ? table.delimiter : slot)));
+          separated = true;
+        }
         i++;
       } else {
         const added = [];
@@ -512,7 +525,7 @@ window.MarkalooTableCells = (() => {
       ids.add(column.id);
       if (column.originalIndex !== undefined) {
         const original = column.originalIndex;
-        if (!Number.isSafeInteger(original) || original <= lastOriginal || original >= count ||
+        if (!Number.isSafeInteger(original) || original < 0 || original >= count || positions[original] !== null ||
             deleted.has(original)) fail('tableCells.invalid');
         positions[original] = i;
         lastOriginal = original;
@@ -528,7 +541,9 @@ window.MarkalooTableCells = (() => {
       if (!edit || table.rows.some(row => row.cells.some((cell, column) =>
           cell === edit.cell && deleted.has(column)))) fail('tableCells.invalid');
     }
-    const changed = deleted.size > 0 || columns.some(column => column.originalIndex === undefined);
+    const reordered = columns.some((column, i) => column.originalIndex !== undefined &&
+      columns.slice(0, i).some(before => before.originalIndex > column.originalIndex));
+    const changed = deleted.size > 0 || columns.some(column => column.originalIndex === undefined) || reordered;
     const stageCells = entry => positions.map((position, original) => {
       if (position !== null) return entry.cells[position];
       const cell = entry.original?.cells[original];
@@ -626,6 +641,20 @@ window.MarkalooTableCells = (() => {
       if (!trailing && (columns.length === 1 || deleted.has(count - 1) || !lastText)) {
         const slashes = /\\*$/.exec(line)[0].length;
         line += (slashes % 2 ? ' ' : '') + '|';
+      }
+      if (reordered) {
+        const remaining = lineLayout(line, 0), survivors = owners.filter(owner => !deleted.has(owner.original));
+        if (remaining.slots.length !== survivors.length) fail('tableCells.invalid');
+        const slots = new Map(survivors.map((owner, i) => [owner.position,
+          line.slice(remaining.slots[i].rawStart, remaining.slots[i].rawEnd)]));
+        const ordered = columns.map((_column, position) => {
+          const raw = slots.get(position);
+          if (typeof raw !== 'string') fail('tableCells.invalid');
+          return raw + (/\\*$/.exec(raw)[0].length % 2 ? ' ' : '');
+        });
+        // Explicit outer pipes keep moved empty or backslash-ending edge cells structural.
+        line = line.slice(0, indent) + '|' + ordered.join('|') + '|' +
+          (remaining.trailingPipe === null ? '' : line.slice(remaining.trailingPipe + 1));
       }
       const final = lineLayout(line, 0);
       const finalExpected = entry ? entry.cells.map(textOf) : columns.map(column =>

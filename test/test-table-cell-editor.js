@@ -1,7 +1,8 @@
 "use strict";
 
 const fs = require("fs");
-const sourceOnly = process.argv.includes("--source");
+const movementOnly = process.argv.includes("--movement-source") || process.env.MARKALOO_CELL_MOVEMENT_ONLY === "1";
+const sourceOnly = movementOnly || process.argv.includes("--source");
 const earlyElectron = sourceOnly ? null : createEarlyElectronSafety(require("electron"));
 const path = require("path");
 const vm = require("vm");
@@ -105,7 +106,7 @@ const expectedEdited = original.slice(0, editedOffset) + richCell +
   original.slice(editedOffset + oldCell.length);
 const image = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12">' +
   '<rect width="12" height="12" fill="green"/></svg>';
-const productFiles = [...new Set(["src/inline-formatting.js", "src/table-cell-editor.js",
+const productFiles = movementOnly ? [] : [...new Set(["src/inline-formatting.js", "src/table-cell-editor.js",
   ...require("../package.json").build.files.filter(file => /^src[\\/].+\.(?:js|css|html)$/.test(file))])];
 const sha = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const hashes = () => Object.fromEntries(productFiles.map(file => [file, sha(path.join(ROOT, file))]));
@@ -119,7 +120,7 @@ async function sourceTests(core = false) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "inline-formatting.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
   const cells = context.window.MarkalooTableCells;
-  if (sourceOnly && !proof) {
+  if (sourceOnly && !proof && !movementOnly) {
     await sharedNativeSetupSourceTests();
     sharedOpeningOracleSourceTests();
     await columnSizingSourceTests(cells);
@@ -187,7 +188,9 @@ async function sourceTests(core = false) {
   if (core) {
     structuralRowSourceTests(cells, marked, protect);
     sharedTableSourceTests(cells, marked, protect);
+    movementTableSourceTests(cells, marked, protect);
     await rowRemovalSessionSourceTests(cells);
+    if (movementOnly) await columnSizingSourceTests(cells, true);
     return;
   }
   const shared = context.window.MarkalooInlineFormatting;
@@ -537,7 +540,7 @@ function sharedTableSourceTests(cells, marked, protect) {
       "tableCells.columnsScope" && model.source === source);
   for (const [label, columns] of [
     ["duplicate id", [{ id: "x", originalIndex: 0 }, { id: "x" }, { id: "b", originalIndex: 1 }]],
-    ["original reorder", [{ id: "b", originalIndex: 1 }, { id: "new" }, { id: "a", originalIndex: 0 }]],
+    ["duplicate original", [{ id: "b", originalIndex: 1 }, { id: "new" }, { id: "other-b", originalIndex: 1 }]],
     ["missing original", [{ id: "a", originalIndex: 0 }, { id: "new" }]],
   ]) {
     check("structural column contract refuses " + label + " without source mutation",
@@ -853,7 +856,6 @@ function structuralRowSourceTests(cells, marked, protect) {
   const badCases = [
     ["missing original", target, [own(b), added("x", "X")]],
     ["duplicate original", target, [own(b), own(b), added("x", "X"), own(c)]],
-    ["reordered originals", target, [own(c), added("x", "X"), own(b)]],
     ["foreign original", target, [own(target.table.rows[1]), added("x", "X"), own(c)]],
     ["readonly context header anchor", target, [own(target.table.rows[0]), own(b), added("x", "X"), own(c)]],
     ["noncontiguous scope", legacy, [own(legacy.rows[0]), added("x", "X"), own(legacy.rows[1])]],
@@ -886,7 +888,7 @@ function structuralRowSourceTests(cells, marked, protect) {
     ["foreign deletion", [own(b), own(c)], [target.table.rows[1]]],
     ["true header deletion", [own(b), own(c)], [target.table.rows[0]]],
     ["edit on deleted original", [own(c)], [b], [{ cell: b.cells[0], text: "edited" }]],
-    ["reordered originals without additions", [own(c), own(b)], []],
+    ["duplicate originals without additions", [own(c), own(c)], []],
   ]) {
     check("removal authority rejects " + label + " without mutating its model",
       rejects(target, order, edits, protect, deleted) && target.model.source === base);
@@ -927,6 +929,77 @@ function structuralRowSourceTests(cells, marked, protect) {
     ragged.tables.length === 1 && !ragged.tables[0].writable);
 }
 
+function movementTableSourceTests(cells, marked, protect) {
+  const attempt = action => {
+    try { return action(); }
+    catch (error) { return { error: error.stack }; }
+  };
+  const raw = (model, cell) => model.source.slice(model.view.offsets[cell.start], model.view.offsets[cell.end]);
+  const whole = source => {
+    const model = cells.index(source, marked, protect);
+    const table = model.tables[0];
+    if (!table?.writable) throw new Error("Movement fixture must be writable");
+    return { mode: cells.Mode.UPDATE_TABLE, model, table, rows: table.rows };
+  };
+  for (const ending of ["\n", "\r\n", "\r"]) for (const terminal of ["", ending]) {
+    const prefix = "\uFEFF<!-- owned-width-envelope -->" + ending + ending;
+    const lines = ["| **A** | B | C |", "| :--- | ---: | :---: |",
+      "| x\\|y | `code` | [ref][r] |", "| 😀 | tail | slash\\ |"];
+    const source = prefix + lines.join(ending) + terminal;
+    const target = whole(source), [header, a, b] = target.rows;
+    const moved = attempt(() => cells.replaceRows(target, [], [{ original: header }, { original: b }, { original: a }],
+      marked, protect));
+    check("row movement keeps exact source escapes metadata and terminal ending " + JSON.stringify({ ending, terminal }),
+      moved === prefix + [lines[0], lines[1], lines[3], lines[2]].join(ending) + terminal &&
+      target.model.source === source, moved);
+    const columnOrder = [2, 0, 1], columns = columnOrder.map(originalIndex => ({ id: "c" + originalIndex, originalIndex }));
+    const order = [header, b, a].map(original => ({ original, cells: columnOrder.map(i => raw(target.model, original.cells[i])) }));
+    const candidate = attempt(() => cells.replaceStructure(target, [], order, columns, marked, protect));
+    const expected = prefix + ["| C | **A** | B |", "| :---: | :--- | ---: |",
+      "| slash\\ | 😀 | tail |", "| [ref][r] | x\\|y | `code` |"].join(ending) + terminal;
+    check("combined row and column movement carries exact cell sources and delimiter alignment " +
+      JSON.stringify({ ending, terminal }), candidate === expected && target.model.source === source, candidate);
+  }
+  const mixed = "\uFEFF| A | B |\r\n| --- | ---: |\r| alpha | **one** |\n| beta | two |\r\n| gamma | three |";
+  const mixedTarget = whole(mixed), [header, alpha, beta, gamma] = mixedTarget.rows;
+  const moved = attempt(() => cells.replaceRows(mixedTarget, [{ cell: beta.cells[1], text: "`edited`" }],
+    [header, gamma, alpha, beta].map(original => ({ original })), marked, protect));
+  check("mixed-ending row movement preserves destination separators and an unterminated EOF",
+    moved === "\uFEFF| A | B |\r\n| --- | ---: |\r| gamma | three |\n| alpha | **one** |\r\n| beta | `edited` |", moved);
+  const subset = { ...mixedTarget, mode: cells.Mode.UPDATE_ROWS, rows: [beta, gamma] };
+  const swapped = attempt(() => cells.replaceRows(subset, [], [{ original: gamma }, { original: beta }], marked, protect));
+  check("selected-row movement changes only its contiguous authorized body scope",
+    swapped === "\uFEFF| A | B |\r\n| --- | ---: |\r| alpha | **one** |\n| gamma | three |\r\n| beta | two |", swapped);
+  const mixedOutput = attempt(() => cells.replaceRows(mixedTarget, [{ cell: beta.cells[1], text: "edited" }],
+    [{ original: header }, { original: gamma }, { id: "new", cells: ["new", "cell"] }, { original: beta }],
+    marked, protect, [alpha]));
+  check("row movement combines deletion insertion and edited original identity without concatenating EOF",
+    typeof mixedOutput === "string" &&
+    cells.index(mixedOutput, marked, protect).tables[0].rows.map(row => row.cells[0].text).join(",") ===
+      "A,gamma,new,beta" && mixedOutput.endsWith("| beta | edited |"), mixedOutput);
+  const compact = "A|B|C\n:---|---:|:---:\nx|y|z\\";
+  const compactTarget = whole(compact), projection = [2, null, 0];
+  const columns = projection.map((index, i) => index === null ? { id: "new" } : { id: "c" + i, originalIndex: index });
+  const order = compactTarget.rows.map(original => ({ original,
+    cells: projection.map(i => i === null ? "new" : raw(compactTarget.model, original.cells[i])) }));
+  const compactMoved = attempt(() => cells.replaceStructure(compactTarget, [], order, columns, marked, protect, [], [1]));
+  check("column permutation combines inserted deleted and backslash-ending pipe-less source cells",
+    compactMoved === "|C | new |A|\n|:---: | --- |:---|\n|z\\ | new |x|", compactMoved);
+  const repeated = "| A | B |\n| :--- | ---: |\n| x | y |";
+  const outside = "<!-- start-widths -->\n\n" + repeated + "\n\n<!-- end-widths -->\n\n" + repeated + "\nAfter";
+  const target = whole(outside), swappedColumns = [1, 0].map(originalIndex => ({ id: String(originalIndex), originalIndex }));
+  const candidate = attempt(() => cells.replaceStructure(target, [], target.rows.map(original => ({ original,
+    cells: [raw(target.model, original.cells[1]), raw(target.model, original.cells[0])] })),
+    swappedColumns, marked, protect));
+  check("column movement preserves neighboring hidden metadata and a repeated unowned table byte for byte",
+    candidate === outside.replace(repeated, "| B | A |\n| ---: | :--- |\n| y | x |") &&
+    target.model.source === outside, candidate);
+  let refusal;
+  try { cells.replaceRows(mixedTarget, [], [alpha, header, beta, gamma].map(original => ({ original })), marked, protect); }
+  catch (error) { refusal = error.message; }
+  check("row movement cannot exchange the header with a body row", refusal === "tableCells.invalid");
+}
+
 async function rowRemovalSessionSourceTests(cells) {
   const renderer = fs.readFileSync(path.join(ROOT, "src", "renderer.js"), "utf8");
   const start = renderer.indexOf("function refreshTableCellRows(session)");
@@ -941,6 +1014,7 @@ async function rowRemovalSessionSourceTests(cells) {
     setAttribute(name, value) { this.attributes[name] = value; }, focus() { focused = this; } });
   const above = control(), below = control(), remove = control(), updateButton = control();
   const left = control(), right = control(), deleteColumn = control();
+  const up = control(), down = control(), moveLeft = control(), moveRight = control();
   const classList = () => {
     const values = new Set();
     return { add: value => values.add(value), remove: value => values.delete(value), contains: value => values.has(value) };
@@ -953,6 +1027,7 @@ async function rowRemovalSessionSourceTests(cells) {
     const row = { id: original ? "row-" + sourceRows.indexOf(original) : "new-row",
       original, editable, header: original === sourceRows[0],
       label: {}, element: { children: [], remove() { this.removed = true; },
+        appendChild(child) { this.insertBefore(child, null); },
         insertBefore(child, next) {
           if (child.parentElement) child.parentElement.children =
             child.parentElement.children.filter(item => item !== child);
@@ -982,6 +1057,7 @@ async function rowRemovalSessionSourceTests(cells) {
     tableCellGrid: grid, tableCellDialog: modal, tableCellUpdate: updateButton,
     tableCellInsertAbove: above, tableCellInsertBelow: below, tableCellRemoveAdded: remove,
     tableCellInsertLeft: left, tableCellInsertRight: right, tableCellDeleteColumn: deleteColumn, tableCellCounts: {},
+    tableCellMoveUp: up, tableCellMoveDown: down, tableCellMoveLeft: moveLeft, tableCellMoveRight: moveRight,
     tableCellColumnScope: {}, TableCellMode: cells.Mode, MarkalooTableCells: cells,
     tableCellError: { textContent: "" },
     i18n: (key, params) => {
@@ -1028,7 +1104,8 @@ async function rowRemovalSessionSourceTests(cells) {
       get columns() { return this.columnOrder.length; },
       columnOrder: [{ id: "a", originalIndex: 0 }, { id: "b", originalIndex: 1 }],
       selection: { isCurrent: () => current }, exact, rows: [header, b, c], cells: [],
-      deletedRows: new Set(), deletedColumns: new Set(), body: { insertBefore() {} },
+      deletedRows: new Set(), deletedColumns: new Set(),
+      body: { moves: [], insertBefore(element, before) { this.moves.push({ element, before }); } },
       sizing: { cancel() {}, refresh() {}, dispose() {}, isComposing: () => composing },
       activeCell: b.cells[1],
     };
@@ -1160,6 +1237,7 @@ async function rowRemovalSessionSourceTests(cells) {
         throw new Error("Bad removal transaction");
       transaction.apply();
     };
+    session.sizing.moveColumn = (_index, _destination, transaction) => transaction.apply();
     context.refreshTableCellRows(session);
     context.selectTableCell(session, session.rows[1].cells[Math.min(1, count - 1)]);
     return { session, selected: session.selectedCell, rows: session.rows.slice(),
@@ -1187,6 +1265,71 @@ async function rowRemovalSessionSourceTests(cells) {
         return cell === old.cell && cell.input === old.input && cell.container === old.container &&
           cell.engine === old.engine && cell.input.innerHTML === old.html && cell.engine?.disposed === old.disposed;
       }));
+  for (const mode of [cells.Mode.INSERT, cells.Mode.UPDATE_TABLE, cells.Mode.UPDATE_ROWS]) {
+    const item = columnFixture(mode), selected = item.rows[1].cells[1], nodes = item.rows[1].cells.slice();
+    check("movement boundary controls keep the header fixed and restrict selected-row columns " + mode,
+      up.disabled && !down.disabled && moveLeft.disabled === (mode === cells.Mode.UPDATE_ROWS) &&
+      moveRight.disabled === (mode === cells.Mode.UPDATE_ROWS));
+    context.moveTableCell("row", 1);
+    check("moving a body row keeps exact cells engines selected identity and document authority " + mode,
+      item.session.rows[2] === item.rows[1] && item.session.rows[1] === item.rows[2] &&
+      item.session.selectedCell === selected && focused === selected.input &&
+      nodes.every((cell, index) => cell === item.session.rows[2].cells[index] && !cell.engine.disposed) &&
+      item.session.body.moves.at(-1).element === item.rows[1].element &&
+      item.session.body.moves.at(-1).before === null && down.disabled && !up.disabled &&
+      sourceReads === 0 && documentWrites === 0 && !errors.length);
+    context.moveTableCell("row", -1);
+    check("inverse row movement restores the same draft nodes without serialization " + mode,
+      item.session.rows.every((row, i) => row === item.rows[i]) &&
+      item.session.body.moves.at(-1).before === item.rows[2].element && sourceReads === 0 && !errors.length);
+    context.selectTableCell(item.session, item.header.cells[0]);
+    context.moveTableCell("row", 1);
+    check("attempted header movement fails explicitly without crossing body semantics " + mode,
+      errors.at(-1) === "tableCells.invalid" && item.session.rows[0] === item.header && up.disabled && down.disabled);
+  }
+  for (const mode of [cells.Mode.INSERT, cells.Mode.UPDATE_TABLE]) for (const direction of [-1, 1]) {
+    const item = columnFixture(mode), originalCells = item.rows.map(row => row.cells.slice());
+    const selected = item.selected, at = 1 + direction;
+    context.moveTableCell("column", direction);
+    check("column movement retains every engine provenance and corresponding DOM node " + mode + "/" + direction,
+      item.session.columnOrder[at] === item.columns[1] && item.session.selectedCell === selected &&
+      selected.column === at && focused === selected.input &&
+      item.rows.every((row, index) => row.cells[at] === originalCells[index][1] &&
+        row.element.children[at + 1] === originalCells[index][1].container &&
+        row.cells.every(cell => !cell.engine.disposed)) &&
+      sourceReads === 0 && documentWrites === 0 && !errors.length);
+    context.moveTableCell("column", -direction);
+    check("inverse column movement restores exact identity order and original deletion accounting " + mode + "/" + direction,
+      item.session.columnOrder.every((column, i) => column === item.columns[i]) &&
+      item.rows.every((row, r) => row.cells.every((cell, c) =>
+        cell === originalCells[r][c] && row.element.children[c + 1] === cell.container)) &&
+      !item.session.deletedColumns.size && !errors.length);
+  }
+  for (const label of ["selection", "selected-row column", "composition", "stale", "confirmation", "edge"]) {
+    const item = columnFixture(label === "selected-row column" ? cells.Mode.UPDATE_ROWS : cells.Mode.UPDATE_TABLE);
+    if (label === "selection") context.selectTableCell(item.session, null);
+    if (label === "composition") composing = true;
+    if (label === "stale") current = false;
+    if (label === "confirmation") item.session.confirmation = {};
+    if (label === "edge") context.selectTableCell(item.session, item.rows[1].cells[0]);
+    const before = draftWitness(item.session);
+    context.moveTableCell("column", -1);
+    before.authority = authority;
+    check("movement independently refuses " + label + " before source or draft mutation",
+      unchanged(item.session, before) && (label === "confirmation" || errors.length === 1));
+  }
+  {
+    const item = columnFixture(), before = draftWitness(item.session);
+    item.session.sizing.moveColumn = (_index, _destination, transaction) => {
+      try { transaction.apply(); throw new Error("forced move layout"); }
+      catch (error) { transaction.rollback(); throw error; }
+    };
+    context.moveTableCell("column", 1);
+    before.authority = authority;
+    check("failed column movement restores every original column cell and DOM association",
+      unchanged(item.session, before) && errors.at(-1) === "forced move layout" &&
+      item.rows.every(row => row.cells.every((cell, c) => row.element.children[c + 1] === cell.container)));
+  }
   for (const label of [" Current header ", "", "Duplicate", "<img src=x onerror=bad()> $&"]) {
     const item = columnFixture();
     item.header.cells[1].input.textContent = label;
@@ -1432,6 +1575,29 @@ async function rowRemovalSessionSourceTests(cells) {
   check("the shipping Update fast path cannot discard deletion-only operations",
     forwarded && adopted === 1 && context.markdownEditor.value === "deleted candidate" &&
     history.length === 1 && history[0] === "snapshot" && !modal.open);
+  for (const inverse of [false, true]) {
+    const item = columnFixture(cells.Mode.UPDATE_ROWS);
+    item.session.selection.tab = owner; item.session.selection.mode = item.session.selection.sequence = 0;
+    const originals = item.session.target.rows.slice(), beforeHistory = history.length;
+    context.markdownEditor.value = "snapshot";
+    context.moveTableCell("row", 1);
+    if (inverse) context.moveTableCell("row", -1);
+    let projected = 0, adoptions = 0;
+    context.MarkalooTableCells = { ...cells, replaceRows(target, edits, order) {
+      projected++;
+      check("row-only Update forwards the reordered original identities to the source transaction",
+        target === item.session.target && !edits.length &&
+        order.map(entry => originals.indexOf(entry.original)).join(",") === "0,2,1");
+      return "row movement candidate";
+    } };
+    context.window.CustomTabs.adoptExactEditorContent = value => { adoptions++; return value === "row movement candidate"; };
+    await context.updateTableCells();
+    check("row movement Update distinguishes a real permutation from an inverse exact no-op " + inverse,
+      !modal.open && !errors.length && (inverse
+        ? !projected && !adoptions && history.length === beforeHistory && context.markdownEditor.value === "snapshot"
+        : projected === 1 && adoptions === 1 && history.length === beforeHistory + 1 &&
+          history.at(-1) === "snapshot" && context.markdownEditor.value === "row movement candidate"));
+  }
   for (const replacement of [false, true]) for (const stale of [false, true]) {
     const item = columnFixture(), label = (replacement ? "equal-count" : "delete-only") + (stale ? "/stale" : "/adopt");
     item.session.selection.tab = owner; item.session.selection.mode = item.session.selection.sequence = 0;
@@ -1516,7 +1682,7 @@ async function rowRemovalSessionSourceTests(cells) {
     /\.table-cell-row-actions > \.note-dialog-btn \{[^}]*border: 1px solid var\(--primary-color\)/.test(css));
 }
 
-async function columnSizingSourceTests(cells) {
+async function columnSizingSourceTests(cells, movement = false) {
   const styles = lf(fs.readFileSync(path.join(ROOT, "src", "styles.css"), "utf8"));
   const imageRule = styles.match(/\.table-cell-grid img \{([^}]*)\}/)?.[1];
   check("cell image thumbnails keep their size limit while fitting the available cell width",
@@ -1622,8 +1788,8 @@ async function columnSizingSourceTests(cells) {
   vm.runInContext(renderer.slice(begin, end), context);
   const openingRows = texts => texts.map(row => ({ cells: row.map(text => ({ text })) }));
   const estimateOpening = texts => context.estimateTableCellOpening(openingRows(texts), 1800).width;
-  check("short displayed cells open at the control minimum instead of nearly filling the window",
-    estimateOpening([["Name", "Value"], ["one", "two"]]) === 480);
+  check("short displayed cells open at a comfortable editing width rather than the old narrow minimum",
+    estimateOpening([["Name", "Value"], ["one", "two"]]) === 800);
   check("displayed source lengths influence the opening estimate before the comfort cap",
     estimateOpening([Array(4).fill("x".repeat(20))]) === 819);
   check("the comfort cap applies only to initial width and the current viewport gutter",
@@ -1637,7 +1803,7 @@ async function columnSizingSourceTests(cells) {
   }));
   const withinBudget = context.estimateTableCellOpening(countedRows(24, 5, 10), 1800);
   check("the bounded estimator genuinely reads displayed lengths within its row and cell budgets",
-    withinBudget.width === 597 && withinBudget.weights.every(width => width === 98) && inspected === 120);
+    withinBudget.width === 800 && withinBudget.weights.every(width => width === 98) && inspected === 120);
   inspected = 0;
   check("an oversized displayed row scope uses conservative demands without cell reads",
     context.estimateTableCellOpening(countedRows(25, 4, 20), 1800).width === 960 && inspected === 0);
@@ -2314,6 +2480,43 @@ async function columnSizingSourceTests(cells) {
       !rule() && observer.observed.size === 0 && probe.container.children.length === 1 &&
       probe.root.listenerCount() === 0 && probe.input.innerHTML === "<strong>keep caret and text</strong>");
   }
+  for (const manual of [false, true]) for (const failure of [null, "apply", "layout"]) {
+    const id = "moveSizing" + Number(manual) + (failure || "success"), probe = fixture(id);
+    let armed = false, applies = 0, rollbacks = 0;
+    const controller = context.createTableColumnSizing({ ...options, root: probe.root,
+      initialWeights: [96, 288], initialFixedWidths: [83], isCurrent: () => true, onDragChange() {},
+      onLayout() { if (armed) { armed = false; throw new Error("forced move layout"); } } });
+    probe.root.emit("pointerover", { target: probe.table });
+    let grip = probe.container.children[1].children[0];
+    if (manual) { grip.focus(); grip.emit("keydown", { key: "ArrowRight" }); }
+    const row = probe.table.rows[0], before = row.cells.slice();
+    const rule = () => document.head.children.find(style => style.textContent?.startsWith("#" + id + " "));
+    const widths = () => [...rule().textContent.matchAll(
+      /nth-child\(\d+\)\{box-sizing:border-box;width:([\d.e+-]+)px;/g)].map(match => Number(match[1]));
+    const previous = widths(), originalRule = rule().textContent;
+    let error;
+    try { controller.moveColumn(0, 1, {
+      apply() {
+        applies++; row.cells.splice(2, 0, ...row.cells.splice(1, 1));
+        if (failure === "apply") throw new Error("forced move apply");
+        armed = failure === "layout";
+      },
+      rollback() { rollbacks++; row.cells.splice(0, row.cells.length, ...before); },
+    }); } catch (caught) { error = caught.message; }
+    check("column movement sizing keeps current widths attached to their stable column identities " + id,
+      applies === 1 && (failure
+        ? error === "forced move " + failure && rollbacks === 1 && rule().textContent === originalRule &&
+          row.cells.every((cell, i) => cell === before[i])
+        : !error && !rollbacks && row.cells[1] === before[2] && widths()[0] === previous[0] &&
+          Math.abs(widths()[2] / widths()[1] - previous[1] / previous[2]) < .001) &&
+      probe.table.classList.contains("table-manually-sized") === manual, { error, widths: widths(), previous });
+    grip = probe.container.children[1].children[0];
+    grip.focus();
+    grip.emit("keydown", { key: "Home" });
+    check("column movement reset weights follow the same permutation or rollback as current widths " + id,
+      widths()[0] === 83 && Math.abs(widths()[2] / widths()[1] - (failure ? 3 : 1 / 3)) < .001);
+    controller.dispose();
+  }
   window.innerWidth = 1000; window.innerHeight = 800;
   const popup = node("dialog"), popupGrid = fixture("proportionalGrid");
   const label = popupGrid.table.rows[0].cells[0];
@@ -2416,9 +2619,90 @@ async function columnSizingSourceTests(cells) {
   check("a content-sized opening becomes the initial relative preference without pinning height",
     compactPopup.style.width === "30vw" && compactPopup.style.height === "");
   compactSizing.dispose();
+  for (const side of ["left", "right"]) {
+    const edgePopup = node("dialog"), edgeGrid = fixture("edgeGrid" + side);
+    edgePopup.bounds = { width: 800, height: 440 };
+    const controller = context.createTableCellSizing({
+      root: edgeGrid.root, dialog: edgePopup, isCurrent: () => true, initialWidth: 800,
+    });
+    const edge = edgePopup.children.find(child => child.className.endsWith("-" + side));
+    check("both vertical edges expose a width grip without covering the native lower corner " + side,
+      edge && edge.attributes["aria-hidden"] === "true" &&
+      styles.includes("bottom: 20px; width: 6px; cursor: ew-resize") &&
+      styles.match(/\.table-cell-dialog \{([^}]*)\}/)?.[1].includes("resize: both"));
+    edge.emit("pointerdown", { isTrusted: true, clientX: 200 });
+    window.emit("pointermove", { clientX: side === "right" ? 240 : 160 });
+    check("edge gesture changes only centered width before committing its relative preference " + side,
+      edge.hasPointerCapture(7) && edgePopup.style.width === "880px" && edgePopup.style.height === "");
+    window.emit("pointerup", { clientX: side === "right" ? 240 : 160 }); flushTimers();
+    check("completed edge resizing retains width preference and natural height " + side,
+      Math.abs(parseFloat(edgePopup.style.width) - 55) < .001 && edgePopup.style.width.endsWith("vw") &&
+      edgePopup.style.height === "" &&
+      !edge.hasPointerCapture(7));
+    edgePopup.bounds.width = 880;
+    edge.emit("pointerdown", { isTrusted: true, clientX: 200 });
+    window.emit("pointermove", { clientX: side === "right" ? 140 : 260 });
+    window.emit("pointerup", { clientX: side === "right" ? 140 : 260 }); flushTimers();
+    check("both edges can shrink as well as grow without learning a height " + side,
+      edgePopup.style.width === "47.5vw" && edgePopup.style.height === "");
+    controller.dispose();
+    check("edge disposal removes capture listeners and owned affordances " + side,
+      edgePopup.children.length === 0 && edge.listenerCount() === 0 && edgePopup.listenerCount() === 0);
+  }
+  for (const cancellation of ["pointercancel", "lostpointercapture", "blur", "viewport", "stale", "dispose", "Escape"]) {
+    const edgePopup = node("dialog"), edgeGrid = fixture("cancelEdge" + cancellation);
+    edgePopup.bounds = { width: 800, height: 440 };
+    let current = true;
+    const controller = context.createTableCellSizing({
+      root: edgeGrid.root, dialog: edgePopup, isCurrent: () => current, initialWidth: 800,
+    });
+    const edge = edgePopup.children[1];
+    edge.emit("pointerdown", { isTrusted: true, clientX: 200 });
+    window.emit("pointermove", { clientX: 240 });
+    check("edge cancellation setup actually changes width and captures its pointer " + cancellation,
+      edgePopup.style.width === "880px" && edge.hasPointerCapture(7));
+    if (cancellation === "viewport") { window.innerWidth = 900; window.emit("resize"); window.innerWidth = 1600; }
+    else if (cancellation === "stale") { current = false; controller.refresh(); }
+    else if (cancellation === "dispose") controller.dispose();
+    else if (cancellation === "Escape") edgePopup.emit("keydown", { key: "Escape" });
+    else if (cancellation === "lostpointercapture") edge.emit(cancellation);
+    else window.emit(cancellation);
+    flushTimers();
+    check("canceled edge resizing restores the prior relative size and releases capture " + cancellation,
+      edgePopup.style.width === "50vw" && edgePopup.style.height === "" && !edge.hasPointerCapture(7));
+    controller.dispose();
+  }
+  {
+    const edgePopup = node("dialog"), edgeGrid = fixture("edgeClamps");
+    edgePopup.bounds = { width: 800, height: 440 };
+    const controller = context.createTableCellSizing({
+      root: edgeGrid.root, dialog: edgePopup, isCurrent: () => true, initialWidth: 800,
+    });
+    const edge = edgePopup.children[1];
+    edge.emit("pointerdown", { clientX: 200 });
+    window.emit("pointermove", { clientX: 300 });
+    check("untrusted edge input cannot start resizing", edgePopup.style.width === "50vw" && !edge.hasPointerCapture(7));
+    edge.emit("pointerdown", { isTrusted: true, clientX: 200 });
+    window.emit("pointermove", { clientX: 5000 });
+    check("edge growth remains within the viewport gutter", edgePopup.style.width === "1576px");
+    window.emit("pointermove", { clientX: -5000 });
+    check("edge shrink retains the existing comfortable resize floor", edgePopup.style.width === "480px");
+    check("the shared cancellation API consumes an active edge gesture", controller.cancel() === true);
+    check("cancel API restores the exact prior width preference", edgePopup.style.width === "50vw");
+    edge.emit("pointerdown", { isTrusted: true, clientX: 200 });
+    window.emit("pointermove", { clientX: 240 });
+    window.emit("pointerup", { clientX: 240 });
+    edge.emit("lostpointercapture");
+    flushTimers();
+    check("implicit capture release after pointerup cannot cancel a completed edge width",
+      Math.abs(parseFloat(edgePopup.style.width) - 55) < .001 && edgePopup.style.width.endsWith("vw") &&
+      edgePopup.style.height === "" && !edge.hasPointerCapture(7));
+    controller.dispose();
+  }
   check("disposing every instance leaves no owned widths observers listeners or frames",
     document.head.children.length === 0 && window.listenerCount() === 0 &&
     observers.every(observer => observer.observed.size === 0) && frames.size === 0 && timers.size === 0);
+  if (movement) return;
 
   const menuWindow = Object.assign(node("window"), { innerWidth: 900, innerHeight: 700 });
   const menuDocument = { defaultView: menuWindow, nodeType: 9 };
@@ -3316,7 +3600,11 @@ function dialogGuardSourceTests() {
   check("dialog guard refuses a conflicting HTML guard instead of silently repairing it", conflict);
 }
 
-if (sourceOnly) {
+if (movementOnly) {
+  // Bounded source/VM checks never hash or load the packaged application inventory.
+  sourceTests(true).catch(error => check("movement source suite completed", false, error.stack))
+    .finally(() => { process.exitCode = summary(); });
+} else if (sourceOnly) {
   const sourceProduct = hashes();
   sourceTests().catch(error => check("cell source suite completed", false, error.stack))
     .finally(() => {

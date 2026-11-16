@@ -469,6 +469,15 @@ flowchart LR
     E --> F["Normal preview render"]
 ```
 
+- The separate **Move** toolbar group moves the selected body row up/down or
+  the selected column left/right. The header stays first; selected-row editing
+  keeps movement inside its selected rows and cannot move whole columns.
+- Movement keeps cell source, column alignment and editor state together.
+  Draft changes reach the document only through Update, as one Undo step.
+- Editing opens at least 800px wide when the viewport allows it. Both vertical
+  edges resize width; the lower-right corner still resizes width and height.
+  Popup size stays within the viewport.
+
 - Shared creation, column changes and deliberate cell selection are
   implemented, reviewed and locally installed as the current 0.12.0 candidate.
   Current B973/BD1B pointer SAME15 passes all fifteen cases. Shared/Core reach both
