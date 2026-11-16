@@ -57,8 +57,12 @@ section is kept here so the register has a visible edge.
   - F1/F2/B1 provide Edit/Insert movement, side-edge resizing and initial width.
     F5 adds filtered-popup wrapping; B2/B3 repair search stacking and focus.
     The bounded merged editor source suite passed. Root accepted the editor's
-    owned native run and search's author runs; merged popup and search/F4 seam
-    checks remain open under serialized native permission.
+    owned native run and search's author runs.
+  - The merged F4 and isolated search seam runs passed. The merged popup run
+    passed both narrow footer checks but did not establish responsive collapse:
+    the fixture changed actual column widths, while fitColumns uses width
+    definitions/minimums to decide collapse. Its source revert was not run.
+    Corrected collapse setup and final integrated reviews remain open.
   - Node syntax, loaded-language gates and focused scroll-state checks passed.
     The owned-file, safe Node-parent fixture passed its focused F4 checks,
     including literal setup, Reader receipts and both search orderings.

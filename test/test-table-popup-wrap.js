@@ -313,7 +313,10 @@ async function exerciseNarrow(themeId) {
       footer.right <= footer.footerRight && footer.right <= viewport.width &&
       footer.top >= footer.footerTop && footer.bottom <= footer.footerBottom &&
       footer.bottom <= viewport.height, footer);
-    await evaluate(win, `table.getColumns()[0].setWidth(260)`);
+    await evaluate(win, `(async () => {
+      for (const column of table.getColumns()) await column.updateDefinition({ width: 260 });
+      table.redraw(true);
+    })()`);
     await until(win, "document.querySelector('.tabulator-responsive-collapse td') !== null");
     const collapsed = await evaluate(win, `(() => {
       const cells = [...document.querySelectorAll('.tabulator-responsive-collapse td')];
