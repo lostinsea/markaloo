@@ -38,7 +38,7 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v0141-release` - **SOURCE PREPARATION ACCEPTED; LOCAL BUILD PENDING**.
+- `v0141-release` - **LOCAL UNSIGNED CANDIDATE BUILT; PUBLICATION HELD**.
   - Publish as 0.14.1 only after all fixes are done and relevant targeted tests
     pass. Authorization does not waive native, full-app or exclusion blockers.
   - The reviewed search-viewport/padding commit is integrated as `ae3313e8`.
@@ -55,6 +55,24 @@ section is kept here so the register has a visible edge.
     No push, tag, dispatch or publication has happened.
   - Root now owns a fresh Sandbox for native checks and will request actual UAC
     approval if needed. No new native or offscreen runtime is launched here.
+  - Build source: `7ee449561747d19c4c9621049e926dcbd1192683`.
+    The established `npm run build-installer -- --config.directories.output=<artifact-directory>`
+    route succeeded into the owned session artifact directory, with the
+    script's existing `--publish never`. NSIS only; no alternate format.
+  - New installer: `Markaloo-Setup-0.14.1.exe`, 106880092 bytes.
+    SHA256: `37CBC80423155761E84573D64A3BA975AC8C56CC0477176118C2E15823EF2E18`.
+    Packaged archive SHA256:
+    `39110BF4EBC105A608927236FB9C4D1687C24BCBCC6F42EF003F8452898FCCB1`.
+    Installer and unpacked app have actual Authenticode status `NotSigned`.
+  - Packaged name/version/entry fields match 0.14.1; the nine named allowed
+    product files match the build source byte-for-byte. Source was tracked-clean.
+    No excluded-source inventory or native runtime was used for these checks.
+  - Build evidence: integration session `files\combined-0141-7ee44956`,
+    including `source-manifest.json`, `unsigned-artifacts.json` and
+    `unsigned-installer-build.log`; installer is under `unsigned-installer`.
+    Root received the exact path and hashes for native testing.
+    This candidate is **NOT NATIVE QUALIFIED**. Building clears no native,
+    full-app, Main Save, exclusion or hosted release gate.
   - Use the established release path: matching package/root-lock versions,
     reviewed release preparation, then the normal hosted `release.yml`
     staging/build gates. Dispatch the eventual tag ref for publication;
@@ -114,10 +132,10 @@ section is kept here so the register has a visible edge.
     This remains owned offscreen evidence with explicit adapters, not installed,
     full-app, Main Save, physical-keyboard or cross-platform qualification.
     Changed full-app search/tab predicates have source/syntax checks only.
-  - The existing unsigned candidate covers only the prior three fixes.
-    It does not include this correction. Preserve its artifacts and all
-    native, full-app and exclusion blockers; no new candidate has been built.
-- `windows-update-visibility` - **SOURCE INTEGRATED; NATIVE PARTIAL; ENVIRONMENT RECHECK PENDING**.
+  - The preserved unsigned 0.14.0 candidate covers only the prior three fixes.
+    The new 0.14.1 candidate above includes this correction, but native,
+    full-app and exclusion limits remain open.
+- `windows-update-visibility` - **SOURCE INTEGRATED; NATIVE PARTIAL; FRESH-GUEST CHECKS IN PROGRESS**.
   - Make Windows interactive updates visible, including installer-side
     compatibility with old 0.13/0.14 clients. Remove the unconditional,
     unverified Folia warning.
@@ -151,6 +169,9 @@ section is kept here so the register has a visible edge.
   - Root preserved receipts and the viewed image before verified Sandbox
     teardown. A fresh software-graphics start failed; status then confirmed
     no running Sandbox. There was no blind restart.
+  - Root now reports a new network-off minimized Sandbox with its desktop and
+    agent ready. It owns this fresh native slot and will measure this guest
+    separately; prior guest settings establish nothing about it or the host.
   - Evidence: Root's `files\updater-correction\result.json` and
     `files\updater-correction\controls-through-014-replay`.
     No untouched public-GitHub pass or completed qualification is claimed.
