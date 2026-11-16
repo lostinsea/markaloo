@@ -124,7 +124,7 @@ section is kept here so the register has a visible edge.
     installer/sandbox work, release changes or pushes.
   - The normal `test:table-cells-source` route also hashes excluded installer
     sources through `productFiles`; the owner did not run that route.
-- `post-release-integration` - **SOURCE REVIEWED; UNSIGNED CANDIDATE BUILD PENDING**.
+- `post-release-integration` - **UNSIGNED CANDIDATE BUILT; NOT NATIVE QUALIFIED**.
   - Published 0.14.0 remains `f79df9d28bf9c37f8af70099f6e141ca962134e5`.
     These corrections do not change that release.
   - Updater, table UI and saved-rendering commits were integrated serially
@@ -142,8 +142,17 @@ section is kept here so the register has a visible edge.
   - Fresh independent Sol 6.1/high and Luna 6/high seam reviews found no
     significant issues or blockers. There was no reviewer disagreement.
     No material correction or second review round was needed.
-  - Root authorized an unsigned, same-version installer build after review.
-    That build remains pending.
+  - The approved `build-installer` command completed with `--publish never`
+    from `c11a5a6bf554e94bf311be6d355e595b384672ef`, still version 0.14.0.
+    Installer and unpacked app Authenticode status are both `NotSigned`.
+    Checked packaged source bytes match the reviewed tree.
+  - Candidate: evidence directory above, under
+    `unsigned-installer-c11a5a6b\Markaloo-Setup-0.14.0.exe`.
+    SHA256: `8F3CD434370EFA6A58008C397B40107BE3BFAAC91BA0C40D07EA2AE9405AE21D`.
+    Packaged `app.asar` SHA256:
+    `B3E710A4067CAA620A231351B4459617139AE699834C9EA2A4094CD84C9CB85D`.
+    Build log, source/candidate manifests and unsigned-status receipts persist
+    beside the candidate. The final register update changes no build input.
     Building does not clear native, UAC, cancel or full Main Save gates.
     No version bump, push, tag, release or PR.
   - Existing source exclusions remain. The global `prove-table-fixes` harness
