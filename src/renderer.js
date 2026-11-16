@@ -6718,6 +6718,7 @@ function updateFileMenuRecent() {
 let searchMatches = [];
 let currentMatchIndex = -1;
 let currentMatchEl = null; // see highlightCurrentMatch()
+const tableCodeSearchParts = new WeakMap();
 // Declared here rather than next to the debounce helpers below so the whole
 // search-state block is contiguous: syncSearchNavDisabled() reads
 // pendingSearchTerm, and it is defined above the debounce section, so declaring
@@ -6752,7 +6753,7 @@ function highlightSearchTerm(searchTerm, request = null) {
 
   clearSearchHighlights();
 
-  const textNodes = [];
+  const textRuns = [], tableCodeRuns = new Map();
   const walker = document.createTreeWalker(
     viewer,
     NodeFilter.SHOW_TEXT,
@@ -6774,43 +6775,61 @@ function highlightSearchTerm(searchTerm, request = null) {
 
   let node;
   while (node = walker.nextNode()) {
-    textNodes.push(node);
+    const code = node.parentElement.closest('th code.prism-highlighted, td code.prism-highlighted');
+    if (code && !code.closest('pre') && explicitTableCodeLanguage(code)) {
+      if (!tableCodeRuns.has(code)) {
+        const run = [];
+        tableCodeRuns.set(code, run);
+        textRuns.push(run);
+      }
+      tableCodeRuns.get(code).push(node);
+    } else {
+      textRuns.push([node]);
+    }
   }
 
   const searchRegex = new RegExp(escapeRegex(searchTerm), 'gi');
 
-  textNodes.forEach(textNode => {
-    const text = textNode.textContent;
-    const matches = [...text.matchAll(searchRegex)];
-
-    if (matches.length > 0) {
+  for (const nodes of textRuns) {
+    const text = nodes.map(node => node.data).join('');
+    const matches = [...text.matchAll(searchRegex)].map(match =>
+      ({ start: match.index, end: match.index + match[0].length, parts: [] }));
+    let offset = 0, matchIndex = 0;
+    for (const textNode of nodes) {
+      if (!textNode.length) continue;
+      const end = offset + textNode.length;
+      if (!matches[matchIndex] || matches[matchIndex].start >= end) {
+        offset = end;
+        continue;
+      }
       const fragment = document.createDocumentFragment();
       let lastIndex = 0;
-
-      matches.forEach(match => {
-        // Add text before match
-        if (match.index > lastIndex) {
-          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-        }
-
-        // Add highlighted match
+      while (matches[matchIndex] && matches[matchIndex].start < end) {
+        const match = matches[matchIndex];
+        const start = Math.max(0, match.start - offset), finish = Math.min(end, match.end) - offset;
+        if (start > lastIndex)
+          fragment.appendChild(document.createTextNode(textNode.data.slice(lastIndex, start)));
         const span = document.createElement('span');
         span.className = 'search-highlight';
-        span.textContent = match[0];
+        span.textContent = textNode.data.slice(start, finish);
         fragment.appendChild(span);
-        searchMatches.push(span);
-
-        lastIndex = match.index + match[0].length;
-      });
-
-      // Add remaining text
-      if (lastIndex < text.length) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+        match.parts.push(span);
+        lastIndex = finish;
+        if (match.end > end) break;
+        matchIndex++;
       }
-
+      if (lastIndex < textNode.length)
+        fragment.appendChild(document.createTextNode(textNode.data.slice(lastIndex)));
       textNode.parentNode.replaceChild(fragment, textNode);
+      offset = end;
     }
-  });
+    for (const match of matches) {
+      const first = match.parts[0];
+      if (!first) continue;
+      if (match.parts.length > 1) tableCodeSearchParts.set(first, match.parts);
+      searchMatches.push(first);
+    }
+  }
 
   if (searchMatches.length > 0) {
     currentMatchIndex = 0;
@@ -6826,12 +6845,13 @@ function highlightCurrentMatch(request = null) {
   // benchmark document. Only two elements ever change, so track the outgoing
   // one instead of rediscovering it.
   if (currentMatchEl && currentMatchEl !== searchMatches[currentMatchIndex]) {
-    currentMatchEl.classList.remove('current');
+    for (const part of tableCodeSearchParts.get(currentMatchEl) || [currentMatchEl])
+      part.classList.remove('current');
   }
   const match = searchMatches[currentMatchIndex];
   currentMatchEl = match || null;
   if (!match) return;
-  match.classList.add('current');
+  for (const part of tableCodeSearchParts.get(match) || [match]) part.classList.add('current');
   // A render can repair highlights/counters, but cannot create or replay a
   // navigation. Only the captured genuine request owns a preview or explicit step.
   if (request?.navigate !== false && request?.intent && readingViewport.isIntentCurrent(request.intent)) {
@@ -8655,7 +8675,7 @@ function renderLightFormat(content, generation, viewportPermit, modeReading = nu
   applyTableBreakout();
   updateShowNotesToggleVisibility();
   updateNotesList();
-  highlightNewElements();
+  highlightNewElements(scrollSource);
   addCodeBlockCopyButtons();
   editorScroll.commit(scrollSource);
   publishReadingPresentation(scrollSource);
@@ -8667,8 +8687,34 @@ function renderLightFormat(content, generation, viewportPermit, modeReading = nu
 // used to call Prism.highlightAll(), which walks the whole document; narrowing
 // to #viewer would silently stop highlighting code blocks that live in dialogs
 // and preview panes.
-function highlightNewElements() {
+function explicitTableCodeLanguage(element) {
+  if (typeof Prism === 'undefined') return null;
+  const labels = [...element.classList].map(name => /^(?:language|lang)-([\w-]+)$/i.exec(name))
+    .filter(Boolean).map(match => match[1].toLowerCase());
+  if (!labels.length || new Set(labels).size !== 1) return null;
+  const language = labels[0];
+  return Object.prototype.hasOwnProperty.call(Prism.languages, language) &&
+    Prism.languages[language] && typeof Prism.languages[language] === 'object' ? language : null;
+}
+
+function pendingTableCodeElements() {
+  if (typeof Prism === 'undefined') return [];
+  return [...viewer.querySelectorAll('th code:not(.prism-highlighted), td code:not(.prism-highlighted)')]
+    .filter(element => !element.closest('pre') && explicitTableCodeLanguage(element));
+}
+
+function highlightNewElements(scrollSource) {
   if (typeof Prism === 'undefined') return;
+  const pendingTableCode = pendingTableCodeElements();
+  // Prism replaces code children; restore this search once, without replaying navigation.
+  const restoreTableSearch = pendingTableCode.length > 0 && searchMatches.length > 0;
+  if (restoreTableSearch) clearSearchHighlights();
+  const tables = new Map();
+  for (const element of pendingTableCode) {
+    const table = element.closest('table');
+    if (!tables.has(table)) tables.set(table, { before: table.innerHTML, elements: [] });
+    tables.get(table).elements.push(element);
+  }
   document.querySelectorAll('pre code:not(.prism-highlighted)').forEach(el => {
     Prism.highlightElement(el);
     el.classList.add('prism-highlighted');
@@ -8679,6 +8725,19 @@ function highlightNewElements() {
     produced.decorations = [...el.querySelectorAll('span')];
     readingGeneratedContainers.set(pre, produced);
   });
+  for (const [table, { before, elements }] of tables) {
+    const produced = readingGeneratedContainers.get(table);
+    if (!produced) continue;
+    for (const element of elements) {
+      Prism.highlightElement(element);
+      element.classList.add('prism-highlighted');
+      noteReadingAttribute(element, 'class');
+      produced.decorations.push(...element.querySelectorAll('span'));
+    }
+    // Only the source-bound markup observed before Prism may gain a new seal.
+    editorScroll.sealTableDecoration(scrollSource, table, before);
+  }
+  if (restoreTableSearch) highlightSearchTerm(searchInput.value, { navigate: false });
 }
 
 // Smart render dispatcher — chooses mode based on content diff
@@ -8969,7 +9028,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
     // Empty or already-highlighted documents must not wait for idle work
     // that has nothing to do while the loading overlay still blocks input.
     const textPending = typeof Prism !== 'undefined' &&
-      !!document.querySelector('pre code:not(.prism-highlighted)');
+      (!!document.querySelector('pre code:not(.prism-highlighted)') || pendingTableCodeElements().length > 0);
     let textReady = null;
     if (textPending) {
       // Use requestIdleCallback for non-blocking syntax highlighting.
@@ -8991,7 +9050,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
         // on a 60-code-block document: all 60 <code> nodes were preserved, yet
         // 0 of their 540 syntax spans survived. highlightNewElements() honours
         // the marker, so only genuinely new blocks are highlighted.
-        highlightNewElements();
+        highlightNewElements(scrollSource);
         // Add copy buttons to code blocks after syntax highlighting
         addCodeBlockCopyButtons();
         // Hide loading screen after syntax highlighting is done

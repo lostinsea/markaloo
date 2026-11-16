@@ -677,7 +677,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         const previous = target && tableReceipts.get(target);
         // Hash/LCS matching is a rendering optimization, not edit authority.
         if (target && (target === fresh || (previous?.canonical === fresh.innerHTML &&
-            previous.presented === target.innerHTML))) {
+            previous.presented === tablePresentation(target)))) {
           this.editableTables.set(target, { start: table.start, end: table.end,
             canonical: fresh.innerHTML });
         }
@@ -755,6 +755,16 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const attributes = [...node.attributes];
     return node.tagName === 'SPAN' && attributes.length === 1 && attributes[0].name === 'class' &&
       /^(?:search-highlight(?: current)?|current search-highlight)$/.test(attributes[0].value);
+  }
+  function tablePresentation(table) {
+    const selector = 'span.search-highlight';
+    if (!table.querySelector(selector)) return table.innerHTML;
+    const copy = table.cloneNode(true);
+    // Search wrappers are presentation only, including before deferred Prism runs.
+    for (const span of copy.querySelectorAll(selector)) {
+      if (readingHighlight(span)) span.replaceWith(...span.childNodes);
+    }
+    return copy.innerHTML;
   }
   function readingElements(root, controls = new Set()) {
     return [root, ...root.querySelectorAll('*')].filter(node => {
@@ -838,7 +848,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       }
       usedFresh.add(proof.fresh); usedBodies.add(body);
       const targets = new Map(), codeBodies = new Map(), tableBodies = new Set(), controls = new Set(), ownerPairs = new Map(), wrappers = new Map();
-      const sections = new Map(), images = new Map();
+      const sections = new Map(), images = new Map(), tableDecorations = new Set();
       for (const pair of association.sections || []) {
         const tree = findReadingTree(proof.tree, pair?.fresh), section = pair?.section;
         if (!tree || !/^H[1-6]$/.test(tree.tag) || sections.has(pair.fresh) ||
@@ -942,7 +952,13 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           if (!originalCode) return readingFailure('unsupported', 'unverified-code-source-body');
           codeBodies.set(originalCode.node, { code, display: descriptor.readingCode.display });
         } else {
-          if (pair.decorations.length || pair.code !== null) return readingFailure('unsupported', 'unverified-table-decoration');
+          if (pair.code !== null || new Set(pair.decorations).size !== pair.decorations.length ||
+              pair.decorations.some(node => !(node instanceof Element) || node.tagName !== 'SPAN' ||
+                !target.contains(node) || node.closest('table') !== target ||
+                !node.closest('th code, td code'))) {
+            return readingFailure('unsupported', 'unverified-table-decoration');
+          }
+          for (const node of pair.decorations) tableDecorations.add(node);
           tableBodies.add(target);
           if (pair.header !== undefined && pair.header !== null) {
             if (pair.header.tagName !== 'THEAD' || pair.header.parentElement !== target) {
@@ -960,7 +976,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           else if (node.nodeType === Node.TEXT_NODE) {
             if (typeof children.at(-1) === 'string') children[children.length - 1] += node.data;
             else children.push(node.data);
-          } else if (node.nodeType === Node.ELEMENT_NODE && readingHighlight(node)) {
+          } else if (node.nodeType === Node.ELEMENT_NODE && (readingHighlight(node) || tableDecorations.has(node))) {
             for (const child of node.childNodes) append(child);
           } else children.push(node);
         };
@@ -2129,7 +2145,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       if (committed?.selection !== source.selection) owner = 'preview';
       committed = source;
       for (const [table, receipt] of source.editableTables) {
-        tableReceipts.set(table, { ...receipt, presented: table.innerHTML });
+        tableReceipts.set(table, { ...receipt, presented: tablePresentation(table) });
       }
       pendingSource = false;
       sourceTextReceipts.delete(source);
@@ -2171,13 +2187,20 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     isCurrentSource(text) { return !!usable() && committed.source === text; },
     captureTextRange,
     sealTextSource,
+    sealTableDecoration(source, table, before) {
+      const receipt = source?.editableTables.get(table), sealed = tableReceipts.get(table);
+      if (source !== committed || source.selection !== identity() || source.source !== editor.value ||
+          !receipt || !table.isConnected || !preview.contains(table) || sealed?.presented !== before) return false;
+      tableReceipts.set(table, { ...receipt, presented: tablePresentation(table) });
+      return true;
+    },
     sourceLineAt,
     tableSource(table) {
       if (!usable() || committed.source !== editor.value || !table.isConnected ||
           !preview.contains(table)) return null;
       const receipt = committed.editableTables.get(table);
       const sealed = tableReceipts.get(table);
-      return receipt && sealed?.presented === table.innerHTML
+      return receipt && sealed?.presented === tablePresentation(table)
         ? { start: receipt.start, end: receipt.end } : null;
     },
     invalidate,

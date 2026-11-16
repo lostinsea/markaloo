@@ -2034,7 +2034,96 @@ const READING_LOCATION_REVERTS = [
   requireMustPassAssertions: true, expectedFailureCount: revert.expect.length, ...revert,
 }));
 
+const RENDERED_TABLE_CODE_REVERTS = [
+  {
+    id: "0140-RENDER-HIGHLIGHT", what: "leave explicitly labelled table code without Prism tokens",
+    file: RENDERER,
+    from: "      Prism.highlightElement(element);",
+    to: "      element.textContent = element.textContent;",
+    expect: [
+      /^table code supported language witnesses produce Prism tokens$/,
+      /^table code explicit lang alias is supported$/,
+      /^table code uses token colors and keeps cell wrapping$/,
+      /^table code repeat highlight keeps existing token nodes$/,
+      /^table code search counts logical matches across Prism tokens$/,
+      /^table code search marks all parts of one current match$/,
+      /^table code Reader rejects an unregistered Prism span$/,
+      /^table code light-format ordering seals post-Prism source authority$/,
+      /^table code commit then search then deferred Prism retains source authority$/,
+    ],
+  },
+  {
+    id: "0140-RENDER-SEARCH-RUNS", what: "search Prism fragments instead of complete table-code text",
+    file: RENDERER,
+    from: "    if (code && !code.closest('pre') && explicitTableCodeLanguage(code)) {",
+    to: "    if (false && code && !code.closest('pre') && explicitTableCodeLanguage(code)) {",
+    expect: [
+      /^table code deferred Prism restores existing search without navigation$/,
+      /^table code search counts logical matches across Prism tokens$/,
+      /^table code search includes ordinary cell matches in document order$/,
+      /^table code search marks all parts of one current match$/,
+      /^table code next search navigates once and clears previous fragments$/,
+    ],
+  },
+  {
+    id: "0140-RENDER-TABLE-RECEIPT", what: "include temporary search wrappers in exact table receipts",
+    file: path.join(SRC, "editor-scroll.js"),
+    from: "    return copy.innerHTML;",
+    to: "    return table.innerHTML;",
+    expect: [
+      /^table code exact edit correspondence survives deferred highlighting$/,
+      /^table code active search preserves edit and Reader correspondence$/,
+      /^table code search clear restores text tokens and exact source receipt$/,
+      /^table code late-search setup exists after source commit$/,
+    ],
+  },
+  {
+    id: "0140-RENDER-SEAL", what: "omit the guarded post-Prism table receipt",
+    file: RENDERER,
+    from: "    editorScroll.sealTableDecoration(scrollSource, table, before);",
+    to: "    void before;",
+    expect: [
+      /^table code exact edit correspondence survives deferred highlighting$/,
+      /^table code active search preserves edit and Reader correspondence$/,
+      /^table code search clear restores text tokens and exact source receipt$/,
+      /^table code commit then search then deferred Prism retains source authority$/,
+    ],
+  },
+  {
+    id: "0140-RENDER-STALE-SEAL", what: "reseal table markup from a stale source or selection",
+    file: path.join(SRC, "editor-scroll.js"),
+    from: "      if (source !== committed || source.selection !== identity() || source.source !== editor.value ||\n" +
+      "          !receipt || !table.isConnected || !preview.contains(table) || sealed?.presented !== before) return false;",
+    to: "      if (!receipt || !table.isConnected || !preview.contains(table)) return false;",
+    expect: [
+      /^table code cannot reseal from stale pre-highlight markup$/,
+      /^table code replaced selection cannot reseal an old source$/,
+    ],
+  },
+  {
+    id: "0140-RENDER-PRE-WHITESPACE", what: "apply inline table-code wrapping to preformatted blocks",
+    file: CSS,
+    from: 'code:is([class*="language-"], [class*="lang-"]):not(pre code) {',
+    to: 'code:is([class*="language-"], [class*="lang-"]) {',
+    expect: [/^table code leaves nested preformatted block whitespace unchanged$/],
+  },
+].map(revert => ({
+  ...revert, suite: "test:rendered-table-code", requireExactFailures: true,
+  requireMustPassAssertions: true, expectedFailureCount: revert.expect.length,
+  mustPass: [
+    /^table code console sentinel is alive$/,
+    /^table code every loaded grammar and alias preserves exact source text$/,
+    /^table code never guesses plain unknown inherited or conflicting language$/,
+    /^table code highlighting leaves Markdown and copy text unchanged$/,
+    /^table code edited DOM loses source authority$/,
+    /^table code preserves existing block highlight-once behavior$/,
+    /^table code guest blocks external and file requests$/,
+    /^table code guest has no unexpected console errors$/,
+  ],
+}));
+
 const REVERTS = [
+  ...RENDERED_TABLE_CODE_REVERTS,
   ...READING_CONSUMER_REVERTS,
   ...READING_CONTROL_REVERTS,
   ...READING_LOCATION_REVERTS,
@@ -31232,6 +31321,7 @@ function proveCompanionTranscriptRoles() {
     REVERTS.filter((r) => Number.isSafeInteger(r.expectedFailureCount) && !SYNTAX_REVERT_IDS.includes(r.id))
       .map((r) => r.id)
       .join(",") ===
+        "0140-RENDER-HIGHLIGHT,0140-RENDER-SEARCH-RUNS,0140-RENDER-TABLE-RECEIPT,0140-RENDER-SEAL,0140-RENDER-STALE-SEAL,0140-RENDER-PRE-WHITESPACE," +
         "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
         "R1329," +
         "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1243,R1244,R1245,R1246,R1247,R1248,R1249,R1250,R1251,R1252,R1253,R1254,R1255,R1256,R1257,R1258,R1259,R1260,R1261,R1262,R1263,R1264,R1265,R1266,R1267,R1268,R1269,R1270,R1271,R1272,R1273,R1274,R1275,R1276,R1277,R1278,R1279,R1280,R1281,R1282,R1283,R1284,R1285,R1286,R1287,R1288,R1289,R1290,R1291,R1292,R1293,R1294,R1295,R1296,R1297,R1298,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1524,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +

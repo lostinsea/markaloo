@@ -27,6 +27,23 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Explicit code languages in rendered tables
+
+- Put an existing language class on the cell's code element:
+  `<code class="language-rust">let answer = 42;</code>`.
+- All locally bundled Prism grammars and aliases are available. `lang-*` works
+  too. Plain backticks, unknown languages and conflicting labels stay plain;
+  no language is guessed or downloaded.
+- Encode characters needed by Markdown/HTML: `&#124;` for a pipe, `&lt;` for
+  `<`, and `&amp;` for `&`. Markdown still parses inline HTML content: encode
+  literal backticks (`&#96;`), asterisks (`&#42;`) and backslashes (`&#92;`) too.
+- Highlighting keeps exact Markdown and copied text unchanged. Search counts
+  one logical match across token colors and clears without deleting tokens.
+- Inline cell code wraps. Preformatted code keeps its existing whitespace
+  and block behavior. Deferred highlighting preserves source-bound editing
+  and Reader correspondence.
+- This does not add width metadata, autosave or a new Save interface.
+
 ### Windows Folia settings import
 
 - Normal profiles use Markaloo/Markaloo-dev. An explicit relocation stays selected.

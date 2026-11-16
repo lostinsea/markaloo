@@ -4610,6 +4610,11 @@ code[class*="language-"] ::selection {
   color: var(--code-selection-fg);
 }
 
+.markdown-body :is(th, td) code:is([class*="language-"], [class*="lang-"]):not(pre code) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* Code blocks */
 pre[class*="language-"] {
   padding: 1em;
