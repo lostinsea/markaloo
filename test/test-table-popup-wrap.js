@@ -314,9 +314,9 @@ async function exerciseNarrow(themeId) {
       footer.top >= footer.footerTop && footer.bottom <= footer.footerBottom &&
       footer.bottom <= viewport.height, footer);
     await evaluate(win, `(async () => {
-      for (const column of table.getColumns()) await column.updateDefinition({
+      // Configure Token first, before intermediate rebuilds can collapse it.
+      for (const column of [...table.getColumns()].reverse()) await column.updateDefinition({
         width: 260,
-        // The long-token witness must collapse, independent of rebuild order.
         responsive: column.getField() === "col2" ? 2 : 1,
       });
       table.redraw(true);
