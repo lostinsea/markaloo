@@ -1,44 +1,8 @@
 # Project change list
 
 - Customer-facing changes added by Markaloo, including security and performance.
-- **0.13.0 is published. 0.14.0 is upcoming and not yet released.**
-- Existing tabs, notes, split editing, basic themes, search, Mermaid, table
-  popouts and PDF export are not new features.
 
-## Recent releases
-
-| ID | Release | Changes |
-|---|---|---|
-| V014-01 | 0.14.0 - upcoming | Move columns left/right and data rows up/down in Edit/Insert Table using a separate Move group. The header stays the header. |
-| V014-02 | 0.14.0 - upcoming | Resize Edit/Insert Table from either vertical edge or the lower-right corner. |
-| V014-03 | 0.14.0 - upcoming | Edit/Insert Table opens wider for readability while staying within the available window. |
-| V014-04 | 0.14.0 - upcoming | Table cells support syntax colors for explicitly labelled code in existing supported languages and aliases. Ordinary backtick inline code stays plain; there is no language guessing. |
-| V014-05 | 0.14.0 - upcoming | Optional **Word wrap** beside page size in the separate filtered table viewer. It starts off. |
-| V014-06 | 0.14.0 - upcoming | Keep the search panel above sticky table headers. |
-| V014-07 | 0.14.0 - upcoming | Closing search releases its keyboard focus so hidden search no longer receives typing. |
-| V013-01 | 0.13.0 - published | Back/Forward buttons revisit up to ten reading locations per tab from heading, internal-link and search jumps. Windows Alt+Left/Right also navigate reading history. |
-| V013-02 | 0.13.0 - published | Improve reading-position handling across Edit/Split changes, tabs and zoom. Newer navigation takes priority over delayed position updates. |
-| V013-03 | 0.13.0 - published | Improve linked scrolling when the user reaches the end of a nested scroll area. |
-| V013-04 | 0.13.0 - published | Schedule daily update checks with at most one automatic reminder per local day. Downloads and installation remain explicit actions. |
-| V013-05 | 0.13.0 - published | Expand **See what is new** in the update notice to load that version's release notes on demand, without opening their links or loading their images. |
-| V013-06 | 0.13.0 - published | Packaged Windows builds import settings and saved sessions from the default Folia profile when no Markaloo profile exists. Unsaved editor text is not recovered. |
-| V012-01 | 0.12.0 - published | Resize table columns in the reading view and table-editing grid. |
-| V012-02 | 0.12.0 - published | Create tables, edit whole tables or selected rows in one grid. Insert rows above/below and columns left/right; confirm row or column removal. |
-| V012-03 | 0.12.0 - published | Keep table updates and document Undo/Redo separate from typing history inside cells. |
-| V012-04 | 0.12.0 - published | Improve table-dialog sizing, compact action icons with tooltips and context-menu behavior during unrelated scrolling. |
-| V012-05 | 0.12.0 - published | Let wide Mermaid diagrams use space beyond the reading column and keep sequence labels readable. |
-
-- In 0.14.0, labelled table-cell code uses HTML such as
-  `<code class="language-rust">let count = 1;</code>`.
-  Literal code punctuation may need HTML entities, such as `&lt;` for `<`.
-- Table widths are view-only, not saved in Markdown. Reading-view widths reset
-  when the document renders again; table-editing widths reset on reopening.
-  Persistent widths, hidden metadata and automatic saving are not included in 0.14.0.
-- Reading history is temporary and separate from document Undo and file history.
-  Ordinary scrolling does not add stops. On Windows, use the toolbar buttons
-  for navigation from embedded HTML panels.
-
-## Earlier changes: documents and editing
+## Documents and editing
 
 ### Tabs, refresh and file safety
 
@@ -68,11 +32,14 @@
   Notes remain available in reading mode and save on confirmation.
 - Edit rendered table cells without a separate Markdown box. Preserve surrounding
   text, unselected rows and unchanged formatting.
-- Apply a table Update as one document Undo step without saving the file.
+- [TABLE-UNDO] Apply a table Update as one document Undo step without saving the file.
+  Keep document Undo/Redo separate from typing history inside cells.
   Cancel leaves the document unchanged.
-- Create tables with an editable header, including header-only tables.
+- [TABLE-GRID] Create tables, edit whole tables or selected rows in one grid.
+  Use an editable header, including header-only tables.
   The header cannot be removed, and at least one column must remain.
-- Select a cell before inserting or removing rows or columns.
+- Select a cell before inserting rows above/below or columns left/right.
+  Confirm row or column removal.
   Selected-row editing cannot change the whole table's columns.
 - Move between cells with Tab or Enter/Shift+Enter.
   Ctrl+Enter applies the update; Escape cancels.
@@ -84,8 +51,19 @@
 - Resize insertion dialogs within the available window. Grid columns fit the
   dialog and scroll when they cannot shrink further; image thumbnails keep
   their proportions.
+- [TABLE-DIALOG] Improve table-dialog sizing, compact action icons with tooltips
+  and context-menu behavior during unrelated scrolling.
+- [TABLE-MOVE] Move columns left/right and data rows up/down in Edit/Insert Table
+  using a separate Move group. The header stays the header.
+- [TABLE-RESIZE] Resize Edit/Insert Table from either vertical edge or the
+  lower-right corner.
+- [TABLE-OPEN-WIDTH] Edit/Insert Table opens wider for readability while staying
+  within the available window.
+- Table widths are view-only, not saved in Markdown. Reading-view widths reset
+  when the document renders again; table-editing widths reset on reopening.
+  Persistent widths, hidden metadata and automatic saving are not included.
 
-## Earlier changes: reading and rendering
+## Reading and rendering
 
 ### Navigation, search and scrolling
 
@@ -96,21 +74,37 @@
   keep the current heading visible without taking document focus.
 - Remember the choice of table of contents, All Notes or a closed drawer.
   Preserve reading position when drawers open or close.
+- [READING-HISTORY] Back/Forward buttons revisit up to ten reading locations per tab
+  from heading, internal-link and search jumps. Windows Alt+Left/Right also
+  navigate reading history.
+- Reading history is temporary and separate from document Undo and file history.
+  Ordinary scrolling does not add stops. On Windows, use the toolbar buttons
+  for navigation from embedded HTML panels.
+- [READING-POSITION] Improve reading-position handling across Edit/Split changes, tabs
+  and zoom. Newer navigation takes priority over delayed position updates.
 - Raise document zoom to 400% and remember the reading percentage across
   documents, reader windows and restarts.
 - Keep folded sections separate between documents and preserve folding on rerender.
 - Refresh search results after edits and finish pending search before moving
   between matches.
+- [SEARCH-STACKING] Keep the search panel above sticky table headers.
+- [SEARCH-FOCUS] Closing search releases its keyboard focus so hidden search
+  no longer receives typing.
 - Link Source and preview scrolling by matching content rather than equal
   scroll percentages. Wheel, scrollbar and keyboard input choose the leading pane.
 - Keep source text, selection and Undo unchanged during scrolling.
   Complex or collapsed content can align to a section boundary instead of a line.
+- [SCROLL-NESTED] Improve linked scrolling when the user reaches the end of a
+  nested scroll area.
 - Fix an empty-list scrolling problem that could freeze the app.
 
 ### Tables, images, diagrams and appearance
 
 - Size table columns to their content. Wide tables can extend beyond the prose
   column; narrow views wrap suitable cells or scroll horizontally.
+- [TABLE-COLUMN-WIDTH] Resize table columns in the reading view and table-editing grid.
+- [TABLE-WRAP] Optional **Word wrap** beside page size in the separate filtered
+  table viewer. It starts off.
 - Keep table headers visible while scrolling, including independent nested tables.
 - Wrap long links and inline code in cells without changing preformatted blocks.
   Keep long ordered-list markers visible.
@@ -121,6 +115,8 @@
 - Improve Mermaid label proportions, zoomed rendering, dark-theme contrast and
   first-open appearance. An invalid diagram no longer prevents valid neighbors
   from rendering.
+- [MERMAID-WIDTH] Let wide Mermaid diagrams use space beyond the reading column
+  and keep sequence labels readable.
 - Remove blurry image and diagram popout rendering.
 - Add Clarity, Parchment, Abyss and Ember color schemes, with a remembered scheme
   for light and dark modes. Apply colors to code, notes, dialogs and errors.
@@ -138,8 +134,13 @@
 - Keep existing languages, aliases and exact source-copy behavior.
 - Unknown or unlabelled code blocks stay plain. No language detection or
   runtime language downloads.
-- Editor text and ordinary inline code stay plain. The upcoming 0.14.0
-  table-cell option requires an explicit supported language label.
+- Editor text and ordinary inline code stay plain.
+- [TABLE-CODE] Table cells support syntax colors for explicitly labelled code in
+  existing supported languages and aliases. Ordinary backtick inline code stays
+  plain; there is no language guessing.
+- Labelled table-cell code uses HTML such as
+  `<code class="language-rust">let count = 1;</code>`.
+  Literal code punctuation may need HTML entities, such as `&lt;` for `<`.
 
 ### Dialogs, updates and installation
 
@@ -150,9 +151,17 @@
   Download and Restart & install actions.
 - Remember a known newer version while offline. Opening About does not itself
   contact the update service.
+- [UPDATE-DAILY] Schedule daily update checks with at most one automatic reminder
+  per local day. Downloads and installation remain explicit actions.
+- [UPDATE-NOTES] Expand **See what is new** in the update notice to load that
+  version's release notes on demand, without opening their links or loading
+  their images.
 - Ordinary quit does not install a downloaded update. Keep unsaved-document
   protection when installing updates.
 - Use Markaloo's own release feed and preserve custom installation directories.
+- [PROFILE-IMPORT] Packaged Windows builds import settings and saved sessions from
+  the default Folia profile when no Markaloo profile exists.
+  Unsaved editor text is not recovered.
 - Windows and macOS downloads are unsigned and may trigger operating-system
   warnings. Unsigned macOS builds use manual release downloads.
 
@@ -196,8 +205,6 @@
 
 ## More information
 
-- [Published releases](https://github.com/lostinsea/markaloo/releases)
-- [0.13.0](https://github.com/lostinsea/markaloo/releases/tag/v0.13.0)
-  and [0.12.0](https://github.com/lostinsea/markaloo/releases/tag/v0.12.0)
+- [Release history](https://github.com/lostinsea/markaloo/releases)
 - [Security details](https://github.com/lostinsea/markaloo/blob/main/docs/SECURITY-AUDIT.md)
 - [Performance details](https://github.com/lostinsea/markaloo/blob/main/docs/PERF-AUDIT.md)

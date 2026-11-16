@@ -38,6 +38,20 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `v014-release` - **PREPARING; RELEASE SCOPE BLOCKED**.
+  - Canonical main remains `41dd78df`; the integrated feature source is
+    `4106be09`. No 0.14.0 tag, release or active release workflow was found.
+  - Prepare only the package/root-lock version fields and the user-requested
+    customer change-list cleanup. Group changes by capability without version,
+    publication-status or time-based labels; use capability-based reference IDs.
+  - The unchanged release workflow requires packaging scans that read all
+    immediate source JavaScript and recursively read test/scripts JavaScript.
+    Those scans match excluded installer paths. Windows also runs the normal
+    table and Main-based scroll suites. Root must resolve scope with the user
+    before tests, builds, push, tag or dispatch. Do not weaken release gates.
+  - Focused independent Sol/Luna review of only these release changes is
+    complete. Sol found no issue; Luna requested a neutral release-history
+    link label, now corrected. Neither found version or retained-change issues.
 - `v014-rendered-tables` - **SOURCE REVIEWED; FOCUSED GATES PASSED; F3 DEFERRED**.
   - Base: canonical `lostinsea/markaloo` main `41dd78df`; the primary checkout
     and its branches remain unchanged.
