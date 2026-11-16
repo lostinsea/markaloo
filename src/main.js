@@ -10772,6 +10772,45 @@ ipcMain.on("open-table-popup", (event, data) => {
             background-color: var(--accent-hover);
         }
 
+        .tabulator .tabulator-footer,
+        .tabulator .tabulator-footer .tabulator-footer-contents {
+            white-space: normal;
+        }
+
+        .tabulator .tabulator-footer .tabulator-footer-contents,
+        .tabulator .tabulator-footer .tabulator-paginator {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tabulator .tabulator-footer .tabulator-paginator {
+            justify-content: flex-end;
+        }
+
+        .table-word-wrap-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        #data-table.table-word-wrap .tabulator-row .tabulator-cell,
+        #data-table.table-word-wrap .tabulator-responsive-collapse td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: normal;
+            text-overflow: clip;
+        }
+
+        #data-table.table-word-wrap .tabulator-responsive-collapse table {
+            width: 100%;
+            table-layout: fixed;
+        }
+
         /* Header filter styling */
         .tabulator .tabulator-header-filter input {
             border: 1px solid var(--border-color);
@@ -10850,6 +10889,7 @@ ipcMain.on("open-table-popup", (event, data) => {
             // per column in setField.
             nestedFieldSeparator: false,
             layout: "fitColumns",
+            columnDefaults: { variableHeight: true },
             pagination: true,
             paginationSize: 50,
             paginationSizeSelector: [25, 50, 100, 200, true],
@@ -10865,6 +10905,23 @@ ipcMain.on("open-table-popup", (event, data) => {
             headerFilterLiveFilterDelay: 300,
             initialSort: [],
             height: "100%"
+        });
+
+        table.on("tableBuilt", () => {
+            const label = document.createElement("label");
+            label.className = "table-word-wrap-control";
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.id = "tableWordWrap";
+            checkbox.setAttribute("aria-controls", "data-table");
+            label.append(checkbox, document.createTextNode("Word wrap"));
+            document.querySelector("#data-table .tabulator-page-size").after(label);
+            checkbox.addEventListener("change", () => {
+                document.getElementById("data-table").classList.toggle("table-word-wrap", checkbox.checked);
+                // Invalidate off-page row heights too, including when wrapping is disabled.
+                table.redraw(true);
+            });
+            table.redraw(true);
         });
 
         // Export functions
