@@ -1943,12 +1943,11 @@ async function main() {
     check("Delete column is bound once and differs deliberately from insertion availability",
       /const tableCellDeleteColumn = document\.getElementById\('tableCellDeleteColumn'\);/.test(rendererSource) &&
       (rendererSource.match(/tableCellDeleteColumn\.addEventListener\('click', \(\) => changeTableCellColumns\('remove'\)\);/g) || []).length === 1 &&
-      /tableCellDeleteColumn\.disabled\s*=/.test(actions) &&
-      actions.includes("session.columns <= 1") && actions.includes("session.selectedCell") &&
+      /tableCellDeleteColumn\.disabled = disabled \|\| session\.mode === TableCellMode\.UPDATE_ROWS \|\|\s*!session\.selectedCell \|\| session\.columns <= 1;/.test(actions) &&
       columns.includes("confirmTableCellColumnRemoval(session,") &&
       columns.includes("'remove'") && columns.includes("'tableCells.minimumColumns'") &&
       actions.includes("session.mode === TableCellMode.UPDATE_ROWS") &&
-      rendererSource.includes("Columns change every row. Edit the whole table to insert or delete a column."));
+      rendererSource.includes("Columns change every row. Edit the whole table to insert, delete or move a column."));
     check("column deletion uses explicit original accounting and the shared sizing removal transaction",
       /deletedColumns = \[\]/.test(modelStructure) && modelStructure.includes("deletedColumns") &&
       /deletedColumns: new Set\(\)/.test(open) && removeColumn.includes("session.deletedColumns") &&

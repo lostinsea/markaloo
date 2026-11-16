@@ -38,17 +38,23 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
-- `v014-release` - **PREPARING; RELEASE SCOPE BLOCKED**.
-  - Canonical main remains `41dd78df`; the integrated feature source is
-    `4106be09`. No 0.14.0 tag, release or active release workflow was found.
-  - Prepare only the package/root-lock version fields and the user-requested
-    customer change-list cleanup. Group changes by capability without version,
-    publication-status or time-based labels; use capability-based reference IDs.
-  - The unchanged release workflow requires packaging scans that read all
-    immediate source JavaScript and recursively read test/scripts JavaScript.
-    Those scans match excluded installer paths. Windows also runs the normal
-    table and Main-based scroll suites. Root must resolve scope with the user
-    before tests, builds, push, tag or dispatch. Do not weaken release gates.
+- `v014-release` - **ROOT-OWNED HOSTED STAGING; SOURCE ORACLE CORRECTION**.
+  - Root staged `6dc9b897` on the release-candidate branch and owns workflow
+    execution and publication. Main and the release tag remain unchanged.
+  - Package/root-lock versions are 0.14.0. Customer changes are grouped by
+    capability without version, publication-status or time-based labels.
+  - Hosted run `43943597522` stopped before builds on one packaging oracle:
+    the Delete column check still expected the scope hint without column moves.
+    The production binding and insertion/deletion guards remain correct.
+  - Update only that source oracle's exact hint and deletion-specific predicate.
+    Move controls must not satisfy a missing Delete selection guard.
+    Local checks stay isolated; full packaging, native and release operations
+    remain with Root. Installer-source exclusions remain in this checkout.
+  - The isolated actual oracle reproduces the original failure and passes the
+    correction. Missing/duplicate binding, missing deletion guards, missing
+    confirmation and stale-hint controls are rejected; an unrelated Move
+    selection change does not determine the Delete result. Syntax passes.
+    Focused independent Sol/Luna review found no issues or disagreement.
   - Focused independent Sol/Luna review of only these release changes is
     complete. Sol found no issue; Luna requested a neutral release-history
     link label, now corrected. Neither found version or retained-change issues.
