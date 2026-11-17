@@ -71,8 +71,8 @@ section is kept here so the register has a visible edge.
     including `source-manifest.json`, `unsigned-artifacts.json` and
     `unsigned-installer-build.log`; installer is under `unsigned-installer`.
     Root received the exact path and hashes for native testing.
-    This candidate is **NOT NATIVE QUALIFIED**. Building clears no native,
-    full-app, Main Save, exclusion or hosted release gate.
+    This candidate is **NOT FULLY NATIVE QUALIFIED**. Building itself clears
+    no gate; Root's bounded installed-candidate passes are recorded below.
   - Nonpublishing hosted branch staging is **BLOCKED: WRITE ACCESS**.
     Requested staging SHA: `d2be6986025e11af036d4e370df2e6a7587989e9`;
     branch: `users/vinma-microsoft/markaloo-table-rendering`.
@@ -91,11 +91,54 @@ section is kept here so the register has a visible edge.
     checks, platform builds, strict Windows archive checks, artifact
     completeness checks and tag-only attestation/publication.
   - Global proof initialization and broad local table-source inventory remain
-    exclusion-blocked. Native/UAC/cancel and full Main Save limits remain open;
-    report blockers rather than weaken gates or treat unrun checks as passes.
+    exclusion-blocked. Current-user, silent-mode, real UAC and wider full-app
+    and platform gates remain open. The bounded cancel/default-update/Main Save
+    passes below do not qualify unrun controls or clear the publication hold.
   - Preserve the unsigned 0.14.0 candidate as prior-three-fix evidence only.
     It is not a 0.14.1 release artifact and does not include the viewport fix.
-- `search-bar-readable-viewport` - **SOURCE INTEGRATED; COMBINED CHECKS PASSED**.
+- `v0141-native-qualification` - **BOUNDED INSTALLED-CANDIDATE PASSES; CONTROLS PENDING**.
+  - Root's results apply to the exact new `7ee44956` candidate above:
+    installer `37CBC804...`, archive `39110BF4...`, app `38A47E42...`.
+    Keep them separate from the prior 0.14.0 candidate evidence.
+  - Owned network-off guest: `deda8cc6-67ef-4859-8a44-508f0b423d50`,
+    epoch `f1726c53-34ab-4f1c-b75a-7781f394ecd2`.
+    Root retains the native slot; no source fix or rebuild is indicated.
+  - Actual public 0.14.0 About -> Download -> Restart and Install:
+    cancellation and completed default-all-users update both **PASS**.
+    Only the external standard feed changed to an owned generic loopback feed;
+    no app-code or launch overrides. This is not public-GitHub E2E.
+    A missing blockmap used normal full-download fallback, not a differential pass.
+  - Ordinary Cancel preserved exact public 0.14.0 executable/archive, HKLM
+    uninstall version and profile marker. The old app relaunched manually.
+    Completion used unchanged default scope, Next and Finish, with Run checked:
+    exact candidate bytes, HKLM 0.14.1, no HKCU entry, marker preserved,
+    automatic app/document relaunch. The second setup argv was not queried.
+    Screens 006-009 are preserved.
+  - Real installed-app popup Update -> actual Main Save -> Exit -> Reader ->
+    Reload **PASS**, without injected application adapters. Decoded JSON and
+    all content outside the edited cell are exact; multiline colored code
+    survives Reload. Input used native UI Automation, not a real clipboard test.
+    Saved-file SHA256:
+    `7B02F6EF8933D2E5E18829E60A6732DCCC19247251D16937CE40CC5901C1F977`.
+  - Native Move-toolbar alignment and lower blank tall Row 1/column 1 selection
+    **PASS**. Reader/Split search navigation, sticky headings below visible
+    search and closed zero-row behavior **PASS** at this guest size/zoom.
+    These do not qualify broader native sizes/zooms or physical-keyboard input.
+    Installed-app screens 011-014 and 016-018 are preserved.
+  - Root separately reports no-argument candidate setup normally opened
+    License/Options without a Folia warning, then was cancelled (screen 019).
+    No direct-install completion is claimed.
+  - This new guest also measured `EnableLUA=0`; the observation is no longer
+    limited to the destroyed guest. No policy changes or UAC prompt occurred.
+    Real accept/refuse remains **NOT EXERCISED**; nothing is inferred about
+    the host. Current-user and candidate silent-mode controls remain pending.
+  - Root receipt: session `a945df13-28fd-4f94-b3b7-dcae77565b03`,
+    `files\native0141\native-results.json`, with `main-save-check.json`
+    and the actual `real-main-saved.md` alongside it.
+    Global/excluded-source and full-platform qualification remain open.
+    Source/build/release holds and the hosted 403 blocker are unchanged;
+    requested hosted staging remains exactly `d2be6986`.
+- `search-bar-readable-viewport` - **COMBINED CHECKS PASSED; BOUNDED NATIVE PASS**.
   - While search is visible, the readable area starts below its bar.
     Sticky table headings and other content must not hide behind it.
   - Owner: session `16aa6ad3-eabd-41a1-8a3e-a4e11509683d`,
@@ -143,8 +186,8 @@ section is kept here so the register has a visible edge.
     full-app, Main Save, physical-keyboard or cross-platform qualification.
     Changed full-app search/tab predicates have source/syntax checks only.
   - The preserved unsigned 0.14.0 candidate covers only the prior three fixes.
-    The new 0.14.1 candidate above includes this correction, but native,
-    full-app and exclusion limits remain open.
+    The new 0.14.1 candidate includes this correction. Root's native pass above
+    covers the current guest size/zoom only; wider qualification remains open.
 - `windows-update-visibility` - **SOURCE INTEGRATED; NATIVE PARTIAL; FRESH-GUEST CHECKS IN PROGRESS**.
   - Make Windows interactive updates visible, including installer-side
     compatibility with old 0.13/0.14 clients. Remove the unconditional,
@@ -168,25 +211,25 @@ section is kept here so the register has a visible edge.
   - On the corrected baseline, default arguments showed installation options
     with all-users selected. The Cancel action was refused after the Sandbox
     desktop became noninteractive; no alternative UI route was used.
-    Cancellation did not pass.
-  - `EnableLUA=0` was measured only in the previous, now-destroyed Sandbox
-    guest. Real UAC checks were blocked there; this says nothing about the
-    host or a fresh guest. Root will recheck the actual test environment.
+    Cancellation did not pass for that prior candidate; the new 0.14.1
+    cancellation pass is recorded separately above.
+  - `EnableLUA=0` was measured in the previous, now-destroyed Sandbox and
+    the new owned guest `deda8cc6`. Real UAC accept/refuse was not exercised
+    in either; this says nothing about the host.
     The user offered to approve real UAC prompts when needed; Root will ask
     at an actual approval step. Do not change settings or bypass prompts.
-    Current-user, completed default 0.14 update, cancel, `/S` and ordinary
-    no-Folia controls have not passed.
+    Current-user and candidate `/S` controls remain pending. New 0.14.1 default
+    update, Cancel and no-argument setup visibility results are recorded above.
   - Root preserved receipts and the viewed image before verified Sandbox
     teardown. A fresh software-graphics start failed; status then confirmed
     no running Sandbox. There was no blind restart.
-  - Root now reports a new network-off minimized Sandbox with its desktop and
-    agent ready. It owns this fresh native slot and will measure this guest
-    separately; prior guest settings establish nothing about it or the host.
+  - Root owns the new network-off minimized Sandbox and remaining controls.
+    Its measured state and exact 0.14.1 results are recorded separately above.
   - Evidence: Root's `files\updater-correction\result.json` and
     `files\updater-correction\controls-through-014-replay`.
     No untouched public-GitHub pass or completed qualification is claimed.
     Root alone owns native proof; combined qualification remains pending.
-- `table-editor-controls-and-selection` - **SOURCE INTEGRATED; SEAM REVIEW PASSED**.
+- `table-editor-controls-and-selection` - **SOURCE INTEGRATED; BOUNDED NATIVE PASS**.
   - Put Move controls on the same row, immediately right of the prior controls.
     Make the whole cell selectable, including blank and padded areas.
   - Scope: the owned visual table editor, not Reader or the table popup.
@@ -201,10 +244,12 @@ section is kept here so the register has a visible edge.
   - The owner reports both exact toolbar/cell-hit proofs passed through the
     shipping virtual-suite dispatcher with their named failures, all required
     controls, exact byte restoration and a restored 813/813 positive.
-    This evidence is not qualification of the combined candidate.
-- `saved-table-code-rendering` - **SOURCE INTEGRATED; SEAM REVIEW PASSED**.
+    This fixture evidence is not installed-candidate qualification. Root's
+    separate 0.14.1 native toolbar/blank-cell pass is recorded above.
+- `saved-table-code-rendering` - **REAL MAIN SAVE PATH PASSED; WIDER GATES OPEN**.
   - Correct saved table-cell fenced-JSON rendering in Reader.
-    No combined-candidate or release acceptance yet.
+    The exact installed 0.14.1 Main Save path passed as recorded above;
+    wider controls and release acceptance remain open.
   - Owner: session `92de363c-daf1-4d9f-8d16-f719dbcb2ba5`,
     branch `users/vinma-microsoft/saved-table-code-rendering`.
   - The owner's Astra trace attributes the synthetic plain-paste failure to
