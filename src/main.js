@@ -3531,6 +3531,14 @@ function sameDiskVersion(before, after) {
   return !diskVersionChanged(before, after);
 }
 
+function documentContentFromDisk(raw, filePath) {
+  // Markdown is editable source, including its BOM. Diagram imports retain
+  // their existing BOM removal and Mermaid wrapping.
+  const content = SUPPORTED_EXTENSIONS.markdown.includes(path.extname(filePath).toLowerCase())
+    ? raw : removeBOM(raw);
+  return wrapMermaidContent(content, filePath);
+}
+
 // Pair renderer bytes with the mtime that describes those exact bytes. A
 // separate stat after an unconstrained read can observe a later external write
 // and make stale content look current, suppressing the watcher notification.
@@ -3562,7 +3570,7 @@ async function markdownSnapshotPromise(filePath, expectedTarget = null) {
           sameDiskVersion(before, after) && sameDiskVersion(before, pathStats) &&
           sameDiskVersion(before, targetStats)) {
         return Object.freeze({
-          content: wrapMermaidContent(removeBOM(raw), filePath),
+          content: documentContentFromDisk(raw, filePath),
           modifiedTime: after.mtimeMs,
           diskVersion: diskVersionFromStats(after),
           physical: Object.freeze({
@@ -7352,7 +7360,7 @@ async function readOwnedTabDiskSnapshot(owner, filePath, event, data) {
         sameDiskVersion(before, targetStats)
       ) {
         return Object.freeze({
-          content: wrapMermaidContent(removeBOM(raw), filePath),
+          content: documentContentFromDisk(raw, filePath),
           modifiedTime: after.mtimeMs,
           diskVersion: diskVersionFromStats(after),
         });
@@ -8435,9 +8443,7 @@ ipcMain.handle("prepare-document-disk-adoption", async (event, data) => {
     const pathStats = await fs.promises.stat(sourcePath);
     const targetStats = acceptedReadTarget
       ? await fs.promises.stat(acceptedReadTarget) : null;
-    const content = wrapMermaidContent(
-      removeBOM(raw), sourcePath,
-    );
+    const content = documentContentFromDisk(raw, sourcePath);
     const digest = Buffer.from(await crypto.webcrypto.subtle.digest(
       "SHA-256", Buffer.from(content, "utf8"),
     )).toString("hex");
