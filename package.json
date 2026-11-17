@@ -157,6 +157,8 @@
       "src/reading-viewport.js",
       "src/inline-formatting.js",
       "src/table-cell-editor.js",
+      "src/table-source.js",
+      "src/table-marked.js",
       "src/popup-preload.js",
       "src/styles.css",
       "assets/logo.ico",
