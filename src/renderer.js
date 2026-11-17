@@ -973,6 +973,7 @@ const UI_STRINGS = {
   'tableCells.draftScope': '${rows} original rows, ${added} new rows, ${removed} removed rows, ${columns} columns. Update applies only this scope.',
   'tableCells.emptyScope': 'No data rows remain in this scope. Select the header, then add a row in the selected scope.',
   'tableCells.composing': 'Finish entering text before changing rows, columns or updating.',
+  'tableCells.history': 'This Undo or Redo result could not be matched safely. Your draft is kept. Cancel and reopen the table before updating.',
   'tableCells.cell': '${row}, column ${column}',
   'tableCells.select': 'Select a table or its rows first. The selection must contain exactly one table.',
   'tableCells.click': 'Right-click inside a table to edit it.',
@@ -8633,14 +8634,8 @@ function renderLightFormat(content, generation, viewportPermit, modeReading = nu
   const scrollSource = editorScroll.source(content);
   const admission = captureReadingAdmission(scrollSource, generation);
 
-  // Deliberately at the SAME point as renderMarkdownFull's call - remove the
-  // BOM and expand emoji before any block is lifted into a placeholder. Matching the
-  // full path rather than improving on it is the whole point: running it after
-  // extraction would leave the two paths disagreeing, just in the other
-  // direction. Without this an edit flips :star: between literal and emoji
-  // depending only on which render path the diff happened to select. Same
-  // two-path divergence that RAW_HTML_FENCE exists to prevent.
-  content = scrollSource.prepare(parseEmojis);
+  // Both render paths protect complete raw cells before any text transforms.
+  content = scrollSource.prepare(parseEmojis, marked, RAW_HTML_FENCE);
 
   // Extract and placeholder special blocks (same as full render)
   const mermaidBlocks = createBlockPlaceholders('MERMAID_BLOCK_');
@@ -8686,7 +8681,7 @@ function renderLightFormat(content, generation, viewportPermit, modeReading = nu
   updateShowNotesToggleVisibility();
   updateNotesList();
   highlightNewElements(scrollSource);
-  addCodeBlockCopyButtons();
+  addCodeBlockCopyButtons(scrollSource);
   editorScroll.commit(scrollSource);
   publishReadingPresentation(scrollSource);
 }
@@ -8718,7 +8713,8 @@ function pendingTableCodeElements() {
   if (typeof Prism === 'undefined') return [];
   return [...viewer.querySelectorAll('th code, td code')]
     .filter(element => !highlightedTableCodeElements.has(element) &&
-      !element.closest('pre') && explicitTableCodeLanguage(element));
+      (element.parentElement?.matches('pre.table-fenced-code-block') ||
+        !element.closest('pre') && explicitTableCodeLanguage(element)));
 }
 
 function highlightNewElements(scrollSource) {
@@ -8730,10 +8726,11 @@ function highlightNewElements(scrollSource) {
   const tables = new Map();
   for (const element of pendingTableCode) {
     const table = element.closest('table');
-    if (!tables.has(table)) tables.set(table, { before: table.innerHTML, elements: [] });
+    if (!tables.has(table)) tables.set(table, { before: editorScroll.captureTableDecoration(table), elements: [] });
     tables.get(table).elements.push(element);
   }
   document.querySelectorAll('pre code:not(.prism-highlighted)').forEach(el => {
+    if (el.parentElement?.matches('pre.table-fenced-code-block') || el.closest('.table-source-warning')) return;
     Prism.highlightElement(el);
     el.classList.add('prism-highlighted');
     noteReadingAttribute(el.parentElement, 'tabindex');
@@ -8747,11 +8744,18 @@ function highlightNewElements(scrollSource) {
     const produced = readingGeneratedContainers.get(table);
     if (!produced) continue;
     for (const element of elements) {
-      Prism.highlightElement(element);
+      if (explicitTableCodeLanguage(element)) Prism.highlightElement(element);
       highlightedTableCodeElements.add(element);
       element.classList.add('prism-highlighted');
       noteReadingAttribute(element, 'class');
       produced.decorations.push(...element.querySelectorAll('span'));
+      if (element.parentElement?.matches('pre.table-fenced-code-block')) {
+        const pre = element.parentElement;
+        noteReadingAttribute(pre, 'tabindex');
+        const code = readingGeneratedContainers.get(pre) || { wrapper: null, controls: [] };
+        Object.assign(code, { code: element, decorations: [...element.querySelectorAll('span')] });
+        readingGeneratedContainers.set(pre, code);
+      }
     }
     // Only the source-bound markup observed before Prism may gain a new seal.
     editorScroll.sealTableDecoration(scrollSource, table, before);
@@ -8822,7 +8826,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
 
   try {
     // Keep source positions while removing the BOM and expanding emoji.
-    content = scrollSource.prepare(parseEmojis);
+    content = scrollSource.prepare(parseEmojis, marked, RAW_HTML_FENCE);
 
     // First, extract mermaid blocks and replace with placeholders
     const mermaidBlocks = createBlockPlaceholders('MERMAID_BLOCK_');
@@ -9071,7 +9075,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
         // the marker, so only genuinely new blocks are highlighted.
         highlightNewElements(scrollSource);
         // Add copy buttons to code blocks after syntax highlighting
-        addCodeBlockCopyButtons();
+        addCodeBlockCopyButtons(scrollSource);
         // Hide loading screen after syntax highlighting is done
         hideLoadingScreenFor(generation);
         if (notesPanel.classList.contains('visible')) updateNotesList();
@@ -9086,7 +9090,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
       }));
     } else {
       // Add copy buttons even without Prism
-      addCodeBlockCopyButtons();
+      addCodeBlockCopyButtons(scrollSource);
       // Hide loading screen if no syntax highlighting needed
       hideLoadingScreenFor(generation);
       if (notesPanel.classList.contains('visible')) updateNotesList();
@@ -10595,10 +10599,13 @@ function revealApprovedDocumentFolder(filePath) {
 window.revealApprovedDocumentFolder = revealApprovedDocumentFolder;
 
 // Add copy buttons to code blocks
-function addCodeBlockCopyButtons() {
+const codeBlockCopySources = new WeakMap();
+function addCodeBlockCopyButtons(scrollSource) {
   const codeBlocks = viewer.querySelectorAll('.markdown-body pre, #viewer pre');
 
   codeBlocks.forEach((pre) => {
+    // Reused controls and their pending timers must follow the newly adopted Source.
+    codeBlockCopySources.set(pre, scrollSource);
     // Skip if already wrapped
     if (pre.parentNode.classList?.contains('code-block-container')) {
       return;
@@ -10607,6 +10614,7 @@ function addCodeBlockCopyButtons() {
     // Get the code element inside pre
     const codeElement = pre.querySelector('code');
     if (!codeElement) return;
+    const table = pre.closest('table'), before = table && editorScroll.captureTableDecoration(table);
 
     // Create container
     const container = document.createElement('div');
@@ -10626,24 +10634,21 @@ function addCodeBlockCopyButtons() {
       </svg>
     `;
 
+    const showCopied = copied => {
+      const previous = table && editorScroll.captureTableDecoration(table);
+      copyBtn.querySelector('.copy-icon').style.display = copied ? 'none' : 'block';
+      copyBtn.querySelector('.check-icon').style.display = copied ? 'block' : 'none';
+      copyBtn.classList.toggle('copied', copied);
+      // Copy feedback changes owned table decoration, not document content.
+      if (table) editorScroll.sealTableDecoration(codeBlockCopySources.get(pre), table, previous);
+    };
     copyBtn.addEventListener('click', async () => {
       // Get the raw text content (without formatting)
       const textContent = codeElement.textContent;
 
       if (await copyTextToClipboard(textContent)) {
-        // Show success feedback
-        const copyIcon = copyBtn.querySelector('.copy-icon');
-        const checkIcon = copyBtn.querySelector('.check-icon');
-        copyIcon.style.display = 'none';
-        checkIcon.style.display = 'block';
-        copyBtn.classList.add('copied');
-
-        // Reset after 2 seconds
-        setTimeout(() => {
-          copyIcon.style.display = 'block';
-          checkIcon.style.display = 'none';
-          copyBtn.classList.remove('copied');
-        }, 2000);
+        showCopied(true);
+        setTimeout(() => showCopied(false), 2000);
       }
     });
 
@@ -10665,6 +10670,7 @@ function addCodeBlockCopyButtons() {
     readingGeneratedContainers.set(pre, produced);
     const association = readingPatchBodies.get(pre);
     if (association) readingPatchBodies.set(container, association);
+    if (table) editorScroll.sealTableDecoration(scrollSource, table, before);
   });
 }
 
@@ -14938,8 +14944,16 @@ function restoreTableMenuSelection(selection, refocus) {
 }
 
 function protectTableSource(text, mask) {
-  return text.replace(RAW_HTML_FENCE, mask)
+  const spans = window.MarkalooTableMarked.protectedRanges(text, marked, RAW_HTML_FENCE), pieces = [];
+  const gap = value => value.replace(RAW_HTML_FENCE, mask)
     .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
+  let cursor = 0;
+  for (const span of spans) {
+    pieces.push(gap(text.slice(cursor, span.start)), text.slice(span.start, span.end));
+    cursor = span.end;
+  }
+  pieces.push(gap(text.slice(cursor)));
+  return pieces.join('');
 }
 
 function closeTableCellEditor() {
@@ -14972,22 +14986,32 @@ function serializeSafeTableCell(input, provenance) {
 }
 
 function createTableCell(session, row, columnState, column, raw, original) {
-  const container = document.createElement(row.header ? 'th' : 'td'), input = document.createElement('div');
+  const literal = original?.syntax?.kind === 'raw';
+  if (literal) raw = session.model.source.slice(original.syntax.content.start, original.syntax.content.end);
+  const container = document.createElement(row.header ? 'th' : 'td');
+  const input = document.createElement(literal ? 'textarea' : 'div');
   if (row.header) container.scope = 'col';
   input.dataset.tableCell = '';
   input.setAttribute('role', 'textbox');
   if (row.editable) {
-    input.contentEditable = 'true';
-    input.setAttribute('aria-multiline', 'false');
+    if (!literal) input.contentEditable = 'true';
+    input.setAttribute('aria-multiline', String(literal));
   } else {
     input.tabIndex = 0;
     input.setAttribute('aria-readonly', 'true');
+    if (literal) input.readOnly = true;
   }
-  const provenance = MarkalooTableCells.prepareCell(input, original?.text ?? raw, raw, marked, session.model.links,
-    parseEmojis, sanitizeTableHtml);
-  if (row.editable) serializeSafeTableCell(input, provenance);
+  let provenance = null;
+  if (literal) {
+    input.className = 'table-cell-literal';
+    input.value = MarkalooInlineFormatting.normalise(raw);
+  } else {
+    provenance = MarkalooTableCells.prepareCell(input, original?.text ?? raw, raw, marked, session.model.links,
+      parseEmojis, sanitizeTableHtml);
+    if (row.editable) serializeSafeTableCell(input, provenance);
+  }
   const cell = { cell: original, input, container, provenance, initial: input.innerHTML,
-    rowState: row, columnState, column };
+    rowState: row, columnState, column, literal, literalSource: literal ? raw : null, initialSource: raw };
   tableCellInputs.set(input, cell);
   tableCellInputs.set(container, cell);
   container.appendChild(input);
@@ -15092,6 +15116,7 @@ function requireTableCellMutation(session, action) {
     selectTableCell(session, null);
     throw new Error('tableCells.stale');
   }
+  for (const cell of session.cells) cell.engine.validateHistory?.();
 }
 
 function finishTableCellDraftChange(session, focus, selected = null) {
@@ -15581,7 +15606,8 @@ async function updateTableCells() {
     if (session.mode === TableCellMode.UPDATE_ROWS && columnsChanged) throw new Error('tableCells.columnsScope');
     session.sizing?.cancel();
     session.sizing?.refresh();
-    const edits = session.cells.filter(cell => cell.cell && cell.input.innerHTML !== cell.initial).map(cell => ({
+    const edits = session.cells.filter(cell => cell.cell &&
+      (cell.engine.isDirty ? cell.engine.isDirty() : cell.input.innerHTML !== cell.initial)).map(cell => ({
       cell: cell.cell, text: cell.engine.readSource(),
     }));
     const order = session.rows.filter(row => row.editable).map(row => row.original
@@ -15705,19 +15731,36 @@ tableCellDialog.addEventListener('cancel', event => {
 });
 
 function attachTableCellInput(cell, session) {
-  return MarkalooInlineFormatting.attachInlineEditor({
+  const ending = cell.rowState.original?.syntax?.ending;
+  const rowEnding = ending && session.model.source.slice(ending.start, ending.end);
+  const lineEnding = rowEnding || session.exact.match(/\r\n|\n/)?.[0] || '\n';
+  const options = {
     element: cell.input, ownership: cell.provenance, marked,
     transform: parseEmojis, sanitize: sanitizeTableHtml, documentEditor: markdownEditor,
     isCurrent: () => tableCellSession === session && !session.submitting &&
       !session.applied && !session.confirmation && session.selection.isCurrent(),
     reportError: showTableCellError, clearError: () => { tableCellError.textContent = ''; },
     sourcePolicy: {
-      resolveTableFenceLanguage: bundledTableCodeLanguage,
+      pasteRawFence(text) {
+        const previous = cell.input, input = document.createElement('textarea');
+        for (const { name, value } of previous.attributes) if (name !== 'contenteditable') input.setAttribute(name, value);
+        input.classList.add('table-cell-literal');
+        input.setAttribute('aria-multiline', 'true');
+        cell.engine.dispose();
+        previous.replaceWith(input);
+        cell.input = input;
+        cell.literal = true;
+        cell.literalSource = MarkalooInlineFormatting.normalise(text).replace(/\n/g, lineEnding);
+        tableCellInputs.set(input, cell);
+        cell.engine = attachTableCellInput(cell, session);
+        input.focus();
+        session.sizing?.refresh();
+      },
       keydown(event) {
         if (session.confirmation) { event.preventDefault(); return; }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
           event.preventDefault(); updateTableCells();
-        } else if (event.key === 'Enter') {
+        } else if (event.key === 'Enter' && !cell.literal) {
           event.preventDefault();
           const next = session.rows[session.rows.indexOf(cell.rowState) + (event.shiftKey ? -1 : 1)];
           if (next?.editable) {
@@ -15730,7 +15773,10 @@ function attachTableCellInput(cell, session) {
         }
       },
     },
-  });
+  };
+  return cell.literal ? MarkalooInlineFormatting.attachLiteralEditor({
+    ...options, source: cell.literalSource, baseline: cell.initialSource, ending: lineEnding,
+  }) : MarkalooInlineFormatting.attachInlineEditor(options);
 }
 // Noneditable header cells still contain authored links.
 tableCellDialog.addEventListener('click', event => {

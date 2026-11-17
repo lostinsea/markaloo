@@ -4626,7 +4626,7 @@ code[class*="language-"] ::selection {
   overflow-wrap: anywhere;
 }
 
-.markdown-body :is(th, td) code.table-fenced-code:not(pre code) {
+.markdown-body :is(th, td) code.table-fenced-code {
   white-space: pre-wrap;
 }
 
@@ -4856,14 +4856,28 @@ pre[class*="language-"] {
 .table-cell-grid th:first-child { min-width: 65px; padding: 8px; }
 .table-cell-grid thead { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); }
 .table-cell-grid th > div { overflow-wrap: anywhere; white-space: pre-wrap; }
-.table-cell-grid [contenteditable] {
+.table-cell-grid :is([contenteditable], .table-cell-literal) {
   min-height: 38px;
   padding: 8px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.table-cell-grid [contenteditable]:focus { outline: 1px dotted var(--primary-color); outline-offset: -1px; }
-.table-cell-grid .table-cell-selected [contenteditable]:focus { outline: none; }
+.table-cell-grid .table-cell-literal {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 120px;
+  resize: vertical;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-family: var(--font-mono, monospace);
+}
+.table-cell-grid :is([contenteditable], .table-cell-literal):focus { outline: 1px dotted var(--primary-color); outline-offset: -1px; }
+.table-cell-grid .table-cell-selected :is([contenteditable], .table-cell-literal):focus { outline: none; }
 .table-cell-grid img { max-width: min(160px, 100%); max-height: 100px; height: auto; }
 .table-cell-grid a,
 .table-cell-grid a:visited {

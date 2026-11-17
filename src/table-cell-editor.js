@@ -97,51 +97,82 @@ window.MarkalooTableCells = (() => {
   }
 
   function index(source, marked, protect) {
-    const view = sourceView(source);
-    let text = view.text;
-    const bom = text[0] === '\uFEFF' ? 1 : 0;
-    // Use the renderer's own protected-block extraction. Keep every offset.
-    text = protect(text, match => match.replace(/[^\n]/g, ' '));
-    const input = text.slice(bom), lexer = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-    const definitions = [], blockTokens = lexer.blockTokens, definition = lexer.tokenizer.def;
-    let depth = 0;
-    lexer.blockTokens = function (...args) {
-      depth++;
-      try { return blockTokens.apply(this, args); } finally { depth--; }
+    const view = sourceView(source), syntax = Object.freeze({ text: source, space: 'original' });
+    const adapter = window.MarkalooTableMarked;
+    if (typeof adapter?.createTableReader !== 'function') fail('tableCells.mapping');
+    const readTable = adapter.createTableReader(syntax, marked);
+    const bom = view.text[0] === '\uFEFF' ? 1 : 0;
+    const discover = adapter.create(marked).lexer(view.text.slice(bom));
+    const protectedSpans = discover.filter(token => token.type === 'markalooRawTable')
+      .map(token => ({ start: bom + token.at, end: bom + token.at + token.raw.length }));
+    let text = '', copied = 0;
+    const mask = value => {
+      const result = protect(value, match => match.replace(/[^\n]/g, ' '));
+      if (result.length !== value.length) fail('tableCells.mapping');
+      return result;
     };
-    lexer.tokenizer.def = function (remaining) {
-      const token = definition.call(this, remaining);
-      if (token && depth === 1 && !['paragraph', 'text'].includes(lexer.tokens.at(-1)?.type)) {
-        const start = input.length - remaining.length;
-        if (input.slice(start) !== remaining) fail('tableCells.mapping');
-        definitions.push({ start, end: start + token.raw.length });
+    // Raw fences and malformed literal regions are opaque even to Mermaid and HTML extraction.
+    for (const span of protectedSpans) {
+      if (!Number.isSafeInteger(span.start) || span.start < copied || span.end > view.text.length) {
+        fail('tableCells.mapping');
       }
-      return token;
-    };
-    let tokens = lexer.lex(input);
-    const links = tokens.links;
-    if (definitions.length) {
-      // Observe consumed definitions before Marked merges surrounding newline
-      // tokens. Its returned raw strings are not a source partition in that case.
-      let cursor = 0, masked = '';
-      for (const span of definitions) {
-        masked += input.slice(cursor, span.start) + input.slice(span.start, span.end).replace(/[^\n]/g, ' ');
-        cursor = span.end;
-      }
-      masked += input.slice(cursor);
-      text = text.slice(0, bom) + masked;
-      const clean = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-      clean.tokens.links = links;
-      tokens = clean.lex(masked);
+      text += mask(view.text.slice(copied, span.start)) + view.text.slice(span.start, span.end);
+      copied = span.end;
     }
+    text += mask(view.text.slice(copied));
+    const input = text.slice(bom), parser = adapter.create(marked), tokens = parser.lexer(input);
+    const links = tokens.links;
     const tables = [], otherTables = [], blocks = [];
     let cursor = bom, htmlCoveredUntil = bom;
+    const ignored = raw => !raw || /^[ \t\n]*$/.test(raw) ||
+      adapter.create(marked).lexer(raw).every(token => token.type === 'space');
+    const gapTo = end => {
+      const raw = text.slice(cursor, end);
+      // Public tokens omit definitions and may coalesce whitespace across them.
+      // Certify every skipped byte with a fresh public lexer, never a private tokenizer patch.
+      if (!ignored(raw)) fail('tableCells.mapping');
+      if (raw) blocks.push({ start: cursor, end, type: 'space', raw });
+      cursor = end;
+    };
     for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
       const token = tokens[tokenIndex];
-      if (!text.startsWith(token.raw, cursor)) fail('tableCells.mapping');
-      const start = cursor;
-      cursor += token.raw.length;
+      if (token.type === 'space') continue;
+      let start = token.type === 'markalooRawTable' ? bom + token.at : text.indexOf(token.raw, cursor);
+      if (token.type !== 'markalooRawTable') {
+        while (start >= 0 && (start !== bom && text[start - 1] !== '\n' ||
+            !ignored(text.slice(cursor, start)))) start = text.indexOf(token.raw, start + 1);
+      }
+      if (start < cursor || !text.startsWith(token.raw, start)) fail('tableCells.mapping');
+      gapTo(start);
+      cursor = start + token.raw.length;
       blocks.push({ start, end: cursor, type: token.type, raw: token.raw });
+      if (token.type === 'markalooRawTable') {
+        const receipt = readTable(view.offsets[start]);
+        const consumed = receipt && normalise(source.slice(view.offsets[start], receipt.next));
+        // Marked may append a following blank line to the preceding public token.
+        if (!receipt || !token.raw.startsWith(consumed) || /[^ \t\n]/.test(token.raw.slice(consumed.length))) {
+          fail('tableCells.mapping');
+        }
+        if (receipt.kind === 'literal' || receipt.kind === 'refusal') {
+          otherTables.push({ start, end: editorOffset(view, receipt.span.end), uncertain: true, syntax: receipt });
+          continue;
+        }
+        const row = value => ({
+          start: editorOffset(view, value.span.start), end: editorOffset(view, value.span.end), syntax: value,
+          cells: value.cells.map(cell => ({
+            start: editorOffset(view, cell.content.start), end: editorOffset(view, cell.content.end),
+            text: cell.kind === 'raw' ? normalise(source.slice(cell.content.start, cell.content.end)) :
+              source.slice(cell.content.start, cell.content.end).replace(/\\\|/g, '|'),
+            syntax: cell,
+          })),
+        });
+        const value = receipt.value;
+        const logicalRows = [value.header, ...value.rows].map(row);
+        tables.push({ start, end: editorOffset(view, value.span.end), rows: logicalRows,
+          delimiter: { ...row(value.delimiter), delimiter: true }, token,
+          writable: logicalRows.every(row => row.cells.length === value.header.cells.length), syntax: receipt });
+        continue;
+      }
       if (token.type !== 'table') {
         const hasTable = item => item.type === 'table' ||
           (item.type === 'html' && /<table[\s>]/i.test(item.raw)) ||
@@ -174,9 +205,9 @@ window.MarkalooTableCells = (() => {
         } else {
           if (start < htmlCoveredUntil) continue;
           const render = raw => {
-            const parser = new marked.Lexer({ ...marked.defaults, tokenizer: null });
-            parser.tokens.links = links;
-            return marked.parser(parser.lex(raw));
+            const renderer = adapter.create(marked), parsed = renderer.lexer(raw);
+            parsed.links = links;
+            return renderer.parser(parsed);
           };
           let end = cursor, regions = htmlTableRegions(token.raw, render);
           // Blank lines can split one raw HTML table across Markdown tokens.
@@ -211,9 +242,41 @@ window.MarkalooTableCells = (() => {
           cell.text === expected[r][c].text));
       tables.push({ start, end: start + token.raw.trimEnd().length, rows: actual, delimiter: rows[1],
         token, writable });
+      const table = tables.at(-1), originalStart = view.offsets[start];
+      const receipt = originalStart === 0 || originalStart === 1 && source[0] === '\uFEFF' ||
+        source[originalStart - 1] === '\n' ?
+        readTable(originalStart) : null;
+      if (receipt?.kind === 'refusal') {
+        tables.pop();
+        otherTables.push({ start, end: editorOffset(view, receipt.span.end), uncertain: true, syntax: receipt });
+        cursor = text.length;
+        blocks.at(-1).end = cursor;
+        blocks.at(-1).raw = text.slice(start);
+        break;
+      }
+      if (receipt?.kind === 'complete' && receipt.value.rows.length + 1 === actual.length) {
+        table.syntax = receipt;
+        const originalRows = [receipt.value.header, ...receipt.value.rows];
+        actual.forEach((row, i) => {
+          row.syntax = originalRows[i];
+          row.cells.forEach((cell, c) => { cell.syntax = originalRows[i].cells[c]; });
+        });
+        table.delimiter.syntax = receipt.value.delimiter;
+      }
     }
-    if (cursor !== text.length) fail('tableCells.mapping');
-    return { source, view, tables, otherTables, blocks, links };
+    gapTo(text.length);
+    return { source, view, syntax, tables, otherTables, blocks, links };
+  }
+
+  function editorOffset(view, original) {
+    let low = 0, high = view.offsets.length - 1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2), value = view.offsets[middle];
+      if (value === original) return middle;
+      if (value < original) low = middle + 1;
+      else high = middle - 1;
+    }
+    fail('tableCells.mapping');
   }
 
   function resolveSourceLine(model, line, mode) {
@@ -298,6 +361,9 @@ window.MarkalooTableCells = (() => {
 
   function replaceCells(target, edits, marked, protect) {
     validateUpdateMode(target?.mode);
+    if (logicalOperation(target, edits)) {
+      return replaceLogical(target, edits, null, null, marked, protect);
+    }
     const { model } = target;
     const ordered = edits.slice().sort((a, b) => a.cell.start - b.cell.start);
     let cursor = 0, previousEnd = 0, candidate = '';
@@ -320,6 +386,229 @@ window.MarkalooTableCells = (() => {
   const validCellSource = text => typeof text === 'string' &&
     !/[\r\n]/.test(text) && !/(^|[^\\])(?:\\\\)*\|/.test(text);
 
+  function cellSource(text, existingRaw = false) {
+    if (typeof text !== 'string') fail('tableCells.invalid');
+    // The literal popup validates its envelope; ordinary one-line Markdown may begin with backticks.
+    const receipt = existingRaw || /[\r\n]/.test(text) ?
+      window.MarkalooTableSource.readCell({ text, space: 'editor' }) : null;
+    if (receipt?.kind === 'literal') {
+      const error = new Error('tableCells.invalid');
+      error.diagnostic = receipt.diagnostic;
+      throw error;
+    }
+    if (receipt?.kind === 'complete') {
+      return { raw: true, source: text.slice(receipt.value.slot.start, receipt.value.slot.end),
+        text: normalise(text.slice(receipt.value.content.start, receipt.value.content.end)) };
+    }
+    if (!validCellSource(text)) fail('tableCells.invalid');
+    return { raw: false, source: text, text: text.trim().replace(/\\\|/g, '|') };
+  }
+
+  function logicalOperation(target, edits = [], order = []) {
+    if (!Array.isArray(edits)) fail('tableCells.invalid');
+    return !!target?.table?.syntax?.value?.hasRaw ||
+      edits.some(edit => cellSource(edit?.text).raw) ||
+      (order || []).some(entry => Array.isArray(entry?.cells) && entry.cells.some(text => cellSource(text).raw));
+  }
+
+  function validateLogicalTarget(target) {
+    const { model, table, rows } = target || {};
+    if (!model?.tables.includes(table) || !table.writable || table.syntax?.kind !== 'complete' ||
+        table.syntax.input !== model.syntax || model.syntax.text !== model.source ||
+        !Array.isArray(rows) || !rows.length || new Set(rows).size !== rows.length ||
+        rows.some(row => !table.rows.includes(row) || !row.syntax ||
+          row.cells.some((cell, i) => cell.syntax !== row.syntax.cells[i]))) fail('tableCells.invalid');
+  }
+
+  function sourceEnding(model, row) {
+    const span = row.syntax.ending;
+    return model.source.slice(span.start, span.end) || model.source.match(/\r\n|\r|\n/)?.[0] || '\n';
+  }
+
+  function validateLogicalAdoption(target, candidate, expected, alignment, marked, protect) {
+    const { model, table } = target, checked = index(candidate, marked, protect);
+    const actual = checked.tables[model.tables.indexOf(table)], before = table.syntax.value;
+    if (!actual?.writable || actual.start !== table.start ||
+        checked.tables.length !== model.tables.length ||
+        JSON.stringify(actual.rows.map(row => row.cells.map(cell => cell.text))) !== JSON.stringify(expected) ||
+        JSON.stringify(actual.token.align) !== JSON.stringify(alignment) ||
+        actual.syntax?.input !== checked.syntax) fail('tableCells.invalid');
+    const after = actual.syntax.value;
+    if (candidate.slice(0, after.span.start) !== model.source.slice(0, before.span.start) ||
+        candidate.slice(after.ending.end) !== model.source.slice(before.ending.end)) fail('tableCells.invalid');
+    const delta = checked.view.text.length - model.view.text.length;
+    const unchanged = (old, current) => old.length === current.length && old.every((item, i) => {
+      const other = current[i], shift = item.start > table.start ? delta : 0;
+      return other && other.start === item.start + shift && other.end === item.end + shift &&
+        other.kind === item.kind && other.uncertain === item.uncertain &&
+        checked.view.text.slice(other.start, other.end) === model.view.text.slice(item.start, item.end);
+    });
+    const outsideBlocks = (value, item) => value.blocks.filter(block => block.type !== 'space' &&
+      (block.end <= item.start || block.start > item.end)).map(block => [block.type, block.raw]);
+    if (!unchanged(model.tables.filter(item => item !== table), checked.tables.filter(item => item !== actual)) ||
+        !unchanged(model.otherTables, checked.otherTables) ||
+        JSON.stringify(outsideBlocks(model, table)) !== JSON.stringify(outsideBlocks(checked, actual))) {
+      fail('tableCells.invalid');
+    }
+    return candidate;
+  }
+
+  function replaceLogical(target, edits, order, columns, marked, protect, deletedRows = [], deletedColumns = []) {
+    validateLogicalTarget(target);
+    const { model, table, rows } = target;
+    if (!Array.isArray(edits) || !Array.isArray(deletedRows) || !Array.isArray(deletedColumns)) {
+      fail('tableCells.invalid');
+    }
+    const deleted = new Set(deletedRows), edited = new Map(), width = table.rows[0].cells.length;
+    if (deleted.size !== deletedRows.length || deletedRows.some(row => !rows.includes(row) || row === table.rows[0])) {
+      fail('tableCells.invalid');
+    }
+    for (const edit of edits) {
+      if (!edit || !rows.some(row => !deleted.has(row) && row.cells.includes(edit.cell)) || edited.has(edit.cell)) {
+        fail('tableCells.invalid');
+      }
+      edited.set(edit.cell, cellSource(edit.text, edit.cell.syntax.kind === 'raw'));
+    }
+    const first = order ? table.rows.indexOf(rows[0]) : 0, last = first + rows.length - 1;
+    if (order && (rows.some((row, i) => row !== table.rows[first + i]) || !Array.isArray(order))) {
+      fail('tableCells.invalid');
+    }
+    const retained = new Set(), ids = new Set();
+    const entries = order || table.rows.map(original => ({ original }));
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') fail('tableCells.invalid');
+      if (entry.original) {
+        if (!(order ? rows : table.rows).includes(entry.original) ||
+            deleted.has(entry.original) || retained.has(entry.original)) fail('tableCells.invalid');
+        retained.add(entry.original);
+      } else {
+        if (typeof entry.id !== 'string' || !entry.id || ids.has(entry.id) || !Array.isArray(entry.cells)) {
+          fail('tableCells.invalid');
+        }
+        ids.add(entry.id);
+      }
+    }
+    if (order && (retained.size !== rows.length - deleted.size ||
+        first === 0 && entries[0]?.original !== table.rows[0])) fail('tableCells.invalid');
+    let projected = Array.from({ length: width }, (_, originalIndex) => ({ originalIndex }));
+    const removed = new Set(deletedColumns);
+    if (columns) {
+      if (!columns.length || removed.size !== deletedColumns.length ||
+          deletedColumns.some(column => !Number.isSafeInteger(column) || column < 0 || column >= width)) {
+        fail('tableCells.invalid');
+      }
+      const names = new Set(), originals = new Set();
+      for (const column of columns) {
+        if (!column || typeof column.id !== 'string' || !column.id || names.has(column.id)) fail('tableCells.invalid');
+        names.add(column.id);
+        if (column.originalIndex !== undefined) {
+          const at = column.originalIndex;
+          if (!Number.isSafeInteger(at) || at < 0 || at >= width || removed.has(at) || originals.has(at)) {
+            fail('tableCells.invalid');
+          }
+          originals.add(at);
+        }
+      }
+      if (originals.size + removed.size !== width || edits.some(edit =>
+        table.rows.some(row => row.cells.some((cell, c) => cell === edit.cell && removed.has(c))))) {
+        fail('tableCells.invalid');
+      }
+      projected = columns;
+    } else if (removed.size) fail('tableCells.invalid');
+    const columnChange = projected.length !== width ||
+      projected.some((column, i) => column.originalIndex !== i);
+    const originalText = cell => cell.syntax.kind === 'raw' ?
+      normalise(model.source.slice(cell.syntax.content.start, cell.syntax.content.end)) : cell.text;
+    const values = entry => {
+      if (entry.cells !== undefined &&
+          (!Array.isArray(entry.cells) || entry.cells.length !== projected.length)) fail('tableCells.invalid');
+      return projected.map((column, at) => {
+        const cell = entry.original?.cells[column.originalIndex];
+        const value = cell ? edited.get(cell) || { raw: cell.syntax.kind === 'raw',
+          source: model.source.slice(cell.syntax.content.start, cell.syntax.content.end), text: originalText(cell) } :
+          cellSource(entry.cells?.[at]);
+        if (entry.cells && cellSource(entry.cells[at], cell?.syntax.kind === 'raw').text !== value.text) {
+          fail('tableCells.invalid');
+        }
+        return value;
+      });
+    };
+    const expectedRows = entries.map(values);
+    const body = (row, entryValues, delimiter = false) => {
+      if (!row) return '| ' + entryValues.map(value => value.source).join(' | ') + ' |';
+      const receipt = row.syntax;
+      if (!receipt || receipt.cells.length !== width) fail('tableCells.invalid');
+      if (!columnChange) {
+        let cursor = receipt.span.start, text = '';
+        row.cells.forEach((cell, i) => {
+          const changed = delimiter ? null : edited.get(cell);
+          if (!changed) return;
+          text += model.source.slice(cursor, cell.syntax.content.start) + entryValues[i].source;
+          cursor = cell.syntax.content.end;
+        });
+        text += model.source.slice(cursor, receipt.span.end);
+        if (entryValues.some(value => value.raw)) {
+          if (!receipt.leadingPipe) text = '|' + text;
+          if (!receipt.trailingPipe) text += (/\\$/.test(text) ? ' ' : '') + '|';
+        }
+        return text;
+      }
+      const slots = projected.map((column, at) => {
+        const cell = row.cells[column.originalIndex], value = entryValues[at];
+        if (!cell) return ' ' + value.source + ' ';
+        const span = cell.syntax;
+        if (delimiter || !edited.has(cell)) return model.source.slice(span.slot.start, span.slot.end);
+        return model.source.slice(span.slot.start, span.content.start) + value.source +
+          model.source.slice(span.content.end, span.slot.end);
+      });
+      let leading = model.source.slice(receipt.span.start, receipt.cells[0].slot.start);
+      let trailing = model.source.slice(receipt.cells.at(-1).slot.end, receipt.span.end);
+      const raw = entryValues.some(value => value.raw);
+      if (!leading && (raw || projected.length === 1 || !entryValues[0].text ||
+          projected[0].originalIndex !== 0)) leading = '|';
+      if (!trailing && (raw || projected.length === 1 || !entryValues.at(-1).text ||
+          projected.at(-1).originalIndex !== width - 1)) {
+        trailing = (/\\$/.test(slots.at(-1)) ? ' ' : '') + '|';
+      }
+      return leading + slots.join('|') + trailing;
+    };
+    const headerValues = projected.map(column => ({ raw: false,
+      source: column.originalIndex === undefined ? '---' : table.delimiter.cells[column.originalIndex].text,
+      text: column.originalIndex === undefined ? '---' : table.delimiter.cells[column.originalIndex].text }));
+    const allEntries = order ? [...table.rows.slice(0, first).map(original => ({ original })),
+      ...entries, ...table.rows.slice(last + 1).map(original => ({ original }))] : entries;
+    const selectedOriginals = entries.filter(entry => entry.original).map(entry => entry.original);
+    const reordered = !!order && selectedOriginals.some((row, i) =>
+      row !== rows.filter(value => !deleted.has(value))[i]);
+    const final = order ? (rows.at(-1) === table.rows[0] ? table.delimiter : rows.at(-1)) :
+      (table.rows.at(-1) === table.rows[0] ? table.delimiter : table.rows.at(-1));
+    const start = order ? rows[0].syntax.span.start : table.syntax.value.span.start;
+    const end = final.syntax.ending.end, terminated = final.syntax.ending.end > final.syntax.ending.start;
+    const pieces = [model.source.slice(0, start)];
+    entries.forEach((entry, i) => {
+      pieces.push(body(entry.original, expectedRows[i]));
+      let physical = entry.original;
+      if (entry.original === table.rows[0]) {
+        pieces.push(model.source.slice(entry.original.syntax.ending.start, entry.original.syntax.ending.end));
+        pieces.push(body(table.delimiter, headerValues, true));
+        physical = table.delimiter;
+      }
+      const slot = reordered ? rows[Math.min(i, rows.length - 1)] : physical;
+      const boundary = slot === table.rows[0] ? table.delimiter : slot;
+      const ending = boundary ? model.source.slice(boundary.syntax.ending.start, boundary.syntax.ending.end) : '';
+      const needsEnding = i < entries.length - 1 || terminated;
+      pieces.push(needsEnding ? ending || sourceEnding(model, physical || rows[0]) : '');
+    });
+    pieces.push(model.source.slice(end));
+    const expected = allEntries.map(entry => {
+      const at = entries.indexOf(entry);
+      return at >= 0 ? expectedRows[at].map(value => value.text) :
+        entry.original.cells.map(originalText);
+    });
+    return validateLogicalAdoption(target, pieces.join(''), expected, projected.map(column =>
+      column.originalIndex === undefined ? null : table.token.align[column.originalIndex]), marked, protect);
+  }
+
   function insertTable(model, offset, rows, marked, protect, mode) {
     validateMode(mode);
     if (mode !== Mode.INSERT) fail('tableCells.mode');
@@ -327,9 +616,9 @@ window.MarkalooTableCells = (() => {
         !Array.isArray(model?.blocks) || !Number.isSafeInteger(offset) ||
         offset < 0 || offset > model.view.text.length || !Array.isArray(rows) ||
         !rows.length || !Array.isArray(rows[0]) || !rows[0].length ||
-        rows.some(row => !Array.isArray(row) || row.length !== rows[0].length ||
-          row.some(text => !validCellSource(text)))) fail('tableCells.invalid');
-    const lines = rows.map(row => '| ' + row.join(' | ') + ' |');
+        rows.some(row => !Array.isArray(row) || row.length !== rows[0].length)) fail('tableCells.invalid');
+    const values = rows.map(row => row.map(text => cellSource(text)));
+    const lines = values.map(row => '| ' + row.map(value => normalise(value.source)).join(' | ') + ' |');
     lines.splice(1, 0, '| ' + rows[0].map(() => '---').join(' | ') + ' |');
     const markdown = lines.join('\n'), before = model.view.text.slice(0, offset),
       after = model.view.text.slice(offset);
@@ -342,7 +631,7 @@ window.MarkalooTableCells = (() => {
     const source = spliceInput(model.source, offset, offset, replacement);
     const checked = index(source, marked, protect), start = offset + leading.length;
     const table = checked.tables.find(item => item.start === start);
-    const expected = rows.map(row => row.map(text => text.trim().replace(/\\\|/g, '|')));
+    const expected = values.map(row => row.map(value => value.text));
     if (!table?.writable || checked.tables.length !== model.tables.length + 1 ||
         JSON.stringify(table.rows.map(row => row.cells.map(cell => cell.text))) !== JSON.stringify(expected) ||
         table.token.align.some(alignment => alignment !== null)) fail('tableCells.insertPosition');
@@ -359,7 +648,7 @@ window.MarkalooTableCells = (() => {
     if (!unchanged(model.tables, checked.tables.filter(item => item !== table)) ||
         !unchanged(model.otherTables, checked.otherTables) ||
         JSON.stringify(content(model.blocks)) !== JSON.stringify(content(checked.blocks.filter(item =>
-          item.type !== 'table' || item.start !== start))) ||
+          !['table', 'markalooRawTable'].includes(item.type) || item.start !== start))) ||
         model.source.startsWith('\uFEFF') && !source.startsWith('\uFEFF')) {
       fail('tableCells.insertPosition');
     }
@@ -369,6 +658,13 @@ window.MarkalooTableCells = (() => {
   function replaceRows(target, edits, order, marked, protect, deletedRows = []) {
     validateUpdateMode(target?.mode);
     if (!Array.isArray(order) || !Array.isArray(deletedRows)) fail('tableCells.invalid');
+    if (logicalOperation(target, edits, order)) {
+      if (!deletedRows.length && order.length === target.rows.length &&
+          order.every((entry, i) => entry?.original === target.rows[i])) {
+        return replaceLogical(target, edits, null, null, marked, protect);
+      }
+      return replaceLogical(target, edits, order, null, marked, protect, deletedRows);
+    }
     if (!deletedRows.length && Array.isArray(target?.rows) && order.length === target.rows.length &&
         order.every((entry, i) => entry?.original === target.rows[i])) {
       return replaceCells(target, edits, marked, protect);
@@ -503,6 +799,13 @@ window.MarkalooTableCells = (() => {
   function replaceStructure(target, edits, order, columns, marked, protect, deletedRows = [], deletedColumns = []) {
     validateMode(target?.mode);
     if (target.mode !== Mode.UPDATE_TABLE) fail('tableCells.columnsScope');
+    if (logicalOperation(target, edits, order)) {
+      if (!Array.isArray(order) || !Array.isArray(columns) || !Array.isArray(target.rows) ||
+          target.rows.length !== target.table.rows.length ||
+          target.rows.some((row, i) => row !== target.table.rows[i]) ||
+          order.some(entry => !Array.isArray(entry?.cells))) fail('tableCells.invalid');
+      return replaceLogical(target, edits, order, columns, marked, protect, deletedRows, deletedColumns);
+    }
     const { model, table } = target;
     if (!model?.tables.includes(table) || !table.writable ||
         !Array.isArray(target.rows) || target.rows.length !== table.rows.length ||
@@ -582,7 +885,8 @@ window.MarkalooTableCells = (() => {
       const layout = lineLayout(line, row.start);
       // Physical slots must agree with the index; never invent parser-padded cells.
       if (layout.slots.length !== count ||
-          JSON.stringify(layout.cells) !== JSON.stringify(row.cells)) fail('tableCells.invalid');
+          layout.cells.some((cell, i) => cell.start !== row.cells[i]?.start ||
+            cell.end !== row.cells[i].end || cell.text !== row.cells[i].text)) fail('tableCells.invalid');
       const insertions = [];
       for (let gap = 0; gap <= count; gap++) {
         if (!gaps[gap].length) continue;

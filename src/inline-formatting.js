@@ -1219,44 +1219,78 @@ window.MarkalooInlineFormatting = (() => {
     };
   }
 
-  function tableFenceSurface(input, provenance, dependencies, resolveLanguage) {
-    if (provenance.policy?.raw || typeof resolveLanguage !== 'function') return null;
-    const pieces = [];
-    const collect = parent => {
-      for (const node of parent.childNodes) {
-        if (node.nodeType === Node.TEXT_NODE) pieces.push(node.data);
-        else if (node.nodeType === Node.ELEMENT_NODE && !provenance.attributes(node).length) {
-          if (node.tagName === 'BR') pieces.push('\n');
-          else {
-            const fragment = provenance.fragments.get(node.getAttribute(provenance.partAttribute));
-            if (node.tagName !== 'SPAN' || !['text', 'emoji'].includes(fragment?.kind) ||
-                !collect(node)) return false;
-          }
-        } else return false;
-      }
-      return true;
+  function attachLiteralEditor({ element, source, baseline = source, ending, isCurrent, sourcePolicy = {}, reportError, clearError = () => {} }) {
+    let exact = source, visible = normalise(source), composing = false, disposed = false;
+    let position = 0, historyFailed = false;
+    const listeners = [], versions = [{ visible, exact }];
+    element.value = visible;
+    const listen = (type, handler) => {
+      element.addEventListener(type, handler);
+      listeners.push(() => element.removeEventListener(type, handler));
     };
-    if (!collect(input)) return null;
-    const text = normalise(pieces.join(''));
-    const padded = /^([ \t\n]*)(`[\s\S]*`)([ \t\n]*)$/.exec(text);
-    if (!padded) return null;
-    const fenced = padded[2];
-    const fence = /^(`{3,})([\w-]+)[ \t]*\n([\s\S]*?)\n(`{3,})$/.exec(fenced);
-    if (!fence || fence[0] !== fenced || fence[4].length < fence[1].length) return null;
-    const language = resolveLanguage(fence[2]);
-    if (!language) return null;
-    const { marked, transform, sanitize } = dependencies;
-    const tokens = marked.lexer(fenced);
-    if (tokens.length !== 1 || tokens[0].type !== 'code' || tokens[0].raw !== fenced) return null;
-    // Keep a physical table row single-line, without expanding emoji inside code.
-    // Encode outside padding too, so the table parser cannot trim it away.
-    const padding = value => value.replace(/[ \t\n]/g, char => '&#' + char.charCodeAt(0) + ';');
-    const source = padding(padded[1]) + '<code class="language-' + language + ' table-fenced-code">' +
-      encodeCellText(fence[3]).replace(/:/g, '&#58;') + '</code>' + padding(padded[3]);
-    const surface = document.createElement('div');
-    const ownership = prepareCell(surface, source, source, marked, provenance.links, transform, sanitize);
-    if (surface.querySelector('code')?.textContent !== fence[3]) fail('tableCells.cellType');
-    return { surface, ownership };
+    const sync = event => {
+      const next = element.value;
+      if (historyFailed) { visible = next; return; }
+      if (/^history(?:Undo|Redo)$/.test(event?.inputType || '')) {
+        const undo = event.inputType === 'historyUndo', matches = [];
+        for (let i = undo ? 0 : position + 1; i < (undo ? position : versions.length); i++) {
+          if (versions[i].visible === next) matches.push(i);
+        }
+        // Native history exposes no undo-group identity. Keep the draft, but
+        // never guess which exact-ending version an ambiguous value restored.
+        if (matches.length !== 1) {
+          historyFailed = true;
+          visible = next;
+          reportError(new Error('tableCells.history'));
+          return;
+        }
+        position = matches[0];
+        exact = versions[position].exact;
+      } else {
+        if (next === visible) return;
+        let start = 0, oldEnd = visible.length, newEnd = next.length;
+        while (start < oldEnd && start < newEnd && visible[start] === next[start]) start++;
+        while (oldEnd > start && newEnd > start && visible[oldEnd - 1] === next[newEnd - 1]) {
+          oldEnd--; newEnd--;
+        }
+        const view = sourceView(exact);
+        exact = exact.slice(0, view.offsets[start]) +
+          next.slice(start, newEnd).replace(/\n/g, ending) + exact.slice(view.offsets[oldEnd]);
+        versions.splice(position + 1);
+        versions.push({ visible: next, exact });
+        position = versions.length - 1;
+      }
+      visible = next;
+      clearError();
+    };
+    const validateHistory = () => { if (historyFailed) fail('tableCells.history'); };
+    listen('input', sync);
+    listen('compositionstart', () => { composing = true; });
+    listen('compositionend', event => { composing = false; sync(event); });
+    listen('keydown', event => {
+      event.stopPropagation();
+      if (!composing && !event.isComposing && event.keyCode !== 229) sourcePolicy.keydown?.(event);
+    });
+    listen('drop', event => event.preventDefault());
+    return {
+      isDirty: () => { sync(); return historyFailed || exact !== baseline; },
+      isComposing: () => composing,
+      validateHistory,
+      readSource() {
+        if (disposed || !isCurrent()) fail('tableCells.stale');
+        if (composing) fail('tableCells.composing');
+        sync();
+        validateHistory();
+        const result = window.MarkalooTableSource.readCell({ text: exact, space: 'editor' });
+        if (result?.kind !== 'complete') {
+          const error = new Error('tableCells.invalid');
+          error.diagnostic = { code: 'cell-envelope', at: result?.diagnostic?.at ?? 0 };
+          throw error;
+        }
+        return exact;
+      },
+      dispose() { disposed = true; versions.length = 0; listeners.splice(0).forEach(remove => remove()); },
+    };
   }
 
   function attachInlineEditor({ element, ownership, sourcePolicy = {}, marked, transform, sanitize,
@@ -1763,6 +1797,16 @@ window.MarkalooInlineFormatting = (() => {
       const ctx = context(event);
       if (!ctx) { reportError(new Error('tableCells.stale')); return; }
       const plain = event.clipboardData.getData('text/plain');
+      if (sourcePolicy.pasteRawFence && /^[ \t]*`{3,}[ \t]*(?:[^\s`]+[ \t]*)?(?:\r?\n|$)/.test(plain)) {
+        if (cell.composing) { reportError(new Error('tableCells.composing')); return; }
+        const before = ctx.range.cloneRange(), after = ctx.range.cloneRange();
+        before.selectNodeContents(element); before.setEnd(ctx.range.startContainer, ctx.range.startOffset);
+        after.selectNodeContents(element); after.setStart(ctx.range.endContainer, ctx.range.endOffset);
+        if (!before.toString() && !after.toString()) {
+          sourcePolicy.pasteRawFence(plain);
+          return;
+        }
+      }
       if (ownership.policy?.raw) {
         try { insertPlain(ctx, normalise(plain)); } catch (error) { reportError(error); }
         return;
@@ -1791,10 +1835,9 @@ window.MarkalooInlineFormatting = (() => {
     return {
       readSource() {
         if (!current()) fail('tableCells.stale');
-        const projected = tableFenceSurface(element, ownership, dependencies, sourcePolicy.resolveTableFenceLanguage);
-        return projected ? serializeSurface(projected.surface, projected.ownership, dependencies) :
-          serializeSurface(element, ownership, dependencies);
+        return serializeSurface(element, ownership, dependencies);
       },
+      isComposing: () => cell.composing === true,
       reset() { pendingHistory = null; cell.activeCode = null; cell.composing = false; cell.compositionRevision = (cell.compositionRevision || 0) + 1; },
       dispose() { disposed = true; pendingHistory = null; historyCarets = new WeakMap(); listeners.splice(0).forEach(remove => remove()); },
     };
@@ -1802,5 +1845,5 @@ window.MarkalooInlineFormatting = (() => {
 
   return { normalise, sourceView, projectContainer, spliceInput, serializeCell,
     prepareCell, markdownCode, codeSources, codeDelimiters, typingSlice,
-    attachInlineEditor, attachDialogContainment, serializeSurface, rawMarkdownPolicy, documentFrames };
+    attachInlineEditor, attachLiteralEditor, attachDialogContainment, serializeSurface, rawMarkdownPolicy, documentFrames };
 })();

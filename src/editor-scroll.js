@@ -176,6 +176,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       this.captureGaps = [];
       this.warnings = new Set();
       this.specials = { mermaid: [], raw: [] };
+      this.protected = [];
       this.selection = identity();
     }
     originalOffset(position, segments = this.segments) {
@@ -195,15 +196,39 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       const original = this.originalOffset(position);
       return original - upperBound(this.cr, original - 1, 'offset');
     }
-    replace(regex, replacer) {
+    replace(regex, replacer, outsideRaw = false) {
       const edits = [];
-      const next = this.text.replace(regex, (...args) => {
-        const match = args[0], from = args[args.length - 2];
+      const gap = (from, to) => this.text.slice(from, to).replace(regex, (...args) => {
+        args[args.length - 2] += from;
+        const match = args[0], start = args[args.length - 2];
         const text = replacer(...args);
-        edits.push({ from, to: from + match.length, text });
+        edits.push({ from: start, to: start + match.length, text });
         return text;
       });
+      let next;
+      if (outsideRaw && this.protected.length) {
+        const pieces = [];
+        let cursor = 0;
+        for (const span of this.protected) {
+          pieces.push(gap(cursor, span.start), this.text.slice(span.start, span.end));
+          cursor = span.end;
+        }
+        pieces.push(gap(cursor, this.text.length));
+        next = pieces.join('');
+      } else next = gap(0, this.text.length);
       if (!edits.length) return this.text;
+      let changed = 0, delta = 0;
+      const moved = position => {
+        while (changed < edits.length && edits[changed].to <= position) {
+          const edit = edits[changed++];
+          delta += edit.text.length - (edit.to - edit.from);
+        }
+        if (changed < edits.length && edits[changed].from < position) {
+          throw new Error('Raw table boundary was crossed by source preprocessing');
+        }
+        return position + delta;
+      };
+      this.protected = this.protected.map(span => ({ start: moved(span.start), end: moved(span.end) }));
       const segments = [];
       let cursor = 0, output = 0, index = 0;
       const copy = end => {
@@ -232,9 +257,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         linear: false, exactStart: false, exactEnd: false }];
       return next;
     }
-    prepare(parseEmoji) {
+    prepare(parseEmoji, marked = window.marked, rawHtmlFence) {
       this.replace(/^\uFEFF/, () => '');
-      this.replace(/:([a-zA-Z0-9_+-]+):/g, match => parseEmoji(match));
+      this.protected = window.MarkalooTableMarked.protectedRanges(this.text, marked, rawHtmlFence);
+      this.replace(/:([a-zA-Z0-9_+-]+):/g, match => parseEmoji(match), true);
       return this.text;
     }
     replaceSpecial(kind, regex, replacer) {
@@ -243,7 +269,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         this.specials[kind].push({ start: this.offset(from),
           end: this.offset(from + args[0].length), lines: [] });
         return replacer(...args);
-      });
+      }, true);
     }
     mark(html, descriptor) {
       const index = this.descriptors.push(descriptor) - 1;
@@ -347,6 +373,30 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
+          if (token.type === 'markalooRawTable') {
+            const descriptor = spans.get(token), read = token.syntax;
+            descriptor.kind = read.kind === 'complete' ? 'table' : 'literal';
+            const span = read.kind === 'complete' ? read.value.span : read.span;
+            descriptor.start = tokenView.at(span.start - token.at);
+            descriptor.end = tokenView.at(span.end - token.at);
+            if (read.kind === 'complete') {
+              const rows = [read.value.header, ...read.value.rows], cells = [token.header, ...token.rows];
+              descriptor.rows = rows.map(row => ({ start: tokenView.at(row.span.start - token.at),
+                end: tokenView.at(row.span.end - token.at) }));
+              if (readingEnabled) descriptor.readingTable = cells;
+              for (let r = 0; r < cells.length; r++) for (let c = 0; c < cells[r].length; c++) {
+                const cell = cells[r][c];
+                if (cell === null) continue;
+                const syntax = cell.syntax;
+                let view = sliceView(tokenView, syntax.content.start - token.at, syntax.content.end - token.at);
+                if (syntax.kind === 'inline') view = replaceView(view, /\\\|/g, () => '|');
+                const child = { start: view.at(0), end: view.at(view.text.length), view, kind: 'cell',
+                  row: r, column: c, owner: tokenOwner, root: false, inline: true, readingOnly: true };
+                spans.set(cell, child);
+                if (syntax.kind === 'inline') locate(cell.tokens, view, false, true, false, tokenOwner, true);
+              }
+            }
+          }
           if (!readingOnly && token.type === 'codespan') captureBody(spans.get(token), codeBody(token, tokenView));
           cursor = at + token.raw.length;
           const opaqueChildren = opaque || (this.coarseHtml && topLevel && containsHtml(token));
@@ -464,12 +514,25 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         };
       }
       const source = this;
+      const annotate = (kind, span, html, token) => {
+        const table = spans.get(token);
+        if (!table || table.opaque) return html;
+        if (kind === 'table' || kind === 'literal') return source.mark(html, table);
+        const view = sliceView(table.view, span.start, span.end);
+        const descriptor = { start: view.at(0), end: view.at(view.text.length), view,
+          kind, lines: [], owner: table.owner, root: false };
+        if (kind === 'code' && readingEnabled) {
+          descriptor.readingCode = { display: view.text,
+            runs: view.text ? [{ from: 0, display: view.text, view, kind: 'code' }] : [] };
+        }
+        return source.mark(html, descriptor);
+      };
       this.renderMapping = coarseHtml => {
         this.coarseHtml = coarseHtml;
         this.descriptors = [];
-        return marked.parse(this.text, { renderer, hooks });
+        return window.MarkalooTableMarked.create(marked, { annotate }).parse(this.text, { renderer, hooks });
       };
-      const html = marked.parse(this.text);
+      const html = window.MarkalooTableMarked.create(marked).parse(this.text);
       try {
         this.mappingHtml = this.renderMapping(false);
       } catch (error) {
@@ -2187,10 +2250,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     isCurrentSource(text) { return !!usable() && committed.source === text; },
     captureTextRange,
     sealTextSource,
+    captureTableDecoration(table) { return tablePresentation(table); },
     sealTableDecoration(source, table, before) {
       const receipt = source?.editableTables.get(table), sealed = tableReceipts.get(table);
-      if (source !== committed || source.selection !== identity() || source.source !== editor.value ||
-          !receipt || !table.isConnected || !preview.contains(table) || sealed?.presented !== before) return false;
+      if (!receipt || source !== committed || source.selection !== identity() || source.source !== editor.value ||
+          !table.isConnected || !preview.contains(table) || sealed?.presented !== before) return false;
       tableReceipts.set(table, { ...receipt, presented: tablePresentation(table) });
       return true;
     },

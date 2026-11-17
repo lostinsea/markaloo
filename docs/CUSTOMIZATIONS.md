@@ -29,28 +29,48 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ### Explicit code languages in rendered tables
 
-- Put an existing language class on the cell's code element:
-  `<code class="language-rust">let answer = 42;</code>`.
-- All locally bundled Prism grammars and aliases are available. `lang-*` works
-  too. Plain backticks, unknown languages and conflicting labels stay plain;
-  no language is guessed or downloaded.
-- Encode characters needed by Markdown/HTML: `&#124;` for a pipe, `&lt;` for
-  `<`, and `&amp;` for `&`. Markdown still parses inline HTML content: encode
-  literal backticks (`&#96;`), asterisks (`&#42;`) and backslashes (`&#92;`) too.
-- Highlighting keeps exact Markdown and copied text unchanged. Search counts
-  one logical match across token colors and clears without deleting tokens.
-- Inline cell code wraps. Preformatted code keeps its existing whitespace
-  and block behavior. Deferred highlighting preserves source-bound editing
-  and Reader correspondence.
-- In the Table edit popup, Update turns a complete whole-cell backtick fence
-  with a bundled language (for example, `json`) into highlighted cell code.
-  Line breaks, indentation and literal punctuation survive Save and reopening.
-  Spaces, tabs and blank lines outside the fence are retained, not trimmed.
-- Unknown, unlabelled, unfinished and mixed-content fences stay literal.
-  Already-encoded text is not decoded again. This is not a live typing preview.
-- Raw multiline fences inside pipe-table source rows are not supported.
-  Paste the labelled fence into the Table edit popup instead.
-- This does not add width metadata, autosave or a new Save interface.
+- A complete cell can hold a multiline backtick fence:
+
+`````markdown
+| Label | Snippet |
+| --- | --- |
+| Example | ```rust
+let answer = 42;
+println!("{answer}");
+``` |
+`````
+
+- Use standalone, top-level Markdown tables at document start or after a blank
+  line. A raw-code row needs both outer
+  pipes; the closing fence starts at column zero and resumes the row with a pipe.
+  Header cells and multiple cells in one row are supported.
+- Use at least three backticks. A closer needs at least the opening width.
+  Use a longer outer fence when the body contains a closing-looking line.
+- Name the language explicitly. All locally bundled Prism grammars and aliases
+  are available. Unknown and unlabelled fences stay plain code; no language is
+  guessed or downloaded.
+- Pipes, quotes, backslashes, HTML, emoji names and Markdown inside the fence
+  stay literal. They do not need HTML entities or table escaping.
+  Copy copies the body, without the fence or language label.
+- Raw cells use literal textareas in the Table edit popup. Paste a complete
+  whole-cell fence into an ordinary cell to switch it to the literal surface.
+  Invalid or unfinished drafts keep the popup open without changing the source.
+  Ordinary inline backtick spans are not treated as raw cells.
+- Update changes the document, not disk. Save stays explicit. No-op edits keep
+  the original source, including its BOM and line endings.
+- Local Undo/Redo keeps exact line endings when its saved version is unambiguous.
+  An uncertain history result keeps the draft but blocks Update and structural
+  changes. Cancel and reopen the table rather than guessing its source.
+- A missing closer shows the affected remainder literally with a warning.
+  A raw table with an uncertain Markdown block boundary shows its unchanged
+  source through EOF with a separate warning and no table-edit authority.
+- Authored inline HTML code can also declare a language:
+  `<code class="language-rust">let answer = 42;</code>`. `lang-*` works too.
+  This HTML form still needs Markdown/HTML escaping; raw fenced cells do not.
+  Conflicting HTML language labels stay plain.
+- Highlighting keeps source and copied text unchanged. Search counts one logical
+  match across token colors and clears without deleting tokens. Inline code wraps;
+  raw preformatted code keeps its whitespace and source-bound Reader mapping.
 
 ### Filtered table popup wrapping
 

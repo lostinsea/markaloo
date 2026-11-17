@@ -1,5 +1,434 @@
 "use strict";
 
+// Do not initialize the full product inventory or Electron for this bounded route.
+if (process.argv.includes("--raw-table-o2")) {
+  runRawTableO2();
+  return;
+}
+
+function runRawTableO2() {
+  const fs = require("fs"), path = require("path"), vm = require("vm");
+  const root = path.resolve(__dirname, ".."), results = [];
+  const check = (name, ok, detail) => {
+    results.push({ name, ok: !!ok });
+    console.log((ok ? "PASS " : "FAIL ") + name +
+      (!ok && detail !== undefined ? " -> " + JSON.stringify(detail) : ""));
+  };
+  const run = (name, action) => {
+    try { action(); }
+    catch (error) { check(name + " completed", false, error.stack); }
+  };
+  const equal = (actual, expected, name) => check(name, actual === expected, { actual, expected });
+  const normalized = value => value.replace(/\r\n|\r/g, "\n");
+  let cells, marked, fixture, ready = false;
+  const protect = (source, mask) => source
+    .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
+    .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
+  run("bounded dependency setup", () => {
+    if (process.argv.slice(2).some(arg => arg !== "--raw-table-o2") ||
+        process.env.MARKALOO_CELL_PROOF || process.env.MARKALOO_CELL_MOVEMENT_ONLY) {
+      throw new Error("--raw-table-o2 cannot be combined with other suite modes");
+    }
+    const parser = path.join(root, "libs", "vendor", "marked.min.js");
+    if (!fs.existsSync(parser)) throw new Error("Missing shipping parser: " + parser);
+    const parserContext = vm.createContext({ module: { exports: {} } });
+    parserContext.exports = parserContext.module.exports;
+    vm.runInContext(fs.readFileSync(parser, "utf8"), parserContext, { filename: parser });
+    marked = parserContext.module.exports;
+    const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
+    context.window = context;
+    for (const name of ["table-source.js", "table-marked.js", "inline-formatting.js", "table-cell-editor.js"]) {
+      const filename = path.join(root, "src", name);
+      vm.runInContext(fs.readFileSync(filename, "utf8"), context, { filename });
+    }
+    cells = context.window.MarkalooTableCells;
+    fixture = require("./fixtures/table-code-literals.js");
+    if (typeof context.window.MarkalooTableSource?.readCell !== "function" ||
+        typeof context.window.MarkalooTableMarked?.create !== "function" ||
+        typeof context.window.MarkalooTableMarked?.createTableReader !== "function" ||
+        fixture.cases.length !== 4 || typeof cells.replaceStructure !== "function") {
+      throw new Error("Bounded route requires the real shared provider and adapter APIs");
+    }
+    ready = true;
+    check("bounded route loads actual provider adapter editor and multilingual data only", true);
+  });
+  if (!ready) {
+    console.log("NOT RUN O2 cases: required real dependencies are unavailable");
+    process.exitCode = 1;
+    return;
+  }
+  const targetOf = (source, at = 0) => {
+    const model = cells.index(source, marked, protect), table = model.tables[at];
+    if (!table?.writable) throw new Error("Expected an actual writable table at " + at);
+    return { mode: cells.Mode.UPDATE_TABLE, model, table, rows: table.rows };
+  };
+  const content = (target, cell) => target.model.source.slice(cell.syntax.content.start, cell.syntax.content.end);
+  const snippet = (body, language = "rust", ending = "\n") =>
+    "`````" + language + ending + body.replace(/\n/g, ending) + ending + "`````";
+  const row = values => "| " + values.join(" | ") + " |";
+  const values = target => target.rows.map(original => ({
+    original, cells: original.cells.map(cell => content(target, cell)),
+  }));
+  const errorOf = action => {
+    try { action(); return null; } catch (error) { return error; }
+  };
+  for (const ending of ["\n", "\r\n"]) for (const sample of fixture.cases) {
+    for (const header of [false, true]) for (const column of [0, 1, 2]) {
+      run("raw slot " + JSON.stringify({ ending, sample: sample.id, header, column }), () => {
+        const code = snippet(sample.body, sample.language, ending);
+        const headings = ["Name", "Value", "Reference"], data = ["left", "middle", "right"];
+        (header ? headings : data)[column] = code;
+        const prefix = "# Before 😀" + ending + ending;
+        const table = [row(headings), "| :--- | :---: | ---: |", row(data),
+          "| neighbor | **unchanged** | `x\\|y` |"].join(ending);
+        const suffix = ending + ending + "After 日本語" + ending + ending + table;
+        const source = prefix + table + suffix, target = targetOf(source);
+        const selected = target.rows[header ? 0 : 1].cells[column], receipt = selected.syntax;
+        check("raw setup has logical rows complete snippet and original UTF16 identity",
+          target.rows.length === 3 && target.model.tables.length === 2 &&
+          target.table.syntax.input === target.model.syntax && target.model.syntax.text === source &&
+          target.model.syntax.space === "original" && receipt.kind === "raw" &&
+          content(target, selected) === code && selected.text === normalized(code) &&
+          target.model.view.offsets[selected.start] === receipt.content.start &&
+          target.model.view.offsets[selected.end] === receipt.content.end);
+        equal(cells.replaceCells(target, [], marked, protect), source, "raw no-op keeps all source bytes");
+        equal(cells.replaceStructure(target, [], values(target),
+          [0, 1, 2].map(originalIndex => ({ id: String(originalIndex), originalIndex })), marked, protect),
+        source, "raw identity structure keeps all source bytes");
+        const changed = code.replace("owned-before", "owned-after");
+        check("local edit changes a real code-body marker", changed !== code);
+        const output = cells.replaceCells(target, [{ cell: selected, text: changed }], marked, protect);
+        equal(output, source.slice(0, receipt.content.start) + changed + source.slice(receipt.content.end),
+          "raw local edit preserves all neighbors duplicate table and outside bytes");
+        equal(target.model.source, source, "Update candidate does not mutate captured source");
+      });
+    }
+  }
+  for (const ending of ["\n", "\r\n"]) run("multiple raw and structural " + JSON.stringify(ending), () => {
+    const rust = snippet("let value = \"😀 | :smile: @@@html\";\n\n\t// 日本語", "rust", ending);
+    const json = snippet('{\n\t"pipe": "a|b",\n\n  "html": "<b>&</b>"\n}', "application/json", ending);
+    const lines = [row([rust, "H", json]), "| :--- | :---: | ---: |",
+      row(["a", json, rust]), "| tail | plain | keep |"];
+    const source = lines.join(ending), target = targetOf(source), [header, a, b] = target.rows;
+    check("multiple raw setup contains two header and two body opaque cells",
+      header.cells.filter(cell => cell.syntax.kind === "raw").length === 2 &&
+      a.cells.filter(cell => cell.syntax.kind === "raw").length === 2);
+    equal(cells.replaceRows(target, [], [header, b, a].map(original => ({ original })), marked, protect),
+      [lines[0], lines[1], lines[3], lines[2]].join(ending),
+      "row movement carries complete multiline logical rows");
+    equal(cells.replaceRows({ ...target, mode: cells.Mode.UPDATE_ROWS, rows: [a] }, [],
+      [], marked, protect, [a]), [lines[0], lines[1], lines[3]].join(ending),
+    "selected-row deletion removes complete multiline row only");
+    const added = { id: "new", cells: [json, "inserted", rust] };
+    const inserted = cells.replaceRows(target, [], [{ original: header }, { original: a }, added,
+      { original: b }], marked, protect);
+    equal(inserted, [lines[0], lines[1], lines[2], row(added.cells), lines[3]].join(ending),
+      "row insertion accepts multiple fenced cells without physical-line splitting");
+    for (const permutation of [[2, 0, 1], [1, 2, 0], [1, 0, 2]]) {
+      const columns = permutation.map(originalIndex => ({ id: String(originalIndex), originalIndex }));
+      const order = target.rows.map(original => ({ original,
+        cells: permutation.map(c => content(target, original.cells[c])) }));
+      const moved = cells.replaceStructure(target, [], order, columns, marked, protect);
+      const expectedRow = original => "|" + permutation.map(c => {
+        const span = original.cells[c].syntax.slot;
+        return source.slice(span.start, span.end);
+      }).join("|") + "|";
+      equal(moved, [expectedRow(header), expectedRow(target.table.delimiter), expectedRow(a),
+        expectedRow(b)].join(ending), "column movement preserves complete original slots " + permutation);
+    }
+    for (const column of [0, 1, 2]) {
+      const columns = [0, 1, 2].filter(c => c !== column)
+        .map(originalIndex => ({ id: String(originalIndex), originalIndex }));
+      const order = target.rows.map(original => ({ original,
+        cells: columns.map(c => content(target, original.cells[c.originalIndex])) }));
+      const output = cells.replaceStructure(target, [], order, columns, marked, protect, [], [column]);
+      const parsed = targetOf(output);
+      check("column deletion preserves surviving raw/inline cells and alignment " + column,
+        JSON.stringify(parsed.rows.map(r => r.cells.map(c => c.text))) ===
+        JSON.stringify(order.map(entry => entry.cells.map(normalized))) &&
+        JSON.stringify(parsed.table.token.align) ===
+        JSON.stringify(columns.map(c => target.table.token.align[c.originalIndex])));
+    }
+    for (const column of [0, 1, 3]) {
+      const columns = [0, 1, 2].map(originalIndex => ({ id: String(originalIndex), originalIndex }));
+      columns.splice(column, 0, { id: "added" });
+      const order = values(target).map(entry => {
+        entry.cells.splice(column, 0, json);
+        return entry;
+      });
+      const output = cells.replaceStructure(target, [], order, columns, marked, protect);
+      const parsed = targetOf(output);
+      check("column insertion creates raw header/body slots at first middle or last " + column,
+        parsed.rows.every(r => r.cells.length === 4 && r.cells[column].syntax.kind === "raw"));
+      check("column insertion retains every preexisting complete slot byte for byte " + column,
+        target.rows.every((original, r) => original.cells.every((cell, c) => {
+          const before = cell.syntax.slot, after = parsed.rows[r].cells[c >= column ? c + 1 : c].syntax.slot;
+          return source.slice(before.start, before.end) === output.slice(after.start, after.end);
+        })));
+    }
+    const columns = [{ id: "last", originalIndex: 2 }, { id: "new" }, { id: "first", originalIndex: 0 }];
+    const changed = { cell: b.cells[2], text: rust };
+    const order = [{ original: header, cells: [json, rust, rust] },
+      { id: "new", cells: [json, rust, "inserted"] },
+      { original: b, cells: [rust, json, "tail"] }];
+    const output = cells.replaceStructure(target, [changed], order, columns, marked, protect, [a], [1]);
+    const slot = (owner, c) => source.slice(owner.cells[c].syntax.slot.start, owner.cells[c].syntax.slot.end);
+    equal(output, ["|" + slot(header, 2) + "| " + rust + " |" + slot(header, 0) + "|",
+      "|" + slot(target.table.delimiter, 2) + "| --- |" + slot(target.table.delimiter, 0) + "|",
+      row(order[1].cells), "| " + rust + " | " + json + " |" + slot(b, 0) + "|"].join(ending),
+    "combined row deletion insertion cell conversion and column replacement preserve surviving slots");
+  });
+  for (const source of ["Only\n| --- |\n| old |", "| Only |\n| --- |\nplain", "Only\n| --- |\nplain"]) {
+    run("native single-column raw conversion " + JSON.stringify(source), () => {
+      const target = targetOf(source), code = snippet("x|y\n\n\t😀", "rust");
+      for (const r of [0, 1]) {
+        const output = cells.replaceCells(target, [{ cell: target.rows[r].cells[0], text: code }], marked, protect);
+        const parsed = targetOf(output);
+        check("single-column conversion retains both logical rows and original alignment",
+          parsed.rows.length === 2 && parsed.rows[r].cells[0].syntax.kind === "raw" &&
+          parsed.rows[1 - r].cells[0].text === target.rows[1 - r].cells[0].text &&
+          parsed.table.token.align[0] === target.table.token.align[0]);
+      }
+      run("single-column delimiter native eligibility", () => {
+        const nativeHeading = cells.index("| Only |\n---\n| old |", marked, protect);
+        check("plain one-column delimiter cannot turn a native setext heading into a table",
+          nativeHeading.tables.length === 0 && nativeHeading.blocks.some(block => block.type === "heading"));
+        const source = "| ```rust\nx|y\n``` |\n---\n| keep |", target = targetOf(source);
+        check("a real framed raw header accepts its unframed single-column delimiter",
+          target.rows.length === 2 && target.table.syntax.value.hasRaw &&
+          target.table.delimiter.cells[0].text === "---");
+        equal(cells.replaceCells(target, [], marked, protect), source,
+          "raw single-column delimiter no-op retains exact source");
+      });
+    });
+  }
+  for (const ending of ["\n", "\r\n"]) for (const bom of ["", "\uFEFF"]) {
+    for (const finalEnding of ["", ending]) {
+      run("native plain-body logical receipts " + JSON.stringify({ ending, bom, finalEnding }), () => {
+        const code = snippet("let value = \"😀 | 日本語\";\n\n\t// owned-before", "rust", ending);
+        const lines = ["| Header |", "| :--- |", "plain 日本語😀", "| " + code + " |", "tail α😀"];
+        const source = bom + lines.join(ending) + finalEnding, target = targetOf(source);
+        check("mixed native plain/raw rows retain original Snapshot and absolute UTF16 receipts",
+          target.rows.length === 4 && target.table.syntax.input === target.model.syntax &&
+          target.rows.every(r => r.cells.length === 1 && r.syntax.cells[0] === r.cells[0].syntax) &&
+          content(target, target.rows[1].cells[0]) === lines[2] &&
+          content(target, target.rows[2].cells[0]) === code &&
+          content(target, target.rows[3].cells[0]) === lines[4]);
+        equal(cells.replaceCells(target, [], marked, protect), source,
+          "plain/raw interleaving no-op preserves BOM endings and EOF");
+        const cell = target.rows[2].cells[0], receipt = cell.syntax.content;
+        const changed = code.replace("owned-before", "owned-after");
+        equal(cells.replaceCells(target, [{ cell, text: changed }], marked, protect),
+          source.slice(0, receipt.start) + changed + source.slice(receipt.end),
+          "editing raw between native plain rows preserves every surrounding byte");
+        for (const r of [1, 3]) {
+          const original = target.rows[r], span = original.syntax.span;
+          equal(cells.replaceCells(target, [{ cell: original.cells[0], text: code }], marked, protect),
+            source.slice(0, span.start) + "|" + code + "|" + source.slice(span.end),
+            "native plain row conversion frames only its selected logical row " + r);
+        }
+        equal(cells.replaceRows(target, [], [target.rows[0], target.rows[3], target.rows[2], target.rows[1]]
+          .map(original => ({ original })), marked, protect),
+        bom + [lines[0], lines[1], lines[4], lines[3], lines[2]].join(ending) + finalEnding,
+        "movement carries complete plain/raw rows with exact final ending");
+      });
+    }
+  }
+  for (const tail of ["plain\n# Stop heading\n| after |",
+    "plain\n- item marker\n| after |", "plain\n> quote marker\n| after |",
+    "plain\n```text\noutside literal\n```\n| after |",
+    "plain\n<section>\noutside\n</section>\n| after |",
+    "lookahead\n---\n| after |", "plain\n\nAfter | paragraph"]) {
+    run("native plain-body real boundary " + JSON.stringify(tail), () => {
+      const code = snippet("let value = \"|\";\n\n\t😀", "rust");
+      const prefix = "| Header |\n| --- |\n";
+      const source = prefix + "| " + code + " |\n" + tail;
+      const control = prefix + "| ordinary |\n" + tail;
+      const native = new marked.Marked().lexer(control).find(token => token.type === "table");
+      check("boundary control has a real native table and later non-table source",
+        native?.rows.length >= 1 && native.raw.trimEnd().length < control.trimEnd().length);
+      const target = targetOf(source);
+      equal(JSON.stringify(target.rows.slice(2).map(r => r.cells.map(c => c.text))),
+        JSON.stringify(native.rows.slice(1).map(r => r.map(c => c.text))),
+        "shared original receipts stop at the actual full-input native boundary");
+      const cell = target.rows[1].cells[0], span = cell.syntax.content;
+      const changed = code.replace("let value", "let updated");
+      equal(cells.replaceCells(target, [{ cell, text: changed }], marked, protect),
+        source.slice(0, span.start) + changed + source.slice(span.end),
+        "raw edit retains rejected native block and all later source unchanged");
+    });
+  }
+  for (const boundary of ["# Stop | heading", "- item | marker", "> quote | marker",
+    "```text|note\noutside | literal\n```", "<section data-note=\"a|b\">\noutside\n</section>"]) {
+    run("uncertified raw boundary stays opaque " + JSON.stringify(boundary), () => {
+      const code = snippet("literal @@@html :smile: [ref]\n\n\t😀", "unknown");
+      const prefix = "# Before 😀\n\n", start = prefix.length;
+      const candidate = "| Header |\n| --- |\n| " + code + " |\nplain\n" + boundary +
+        "\n\n| Later |\n| --- |\n| [ref] |\n\n[ref]: /target\n\n```mermaid\nA-->B\n```";
+      const source = prefix + candidate, model = cells.index(source, marked, protect);
+      const ordinarySource = source.replace(code, "ordinary");
+      const ordinary = cells.index(ordinarySource, marked, protect);
+      const native = new marked.Marked().lexer(ordinarySource).filter(token => token.type === "table");
+      check("the same pipe-bearing boundary retains ordinary native tables without a refusal",
+        native.length === 2 && ordinary.tables.length === native.length && ordinary.otherTables.length === 0 &&
+        ordinary.tables.every((table, i) => table.writable &&
+          JSON.stringify(table.rows.map(r => r.cells.map(c => c.text))) ===
+          JSON.stringify([native[i].header, ...native[i].rows].map(r => r.map(c => c.text)))));
+      const ordinaryTable = ordinary.tables[0], ordinaryCell = ordinaryTable.rows[1].cells[0];
+      equal(cells.replaceCells({ mode: cells.Mode.UPDATE_TABLE, model: ordinary,
+        table: ordinaryTable, rows: ordinaryTable.rows }, [{ cell: ordinaryCell, text: "changed" }], marked, protect),
+      ordinarySource.replace("ordinary", "changed"), "ordinary Update preserves the same block boundary and later table");
+      const uncertain = model.otherTables[0];
+      check("refused raw candidate has no table authority through EOF",
+        model.tables.length === 0 && model.otherTables.length === 1 && uncertain?.uncertain &&
+        uncertain.syntax.kind === "refusal" && uncertain.syntax.input === model.syntax &&
+        uncertain.syntax.diagnostic.code === "native-boundary" &&
+        uncertain.syntax.span.start === start && uncertain.syntax.span.end === source.length &&
+        uncertain.start === start && uncertain.end === model.view.text.length);
+      equal(model.source.slice(start), candidate, "refusal preserves exact app syntax references and later source");
+      equal(model.source.slice(0, start), prefix, "refusal keeps preceding source unchanged");
+      check("refused candidate cannot authorize a source table update",
+        errorOf(() => cells.resolveSource(model, start, model.view.text.length,
+          cells.Mode.UPDATE_TABLE))?.message === "tableCells.mapping");
+    });
+  }
+  run("refusal keeps original receipts separate from the BOM CRLF facade", () => {
+    const prefix = "\uFEFF# Before 😀\r\n\r\n";
+    const code = snippet("literal 日本語😀 | @@@html", "unknown", "\r\n");
+    const source = prefix + "| Header |\r\n| --- |\r\n| " + code + " |\r\nplain\r\n# Stop | heading";
+    const model = cells.index(source, marked, protect), uncertain = model.otherTables[0];
+    check("refusal setup has genuinely different original and normalized offsets",
+      prefix.length !== normalized(prefix).length && source.length !== model.view.text.length);
+    check("refusal binds the full original Snapshot without relabeling normalized UTF16 coordinates",
+      model.tables.length === 0 && uncertain?.syntax.kind === "refusal" &&
+      uncertain.syntax.input === model.syntax && model.syntax.text === source && model.syntax.space === "original" &&
+      uncertain.syntax.span.start === prefix.length && uncertain.syntax.span.end === source.length &&
+      uncertain.syntax.next === source.length && uncertain.start === normalized(prefix).length &&
+      uncertain.end === model.view.text.length && model.view.offsets[uncertain.start] === prefix.length);
+  });
+  run("empty raw cells BOM and mixed endings", () => {
+    const source = "\uFEFF| ```\r\n``` | ````\r\n\r\n```` |\r\n| :--- | ---: |\n" +
+      "| first | second |\r\n| tail | keep |";
+    const target = targetOf(source), [header, a, b] = target.rows;
+    check("BOM raw setup keeps exact original Snapshot and separate empty fence separators",
+      target.table.start === 1 && target.table.syntax.input === target.model.syntax &&
+      header.cells.every(cell => cell.syntax.fence.body.start === cell.syntax.fence.body.end));
+    equal(cells.replaceCells(target, [], marked, protect), source, "empty raw cells keep exact BOM and mixed endings");
+    equal(cells.replaceRows(target, [], [header, b, a].map(original => ({ original })), marked, protect),
+      "\uFEFF| ```\r\n``` | ````\r\n\r\n```` |\r\n| :--- | ---: |\n" +
+      "| tail | keep |\r\n| first | second |",
+      "logical movement uses destination separators without changing internal raw CRLF");
+  });
+  run("ordinary row becomes raw", () => {
+    const source = "A|B|C\n:---|:---:|---:\nleft|middle|right\n\nAfter";
+    const target = targetOf(source), code = snippet("x | y\n\n\t😀", "c#"), cell = target.rows[1].cells[1];
+    equal(cells.replaceCells(target, [{ cell, text: code }], marked, protect),
+      "A|B|C\n:---|:---:|---:\n|left|" + code + "|right|\n\nAfter",
+      "only newly raw-bearing unframed row gets required outer pipes");
+    const empty = cells.index("", marked, protect);
+    equal(cells.insertTable(empty, 0, [["A", code]], marked, protect, cells.Mode.INSERT).source,
+      row(["A", code]) + "\n| --- | --- |", "Create accepts raw header content");
+  });
+  run("removing final raw ownership returns to ordinary source", () => {
+    const code = snippet("x|y\n\n\t😀", "rust");
+    const source = "| A | B |\n| :--- | ---: |\n| keep | " + code + " |", target = targetOf(source);
+    const columns = [{ id: "kept", originalIndex: 0 }];
+    const order = target.rows.map(original => ({ original, cells: [content(target, original.cells[0])] }));
+    const output = cells.replaceStructure(target, [], order, columns, marked, protect, [], [1]);
+    equal(output, "| A |\n| :--- |\n| keep |", "deleting the only raw column preserves ordinary surviving slots");
+    check("raw-column removal adopts a genuine ordinary native table", !targetOf(output).table.syntax.value.hasRaw);
+    const removed = target.rows[1];
+    equal(cells.replaceRows({ ...target, mode: cells.Mode.UPDATE_ROWS, rows: [removed] }, [], [],
+      marked, protect, [removed]), "| A | B |\n| :--- | ---: |\n",
+    "deleting the final multiline body row retains the preceding delimiter ending at EOF");
+  });
+  run("raw popup envelope and rejection", () => {
+    const source = "| A | B |\n| --- | --- |\n| old | keep |", target = targetOf(source);
+    const cell = target.rows[1].cells[0], code = snippet("x|y", "unknown");
+    equal(cells.replaceCells(target, [{ cell, text: "\t" + code + "  \n" }], marked, protect),
+      source.replace("old", "\t" + code + "  "), "popup padding is retained and final clipboard newline consumed");
+    for (const draft of ["```rust\nmissing", "```rust extra\nx\n```", code + "\n\n",
+      code + "\nprose", "```sql\nSELECT 1;\n``` | collision\n```"]) {
+      const error = errorOf(() => cells.replaceCells(target, [{ cell, text: draft }], marked, protect));
+      check("malformed popup Update rejects with cell-envelope and unchanged source",
+        error?.message === "tableCells.invalid" && error.diagnostic?.code === "cell-envelope" &&
+        Number.isSafeInteger(error.diagnostic.at.start) && target.model.source === source, error?.stack);
+    }
+    const collision = "```sql\nSELECT 1;\n``` | collision\n```";
+    const error = errorOf(() => cells.replaceCells(target, [{ cell, text: collision }], marked, protect));
+    equal(collision.slice(error.diagnostic.at.start, error.diagnostic.at.end), "``` | collision",
+      "closer collision diagnostic identifies exact body line instead of widening fences");
+    const rawSource = source.replace("old", code), rawTarget = targetOf(rawSource);
+    const incomplete = errorOf(() => cells.replaceCells(rawTarget,
+      [{ cell: rawTarget.rows[1].cells[0], text: "```rust" }], marked, protect));
+    check("an existing raw-cell incomplete single-line draft also rejects without source mutation",
+      incomplete?.message === "tableCells.invalid" && incomplete.diagnostic?.code === "cell-envelope" &&
+      rawTarget.model.source === rawSource);
+  });
+  run("ordinary single-line backticks remain authored Markdown", () => {
+    for (const text of ["```rust", "```rust extra", "```inline```"]) {
+      const source = "| A | B |\n| --- | --- |\n| " + text + " | keep |", target = targetOf(source);
+      check("single-line backtick setup is an ordinary inline cell", target.rows[1].cells[0].syntax.kind === "inline");
+      equal(cells.replaceStructure(target, [], values(target),
+        [0, 1].map(originalIndex => ({ id: String(originalIndex), originalIndex })), marked, protect),
+      source, "ordinary non-opener structure is an exact no-op");
+      equal(cells.replaceCells(target, [{ cell: target.rows[1].cells[0], text }], marked, protect),
+        source, "ordinary one-line Markdown Update is preserved");
+    }
+  });
+  run("malformed source and top-level ownership", () => {
+    const code = snippet("x|y\n\n\t😀", "mermaid");
+    const table = row(["A", code]) + "\n| --- | --- |\n| x | y |";
+    for (const source of ["``````text\n" + table + "\n``````",
+      table.split("\n").map(line => "> " + line).join("\n"),
+      "- item\n\n" + table.split("\n").map(line => "  " + line).join("\n"),
+      "<section>\n" + table + "\n</section>", "# A | " + code + "\n| --- | --- |\n| x | y |"]) {
+      check("container content cannot acquire writable raw-table authority",
+        !cells.index(source, marked, protect).tables.some(item => item.syntax?.value?.hasRaw));
+    }
+    const unclosed = "| ```rust\nx|y\n\n| A | B |\n| --- | --- |\n| x | y |";
+    const model = cells.index(unclosed, marked, protect);
+    check("unclosed source stays literal through EOF without guessed blank-line recovery",
+      model.tables.length === 0 && model.otherTables.length === 1 &&
+      model.otherTables[0].syntax.kind === "literal" &&
+      model.otherTables[0].syntax.diagnostic.code === "missing-fence" &&
+      model.otherTables[0].end === unclosed.length);
+    const target = targetOf(table), foreign = targetOf(table);
+    check("identical numeric spans from another Snapshot cannot authorize a cell edit",
+      errorOf(() => cells.replaceCells(target, [{ cell: foreign.rows[0].cells[1], text: code }],
+        marked, protect))?.message === "tableCells.invalid");
+    const stale = { ...target, model: { ...target.model, syntax: { ...target.model.syntax } } };
+    check("copied Snapshot object is not the captured original receipt identity",
+      errorOf(() => cells.replaceCells(stale, [], marked, protect))?.message === "tableCells.invalid");
+  });
+  run("reference definition controls", () => {
+    const code = snippet("literal :smile: @@@html\n| opaque |", "unknown");
+    for (const definitions of ["[r]: https://example.invalid/r\n\n",
+      "\n[r]: https://example.invalid/r\n\n[s]: /s\n\n"]) {
+      const source = definitions + "| A | B |\n| --- | --- |\n| [ref][r] | " + code + " |\n\n" +
+        "[forward]: /forward\n";
+      const target = targetOf(source);
+      check("public parser retains forward and preceding definition links",
+        target.model.links.r?.href === "https://example.invalid/r" &&
+        target.model.links.forward?.href === "/forward");
+      equal(cells.replaceCells(target, [], marked, protect), source,
+        "definition gaps do not change original coordinates or source bytes");
+    }
+    for (const source of ["[r]: same\n\nsame", '[r]: /x "title\nsame\nend"\n\nsame']) {
+      const model = cells.index(source, marked, protect), paragraph = model.blocks.find(block => block.type === "paragraph");
+      check("definition URL and multiline title duplicates cannot steal a later paragraph source span",
+        paragraph?.start === source.lastIndexOf("same") && paragraph.raw === "same" && model.links.r);
+    }
+  });
+  run("existing ordinary structural rows", () => structuralRowSourceTests(cells, marked, protect, check));
+  run("existing ordinary shared operations", () => sharedTableSourceTests(cells, marked, protect, check));
+  run("existing ordinary movement", () => movementTableSourceTests(cells, marked, protect, check));
+  console.log("NOT RUN full inventory, renderer/UI, native, global proofs, packaging, release gates");
+  const failed = results.filter(result => !result.ok).length;
+  console.log("=== O2 bounded: " + (results.length - failed) + "/" + results.length + " passed ===");
+  process.exitCode = failed ? 1 : 0;
+}
+
 const fs = require("fs");
 const movementOnly = process.argv.includes("--movement-source") || process.env.MARKALOO_CELL_MOVEMENT_ONLY === "1";
 const sourceOnly = movementOnly || process.argv.includes("--source");
@@ -117,6 +546,9 @@ async function sourceTests(core = false) {
   dialogGuardSourceTests();
   dialogCleanupSourceTests();
   const context = vm.createContext({ window: {}, Node: { TEXT_NODE: 3, COMMENT_NODE: 8, ELEMENT_NODE: 1 } });
+  context.window = context;
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-source.js"), "utf8"), context);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-marked.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "inline-formatting.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "src", "table-cell-editor.js"), "utf8"), context);
   const cells = context.window.MarkalooTableCells;
@@ -181,7 +613,7 @@ async function sourceTests(core = false) {
   const parserContext = vm.createContext({ exports: {}, module: { exports: {} } });
   parserContext.exports = parserContext.module.exports;
   vm.runInContext(fs.readFileSync(vendor, "utf8"), parserContext);
-  const marked = parserContext.module.exports.marked || parserContext.module.exports;
+  const marked = parserContext.module.exports;
   const protect = (source, mask) => source
     .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
     .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
@@ -426,7 +858,8 @@ async function sourceTests(core = false) {
   }
 }
 
-function sharedTableSourceTests(cells, marked, protect) {
+function sharedTableSourceTests(cells, marked, protect, report = check) {
+  const check = report, lf = text => text.replace(/\r\n|\r/g, "\n");
   const { Mode } = cells;
   const errorOf = action => {
     try { action(); return "accepted"; } catch (error) { return error.message; }
@@ -720,7 +1153,8 @@ function sharedTableSourceTests(cells, marked, protect) {
   }
 }
 
-function structuralRowSourceTests(cells, marked, protect) {
+function structuralRowSourceTests(cells, marked, protect, report = check) {
+  const check = report;
   const row = value => `| ${value} | keep |`;
   const added = (id, value) => ({ id, cells: [value, "keep"] });
   const own = original => ({ original });
@@ -1084,7 +1518,8 @@ async function tableCellToolbarLayoutChecks(page, check, wrapped) {
         Math.abs(move.bounds.left - structure.bounds.right - layout.gap) <= 1), layout);
 }
 
-function movementTableSourceTests(cells, marked, protect) {
+function movementTableSourceTests(cells, marked, protect, report = check) {
+  const check = report;
   const attempt = action => {
     try { return action(); }
     catch (error) { return { error: error.stack }; }

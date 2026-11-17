@@ -38,6 +38,164 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `raw-table-code-snippets` / `v0143-release` - **SOURCE REVIEW COMPLETE; QUALIFICATION OPEN**.
+  - User requested a separate following release for raw snippets in table cells.
+    Marked's documented extension API is available, but this would be custom
+    Markaloo syntax, not native or portable GFM support.
+  - Do not patch dependency internals or make a preview-only repair. Preserve
+    raw code and source mappings across render, edit and Save, not just
+    highlighting. User says no one uses 0.14.0-0.14.2: no migration or dual-format
+    tooling for their generated HTML-code cells. Ordinary authored HTML remains.
+  - The distinct verified 0.14.2 handoff is sent. Its closure is committed
+    locally as `a38076ec`; feature source must start at published `4dd14960`
+    without importing older register-only ancestry. Preserve the integration
+    branch, its history and all existing evidence.
+  - Astra mapped the implementation contract. Fresh independent Sol 6.1/high
+    and Luna 6/high agree on one conservative recognizer, exact source spans,
+    a public Marked extension, literal body editing and logical structural
+    operations. The later bounded example/API round resolves the earlier
+    blockers; implementation still needs its own independent reviews.
+  - User accepts the opaque-body principle: inside a valid matching fence,
+    pipes, newlines, quotes, backticks, emoji and Markdown-like text are data.
+    Any header/body column and multiple fenced cells per row are included.
+    A reserved closing line still ends the fence; a longer outer fence can
+    preserve shorter fence-looking body lines.
+  - Whole fenced cells in standalone top-level tables; backticks only, opening
+    width at least three and closing width at least the opening width. Raw rows
+    need outer pipes; a column-zero closer resumes the row with a pipe. Unknown
+    and unlabelled bodies remain plain code, with no language guessing.
+    Missing closers display the affected remainder literally with a warning.
+    Invalid popup Update retains the draft; new fenced pastes create raw syntax.
+    Popup body lines that would close a table cell need a longer outer fence.
+  - Implementation must distinguish original, newline-normalized and prepared
+    lexer coordinates; protect bodies before emoji/special-block transforms;
+    keep metadata authority; use literal-editor dirty detection; and validate
+    exact source before Delete Table mutates the DOM.
+  - Reserved owners: one helper for the pure recognizer and coupled guard;
+    one for the structural model and its entire existing test file; integration
+    alone for renderer, inline formatting, scroll metadata, script loading,
+    the shared public Marked adapter, separate integration tests, proofs and
+    this register. Guard test: `test/test-raw-table-cost.js`. Root staffs helpers;
+    whole-file ownership and bounded test routes apply.
+  - Independent QA prepared, but has not product-tested, a C#/Rust/JSON/SQL
+    corpus covering real strings/comments/operators, special characters,
+    Unicode, LF/CRLF, tabs and blank lines. Required checks cover Reader/Split,
+    popup Update, structural edits, exact Save/reopen, unchanged neighbors and
+    no-op Save. Snippets are display data and are never executed.
+  - Integration owns reusable C#/Rust/JSON/SQL literal fixtures. The existing
+    saved-test harness will target canonical raw behavior, not obsolete HTML
+    conversion expectations. No further historical compatibility campaign.
+  - Final contract: integration session `files/raw-table-design/final-contract.json`.
+    Astra settled the examples/API; independent Sol/Luna feedback agrees on the
+    shared fresh Marked adapter, popup collision rejection and source-coordinate
+    rules. Both requested the same reader/envelope/span clarifications, now
+    included. Luna preferred broader opaque labels; Sol considered that optional.
+    One non-whitespace/non-backtick token is accepted, without promising more
+    highlighting languages. Production implementation, its independent reviews
+    and raw-path acceptance remain open.
+  - O1's immutable parser API is integrated unchanged; focused shared-adapter
+    checks pass against it. O2 owns the logical model and structural tests.
+    Popup, production rendering, final review and candidate qualification remain
+    open. QA's frozen v1 corpus is separate data, not product qualification.
+  - Root approved a BOM-only preservation addendum:
+    `files/raw-table-design/contract-addendum-v1-bom.json`. Only a document-initial
+    BOM permits start offset 1 as a first-row boundary. Snapshots stay identical,
+    spans stay absolute, and the BOM remains outside the replaceable table.
+    No clipboard-envelope or bare-CR raw expansion. The original contract stays
+    unchanged; the consolidated production reviews include this refinement.
+  - O1's native provider handoff is `739717ae`. O2's native model/test follow-up
+    `3dd01aac` is imported unchanged as `daa18f04`, preserving `50a42602`.
+    O2 reports 756/756 against the exact shared wrapper/provider: both original
+    one-column plain-body conversions remain active and now pass.
+  - The owned shipping-section fixture passes popup, raw-header/multiple-cell,
+    document-initial BOM, mixed-ending input and native textarea Undo/Redo
+    checks: 92 passed, none failed. The raw render/copy route passes 70 checks,
+    including native plain/raw interleaving with BOM, CRLF and non-BMP text.
+    Copy-feedback markup originally invalidated table authority; owned
+    decoration resealing fixes both success and reset while rejecting
+    unowned text changes. Simulated composition retains the raw draft and
+    blocks semantic-to-raw replacement. No personal clipboard is used.
+  - These are bounded source/DOM checks, not full-app deferred rendering,
+    shipping Save/Undo or native qualification. Rust, JSON, SQL and saved JSON
+    original images were viewed. The first C# capture was blank; C# visual
+    qualification remains open. Capturing later images does not close it.
+  - Root approved one optional native plain-body capability, after a bounded
+    Astra seam pass. Integration owns the shared unextended native oracle;
+    O1 owns validated requests and canonical absolute rows; O2 consumes one
+    wrapper. The frozen API binding is
+    `files/raw-table-design/contract-addendum-v2-native-body.json`,
+    SHA256 `A416B6515FC0D742F9A32DF7B520CC6DD6419897A962B07823D4B8AA477EB081`.
+    O1, O2 and QA received it. The shared export is
+    `createTableReader(input, marked)`, returning a bound `readTable(start)`.
+    Absolute offsets stay in the supplied Snapshot's space; callback checks
+    preserve its identity, text and space. O1's native provider follow-up
+    `739717ae` is imported unchanged as `7615ec61`. The bounded Astra seam pass
+    is complete. Shared wrapper checks pass against the actual provider,
+    preserving real lookahead/final-newline boundaries and opaque raw rows.
+    No second Markdown parser or skipped native block stops. O2 consumed the
+    immutable wrapper; both original conversion failures now pass unchanged.
+  - Root approved a separate refusal supplement:
+    `files/raw-table-design/contract-supplement-v3-native-refusal.json`,
+    SHA256 `78D2AF1B22D17D8EB87C6F6C51443AF9D6F8930263D0F65C24B1D75940800E76`.
+    A recognized raw candidate without a certified native boundary shows its
+    unchanged source through EOF with a distinct warning, not table authority
+    or native fallback. Ordinary null results are unchanged. Shared-adapter
+    checks pass 27/27; the owned raw route passes 70 checks, including refusal
+    through full/light preprocessing and detached metadata.
+  - Bounded in-memory reverts prove copy-feedback resealing, the composing
+    paste guard and native-boundary opacity: exact expected failures occur
+    while named controls pass.
+    Production files are never mutated. An initial proof-fixture setup failure
+    was corrected and its evidence retained.
+  - The ordinary-input fast gate removes unnecessary discovery lexing.
+    Quiet diagnostic medians for protection are 0.26/2.39/0.53 ms on the
+    prose/table/code inputs, not a render-performance acceptance result.
+    The ordinary-table adapter still measures 124.7 ms versus 112.0 ms native;
+    no blanket no-regression claim is made.
+  - Production review round 1 is complete. Sol and Luna agree that ordinary
+    single-line triple-backtick pastes were wrongly promoted to raw drafts;
+    Sol treated it as blocking and Luna as nonblocking. Sol also found stale
+    copy-feedback authority after DOM reuse/search and non-native widths for
+    short/long ordinary rows inside raw tables. Luna did not confirm these
+    other findings. Integration reproduced and corrected all three issues.
+  - Reused copy controls and pending feedback follow the current Source;
+    decoration snapshots ignore only recognized search wrappers. Ordinary
+    paste still uses the semantic editor; genuine incomplete raw openers stay
+    repairable rejected drafts. Native row padding has no source annotation,
+    and clipping never changes canonical provider receipts.
+    Adapter 27/27, raw route 66/66 and popup 84/84 pass. Focused in-memory
+    reverts independently remove each correction and produce exactly the
+    intended failures with named controls still passing. Test-only setup
+    failures remain in the evidence; no production files were mutated.
+  - Final production review round 2 found two in-scope Sol defects: synthetic
+    row padding erased document-wide metadata, and repeated visible textarea
+    values overwrote distinct exact newline versions. Both were reproduced.
+    Metadata now skips only receipt-free padding. Literal history retains
+    ordered exact versions and restores only a unique directional match.
+    Missing or ambiguous history keeps the draft and blocks Update and
+    structural changes until Cancel/reopen; source is never guessed.
+  - Luna withdrew its heading-adjacent blocker after the frozen-scope check.
+    A raw table must start at document start or after a blank physical line.
+    The nonblank heading-adjacent example stays ordinary Markdown; its paired
+    blank-line example preserves literal code and Reader authority. Both pass.
+    No eligibility expansion or additional design/review campaign.
+  - Corrected raw 70/70 and popup 92/92 pass. Exact bounded in-memory reverts
+    independently prove metadata, repeated-value restoration, same-visible
+    history handling and failed-history mutation guards. A real valid raw-row
+    move and exact Update prove the structural probe can succeed; removing its
+    guard actually moves rows, not just changes an error message.
+    Evidence: integration session `files/raw-table-design/review2-proven-a2/`.
+    Original failure logs and earlier proof attempts remain preserved.
+    Both final reviewers accepted the round-one and final corrections; no
+    blocker or remaining disagreement within this source-review scope.
+    Sol inspected the supplied proof records; Luna inspected code/tests but
+    did not independently verify execution results. Neither ran tests/apps.
+    Receipt: `files/raw-table-design/review2-final-adjudication.json`.
+    Fresh combined provider 25/25, guard 12/12, adapter 27/27 and model 756/756
+    pass; syntax and named source-identity/CRLF/diff checks pass.
+    Full-app deferred rendering, shipping Save/document Undo, native, C# visual,
+    representative performance, wider proofs and candidate QA remain open.
+
 - `saved-table-code-paste-padding` / `v0142-release` - **FIX VERIFIED; INDEPENDENT REVIEW NEXT**.
   - New report: popup paste/Update/Save leaves escaped fences and `<br>` literal.
     The later raw multiline pipe-table workaround is a separate unsupported path,
