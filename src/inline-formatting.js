@@ -1238,16 +1238,21 @@ window.MarkalooInlineFormatting = (() => {
     };
     if (!collect(input)) return null;
     const text = normalise(pieces.join(''));
-    const fence = /^(`{3,})([\w-]+)[ \t]*\n([\s\S]*?)\n(`{3,})$/.exec(text);
-    if (!fence || fence[0] !== text || fence[4].length < fence[1].length) return null;
+    const padded = /^([ \t\n]*)(`[\s\S]*`)([ \t\n]*)$/.exec(text);
+    if (!padded) return null;
+    const fenced = padded[2];
+    const fence = /^(`{3,})([\w-]+)[ \t]*\n([\s\S]*?)\n(`{3,})$/.exec(fenced);
+    if (!fence || fence[0] !== fenced || fence[4].length < fence[1].length) return null;
     const language = resolveLanguage(fence[2]);
     if (!language) return null;
     const { marked, transform, sanitize } = dependencies;
-    const tokens = marked.lexer(text);
-    if (tokens.length !== 1 || tokens[0].type !== 'code' || tokens[0].raw !== text) return null;
+    const tokens = marked.lexer(fenced);
+    if (tokens.length !== 1 || tokens[0].type !== 'code' || tokens[0].raw !== fenced) return null;
     // Keep a physical table row single-line, without expanding emoji inside code.
-    const source = '<code class="language-' + language + ' table-fenced-code">' +
-      encodeCellText(fence[3]).replace(/:/g, '&#58;') + '</code>';
+    // Encode outside padding too, so the table parser cannot trim it away.
+    const padding = value => value.replace(/[ \t\n]/g, char => '&#' + char.charCodeAt(0) + ';');
+    const source = padding(padded[1]) + '<code class="language-' + language + ' table-fenced-code">' +
+      encodeCellText(fence[3]).replace(/:/g, '&#58;') + '</code>' + padding(padded[3]);
     const surface = document.createElement('div');
     const ownership = prepareCell(surface, source, source, marked, provenance.links, transform, sanitize);
     if (surface.querySelector('code')?.textContent !== fence[3]) fail('tableCells.cellType');

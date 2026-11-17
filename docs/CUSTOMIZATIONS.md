@@ -45,8 +45,11 @@ This approach means after an upstream merge, you only need to ensure these files
 - In the Table edit popup, Update turns a complete whole-cell backtick fence
   with a bundled language (for example, `json`) into highlighted cell code.
   Line breaks, indentation and literal punctuation survive Save and reopening.
-- Unknown, unlabelled, unfinished, padded and mixed-content fences stay literal.
+  Spaces, tabs and blank lines outside the fence are retained, not trimmed.
+- Unknown, unlabelled, unfinished and mixed-content fences stay literal.
   Already-encoded text is not decoded again. This is not a live typing preview.
+- Raw multiline fences inside pipe-table source rows are not supported.
+  Paste the labelled fence into the Table edit popup instead.
 - This does not add width metadata, autosave or a new Save interface.
 
 ### Filtered table popup wrapping

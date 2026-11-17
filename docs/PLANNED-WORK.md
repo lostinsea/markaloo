@@ -38,6 +38,33 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `saved-table-code-paste-padding` / `v0142-release` - **FIX VERIFIED; INDEPENDENT REVIEW NEXT**.
+  - New report: popup paste/Update/Save leaves escaped fences and `<br>` literal.
+    The later raw multiline pipe-table workaround is a separate unsupported path,
+    not evidence of deletion by the popup. Do not change the Markdown dependency.
+  - Astra found whole-cell conversion rejects leading space/trailing newline.
+    Preserve surrounding whitespace instead of trimming it; keep code-body text,
+    explicit-language checks and escaped/encoded literal safety unchanged.
+  - Original source with the new focused cases: 29 passed, six expected failures.
+    Corrected source: 35 passed, none failed. The existing rendered-code fixture
+    also passes. Bounded shipping reverts produce their exact expected failures
+    with their required passing controls; original source bytes are restored.
+    Global proof initialization remains outside the permitted local scope.
+  - Actual guest clipboard Ctrl+V reproduced literal fences on the original
+    source. The candidate passes popup Update -> actual Main Save -> Exit ->
+    Reader Reload -> normal app exit/relaunch -> popup reopen/unchanged Save.
+    Code body, outside whitespace, complete table shape/neighbors and outside
+    CRLF bytes are exact. No popup-path data loss was reproduced.
+  - Evidence: CLI session `f30454e4-c640-4f97-8751-6c2599c27661`,
+    `files/fenced-paste/native/verification.json`, SHA256
+    `F9AC28544774B929DC4925606DB5FBA12DB41FBCB43F5D0836D105D6EC11EB71`.
+    All native screenshots were viewed. This used curated shipping sources,
+    isolated startup and read-only observation, not an installed-package test.
+    Owned guest `69e1b1c9` is destroyed; no sandbox or owned runtime remains.
+  - User authorized publication as 0.14.2 after the fix and fresh independent
+    Sol/Luna review, at most two rounds. Freeze the reviewed source and use the
+    normal complete release pipeline. No raw multiline syntax in this release;
+    published 0.14.1 remains unchanged and does not contain this correction.
 - `v0141-release` - **LOCAL UNSIGNED CANDIDATE BUILT; PUBLICATION HELD**.
   - Publish as 0.14.1 only after all fixes are done and relevant targeted tests
     pass. Authorization does not waive native, full-app or exclusion blockers.

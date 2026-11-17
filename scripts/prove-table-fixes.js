@@ -2153,6 +2153,10 @@ const SAVED_TABLE_CODE_REVERTS = [
       /^saved cell reopened code edit preserves literal payload and source authority$/,
       /^saved cell bundled language and alias JS survive CRLF input$/,
       /^saved cell bundled language and alias rust survive CRLF input$/,
+      ...["leading-space", "trailing-break", "padded"].flatMap(label => [
+        new RegExp("^saved cell " + label + " fence converts without losing whitespace or table bytes$"),
+        new RegExp("^saved cell " + label + " reopened code edit preserves padding and table bytes$"),
+      ]),
     ],
   },
   {
@@ -2174,7 +2178,20 @@ const SAVED_TABLE_CODE_REVERTS = [
     file: path.join(SRC, "inline-formatting.js"),
     from: "    const text = normalise(pieces.join(''));",
     to: "    const text = normalise(pieces.join('')).trim();",
-    expect: [/^saved cell padded fence stays literal$/, /^saved cell trailing-break fence stays literal$/],
+    expect: ["leading-space", "trailing-break", "padded"].flatMap(label => [
+      new RegExp("^saved cell " + label + " fence converts without losing whitespace or table bytes$"),
+      new RegExp("^saved cell " + label + " reopened code edit preserves padding and table bytes$"),
+    ]),
+  },
+  {
+    id: "0141-SAVED-CELL-PADDED-FENCE", what: "reject a labelled cell fence with surrounding whitespace",
+    file: path.join(SRC, "inline-formatting.js"),
+    from: "    const fenced = padded[2];",
+    to: "    const fenced = text;",
+    expect: ["leading-space", "trailing-break", "padded"].flatMap(label => [
+      new RegExp("^saved cell " + label + " fence converts without losing whitespace or table bytes$"),
+      new RegExp("^saved cell " + label + " reopened code edit preserves padding and table bytes$"),
+    ]),
   },
 ].map(revert => ({
   ...revert, suite: "test:saved-table-code", requireExactFailures: true,
@@ -2190,6 +2207,9 @@ const SAVED_TABLE_CODE_REVERTS = [
     /^saved cell unclosed fence stays literal$/,
     /^saved cell mixed fence stays literal$/,
     /^saved cell multiple fence stays literal$/,
+    /^saved cell padded-unknown fence stays literal$/,
+    /^saved cell padded-mixed fence stays literal$/,
+    /^saved cell escaped saved representation reopens without source changes$/,
     /^saved cell already encoded literal input is not decoded as markup or a fence$/,
     /^saved cell guest has no external requests or unexpected errors$/,
     /^saved cell owned windows are closed$/,

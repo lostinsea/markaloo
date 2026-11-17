@@ -297,12 +297,51 @@ async function run() {
     check("saved cell bundled language and alias "+label+" survive CRLF input",
       observed.code === body && observed.tokens > 0 && observed.receipt === "bound",observed);
   }
+  const paddedBody = '\n\t{\n  "padded": true  \n}\t \n\n';
+  const paddedCases = [
+    ["leading-space", " ", json, ""],
+    ["trailing-break", "", json, "\n"],
+    ["padded", " \t\n  ", paddedBody, " \t\n\n"],
+  ];
+  for (const [label, before, body, after] of paddedCases) {
+    const text = before + "```json\n" + body + "\n```" + after;
+    await execute("fixture.load()");
+    await execute("fixture.open()");
+    const setup = await execute("fixture.paste("+JSON.stringify(text)+")");
+    check("saved cell "+label+" paste preserves its whitespace setup",
+      setup.text.replace(/\r\n/g,"\n") === text && !setup.code,setup);
+    const saved = await execute("fixture.update()");
+    const observed = await execute("fixture.reader("+JSON.stringify(saved.exact)+")");
+    fs.writeFileSync(path.join(output,label+"-saved.md"),saved.exact);
+    fs.writeFileSync(path.join(output,label+"-reader.json"),JSON.stringify(observed,null,2));
+    check("saved cell "+label+" fence converts without losing whitespace or table bytes",
+      observed.code === body && observed.text === before + body + after &&
+      observed.tokens > 0 && observed.receipt === "bound" &&
+      observed.rows === 3 && observed.columns === 3 &&
+      saved.history.length === 1 && saved.history[0] === original &&
+      saved.exact.startsWith(original.slice(0,original.indexOf("replace me"))) &&
+      saved.exact.endsWith(original.slice(original.indexOf("replace me")+"replace me".length)),observed);
+    await execute("fixture.open()");
+    const reopened = await execute("fixture.update()");
+    check("saved cell "+label+" converted fence reopens without source changes",
+      reopened.exact === saved.exact,reopened);
+    await execute("fixture.open()");
+    const changed = await execute("fixture.editText("+JSON.stringify(body === json ? "synthetic-42" : "true")+","+
+      JSON.stringify(body === json ? "synthetic-43" : "false")+",true)");
+    const edited = await execute("fixture.update()");
+    const final = await execute("fixture.reader("+JSON.stringify(edited.exact)+")");
+    const expected = body.replace(body === json ? "synthetic-42" : "true",body === json ? "synthetic-43" : "false");
+    check("saved cell "+label+" reopened code edit preserves padding and table bytes",
+      changed && final.code === expected && final.text === before + expected + after &&
+      final.tokens > 0 && edited.exact === saved.exact.replace(
+        body === json ? "synthetic-42" : "true",body === json ? "synthetic-43" : "false"),final);
+  }
   const controls = [
     ["unknown","```not-supported\n{}\n```"], ["unlabelled","```\n{}\n```"],
     ["unclosed","```json\n{}"], ["mixed","prefix\n```json\n{}\n```"],
     ["multiple","```json\n{}\n```\n```json\n{}\n```"],
-    ["padded","  ```json\n{}\n```  "],
-    ["trailing-break","```json\n{}\n```\n"],
+    ["padded-unknown"," ```not-supported\n{}\n```\n"],
+    ["padded-mixed"," prefix\n```json\n{}\n``` "],
   ];
   for (const [label, text] of controls) {
     await execute("fixture.load()");
@@ -315,6 +354,10 @@ async function run() {
   }
   const escapedFence = "\\`\\`\\`json<br>{}<br>\\`\\`\\`";
   await execute("fixture.load("+JSON.stringify(original.replace("replace me",escapedFence))+")");
+  await execute("fixture.open()");
+  const escapedNoop = await execute("fixture.update()");
+  check("saved cell escaped saved representation reopens without source changes",
+    escapedNoop.exact === original.replace("replace me",escapedFence),escapedNoop);
   await execute("fixture.open()");
   await execute("fixture.editText('{}','{ }')");
   const escapedUpdate = await execute("fixture.update()");
