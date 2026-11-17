@@ -10,7 +10,7 @@
     'tableCells.missingFence': 'This code fence is not closed. Add a matching closing fence and a pipe. The unchanged source is shown below.',
     'tableCells.rawTableInvalid': 'This fenced table needs a delimiter row and matching columns. The unchanged source is shown below.',
     'tableCells.nativeBoundary': 'This fenced table crosses a Markdown block boundary. The unchanged source is shown below.',
-    'tableCells.cellEnvelope': 'Keep one complete code fence in the cell, with no text outside it. Use a longer outer fence if a code line would close the cell.',
+    'tableCells.cellEnvelope': 'Keep one complete code fence in the cell. Only spaces, tabs and blank lines may sit outside it. Use a longer outer fence if a code line would close the cell.',
   });
   const escape = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -23,7 +23,7 @@
     return before < 0 || text[before] === '\n' || before === 0 && text[0] === '\uFEFF';
   };
 
-  const mayHaveRaw = text => /(?:^|\n)\uFEFF?\|[^\r\n]*`{3}/.test(text);
+  const mayHaveRaw = text => /(?:^|\n)\uFEFF?\|[^\r\n]*(?:\r?\n[ \t]*)*`{3}/.test(text);
 
   function createTableReader(input, marked) {
     const text = input.text, space = input.space, receipts = new Map();
@@ -31,15 +31,34 @@
     const analyse = () => {
       if (tables) return;
       const entries = [], delimiters = new Map(), chunks = [];
-      let projected = 0, scannedHeader = 0, candidate = false;
+      const native = nativeParser(marked), fences = new marked.Lexer(native.defaults).tokenizer;
+      const normalized = text.replace(/\r\n?/g, '\n');
+      let normalizedAt = text[0] === '\uFEFF' ? 1 : 0;
+      let projected = 0, scannedHeader = 0, candidate = null;
       for (let at = text[0] === '\uFEFF' ? 1 : 0; at < text.length;) {
         const lf = text.indexOf('\n', at), next = lf < 0 ? text.length : lf + 1;
         const end = lf < 0 ? next : lf - (text[lf - 1] === '\r' ? 1 : 0);
         const line = text.slice(at, end);
-        if (!line.trim()) candidate = false;
+        const fence = /^[ \t]*[`~]{3}/.test(line) &&
+          fences.fences(normalized.slice(normalizedAt));
+        if (fence) {
+          // Use native fence ownership before looking for tables inside it.
+          let end = at;
+          for (let i = 0; i < fence.raw.length; i++, end++) {
+            if (text[end] === '\r' && text[end + 1] === '\n') end++;
+          }
+          entries.push({ start: at, end, raw: false, projected });
+          chunks.push(fence.raw);
+          projected += fence.raw.length;
+          normalizedAt += fence.raw.length;
+          candidate = null;
+          at = end;
+          continue;
+        }
+        if (!line.trim()) candidate = null;
         if (rootBoundary(text, at) && at >= scannedHeader) {
-          const header = source.readTable(input, at);
-          candidate = header?.kind === 'complete';
+          const header = source.readTableHeader(input, at);
+          candidate = header?.kind === 'complete' ? header : null;
           if (candidate) {
             scannedHeader = header.next;
             const delimiter = header.value.delimiter;
@@ -52,7 +71,16 @@
             }
           }
         }
-        const read = candidate && line[0] === '|' && line.includes('```') ? source.readRow(input, at) : null;
+        let read = null;
+        if (candidate && at === candidate.value.header.span.start) {
+          const row = candidate.value.header;
+          read = { kind: 'complete', value: row, next: row.ending.end };
+        } else if (candidate && line[0] === '|') {
+          // Width enables projection/protection, never native table authority.
+          const body = at >= candidate.value.delimiter.ending.end;
+          read = body ? source.readRow(input, at, candidate.value.header.cells.length)
+            : source.readRow(input, at);
+        }
         const raw = read && (read.kind === 'literal' || read.value.cells.some(cell => cell.kind === 'raw'));
         const entry = { start: at, end: raw ? read.next : next, raw: !!raw, projected };
         let value = delimiters.get(at) || line;
@@ -66,9 +94,10 @@
         chunks.push(value);
         projected += value.length;
         entries.push(entry);
+        normalizedAt += text.slice(at, entry.end).replace(/\r\n?/g, '\n').length;
         at = entry.end;
       }
-      const projection = chunks.join(''), tokens = nativeParser(marked).lexer(projection);
+      const projection = chunks.join(''), tokens = native.lexer(projection);
       const forward = [], backward = [];
       let cursor = 0;
       for (const token of tokens) {

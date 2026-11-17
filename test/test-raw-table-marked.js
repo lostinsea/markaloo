@@ -93,6 +93,258 @@ test('a document-initial BOM stays outside absolute table receipts and literal c
   assert.equal(text.slice(ranges[0].start, ranges[0].end), fenced);
 });
 
+for (const eol of ['\n', '\r\n']) for (const column of [0, 1, 2]) test(
+  `padded body column ${column + 1} ${eol === '\n' ? 'LF' : 'CRLF'} keeps literal spans`, () => {
+    const body = '\uFEFFdata \u{1f642} | <script>literal</script>\n@@@html\n:smile:\n@@@';
+    const fenced = snippet(body, 'rust', eol);
+    const cells = ['first', 'middle', 'last'];
+    cells[column] = ' \t' + eol + '\t' + eol + '  ' + fenced + ' \t' + eol + '\t' + eol + ' ';
+    const prefix = '\uFEFF' + eol + eol + '# Before \u{1f642}' + eol + eol;
+    assert.equal(new marked.Marked({ ...marked.defaults }).lexer(prefix)
+      .filter(token => token.type === 'heading').length, 1);
+    const text = prefix + wrap(cells, eol) + eol + '# After';
+    const annotations = [], parser = tables.create(marked, { annotate(kind, span, html, token) {
+      annotations.push({ kind, span, at: token.at });
+      return html;
+    } });
+    const tokens = parser.lexer(text), raw = tokens.filter(token => token.type === 'markalooRawTable');
+    assert.equal(raw.length, 1);
+    assert.equal(raw[0].syntax.kind, 'complete');
+    assert.equal(raw[0].syntax.value.rows.length, 1);
+    const html = parser.parser(tokens);
+    assert.deepEqual(bodies(html), [body]);
+    assert.equal((html.match(/<td/g) || []).length, 3);
+    assert.equal((html.match(/<h1/g) || []).length, 2);
+    assert.ok(!html.includes('<script>') && !html.includes('table-source-warning'));
+    const code = annotations.filter(entry => entry.kind === 'code');
+    assert.equal(code.length, 1);
+    const lexerText = raw[0].syntax.input.text;
+    assert.equal(lexerText.slice(code[0].at + code[0].span.start, code[0].at + code[0].span.end), body);
+    const source = tables.createTableReader({ text, space: 'original' }, marked)(prefix.length);
+    assert.equal(source.kind, 'complete');
+    const cell = source.value.rows[0].cells[column];
+    assert.equal(text.slice(cell.content.start, cell.content.end), fenced);
+    assert.equal(text.slice(cell.fence.body.start, cell.fence.body.end), body.replace(/\n/g, eol));
+    const ranges = tables.protectedRanges(text, marked);
+    assert.equal(ranges.length, 1);
+    assert.equal(text.slice(ranges[0].start, ranges[0].end), fenced);
+  });
+
+for (const eol of ['\n', '\r\n']) test(
+  `padding discovery preserves separate native blocks ${eol === '\n' ? 'LF' : 'CRLF'}`, () => {
+    for (const lastRow of ['| first | middle | last |', '| first | ']) {
+      const text = ['| A | B | C |', '| --- | --- | --- |', lastRow, '',
+        '```rust', 'separate | body', '```', ''].join(eol);
+      assert.equal(tables.create(marked).parse(text),
+        new marked.Marked({ ...marked.defaults }).parse(text));
+      assert.deepEqual(tables.protectedRanges(text, marked), []);
+    }
+  });
+
+test('padded raw rows after native plain runs reuse first-slot authority', () => {
+  for (const header of ['Only', '| Only |']) for (const eol of ['\n', '\r\n']) {
+    const body = '\uFEFFliteral | data\n  ````\nstill body';
+    const fenced = snippet(body, 'rust', eol);
+    const text = [header, '| --- |', 'plain before',
+      row([' \t' + eol + '\t' + fenced + eol + ' \t']), 'plain after'].join(eol);
+    const input = { text, space: 'original' }, receipt = tables.createTableReader(input, marked)();
+    assert.equal(receipt.kind, 'complete');
+    assert.equal(receipt.next, text.length);
+    assert.equal(receipt.value.rows.length, 3);
+    assert.equal(text.slice(receipt.value.rows[1].cells[0].content.start,
+      receipt.value.rows[1].cells[0].content.end), fenced);
+    assert.deepEqual(bodies(tables.create(marked).parse(text)), [body]);
+    const ranges = tables.protectedRanges(text, marked);
+    assert.equal(ranges.length, 1);
+    assert.equal(text.slice(ranges[0].start, ranges[0].end), fenced);
+  }
+});
+
+test('projection width changes with each provider table receipt', () => {
+  const text = [3, 1, 2].map(width => {
+    const cells = Array.from({ length: width }, () => 'neighbor');
+    cells[width - 1] = ' \n\t' + snippet('body ' + width) + '\n ';
+    return row(cells.map((cell, index) => 'Header ' + index)) + '\n' +
+      row(cells.map(() => '---')) + '\n' + row(cells);
+  }).join('\n\n');
+  const parser = tables.create(marked), tokens = parser.lexer(text);
+  const raw = tokens.filter(token => token.type === 'markalooRawTable');
+  assert.equal(raw.length, 3);
+  assert.deepEqual(raw.map(token => token.syntax.value.header.cells.length), [3, 1, 2]);
+  assert.deepEqual(bodies(parser.parser(tokens)), ['body 3', 'body 1', 'body 2']);
+});
+
+test('wider plain-body gaps retain refusal and literal protection, not table authority', () => {
+  for (const width of [2, 3]) for (const eol of ['\n', '\r\n']) {
+    for (const padded of [false, true]) {
+      const fenced = snippet('@@@html\n<script>literal | data</script>\n@@@', 'rust', eol);
+      const cells = Array.from({ length: width }, () => 'neighbor');
+      cells[width - 1] = padded ? ' \t' + eol + fenced + eol + '\t ' : fenced;
+      const text = [row(cells.map((cell, index) => 'Header ' + index)),
+        row(cells.map(() => '---')), 'plain', row(cells)].join(eol);
+      const receipt = tables.createTableReader({ text, space: 'original' }, marked)();
+      assert.equal(receipt.kind, 'refusal');
+      assert.equal(receipt.diagnostic.code, 'native-boundary');
+      assert.deepEqual(receipt.span, { start: 0, end: text.length });
+      const html = tables.create(marked).parse(text);
+      assert.match(html, /Markdown block boundary/);
+      assert.deepEqual(bodies(html), []);
+      assert.ok(!html.includes('<script>'));
+      assert.deepEqual(tables.protectedRanges(text, marked), [{ start: 0, end: text.length }]);
+    }
+  }
+});
+
+test('a complete BODY row cannot reopen its final pipe for a later fence', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const text = ['| A | B | C |', '| --- | --- | --- |', '| one | two | three |', '',
+      '```rust', 'separate | body', '``` |', ''].join(eol);
+    assert.equal(tables.create(marked).parse(text),
+      new marked.Marked({ ...marked.defaults }).parse(text));
+    assert.deepEqual(tables.protectedRanges(text, marked), []);
+  }
+});
+
+test('ordinary document fences keep raw-looking tables literal before later raw tables', () => {
+  for (const outer of ['~~~text | literal', '`````text | literal']) for (const eol of ['\n', '\r\n']) {
+    const closer = outer.startsWith('~') ? '~~~' : '`````';
+    const ordinary = '| Header |\n| --- |\n| value |\n\n' + outer +
+      '\n\n| Header |\n| --- |\n| \n' + snippet('inside | ordinary fence') +
+      ' |\n' + closer + '\n\n';
+    const text = (ordinary + '| Header |\n| --- |\n' + row([snippet('actual | body')]))
+      .replace(/\n/g, eol);
+    const parser = tables.create(marked), tokens = parser.lexer(text);
+    const raw = tokens.filter(token => token.type === 'markalooRawTable');
+    assert.equal(raw.length, 1);
+    assert.equal(raw[0].syntax.kind, 'complete');
+    const html = parser.parser(tokens);
+    assert.deepEqual(bodies(html), ['actual | body']);
+    assert.ok(html.startsWith(new marked.Marked({ ...marked.defaults }).parse(ordinary)));
+    const ranges = tables.protectedRanges(text, marked);
+    assert.equal(ranges.length, 1);
+    assert.equal(text.slice(ranges[0].start, ranges[0].end), snippet('actual | body', 'rust', eol));
+  }
+});
+
+for (const eol of ['\n', '\r\n']) for (const column of [0, 1, 2]) test(
+  `padded header column ${column + 1} ${eol === '\n' ? 'LF' : 'CRLF'} keeps literal spans`, () => {
+    const body = '\uFEFFheader \u{1f642} | <script>literal</script>\n:smile:';
+    const fenced = snippet(body, 'unknown', eol), cells = ['first', 'middle', 'last'];
+    cells[column] = ' \t' + eol + '\t' + eol + fenced + ' \t' + eol + ' ';
+    const prefix = '# Before' + eol + eol;
+    const text = prefix + row(cells) + eol + '| --- | :---: | ---: |' + eol +
+      row(['one', 'two', 'three']) + eol + eol + '# After';
+    const calls = [], parser = tables.create(marked, { annotate(kind, span, html, token) {
+      if (kind === 'code') calls.push({ span, token });
+      return html;
+    } });
+    const tokens = parser.lexer(text), raw = tokens.filter(token => token.type === 'markalooRawTable');
+    assert.equal(raw.length, 1);
+    assert.equal(raw[0].syntax.kind, 'complete');
+    const html = parser.parser(tokens);
+    assert.deepEqual(bodies(html), [body]);
+    assert.equal((html.match(/<th(?:\s|>)/g) || []).length, 3);
+    assert.equal((html.match(/<td(?:\s|>)/g) || []).length, 3);
+    assert.equal((html.match(/<h1/g) || []).length, 2);
+    assert.ok(!html.includes('<script>') && !html.includes('table-source-warning'));
+    assert.equal(calls.length, 1);
+    const { span, token } = calls[0];
+    assert.equal(token.syntax.input.text.slice(token.at + span.start, token.at + span.end), body);
+    const input = { text, space: 'original' }, receipt = tables.createTableReader(input, marked)(prefix.length);
+    assert.equal(receipt.kind, 'complete');
+    assert.equal(receipt.input, input);
+    const cell = receipt.value.header.cells[column];
+    assert.equal(text.slice(cell.content.start, cell.content.end), fenced);
+    assert.equal(text.slice(cell.fence.body.start, cell.fence.body.end), body.replace(/\n/g, eol));
+    const ranges = tables.protectedRanges(text, marked);
+    assert.equal(ranges.length, 1);
+    assert.equal(text.slice(ranges[0].start, ranges[0].end), fenced);
+  });
+
+for (const eol of ['\n', '\r\n']) {
+  const ending = eol === '\n' ? 'LF' : 'CRLF';
+  test(`multiple vertically padded header cells share the canonical receipt ${ending}`, () => {
+    const cells = ['left | literal', 'middle \u{1f642}', 'right <b>literal</b>']
+      .map(body => ' \t' + eol + snippet(body, 'rust', eol) + eol + '\t ');
+    const text = row(cells) + eol + '| --- | --- | --- |' + eol + row(['a', 'b', 'c']) + eol;
+    const input = { text, space: 'original' }, receipt = tables.createTableReader(input, marked)();
+    assert.equal(receipt.kind, 'complete');
+    assert.equal(receipt.next, text.length);
+    assert.equal(receipt.input, input);
+    assert.deepEqual(receipt.value.header.cells.map(cell => cell.kind), ['raw', 'raw', 'raw']);
+    assert.deepEqual(bodies(tables.create(marked).parse(text)),
+      ['left | literal', 'middle \u{1f642}', 'right <b>literal</b>']);
+    assert.equal(tables.protectedRanges(text, marked).length, 3);
+  });
+
+  test(`H1 canonical padded header stays opaque before independent ordinary code ${ending}`, () => {
+    const text = ['| a |', '', '````x', '```inner', 'payload', '```` |',
+      '| --- | --- |', '| c | d |', '', '```outer', 'outside', '```', ''].join(eol);
+    const parser = tables.create(marked), tokens = parser.lexer(text);
+    const raw = tokens.filter(token => token.type === 'markalooRawTable');
+    assert.equal(raw.length, 1);
+    assert.equal(raw[0].syntax.kind, 'complete');
+    assert.equal(raw[0].syntax.value.header.cells.length, 2);
+    assert.equal(tokens.filter(token => token.type === 'code').length, 1);
+    assert.equal(tokens.find(token => token.type === 'code').text, 'outside');
+    assert.deepEqual(bodies(parser.parser(tokens)), ['```inner\npayload']);
+    const ranges = tables.protectedRanges(text, marked);
+    assert.equal(ranges.length, 1);
+    assert.equal(text.slice(ranges[0].start, ranges[0].end),
+      ['````x', '```inner', 'payload', '````'].join(eol));
+  });
+
+  test(`H2 failed header width restores native blocks and later table ${ending}`, () => {
+    const text = ['| a |', '', '```x', 'b', '```', '', '|', '| --- |', '',
+      '```independent', 'kept', '```', '', '| h |', '| --- |', '| v |', ''].join(eol);
+    const native = new marked.Marked({ ...marked.defaults });
+    const nativeTables = native.lexer(text).filter(token => token.type === 'table');
+    assert.deepEqual(nativeTables.at(-1).header.map(cell => cell.text), ['h']);
+    assert.deepEqual(nativeTables.at(-1).rows.map(cells => cells.map(cell => cell.text)), [['v']]);
+    const parser = tables.create(marked), tokens = parser.lexer(text);
+    assert.equal(tokens.filter(token => token.type === 'markalooRawTable').length, 0);
+    assert.deepEqual(tokens.filter(token => token.type === 'table'), nativeTables);
+    assert.equal(parser.parser(tokens), native.parse(text));
+    assert.deepEqual(tables.protectedRanges(text, marked), []);
+  });
+
+  test(`H3 completed BODY cannot steal an independent fence as a new header ${ending}`, () => {
+    const text = ['| h |', '| --- |', '| v |', '', '```x', 'outside', '```', '',
+      '|', '| --- | --- |', '| p | q |', ''].join(eol);
+    const parser = tables.create(marked), tokens = parser.lexer(text);
+    assert.equal(tokens.filter(token => token.type === 'markalooRawTable').length, 0);
+    assert.equal(tokens[0].type, 'table');
+    assert.equal(tokens[0].rows.length, 1);
+    assert.equal(tokens.find(token => token.type === 'code').text, 'outside');
+    assert.equal(parser.parser(tokens), new marked.Marked({ ...marked.defaults }).parse(text));
+    assert.deepEqual(tables.protectedRanges(text, marked), []);
+  });
+
+  test(`H4 duplicate header inside a tilde fence cannot capture the outside receipt ${ending}`, () => {
+    const block = ['| a |', '', '```x', 'b', '```', '', '|', '| --- | --- |',
+      '| c | d |', ''].join(eol);
+    const prefix = '~~~~' + eol + block + '~~~~' + eol + eol;
+    const text = prefix + block, input = { text, space: 'original' };
+    assert.equal(new marked.Marked({ ...marked.defaults }).lexer(text)[0].type, 'code');
+    const parser = tables.create(marked), tokens = parser.lexer(text);
+    const raw = tokens.filter(token => token.type === 'markalooRawTable');
+    assert.equal(raw.length, 1);
+    assert.equal(raw[0].syntax.kind, 'complete');
+    assert.equal(raw[0].at, prefix.replace(/\r\n/g, '\n').length);
+    const html = parser.parser(tokens);
+    assert.deepEqual(bodies(html), ['b']);
+    assert.ok(html.startsWith(new marked.Marked({ ...marked.defaults }).parse(prefix)));
+    const receipt = tables.createTableReader(input, marked)(prefix.length);
+    assert.equal(receipt.kind, 'complete');
+    assert.equal(receipt.input, input);
+    assert.equal(receipt.value.span.start, prefix.length);
+    assert.equal(receipt.next, text.length);
+    const start = prefix.length + ('| a |' + eol + eol).length;
+    assert.deepEqual(tables.protectedRanges(text, marked),
+      [{ start, end: start + ['```x', 'b', '```'].join(eol).length }]);
+  });
+}
+
 test('metadata spans are token-relative and do not alter visible HTML', () => {
   const text = '# Before\n\n' + wrap(['first', snippet('body'), 'last']);
   const plain = tables.create(marked).parse(text), calls = [];

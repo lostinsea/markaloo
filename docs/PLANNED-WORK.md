@@ -38,6 +38,86 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `saved-table-code-paste-padding` / `v0142-release` - **PUBLISHED AND VERIFIED; PHASE ONE COMPLETE**.
+  - New report: popup paste/Update/Save leaves escaped fences and `<br>` literal.
+    The later raw multiline pipe-table workaround is a separate unsupported path,
+    not evidence of deletion by the popup. Do not change the Markdown dependency.
+  - Astra found whole-cell conversion rejects leading space/trailing newline.
+    Preserve surrounding whitespace instead of trimming it; keep code-body text,
+    explicit-language checks and escaped/encoded literal safety unchanged.
+  - Original source with the new focused cases: 29 passed, six expected failures.
+    Corrected source: 35 passed, none failed. The existing rendered-code fixture
+    also passes. Bounded shipping reverts produce their exact expected failures
+    with their required passing controls; original source bytes are restored.
+    Global proof initialization remains outside the permitted local scope.
+  - Actual guest clipboard Ctrl+V reproduced literal fences on the original
+    source. The candidate passes popup Update -> actual Main Save -> Exit ->
+    Reader Reload -> normal app exit/relaunch -> popup reopen/unchanged Save.
+    Code body, outside whitespace, complete table shape/neighbors and outside
+    CRLF bytes are exact. No popup-path data loss was reproduced.
+  - Evidence: CLI session `f30454e4-c640-4f97-8751-6c2599c27661`,
+    `files/fenced-paste/native/verification.json`, SHA256
+    `F9AC28544774B929DC4925606DB5FBA12DB41FBCB43F5D0836D105D6EC11EB71`.
+    All native screenshots were viewed. This used curated shipping sources,
+    isolated startup and read-only observation, not an installed-package test.
+    Owned guest `69e1b1c9` is destroyed; no sandbox or owned runtime remains.
+  - User authorized publication as 0.14.2 after the fix and fresh independent
+    Sol/Luna review, at most two rounds. Freeze the reviewed source and use the
+    normal complete release pipeline. No raw multiline syntax in this release;
+    published 0.14.1 remains unchanged and does not contain this correction.
+  - Frozen candidate: `ee05b15c6c134f6967d6b3b3a07dea93f6901b40`.
+    Fresh independent Sol 6.1/high and Luna 6/high round-one reviews found no
+    blockers. Both accepted the scoped preservation evidence and native limit;
+    no disagreement or material correction. Receipt: same session,
+    `files/fenced-paste/reviews.json`.
+  - Independent QA passed saved-cell 35/35, rendered-code 31/31 and a bounded
+    extension of the existing fixture 51/51. Its final-source saved-cell rerun
+    also passed 35/35; the original Reader image was viewed and owned PIDs are
+    absent. Missing Node/assets and a concurrent capture error remain recorded
+    as failed attempts, not product failures or invented passes.
+    QA receipt: session `b9659739-ecd1-4479-ad01-5c45c9660c4e`,
+    `files/regression-0142.json`, SHA256
+    `2CDB252FB24505601FC9739117CB29F959B900DACFC2DBB1581864A6F8292401`.
+  - Root chose a minimal release commit directly atop canonical `55240f87`:
+    `4dd14960af1d86950ba2eef90f297c2bfb7f0fc4`. All six non-register blobs
+    exactly match reviewed `ee05b15c`; only the reviewed 0.14.2 register entry
+    is inserted into the canonical register. Prior local register history and
+    this integration branch remain untouched. No product/test/config bytes
+    changed during reconstruction; workflow and dependencies are unchanged.
+  - Final bounded round-two Sol 6.1/high and Luna 6/high reviews independently
+    accepted reconstruction, metadata and register scope: no blockers or
+    disagreement. Fresh same-model contexts replaced synchronous contexts
+    that could not receive follow-up; this remains two review rounds total.
+    Receipts: `files/fenced-paste/release-source-identity.json` and
+    `files/fenced-paste/reconstruction-reviews.json`.
+  - Fresh canonical identity, permissions, refs, absent-tag/release and normal
+    workflow guards passed. One atomic nonforce push advanced main to exact
+    `4dd14960` and created annotated `v0.14.2` object
+    `581b3274c6bca446ab41491de298fdbe54d0c115`, peeled to that same source.
+    Normal push-triggered run:
+    [44013447973](https://github.com/lostinsea/markaloo/actions/runs/44013447973),
+    attempt 1. No manual dispatch or direct release/asset writes.
+    All normal workflow jobs completed successfully. The normal workflow
+    published [v0.14.2](https://github.com/lostinsea/markaloo/releases/tag/v0.14.2),
+    release ID `448102608`, at `2026-11-17T04:00:56Z`, with nine assets.
+    Fresh main/tag/latest-release and unique push-run bindings pass.
+  - Independent publication verification passed all normal jobs and required
+    applicable steps, all nine actual asset/API hashes, all three updater
+    manifests and constrained provenance for all five runnable packages.
+    Final publisher reads confirm exact source/main/tag, latest release and
+    unchanged asset IDs/sizes/digests. No gate was bypassed.
+  - Final publisher receipt: integration session `files/publication-0142-final.json`,
+    SHA256 `0A0D606B80F87FC57ED7C0C88BA1B4452F531E1083E7BC14CBD52C11D3DAF245`.
+    Independent final receipt: session `91b732ef-4464-4975-a14d-615f69600595`,
+    `files/publication-0142-final.json`, SHA256
+    `4144ED66C49F2756F91491D11589ADFB7DE4CD9E88F32D0787EDB6EA3B935D4B`.
+  - Final Windows wrappers report 0.14.2 and `NotSigned`; neither was executed.
+    The earlier clipboard proof remains curated-source qualification, not a
+    final installed-package, installer/UAC or macOS/Linux runtime claim.
+    Two initial Sigstore initialization failures are preserved; unchanged
+    constrained retries passed without trust/auth/configuration changes.
+    GitHub reports the release mutable; stability is a point-in-time check.
+    Existing 0.14.1 evidence and user-deferred refusal limits are unchanged.
 - `raw-table-code-snippets` / `v0143-release` - **SOURCE REVIEW COMPLETE; QUALIFICATION OPEN**.
   - User requested a separate following release for raw snippets in table cells.
     Marked's documented extension API is available, but this would be custom
@@ -193,37 +273,219 @@ section is kept here so the register has a visible edge.
     Receipt: `files/raw-table-design/review2-final-adjudication.json`.
     Fresh combined provider 25/25, guard 12/12, adapter 27/27 and model 756/756
     pass; syntax and named source-identity/CRLF/diff checks pass.
-    Full-app deferred rendering, shipping Save/document Undo, native, C# visual,
-    representative performance, wider proofs and candidate QA remain open.
-
-- `saved-table-code-paste-padding` / `v0142-release` - **FIX VERIFIED; INDEPENDENT REVIEW NEXT**.
-  - New report: popup paste/Update/Save leaves escaped fences and `<br>` literal.
-    The later raw multiline pipe-table workaround is a separate unsupported path,
-    not evidence of deletion by the popup. Do not change the Markdown dependency.
-  - Astra found whole-cell conversion rejects leading space/trailing newline.
-    Preserve surrounding whitespace instead of trimming it; keep code-body text,
-    explicit-language checks and escaped/encoded literal safety unchanged.
-  - Original source with the new focused cases: 29 passed, six expected failures.
-    Corrected source: 35 passed, none failed. The existing rendered-code fixture
-    also passes. Bounded shipping reverts produce their exact expected failures
-    with their required passing controls; original source bytes are restored.
-    Global proof initialization remains outside the permitted local scope.
-  - Actual guest clipboard Ctrl+V reproduced literal fences on the original
-    source. The candidate passes popup Update -> actual Main Save -> Exit ->
-    Reader Reload -> normal app exit/relaunch -> popup reopen/unchanged Save.
-    Code body, outside whitespace, complete table shape/neighbors and outside
-    CRLF bytes are exact. No popup-path data loss was reproduced.
-  - Evidence: CLI session `f30454e4-c640-4f97-8751-6c2599c27661`,
-    `files/fenced-paste/native/verification.json`, SHA256
-    `F9AC28544774B929DC4925606DB5FBA12DB41FBCB43F5D0836D105D6EC11EB71`.
-    All native screenshots were viewed. This used curated shipping sources,
-    isolated startup and read-only observation, not an installed-package test.
-    Owned guest `69e1b1c9` is destroyed; no sandbox or owned runtime remains.
-  - User authorized publication as 0.14.2 after the fix and fresh independent
-    Sol/Luna review, at most two rounds. Freeze the reviewed source and use the
-    normal complete release pipeline. No raw multiline syntax in this release;
-    published 0.14.1 remains unchanged and does not contain this correction.
-- `v0141-release` - **LOCAL UNSIGNED CANDIDATE BUILT; PUBLICATION HELD**.
+  - Current private qualification source is `a1afd698`, directly above
+    packaging-only `77dea0bc`. The packaging change adds the two loaded table
+    modules. The successor imports only the reviewed `main.js` BOM correction
+    and its focused test from `e41065f5`, without helper ancestry.
+    No version, dependency, Save mechanism or release change.
+  - Fresh q5 inputs bind that exact source, unchanged observer and named seeds.
+    The complete destination file set and hashes passed before launch.
+    Corrected P1 owner, sentinel, exact Source and viewed Reader checks pass.
+  - The corrected multilingual native scenario preserves the initial BOM:
+    2251 Source units become 2263 after only the selected C# body comment.
+    Update, one document Undo/Redo, a separate neighboring edit and its Undo,
+    explicit Save, actual tab close/reopen, popup readback and no-op Update/Save
+    preserve exact expected Source and disk bytes. The saved file is 2308 bytes;
+    its BOM and original mixed line endings remain intact.
+  - Ordinary controls also preserve exact bytes through explicit Save and
+    actual tab close/reopen, without inserting a BOM. Native Source editing adds
+    a normal inline-code table cell to the bound ordinary working document;
+    its original JavaScript fence and prose remain unchanged. Saved and reopened
+    Reader images were viewed: the fence is highlighted and the inline cell
+    remains ordinary inline code.
+  - This is not a clean execution result. Retained setup/input failures include
+    an incorrect observer field expectation before editing and literal key
+    input that dropped newlines. No Save followed that failed input; a native
+    Undo proved exact clean seed restoration before the corrected Enter input.
+    The final bounded product scenarios pass, but the execution receipt keeps
+    `FAILED_WITH_RETAINED_SETUP_INPUT_ATTEMPTS`. Both owned apps closed normally
+    with actual waited exit 0 and no remaining owned runtime.
+  - The bounded independent Astra bundle audit matched all 49 members and
+    pinned hashes. Final BOM, selected splice, bytes, history, ordinary controls
+    and reopen states are consistent. Root separately verified the q5 manifest
+    and all 76 source blobs; the bundle audit did not repeat that input binding.
+    QA verdict: `corrected-native-evidence-verdict-a1afd698-v1.json`,
+    SHA256 prefix `F5B9559A26C61520`.
+  - Evidence limits remain explicit. `ordinary-control-pre-edit-v2.json`
+    duplicates the original pre-edit/gen8 receipt; it is not fresh reset
+    evidence. `ordinary-control-input-reset.json` records actual seed recovery.
+    Exact `state.source` has 2251 units; normalized textarea `state.editor`
+    has 2240. Both retain the BOM. Full popup drafts, native one-action counts
+    and Save routing are not independently serialized in a raw action ledger;
+    resulting states and bytes are corroborated. The frozen bundle and its
+    failed-with-retained-attempts status remain unchanged.
+  - The original `3f0323e9` BOM-preservation failure remains failed. Its timings
+    and all q3/q4 evidence stay under their original identities.
+    Corrected evidence and viewed images:
+    integration session `files/raw-table-design/owned-qualification-v5/completed-native-v1/`;
+    inventory `evidence-index.json`, SHA256 prefix `4774241D75905A49`.
+  - P2 remains open: real deferred pending-code completion was observed, but
+    a native owner switch while pending was not. P5 stopped on native-driver
+    operations during warmup; no paired samples or performance acceptance.
+    A non-timing baseline control reproduced the clipped ordinary-tab target:
+    accessibility reported it on-screen, but its original center click did not
+    switch. One normal tab-strip scroll exposed the full title; clicking its
+    actual new center switched from completed C200 to exact ordinary Source.
+    The same four tabs and window bounds were preserved. This does not qualify
+    a switch while pending or a timing sample. A read-only setup assertion and
+    blank final capture remain recorded; no capture repair or clean-run claim.
+    The owned app closed normally with actual waited exit 0 and runtime 0.
+    Evidence: `owned-qualification-v5/native-tab-target-control-v1/`,
+    inventory SHA256 prefix `91C3B3339694034E`.
+    Affected corrected-candidate paths still need valid measurements.
+  - Root authorized one q6 P5 campaign using normal scrollbar exposure before
+    a newly read visible tab center. Any exposure stays inside timed tab work.
+    Baseline `4dd14960` and corrected candidate `a1afd698` retain the exact q5
+    input closure. Fresh warmups precede seven alternating matched pairs.
+    Input manifest SHA256 prefix `3118B0D77DE4B31E`, driver `8C448C11A61D98C4`,
+    additive binding `12BD5F1CAC549127`. All named inputs and complete file sets
+    matched before each launch and after both used samples.
+  - q6 P5 is **NOT_MEASURED**, with zero pairs. Baseline warmup completed
+    startup, ordinary setup, P70 open/return and P706 open.
+    The next P706 return stopped before tab input:
+    `Expected one owned id=readingBackBtn, got 0`. The driver exited 1.
+    Root classifies this as a baseline-exhibited external-driver failure:
+    the missing control was a geometry anchor on published `4dd14960`,
+    before any P706-return input. It is not evidence that `a1afd698` introduced
+    a product regression. A later tree contained that control; no retry followed.
+    Candidate warmup and all seven pairs are **NOT RUN**. Partial baseline
+    warmup durations are retained, not accepted samples or budget comparisons.
+    This is not a performance pass or proof of unchanged candidate performance.
+    q6 did not reach C200 or exercise scrollbar exposure. The frozen driver
+    and binding remain unchanged; no replacement samples or collector repair.
+  - Baseline cleanup retains a first normal-close timeout. A subsequent owned
+    native Alt+F4 closed with held-handle waited exit 0 and runtime 0.
+    The separate one-shot q6 P2 attempt stopped at `P2 foreground refused`
+    before opening any document. No pending state or native switch was reached;
+    P2 remains **NOT_OBSERVED**. This is neither a demonstrated product regression
+    nor a proven pre-existing product defect. No focus bypass or retry.
+    Its clean welcome window closed normally with held-handle waited exit 0
+    and runtime 0.
+    Both samples retain all eight unchanged working seeds.
+  - Frozen q6 failure evidence is copied out and hash-verified on the host:
+    `owned-qualification-v6/failed-native-v1/`, inventory SHA256 prefix
+    `21DBA475506B2150`, closure `B5D4354CE4316053`.
+    Original errors, stacks, partial timings and the cleanup timeout remain.
+    Root read and hash-matched the inventory, P5/P2 results and campaign closure.
+    No owned q6 runtime remains. Set the baseline/collector issue aside for this
+    feature; repairing it is not a dependency for unrelated remaining work.
+    No product fix, further native launch or driver-refinement campaign.
+    Actual produced-package module identity, wider native/structural checks,
+    wider proofs and full candidate qualification remain open.
+    That adjudication did not authorize a build, publication, promotion or
+    remote write.
+- `v0143-padding-release` - **SOURCE REVIEW PASSED; NATIVE P4 OPEN**.
+  - Root coordinates the outer-whitespace contract. O1 owns provider/guard
+    changes and focused tests; O2 owns model/span regressions and only necessary
+    model changes. Every HEADER and BODY cell supports exterior blank-line
+    padding around one fence, with a column-zero closer and following pipe.
+    BODY continuation stays below the physical header width; a complete BODY
+    row's last pipe never reopens. A fully witnessed header and matching
+    delimiter win ambiguous old text/code. Failed new header probes roll back
+    to the old unbound header interpretation and existing padding fallback.
+  - Root resumed shared provider/adapter/guard CORE/BODY work after independent
+    traces ruled out local trimming with retained full-Snapshot bytes.
+    The approved public binding is `readRow(input, start, bodyColumns)`, with an
+    optional positive safe-integer physical BODY width, not native or write
+    authority. Invalid supplied widths must throw. Omission stays unbound.
+    Projection reuses shared provider prefix/header/delimiter receipts; final
+    native-body and table certification remain unchanged. No duplicate grammar,
+    saved-input canonicalization or renderer-only workaround.
+    Width through nonblank candidate lines enables projection/protection only.
+    Native plain-body receipts remain width-one-only; wider gaps must retain
+    native-boundary refusal and literal protection, not acquire table authority.
+    Root lifted both architecture and HEADER holds. Shared complete header
+    receipts own HEADER projection; public unbound row recognition is unchanged.
+    Native ordinary-fence receipts keep their interiors opaque before later
+    table discovery. No final candidate freeze yet.
+  - Integration owns only required adapter/renderer changes, synchronized
+    0.14.3 metadata, related docs, final source freeze and normal release work.
+    Preserve the current checkout, dirty register, immutable `a1afd698`, helper
+    ancestry and historical failed evidence. Do not promote the old candidate.
+  - The reviewed BOM two-path correction and O2 tests-only delta are imported
+    with exact handoff blob matches; model production is unchanged.
+    Imported O1 core-only `b8755c30` is preserved WIP, not a final contract or
+    accepted candidate. Its numeric-width and full-HEADER successors are now
+    imported by named path only: O1 `cdf90dd6` then `44bce0d4`.
+    Its imported provider suite passes 36 checks. The O2 suite has 912 passes
+    and two retained failures: the old final-clipboard-newline consumption
+    expectation and rejection of two exterior blank lines. Both actual exits
+    were waited; this combination is not accepted or relabelled as passing.
+    O2 identifies both as old-contract expectations already corrected in its
+    held test preparation, not model production fixes. Their corrected tests
+    are imported in the later coherent checks below; old results stay failed.
+    Package/root-lock versions agree at 0.14.3, with no dependency or script
+    changes. The two missing source-module packaging entries are included.
+  - Focused adapter cases reproduce all six padded BODY failures on the old
+    implementation; the other 29 cases pass, including native partition
+    controls. This is retained pre-implementation evidence, not acceptance.
+    The imported core with the unchanged adapter retains that exact failure
+    set and those passing controls; its actual waited exit is 1.
+    O2's separate envelope-only runs retain actual waited exits 1: first 10/11,
+    then 11/12 after adding the exact second-block diagnostic-span control.
+    The sole remaining extra failure is mixed-ending first-slot padding at
+    `validateLogicalAdoption` on provider `760fba789` and old adapter `5978ec1f`.
+    Original logs remain with O2.
+  - Coherent provider `6ec456ca`, guard `92c7d73e`, adapter `3191121b` and O2
+    final test `dd0dea66` (`cc599a3b`) pass the bounded source, guard, adapter
+    and model routes.
+    Actual waited exits are 0: source 46/46, guard 21/21, adapter 56/56 and
+    model 1171/1171. Model production stays `47f8b5a6`.
+    H1-H4 pass LF/CRLF, including the duplicate header inside a tilde fence:
+    only the outside occurrence gets a bound original-Snapshot receipt.
+    The earlier mixed-ending envelope failure also passes on coherent inputs.
+    Receipts and exact source/log hashes are under session
+    `release-0143-padding/all-header-*-result.json`.
+    Retained intermediate adapter failures include an invalid BOM-heading
+    fixture, a fixture crossing the deliberately refused native boundary and
+    an assumed native table count in H2. Corrections change setup/expectations,
+    not Source bytes, native authority or the production model.
+  - Before the final review snapshot, O1 owns the ordinary-cell paste promotion
+    check in `inline-formatting.js` and its focused shipping popup test.
+    The first-line gate is a potential missed leading-padding entry, not a
+    diagnosed regression. Direct envelope/model checks alone do not prove it.
+    Integration supplied exact allowed shipping fixture dependencies; no Main
+    initializer or full-product inventory is needed. No competing frontend edits.
+    Bounded process-local reverts now pin exact failing assertions and passing
+    controls for the old adapter, pre-HEADER provider, numeric BODY width,
+    old guard and native-fence skipping. They never alter repository files.
+    Records and actual waited exits are in session `release-0143-padding`.
+  - O1 reproduced the ordinary-cell entry miss on the immutable shipping
+    fixture: the original opener gate rejects leading LF/CRLF/blank padding.
+    The gate correction reaches a second seam: the renderer callback rewrites
+    pasted endings to the row ending. Its owned correction `ed623520` keeps
+    the supplied text unchanged. Coherent focused UI checks pass 24/24,
+    including exact draft, Source Update and popup reopen controls.
+    Final frontend paths `dc36fa91`/`5f0c0441` are imported unchanged.
+    The integration checkout also passes the actual shipping paste route
+    24/24 with waited exit 0. The fixture has separate gate and exact-ending
+    sensitivity records. This is not native Save/disk-reopen acceptance.
+    The same final review pair covers the provider, guard, adapter and frontend.
+  - Fresh independent Sol 6.1/high and Luna 6/high reviewed the same frozen
+    provider, guard, adapter, frontend and test delta. Both found no blockers
+    or meaningful new test gaps; no disagreement or correction round.
+    Review input manifest: session `integrated-padding-review-r1.json`,
+    SHA256 `ECC81F7826A6F9DE9AABCB7085B21BD331742125FD49853D679BB6E97F93CA4B`.
+    Both keep native Save/disk reopen and normal release gates open.
+  - The old owned guest `cd3ef94d`/epoch `396eb8ec` timed out on agent ping
+    and desktop requests. The timeout receipt is preserved. Root then
+    authorized one fresh guest after host evidence preservation was verified.
+    Supported stop used no force and retained the old host artifacts.
+    New sole-owned guest `b6994d08`/epoch `e1d34d39` has network off,
+    protocol 2/agent 1.2.0 and a ready desktop with working capture.
+    No app has launched there yet. This recovers the environment only;
+    padded native P4 remains required. No q6/P5 or collector work resumed.
+  - Isolated preparation uses official Node 24.18.1, the immutable lock and
+    named allowed vendoring inputs. Locked installation and normal vendoring
+    completed outside the checkout; no app or installer was launched.
+    A first npm config-argument failure is retained beside the successful run.
+    No release candidate exists yet.
+  - After the reviewed source is bound: bounded padded-cell
+    Update/Save/reopen/exact-byte qualification through the working P4 route.
+    Actual package identity goes to the existing verifier.
+    Normal complete hosted release gates remain required; exclusions still
+    apply. P5 stays **NOT_MEASURED** and P2 stays **NOT_OBSERVED**.
+- `v0141-release` - **PUBLISHED AND VERIFIED; BOUNDED NATIVE LIMITS RETAINED**.
   - Publish as 0.14.1 only after all fixes are done and relevant targeted tests
     pass. Authorization does not waive native, full-app or exclusion blockers.
   - The reviewed search-viewport/padding commit is integrated as `ae3313e8`.
@@ -236,10 +498,16 @@ section is kept here so the register has a visible edge.
     version fields changed; dependency, script and packaging data are unchanged.
   - Root authorized a new unsigned 0.14.1 candidate for native testing after
     those reviews. Native checks need that candidate; they do not block
-    creating it. Main, tag and publication remain held for required gates.
-    No push, tag, dispatch or publication has happened.
-  - Root now owns a fresh Sandbox for native checks and will request actual UAC
-    approval if needed. No new native or offscreen runtime is launched here.
+    creating it. The approved branch staging passed. Root authorized normal
+    publication of exact `55240f87`; later register commits are not release source.
+  - Root verified guest/helper shutdown after the earlier bounded native checks.
+    Root completed the separate installer-UAC check and stopped its owned guest.
+    The native slot is released; no runtime is launched here.
+    The user confirmed direct hosted-installer all-users UAC approval.
+    The user explicitly deferred the separate refusal check for now:
+    it remains **NOT EXERCISED**, not passed and not a publication blocker.
+    Root supplied the precise go-ahead for the guarded normal route;
+    all unchanged workflow and artifact-verification gates still apply.
   - Build source: `7ee449561747d19c4c9621049e926dcbd1192683`.
     The established `npm run build-installer -- --config.directories.output=<artifact-directory>`
     route succeeded into the owned session artifact directory, with the
@@ -258,18 +526,97 @@ section is kept here so the register has a visible edge.
     Root received the exact path and hashes for native testing.
     This candidate is **NOT FULLY NATIVE QUALIFIED**. Building itself clears
     no gate; Root's bounded installed-candidate passes are recorded below.
-  - Nonpublishing hosted branch staging is **HELD: VERIFY PRIOR ACCOUNT ROUTING**.
-    Requested staging SHA: `d2be6986025e11af036d4e370df2e6a7587989e9`;
+  - Initial nonpublishing hosted staging **FAILED: PACKAGING EXPECTATIONS**.
+    Initial staging SHA: `d2be6986025e11af036d4e370df2e6a7587989e9`;
     branch: `users/vinma-microsoft/markaloo-table-rendering`.
     Canonical `lostinsea/markaloo` and the active `release.yml` were verified.
-  - The single explicit branch-only push failed HTTP 403. The account selected
-    for that invocation, `vinma_microsoft`, reported `pull: true`, `push: false`.
-    This proves that invocation lacked write access, not that publication
-    through the previously successful route is unavailable.
-    No force, credential switch, shared remote change or alternate path was used.
-    The remote integration branch remains absent; main remains `f79df9d2`.
-    No dispatch, run URL or hosted artifacts exist; required hosted checks
-    are **NOT RUN**, not passed.
+  - The earlier HTTP 403 came from app-token account `vinma_microsoft`,
+    not an unavailable publisher route. Root recovered the established
+    invocation-only stored `lostinsea` route. The writer independently guarded
+    login `lostinsea`, canonical repository identity and `push: true`.
+    Process overrides were restored in `finally`; no token was printed and
+    no shared account, configuration or remote was changed.
+  - Only the approved branch was created, nonforce, at exact `d2be6986`.
+    Main was verified unchanged at `f79df9d2`; no `v0.14.1` tag exists.
+    Unchanged `release.yml` branch run:
+    [43986016142](https://github.com/lostinsea/markaloo/actions/runs/43986016142).
+    All three platform packaging gates failed before builds.
+    No hosted release artifacts were produced; nothing was published.
+    Receipt: integration session `files\hosted-stage-d2be6986-authorized.json`.
+  - Each platform reported 523 passed, 2 failed and 2 legitimate pre-build
+    archive skips. The exact failures were:
+    `the feature aggregate contains each accepted behavioral suite exactly once`
+    and `the standard updates command actually selects combined acceptance and preserves its focused route`.
+    Both expected command literals in the staged `test\test-packaging.js` omitted the new
+    `node test/test-windows-update-launch.js` segment in `test:updates`.
+    Root independently confirmed that diagnosis.
+  - Coupled test-only correction: **REVIEWED; REPLACEMENT STAGING PASSED**.
+    Frozen correction: `55240f87a97a78f986e3eb96b4d39432dfed9b3a`,
+    parent `c87c39d849eb246e3d036f5d61df033790a5de53`.
+    Only the two expected command literals now include that same segment
+    between schedule and release-notes. Commands, ordering/reachability,
+    phase checks, product sources and workflow gates are unchanged.
+    The extracted shipping block reproduces 12 passes and the exact two
+    original failures; correction passes 14/14. Each isolated expectation revert
+    fails exactly its own assertion; omitted, duplicated and reordered
+    updater-test commands remain rejected. Full local packaging and global
+    proof initialization were not invoked. Syntax, diff and CRLF checks pass.
+  - Fresh independent GPT-6.1 Sol/high and GPT-6 Luna/high reviewed the frozen
+    correction, bounded evidence and operational register diff: no blockers,
+    no disagreements. Both inspected the supplied runtime-free check reports,
+    not independent full-suite or native reruns.
+    Commit/tree metadata proves every other committed blob identical to
+    reviewed build source `7ee44956`; test/register changes do not ship.
+    Exact existing installer, ASAR and executable hashes were rechecked
+    unchanged. No rebuild or native rerun was needed or performed.
+    Receipts: integration session `files\packaging-updates-final.json`,
+    `files\packaging-updates-product-identity.json` and
+    `files\packaging-updates-reviews.json`.
+  - Root approved replacement staging at exact `55240f87`, not register-only
+    `91b6bfa0`, after independently inspecting the frozen patch and receipts.
+    The integration ref was fast-forwarded nonforce from `d2be6986` to that SHA.
+    The unchanged workflow was dispatched once:
+    [43987873603](https://github.com/lostinsea/markaloo/actions/runs/43987873603).
+    Its normal Linux, Windows and macOS jobs **PASSED**.
+    Publisher identity, canonical push permission, main `f79df9d2` and absence
+    of `v0.14.1` were guarded; process overrides were restored.
+    No main, tag or publication writes; no local runtime launched.
+    Receipt: integration session `files\hosted-stage-55240f87-authorized.json`.
+  - All three platforms passed pre-build packaging: 525 passed, 0 failed,
+    with only the two legitimate pre-build archive skips.
+    Windows table checks passed: source 925/925, input 2163/2163,
+    remaining 566/566 and shared 157/157. Editor-scroll companion 24/24
+    and runtime 314/314 passed. Strict built-archive packaging passed
+    540/540, without skips.
+    All platform builds, artifact completeness and uploads passed.
+    macOS verified both application and Electron framework as arm64.
+    Tag-only attestation and publication were skipped as intended.
+  - All three release-package artifact groups were downloaded here without execution.
+    Their update manifests specify 0.14.1; every advertised payload size and
+    SHA512 matches. Both Windows executables report version 0.14.1 and
+    actual Authenticode status `NotSigned`.
+    Hosted installer SHA256:
+    `9113594513e507427ddd1210c81712f9678f58346c7439e29d520d6decb0ec6a`.
+    The hosted installer wrapper differs from the earlier local installer.
+    Root's separate bounded hosted-installer check below passed; its installed
+    application archive and executable exactly match the earlier tested payloads.
+    This does not qualify the hosted portable app or Mac/Linux native behavior.
+  - Final job/source bindings: integration session
+    `files\hosted-stage-43987873603-results.json`.
+    Per-file paths, sizes, SHA256, verified manifest hashes and API artifact
+    bindings: `files\hosted-stage-43987873603-artifacts.json`.
+    API archive digests are recorded separately from local per-file hashes.
+    Windows focused evidence was uploaded and API-bound to the same SHA;
+    its job log is preserved locally without copying runtime inputs.
+    Root's later precise publication go-ahead and normal tag run are recorded below.
+  - In the initial failed run, Windows table/editor-scroll tests, platform builds, strict built-archive
+    checks and artifact checks were **NOT RUN** after packaging failed.
+    The Windows evidence upload failure was secondary: tests never started.
+    Deliberate controlled-child/stdout/stderr failure output was not a new
+    failure. Attestation and publication jobs were skipped.
+    Root received the exact blocker and accepted the bounded correction.
+    The replacement passed the same unchanged normal gates; the first failure
+    remains recorded.
   - Read-only GitHub records confirm the successful 0.14.0 route used the same
     `release.yml` workflow, ID `332361844`, with actor `lostinsea`:
     [branch staging](https://github.com/lostinsea/markaloo/actions/runs/43947495342)
@@ -277,29 +624,32 @@ section is kept here so the register has a visible edge.
     [tag build/publication](https://github.com/lostinsea/markaloo/actions/runs/43948978576)
     on `v0.14.0`, both at `f79df9d28bf9c37f8af70099f6e141ca962134e5`.
     Workflow actor metadata does not establish how credentials were selected.
-  - Root is recovering that account-routing mechanism. No write retries,
-    credential-content searches or identity switches while it is established.
+  - Root's routing metadata showed app `GH_TOKEN` selecting `vinma_microsoft`;
+    stored keyring account `lostinsea` exists but is inactive under that token.
+    The configured Git protocol is SSH; the failed explicit push used HTTPS.
+    The recovered invocation-only publisher route avoids global account changes.
     Keep the exact requested staging target unchanged.
   - Use the established release path: matching package/root-lock versions,
     reviewed release preparation, then the normal hosted `release.yml`
-    staging/build gates. Dispatch the eventual tag ref for publication;
-    a branch-ref dispatch builds without publishing.
+    staging/build gates. Observe the tag-push run before any fallback dispatch
+    on the tag ref; a branch-ref dispatch builds without publishing.
   - The workflow retains packaging/licence checks, Windows table/editor-scroll
     checks, platform builds, strict Windows archive checks, artifact
     completeness checks and tag-only attestation/publication.
   - Global proof initialization and broad local table-source inventory remain
-    exclusion-blocked. Current-user receipt, silent-mode, real UAC and wider
-    full-app and platform gates remain open. The bounded cancel/default-update/Main Save
-    passes below do not qualify unrun controls or clear the publication hold.
+    exclusion-blocked. Wider full-app/platform qualification remains unclaimed.
+    Direct UAC approval and user-deferred refusal are recorded separately below;
+    bounded native passes do not qualify unrun controls.
   - Preserve the unsigned 0.14.0 candidate as prior-three-fix evidence only.
     It is not a 0.14.1 release artifact and does not include the viewport fix.
-- `v0141-native-qualification` - **BOUNDED INSTALLED-CANDIDATE PASSES; CONTROLS PENDING**.
+- `v0141-native-qualification` - **BOUNDED INSTALLED-CANDIDATE PASSES; LIMITS RETAINED**.
   - Root's results apply to the exact new `7ee44956` candidate above:
     installer `37CBC804...`, archive `39110BF4...`, app `38A47E42...`.
     Keep them separate from the prior 0.14.0 candidate evidence.
   - Owned network-off guest: `deda8cc6-67ef-4859-8a44-508f0b423d50`,
     epoch `f1726c53-34ab-4f1c-b75a-7781f394ecd2`.
-    Root retains the native slot; no source fix or rebuild is indicated.
+    Root confirms the guest stopped and the native slot is **RELEASED**.
+    No source fix or rebuild is indicated.
   - Actual public 0.14.0 About -> Download -> Restart and Install:
     cancellation and completed default-all-users update both **PASS**.
     Only the external standard feed changed to an owned generic loopback feed;
@@ -311,6 +661,22 @@ section is kept here so the register has a visible edge.
     exact candidate bytes, HKLM 0.14.1, no HKCU entry, marker preserved,
     automatic app/document relaunch. The second setup argv was not queried.
     Screens 006-009 are preserved.
+  - Actual current-user public 0.14.0 UI upgrade **PASS**. The public app
+    launched automatically visible setup with `--updated --force-run`,
+    no forced scope or `/S`. Default Only for me and the existing per-user
+    path were preserved. Ordinary Next/Finish with Run checked automatically
+    relaunched the exact per-user candidate with the saved document restored.
+    Exact candidate executable/archive, HKCU 0.14.1, no HKLM entry, marker
+    and saved fixture preservation were verified. Screens 020-023 are preserved.
+    This reused the verified updater cache with the changed standard feed;
+    it is not a fresh public-GitHub download or UAC test.
+  - Separate public 0.14.0 per-user baseline -> candidate `/S /currentuser`
+    **PASS**, exit 0. Native window observations found no installer wizard;
+    exact candidate bytes and HKCU-only 0.14.1 scope were verified; the profile
+    marker and saved fixture were preserved. No app automatically launched.
+    Screen 024 is preserved.
+    These bounded observations do not exclude a brief flash or qualify
+    silent all-users installation or UAC.
   - Real installed-app popup Update -> actual Main Save -> Exit -> Reader ->
     Reload **PASS**, without injected application adapters. Decoded JSON and
     all content outside the edited cell are exact; multiline colored code
@@ -322,21 +688,178 @@ section is kept here so the register has a visible edge.
     search and closed zero-row behavior **PASS** at this guest size/zoom.
     These do not qualify broader native sizes/zooms or physical-keyboard input.
     Installed-app screens 011-014 and 016-018 are preserved.
-  - Root separately reports no-argument candidate setup normally opened
-    License/Options without a Folia warning, then was cancelled (screen 019).
+  - No-argument candidate setup normally opened License/Options without
+    a Folia warning, then was cancelled (screen 019).
     No direct-install completion is claimed.
   - This new guest also measured `EnableLUA=0`; the observation is no longer
     limited to the destroyed guest. No policy changes or UAC prompt occurred.
     Real accept/refuse remains **NOT EXERCISED**; nothing is inferred about
-    the host. Root now reports the actual UI current-user upgrade verified;
-    its detailed receipt is pending. Candidate silent-mode control is finishing,
-    not yet passed.
+    the host. Current-user and silent-current-user passes are now in Root's
+    updated receipt; they do not exercise real elevation.
+  - Root verified owned feed process 7804 stopped, no remaining owned
+    candidate app or active installer, and guest shutdown/slot release.
+    Root preserved all referenced screenshots and saved-file/feed receipts;
+    no runtime is launched from this checkout.
   - Root receipt: session `a945df13-28fd-4f94-b3b7-dcae77565b03`,
     `files\native0141\native-results.json`, with `main-save-check.json`
     and the actual `real-main-saved.md` alongside it.
     Global/excluded-source and full-platform qualification remain open.
-    Source/build/release holds remain. Hosted account routing is under investigation.
-    Requested hosted staging remains exactly `d2be6986`.
+    Root's later publication authorization does not broaden this campaign.
+    Replacement staging is exactly `55240f87`, not later register commits.
+- `v0141-hosted-native-smoke` - **BOUNDED ALL-USERS UPGRADE PASSED; REAL UAC NOT EXERCISED**.
+  - Root independently verified terminal/artifact receipt hashes `49E13FE3...`
+    and `D5853672...`, rehashed all nine downloaded files with SHA256/SHA512
+    and checked manifest payload links. API checks confirmed successful run
+    `43987873603` at exact `55240f87`, main `f79df9d2`, integration `55240f87`
+    and no `v0.14.1` tag.
+  - Fresh owned network-off guest: `602d2a2e-2f4a-4720-9771-52053da715f9`,
+    epoch `31ee30e7-70ce-4b3e-bcf1-282fb34e947c`.
+    Exact public 0.14.0 machine install -> changed external standard generic
+    feed -> actual About Download/Restart used the hosted `91135945...` installer.
+    This is not an untouched public-GitHub update-route test.
+  - Setup appeared automatically; its parent and `--updated --force-run`
+    arguments were independently observed. No `/S`, scope override or manual
+    reveal. It recognized default all-users scope and the existing machine path.
+    Ordinary Next/Finish with Run checked automatically relaunched the app.
+    Installed version 0.14.1.0, HKLM 0.14.1 and no HKCU entry were verified.
+    Profile marker and owned fixture were unchanged; the tab was restored
+    and normal Reader Reload passed.
+  - Installed archive SHA256:
+    `39110BF4EBC105A608927236FB9C4D1687C24BCBCC6F42EF003F8452898FCCB1`.
+    Installed executable SHA256:
+    `38A47E422B03509858177787D19EB232FED3B5AEBA165D51F341B444CD768A70`.
+    Both exactly match the earlier native-tested local application payloads.
+    The installer wrappers themselves have different hashes.
+  - Hosted-installer Cancel, current-user and silent controls were not repeated.
+    Earlier results for those controls remain bound to the local installer.
+    Main Save, table and search checks were not repeated in this campaign;
+    their earlier evidence uses the matching application payloads.
+    Mac/Linux native execution and wider qualification remain unclaimed.
+  - This guest also measured `EnableLUA=0`. Real UAC accept/refuse remains
+    **NOT EXERCISED** in this campaign. No policy or host-security changes
+    occurred here. The separate later direct-installer UAC check is recorded below.
+  - Root viewed all three screenshots and preserved evidence before shutdown.
+    The app closed normally; owned feed 2512 exited 0; the guest was destroyed
+    and the native slot released. No runtime is launched from this checkout.
+    Root receipt: session `a945df13-28fd-4f94-b3b7-dcae77565b03`,
+    `files\native0141-hosted\results.json`, with nine evidence files,
+    plus updated `files\native0141\native-results.json`.
+- `v0141-installer-uac` - **DIRECT INSTALLER APPROVAL CONFIRMED; REFUSAL USER-DEFERRED**.
+  - Root invoked exact hosted installer SHA256
+    `9113594513E507427DDD1210C81712F9678F58346C7439E29D520D6DECB0EC6A`
+    through the restarted guest's medium-integrity Explorer/Run, using normal
+    `--updated --force-run` flags. This is a direct installer UAC check,
+    not another About-updater end-to-end test.
+  - The actual options page recognized all-users scope and the existing
+    machine installation; Next carried a shield. The user confirmed:
+    "I selected all users and approved UAC".
+    Root's read-only receipt at 2026-11-17 01:30:27 UTC reports
+    `EnableLUA=1`, consent 5 and secure desktop 1;
+    Explorer 5996 -> setup 5664 -> `/UAC` child 6920.
+  - Installed executable `38A47E42...` and archive `39110BF4...` match expected
+    0.14.1 payloads. Marker `82ADE5CA...` and fixture `D2767A2A...` are unchanged.
+    Finish, installer exit code and automatic relaunch in this UAC-enabled
+    campaign were **NOT OBSERVED**. Keep earlier completion paths separate.
+  - User-directed refusal deferral: "I dont this this needed for now," referring
+    specifically to the separate UAC refusal check. It remains **NOT EXERCISED**;
+    do not call it a pass or retain it as a publication blocker.
+    Root preserved final proof and stopped/destroyed owned guest
+    `a1d42ad4-139b-4e73-9c59-9b4742d1cd81`; final Sandbox status is
+    `running=false`, with no other Sandboxes. The native slot is released.
+    Host inventory elevation remains unrelated to installer qualification.
+  - Root's frozen verification reports fourteen direct evidence checks passing;
+    ten raw files match their copied-out originals. Token observations confirm
+    medium Explorer/setup and an elevated installer child. The follow-up
+    machine receipt confirms display name `Markaloo 0.14.1`, HKLM version
+    0.14.1 and `/allusers`; the earlier exact-name query was too narrow.
+  - Frozen Root proof: session `a945df13-28fd-4f94-b3b7-dcae77565b03`,
+    `files\native0141-uac\results.json`, SHA256
+    `DC14FDF5636F9A368E9C89E9FFB9F629C9FD2EEBE159BFB41BAEE1CAFD09F3EB`;
+    `files\native0141-uac\verification.json`, SHA256
+    `7FCF4B1B93702028136F4DB5580A7C9F99E20F8138C77A15899B91E3D79859A6`.
+    Integration read both named receipts and independently matched both hashes.
+- `v0141-publication-preflight` - **GUARDS RECHECKED; ATOMIC PROMOTION AND NORMAL PUBLICATION PASSED**.
+  - Checked 2026-11-17 at 01:12 UTC using the established process-only
+    `lostinsea` publisher route. Canonical repository identity, push/admin
+    permission and restored process credential values were verified.
+    No shared account/configuration changes, remote writes or dispatches.
+  - Main remains `f79df9d2`; integration is exact approved `55240f87`.
+    The approved source is a verified fast-forward of main. Main has no
+    protection/rules and no active repository rulesets were returned.
+    Neither the `v0.14.1` tag nor release exists.
+  - Package, root lock and root-package lock versions all equal 0.14.1;
+    publication targets `lostinsea/markaloo`. Actions and `release.yml`
+    are active; the workflow blob is unchanged at
+    `f2e483ca305fa7686e953443e473475919920424`.
+    Exact-source staging remains successful on all three platforms;
+    all four source-bound artifacts remain available and unexpired.
+  - Root has supplied the precise go-ahead: nonforce fast-forward remote main
+    to `55240f87`, create/push new annotated `v0.14.1` at that same source,
+    and observe the normal tag workflow. Do not tag later register commits.
+    The successful 0.14.0 tag run was push-triggered. Avoid duplicate dispatch;
+    dispatch on the tag ref only if no matching push-triggered run exists.
+  - Keep the existing platform, strict packaging, completeness, attestation
+    and publication gates. Verify released files, update manifests and
+    exact-source provenance after the normal workflow finishes.
+    Do not substitute direct asset uploads or a branch dispatch.
+  - Root's separate direct-installer approval and user-deferred refusal are
+    recorded above; neither broadens earlier campaign evidence.
+    Recheck all publisher/ref/absence/workflow guards before remote writes.
+    No feature test, review, build or runtime reruns from this checkout.
+    Receipt: integration session `files\publication-preflight-55240f87.json`.
+  - Fresh guards passed immediately before the authorized write at 01:33 UTC.
+    One atomic nonforce push advanced canonical main from `f79df9d2` to exact
+    `55240f87` and created new annotated `v0.14.1`, object
+    `8cbd570b7394424e35ebbb09536b94d67136e09e`, peeled to the same exact source.
+    The primary checkout and shared account/configuration were not changed.
+  - One matching normal push-triggered workflow completed successfully:
+    [43996534071](https://github.com/lostinsea/markaloo/actions/runs/43996534071).
+    Ref `v0.14.1`, source `55240f87`, event `push`; zero manual dispatches.
+    No direct manual release or asset writes. All normal platform, strict archive,
+    completeness, attestation and publication gates passed.
+    Receipt: integration session `files\publication-0141-promotion.json`.
+- `v0141-publication-verification` - **PUBLISHED AND VERIFIED**.
+  - Canonical release:
+    [v0.14.1](https://github.com/lostinsea/markaloo/releases/tag/v0.14.1),
+    release ID `447920408`. It is published, non-draft, non-prerelease and
+    verified as the latest release.
+  - Main and peeled annotated tag both equal exact approved source
+    `55240f87a97a78f986e3eb96b4d39432dfed9b3a`.
+    Tag object is `8cbd570b7394424e35ebbb09536b94d67136e09e`;
+    no later register commit was promoted or tagged.
+  - Normal [run 43996534071](https://github.com/lostinsea/markaloo/actions/runs/43996534071),
+    attempt 1, event `push`: Linux, Windows, macOS, attest and create-release
+    all **PASSED**. Every required packaging/licence, focused Windows,
+    strict archive, build, completeness, upload, attestation and publication
+    step was checked as executed successfully. Zero manual dispatches;
+    no alternate upload/publication path or gate changes.
+  - All nine actual release assets were downloaded without execution.
+    Every size and SHA256 matches the release API. All three updater manifests
+    specify 0.14.1 and point to released files with matching sizes and SHA512.
+    A fresh API check confirmed the same asset IDs, hashes and sizes afterwards.
+  - Every runnable artifact passed cryptographic provenance verification:
+    Windows setup/portable, Linux AppImage/deb and macOS DMG.
+    Each actual file digest is bound to the exact source above,
+    `refs/tags/v0.14.1`, `.github/workflows/release.yml` in `lostinsea/markaloo`
+    and this exact run/attempt. Provenance is not code signing or native execution.
+  - Published setup: `Markaloo-Setup-0.14.1.exe`, 95975727 bytes,
+    SHA256 `4651178f67d72230a3a1925dda9b88f1a3b45c5f9947a5d9acdbb22e1dc3a778`.
+    Both published Windows executables statically report 0.14.1 and `NotSigned`.
+    These freshly built wrappers differ from the staged native-tested files;
+    no native run or extracted-payload comparison of the new wrappers is claimed.
+    Earlier bounded native/UAC results retain their exact file/campaign limits.
+  - The separate UAC refusal check remains **NOT EXERCISED, USER-DEFERRED**,
+    not passed and not a publication blocker. Frozen Root approval/cleanup
+    proof is linked above. No new native/offscreen runtime, source changes,
+    feature-test/review rounds or manual excluded-source access from this checkout.
+    Mac/Linux native execution and wider qualification remain unclaimed.
+  - Complete publication receipt: integration session
+    `files\publication-0141-final.json`, SHA256
+    `7CF762791A5A73A368146EDEE50862DFCC4FEB3F1009C778CAC04C89B2388C91`.
+    Supporting receipts: `files\publication-0141-workflow-results.json`,
+    `files\publication-0141-assets.json`, `files\publication-0141-provenance.json`;
+    verifier outputs under `files\publication-0141-attestations`.
+    Downloaded release files: `files\published-0141-43996534071`.
 - `search-bar-readable-viewport` - **COMBINED CHECKS PASSED; BOUNDED NATIVE PASS**.
   - While search is visible, the readable area starts below its bar.
     Sticky table headings and other content must not hide behind it.
@@ -417,14 +940,15 @@ section is kept here so the register has a visible edge.
     in either; this says nothing about the host.
     The user offered to approve real UAC prompts when needed; Root will ask
     at an actual approval step. Do not change settings or bypass prompts.
-    Root reports current-user UI upgrade verified; candidate `/S` remains pending.
+    Current-user UI upgrade and bounded `/S /currentuser` now pass.
     New 0.14.1 default update, Cancel and no-argument setup visibility results
     are recorded above.
   - Root preserved receipts and the viewed image before verified Sandbox
     teardown. A fresh software-graphics start failed; status then confirmed
     no running Sandbox. There was no blind restart.
-  - Root owns the new network-off minimized Sandbox and remaining controls.
-    Its measured state and exact 0.14.1 results are recorded separately above.
+  - Root completed the bounded new-guest controls and stopped that guest.
+    Its measured state and exact 0.14.1 results are recorded separately above;
+    real UAC and wider qualification remain open.
   - Evidence: Root's `files\updater-correction\result.json` and
     `files\updater-correction\controls-through-014-replay`.
     No untouched public-GitHub pass or completed qualification is claimed.

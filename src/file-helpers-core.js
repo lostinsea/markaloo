@@ -141,6 +141,7 @@ function utf8ByteLength(content) {
 
 function countOrdinaryRenderSegment(content, start, end, state) {
   let { lines, pipes, fencedLines, inFence, atLineStart, fenceRun, lineHasContent } = state;
+  let crossedFence = false;
   for (let i = start; i < end; i++) {
     const c = content.charCodeAt(i);
     if (c === 10) {
@@ -148,6 +149,7 @@ function countOrdinaryRenderSegment(content, start, end, state) {
       if (inFence) fencedLines++;
       if (fenceRun >= 3) {
         inFence = !inFence;
+        crossedFence = true;
         if (inFence) fencedLines++;
       }
       atLineStart = true;
@@ -165,6 +167,7 @@ function countOrdinaryRenderSegment(content, start, end, state) {
     if (c === 124 && !inFence) pipes++;
   }
   Object.assign(state, { lines, pipes, fencedLines, inFence, atLineStart, fenceRun, lineHasContent });
+  return crossedFence;
 }
 
 /**
@@ -196,20 +199,45 @@ function estimateRenderUnits(content) {
     atLineStart: true, fenceRun: 0, lineHasContent: false };
   const input = { text: content, space: 'original' };
   // This is only a cheap physical-line hint. The shared reader owns grammar.
-  const mayHaveRaw = content.includes('```') && (content.startsWith('|') ||
-    content.startsWith('\uFEFF|') || content.includes('\n|'));
-  const candidates = mayHaveRaw ? /(?:^\uFEFF?|\n)\|[^\n]*```/g : null;
+  const mayHaveRaw = content.includes('```') && content.includes('|');
+  const candidates = mayHaveRaw ? /(?:^\uFEFF?|\n)[^\n]*\|/g : null;
   let next = 0;
+  let bodyColumns;
+  const ordinaryUntil = end => {
+    const crossedFence = countOrdinaryRenderSegment(content, next, end, state);
+    if (crossedFence || /(?:^|\n)[ \t]*\r?\n/.test(content.slice(next, end))) {
+      bodyColumns = undefined;
+    }
+    next = end;
+  };
   let match;
   while (candidates && (match = candidates.exec(content)) !== null) {
-    const start = match.index + (content[match.index] === '|' ? 0 : 1);
-    countOrdinaryRenderSegment(content, next, start, state);
-    next = start;
-    if (state.inFence) continue;
-    if (!tableSource || typeof tableSource.readRow !== 'function') {
+    const start = match.index + (content[match.index] === '\n' ||
+      (match.index === 0 && content.charCodeAt(0) === 0xfeff) ? 1 : 0);
+    ordinaryUntil(start);
+    if (state.inFence) {
+      bodyColumns = undefined;
+      continue;
+    }
+    const firstPipe = content.indexOf('|', start);
+    if (firstPipe > start) {
+      const prefixState = { ...state };
+      countOrdinaryRenderSegment(content, start, firstPipe, prefixState);
+      if (prefixState.fenceRun >= 3) {
+        const lf = content.indexOf('\n', firstPipe);
+        ordinaryUntil(lf < 0 ? content.length : lf + 1);
+        candidates.lastIndex = next - 1;
+        continue;
+      }
+    }
+    if (!tableSource || typeof tableSource.readRow !== 'function' ||
+        typeof tableSource.readTableHeader !== 'function') {
       throw new Error('Load table-source.js before estimating raw table render cost');
     }
-    const row = tableSource.readRow(input, start);
+    const head = bodyColumns === undefined ? tableSource.readTableHeader(input, start) : null;
+    const row = head && head.kind === 'complete'
+      ? { kind: 'complete', value: head.value.header, next: head.value.header.ending.end }
+      : head || tableSource.readRow(input, start, bodyColumns);
     if (row && (row.kind === 'literal' ||
         row.value.cells.some(cell => cell.kind === 'raw'))) {
       for (let index = start; index < row.next; index++) {
@@ -221,11 +249,21 @@ function estimateRenderUnits(content) {
       state.atLineStart = true;
       state.fenceRun = 0;
       state.lineHasContent = false;
+    } else if (row) {
+      ordinaryUntil(row.next);
+    }
+    if (head && head.kind === 'complete') {
+      ordinaryUntil(head.next);
+      // Syntactic context only: a nonblank native boundary may still refuse
+      // this table. Keep its raw windows conservative, never certify the run.
+      bodyColumns = state.inFence ? undefined : head.value.header.cells.length;
+    }
+    if (row) {
       // Include the consumed newline as the hint for an adjacent raw row.
       candidates.lastIndex = next - 1;
     }
   }
-  countOrdinaryRenderSegment(content, next, content.length, state);
+  ordinaryUntil(content.length);
   const { lines, pipes, fencedLines } = state;
   const units = Math.max(0, lines - FENCED_LINE_DISCOUNT * fencedLines + pipes);
   return { units, lines, fencedLines, pipes };

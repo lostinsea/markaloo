@@ -1,7 +1,7 @@
 "use strict";
 
 // Do not initialize the full product inventory or Electron for this bounded route.
-if (process.argv.includes("--raw-table-o2")) {
+if (process.argv.includes("--raw-table-o2") || process.argv.includes("--envelope-only")) {
   runRawTableO2();
   return;
 }
@@ -9,6 +9,7 @@ if (process.argv.includes("--raw-table-o2")) {
 function runRawTableO2() {
   const fs = require("fs"), path = require("path"), vm = require("vm");
   const root = path.resolve(__dirname, ".."), results = [];
+  const envelopeOnly = process.argv.includes("--envelope-only");
   const check = (name, ok, detail) => {
     results.push({ name, ok: !!ok });
     console.log((ok ? "PASS " : "FAIL ") + name +
@@ -25,7 +26,8 @@ function runRawTableO2() {
     .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
     .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
   run("bounded dependency setup", () => {
-    if (process.argv.slice(2).some(arg => arg !== "--raw-table-o2") ||
+    if (!process.argv.includes("--raw-table-o2") ||
+        process.argv.slice(2).some(arg => arg !== "--raw-table-o2" && arg !== "--envelope-only") ||
         process.env.MARKALOO_CELL_PROOF || process.env.MARKALOO_CELL_MOVEMENT_ONLY) {
       throw new Error("--raw-table-o2 cannot be combined with other suite modes");
     }
@@ -72,6 +74,14 @@ function runRawTableO2() {
   const errorOf = action => {
     try { action(); return null; } catch (error) { return error; }
   };
+  if (envelopeOnly) {
+    run("raw popup envelope and rejection", rawPopupEnvelopeTests);
+    console.log("NOT RUN other O2 cases, vertical matrix, full inventory, renderer/UI, native and release gates");
+    const failed = results.filter(result => !result.ok).length;
+    console.log("=== O2 envelope: " + (results.length - failed) + "/" + results.length + " passed ===");
+    process.exitCode = failed ? 1 : 0;
+    return;
+  }
   for (const ending of ["\n", "\r\n"]) for (const sample of fixture.cases) {
     for (const header of [false, true]) for (const column of [0, 1, 2]) {
       run("raw slot " + JSON.stringify({ ending, sample: sample.id, header, column }), () => {
@@ -104,6 +114,223 @@ function runRawTableO2() {
       });
     }
   }
+  for (const vertical of [false, true]) for (const ending of ["\n", "\r\n"])
+    for (const header of [false, true]) for (const column of [0, 1, 2]) {
+    run("captured raw padding " + JSON.stringify({ vertical, ending, header, column }), () => {
+      const codeEnding = ending === "\n" ? "\r\n" : "\n";
+      const body = ["owned-before 😀 | 日本語", "\t````` | indented body, not a closer",
+        "", "\t\uFEFF\u00A0opaque body"].join(codeEnding);
+      const code = "`````rust" + codeEnding + body + codeEnding + "`````";
+      const leading = vertical ? " \t" + ending + " \t" + codeEnding + "\t " : " \t  ";
+      const trailing = vertical ? "\t" + codeEnding + " \t" + ending + "\t  " : "\t  \t";
+      const headings = [" A ", " B ", " C "], data = [" left ", " middle ", " right "];
+      (header ? headings : data)[column] = leading + code + trailing;
+      const delimiter = [" :--- ", " :---: ", " ---: "], tail = [" tail ", " unchanged ", " keep "];
+      const pipeRow = slots => "|" + slots.join("|") + "|";
+      const lines = [pipeRow(headings), pipeRow(delimiter), pipeRow(data), pipeRow(tail)];
+      const prefix = "\uFEFF# Before 😀" + ending + ending, suffix = ending + ending + "After 日本語";
+      const source = prefix + lines.join(ending) + suffix, target = targetOf(source);
+      const r = header ? 0 : 1, cell = target.rows[r].cells[column], syntax = cell.syntax;
+      check("padded setup has separate captured slot content body and original Snapshot",
+        syntax.kind === "raw" && target.table.syntax.input === target.model.syntax &&
+        target.model.syntax.text === source && target.model.syntax.space === "original" &&
+        target.rows.length === 3 && target.model.tables.length === 1 &&
+        syntax.slot.start < syntax.content.start && syntax.content.end < syntax.slot.end);
+      equal(source.slice(syntax.slot.start, syntax.slot.end), leading + code + trailing,
+        "captured slot owns exact exterior spaces and tabs");
+      equal(content(target, cell), code, "content excludes captured exterior padding without changing the fence");
+      equal(source.slice(syntax.fence.body.start, syntax.fence.body.end), body,
+        "code-copy body receipt excludes fences and exterior padding but retains opaque body characters");
+      check("mixed-ending facade maps normalized content to absolute original UTF16 spans",
+        cell.text === normalized(code) && target.model.view.offsets[cell.start] === syntax.content.start &&
+        target.model.view.offsets[cell.end] === syntax.content.end &&
+        target.model.source.length !== target.model.view.text.length);
+      equal(cells.replaceCells(target, [], marked, protect), source, "padded raw no-op keeps every original byte");
+      const bodyStart = normalized(source.slice(0, syntax.fence.body.start)).length;
+      const selected = cells.resolveSource(target.model, bodyStart, bodyStart + "owned-before".length,
+        cells.Mode.UPDATE_ROWS);
+      check("selection inside the actual code body resolves only its logical row",
+        selected.rows.length === 1 && selected.rows[0] === target.rows[r] &&
+        selected.rows[0].cells[column] === cell);
+      const changed = code.replace("owned-before", "owned-after-longer");
+      const expected = replacement => source.slice(0, syntax.content.start) + replacement +
+        source.slice(syntax.content.end);
+      equal(cells.replaceCells(selected, [{ cell, text: changed }], marked, protect), expected(changed),
+        "body-only Update changes fenced content without duplicating padding or changing any neighbor");
+      const pasted = leading + changed + trailing;
+      equal(cells.replaceCells(selected, [{ cell, text: pasted }], marked, protect), expected(pasted),
+        "explicit pasted padding adds supplied text inside the captured content splice");
+      equal(target.model.source, source, "padded Update candidates leave the captured source unchanged");
+      const permutation = [2, 0, 1];
+      const columns = permutation.map(originalIndex => ({ id: String(originalIndex), originalIndex }));
+      const order = target.rows.map(original => ({ original,
+        cells: permutation.map(c => content(target, original.cells[c])) }));
+      equal(cells.replaceStructure(target, [], order, columns, marked, protect),
+        prefix + [headings, delimiter, data, tail].map(slots =>
+          pipeRow(permutation.map(c => slots[c]))).join(ending) + suffix,
+        "column movement retains complete padded slots and delimiter alignment");
+      equal(cells.replaceRows(target, [], [target.rows[0], target.rows[2], target.rows[1]]
+        .map(original => ({ original })), marked, protect),
+      prefix + [lines[0], lines[1], lines[3], lines[2]].join(ending) + suffix,
+      "row movement retains exact padded logical rows and outside source");
+      const deletedColumn = (column + 1) % 3, kept = [0, 1, 2].filter(c => c !== deletedColumn);
+      equal(cells.replaceStructure(target, [], target.rows.map(original => ({ original,
+        cells: kept.map(c => content(target, original.cells[c])) })),
+      kept.map(originalIndex => ({ id: String(originalIndex), originalIndex })),
+      marked, protect, [], [deletedColumn]), prefix + [headings, delimiter, data, tail]
+        .map(slots => pipeRow(kept.map(c => slots[c]))).join(ending) + suffix,
+      "neighboring-column deletion retains the entire padded raw slot");
+      equal(cells.replaceRows({ ...target, mode: cells.Mode.UPDATE_ROWS, rows: [target.rows[1]] }, [],
+        [], marked, protect, [target.rows[1]]),
+      prefix + [lines[0], lines[1], lines[3]].join(ending) + suffix,
+      "selected-row deletion removes complete padded logical rows without touching their neighbors");
+      const added = [" inserted ", " inserted ", " inserted "];
+      added[column] = pasted;
+      equal(cells.replaceRows(target, [], [{ original: target.rows[0] }, { original: target.rows[1] },
+        { id: "padded-insert", cells: added }, { original: target.rows[2] }], marked, protect),
+      prefix + [lines[0], lines[1], lines[2], row(added), lines[3]].join(ending) + suffix,
+      "row insertion retains explicit snippet padding and every original table slice");
+    });
+  }
+  for (const vertical of [false, true]) for (const ending of ["\n", "\r\n"])
+    run("multiple captured padded cells " + JSON.stringify({ vertical, ending }), () => {
+    const first = snippet("owned-before 😀 | 日本語", "rust", ending);
+    const second = snippet('{"value":"😀|é"}', "json", ending);
+    const leading = vertical ? " \t" + ending + "\t" + ending + " " : "\t";
+    const trailing = vertical ? " \t" + ending + "\t" + ending + "  " : "  ";
+    const headings = vertical ? [leading + first + trailing, " H ", leading + second + trailing] :
+      [" \t" + first + "\t ", " H ", "  " + second + "\t\t"];
+    const delimiter = [" --- ", " :---: ", " ---: "];
+    const data = [leading + second + trailing, leading + first + trailing, " keep "];
+    const pipeRow = slots => "|" + slots.join("|") + "|";
+    const lines = [headings, delimiter, data].map(pipeRow);
+    const source = lines.join(ending), target = targetOf(source);
+    check("multiple padded setup has two complete raw cells in each logical row",
+      target.rows.length === 2 && target.rows.every(r => r.cells.filter(c => c.syntax.kind === "raw").length === 2));
+    const cell = target.rows[1].cells[1], span = cell.syntax.content, changed = first.replace("owned-before", "changed");
+    equal(cells.replaceCells(target, [{ cell, text: changed }], marked, protect),
+      source.slice(0, span.start) + changed + source.slice(span.end),
+      "selected padded cell Update leaves every other raw cell and exterior padding exact");
+    equal(cells.replaceStructure(target, [], values(target),
+      [0, 1, 2].map(originalIndex => ({ id: String(originalIndex), originalIndex })), marked, protect),
+    source, "multiple padded identity structure does not repeat captured padding");
+    const permutation = [1, 2, 0];
+    equal(cells.replaceStructure(target, [], target.rows.map(original => ({ original,
+      cells: permutation.map(c => content(target, original.cells[c])) })),
+    permutation.map(originalIndex => ({ id: String(originalIndex), originalIndex })), marked, protect),
+    [headings, delimiter, data].map(slots => pipeRow(permutation.map(c => slots[c]))).join(ending),
+    "multiple padded raw slots move together without consuming row or neighboring cell boundaries");
+  });
+  run("outer-padding negatives do not restrict opaque body characters", () => {
+    const source = "| A | B |\n| --- | --- |\n| old | keep |", target = targetOf(source);
+    const code = snippet("opaque \uFEFF\u00A0😀 | body", "rust"), cell = target.rows[1].cells[0];
+    for (const outer of ["\uFEFF", "\u00A0", "\r"]) {
+      const error = errorOf(() => cells.replaceCells(target, [{ cell, text: outer + code }], marked, protect));
+      check("BOM Unicode space or bare CR cannot become leading outer padding " + JSON.stringify(outer),
+        error?.message === "tableCells.invalid" && target.model.source === source, error?.stack);
+    }
+    equal(cells.replaceCells(target, [{ cell, text: code }], marked, protect), source.replace("old", code),
+      "the same BOM and Unicode-space characters remain opaque inside the code body");
+  });
+  for (const ending of ["\n", "\r\n"]) for (const raw of [false, true])
+    run("complete table followed by independent code " + JSON.stringify({ ending, raw }), () => {
+    const header = raw ? row([snippet("header | 😀", "rust", ending), "B"]) : "| A | B |";
+    const table = [header, "| --- | --- |", "| old | keep |"].join(ending);
+    const separate = ending + ending +
+      snippet("standalone 😀 | 日本語\n````` | still inside the independent native fence", "rust", ending);
+    const source = table + separate, target = targetOf(source);
+    check("complete ordinary row plus separate fenced block stays native and independently partitioned",
+      target.model.tables.length === 1 && target.model.otherTables.length === 0 &&
+      target.table.syntax.value.hasRaw === raw && target.model.blocks.some(block => block.type === "code"));
+    equal(cells.replaceCells(target, [{ cell: target.rows[1].cells[0], text: "changed" }], marked, protect),
+      table.replace("old", "changed") + separate,
+      "Update cannot reopen a complete row or alter the following independent fence");
+  });
+  for (const ending of ["\n", "\r\n"]) run("identical padded header provenance " + JSON.stringify(ending), () => {
+    const source = ("~~~~\n| a |\n\n```x\nb\n```\n\n|\n| --- | --- |\n| c | d |\n~~~~\n\n" +
+      "| a |\n\n```x\nb\n```\n\n|\n| --- | --- |\n| c | d |\n").replace(/\n/g, ending);
+    const start = source.lastIndexOf("| a |"), target = targetOf(source);
+    const cell = target.rows[0].cells[1], syntax = cell.syntax;
+    const code = "```x" + ending + "b" + ending + "```";
+    const contentStart = source.indexOf("```x", start), contentEnd = contentStart + code.length;
+    check("only the top-level duplicate acquires its own original Snapshot and complete header receipts",
+      target.table.syntax.input === target.model.syntax && target.model.syntax.text === source &&
+      target.model.syntax.space === "original" && target.table.syntax.value.span.start === start &&
+      target.rows.length === 2 && target.rows.every(r => r.cells.length === 2) &&
+      target.rows[1].cells.map(c => c.text).join(",") === "c,d" &&
+      !target.model.tables.some(t => target.model.view.offsets[t.start] < start));
+    check("duplicate raw slot content and body spans belong to the eligible absolute UTF16 occurrence",
+      syntax.kind === "raw" && target.table.syntax.value.header.cells[1] === syntax &&
+      syntax.slot.start >= start && syntax.slot.end <= source.length &&
+      syntax.content.start === contentStart && syntax.content.end === contentEnd &&
+      target.model.view.offsets[cell.start] === contentStart &&
+      target.model.view.offsets[cell.end] === contentEnd &&
+      source.slice(syntax.fence.body.start, syntax.fence.body.end) === "b");
+    const first = normalized(source.slice(0, source.indexOf("| a |"))).length;
+    check("the later duplicate receipt cannot resolve a selection inside the ordinary tilde fence",
+      errorOf(() => cells.resolveSource(target.model, first, first + "| a |".length,
+        cells.Mode.UPDATE_TABLE))?.message === "tableCells.select");
+    const changed = code.replace(ending + "b" + ending, ending + "updated" + ending);
+    equal(cells.replaceCells(target, [{ cell, text: changed }], marked, protect),
+      source.slice(0, contentStart) + changed + source.slice(contentEnd),
+      "editing the eligible duplicate preserves the identical fenced copy and all exterior padding");
+    const foreign = targetOf(source);
+    check("identical full text in another Snapshot cannot supply the eligible duplicate's cell authority",
+      errorOf(() => cells.replaceCells(target, [{ cell: foreign.rows[0].cells[1], text: code }],
+        marked, protect))?.message === "tableCells.invalid" && target.model.source === source);
+  });
+  for (const ending of ["\n", "\r\n"]) run("successive padded header authority " + JSON.stringify(ending), () => {
+    const source = ("| A |\n\n```js\none\n``` |\n| --- | --- |\n| c | d |\n\n" +
+      "| E |\n\n```js\ntwo\n``` |\n| --- | --- |\n| g | h |\n").replace(/\n/g, ending);
+    const target = targetOf(source, 1), model = target.model, first = model.tables[0];
+    const start = source.indexOf("| E |"), end = source.indexOf("| g | h |") + "| g | h |".length;
+    check("both successive padded headers retain independent top-level table authority and exact bounds",
+      model.tables.length === 2 && first.writable && first.syntax.input === model.syntax &&
+      first.syntax.value.hasRaw && first.syntax.value.span.start === 0 &&
+      first.syntax.value.span.end === source.indexOf("| c | d |") + "| c | d |".length &&
+      target.table.syntax.input === model.syntax && target.table.syntax.value.hasRaw &&
+      target.table.syntax.value.span.start === start && target.table.syntax.value.span.end === end &&
+      model.view.offsets[target.table.start] === start && model.view.offsets[target.table.end] === end);
+    const cell = target.rows[0].cells[1], syntax = cell.syntax;
+    const code = "```js" + ending + "two" + ending + "```";
+    check("the second raw header owns its later absolute slot content and body receipts",
+      syntax.kind === "raw" && target.table.syntax.value.header.cells[1] === syntax &&
+      syntax.slot.start >= start && syntax.content.start === source.indexOf("```js", start) &&
+      content(target, cell) === code &&
+      source.slice(syntax.fence.body.start, syntax.fence.body.end) === "two" &&
+      source.slice(first.rows[0].cells[1].syntax.fence.body.start,
+        first.rows[0].cells[1].syntax.fence.body.end) === "one");
+    const bodyStart = normalized(source.slice(0, syntax.fence.body.start)).length;
+    const selected = cells.resolveSource(model, bodyStart, bodyStart + "two".length, cells.Mode.UPDATE_ROWS);
+    check("a selection in the second padded header cannot resolve the first table",
+      selected.table === target.table && selected.rows.length === 1 && selected.rows[0] === target.rows[0]);
+    const changed = code.replace(ending + "two" + ending, ending + "updated" + ending);
+    equal(cells.replaceCells(selected, [{ cell, text: changed }], marked, protect),
+      source.slice(0, syntax.content.start) + changed + source.slice(syntax.content.end),
+      "second-table Update preserves the complete first table and every other source byte");
+  });
+  for (const ending of ["\n", "\r\n"]) run("failed padded header rollback " + JSON.stringify(ending), () => {
+    const source = ("| a |\n\n```x\nb\n```\n\n|\n| --- |\n\n```independent\nkept\n```\n\n" +
+      "| h |\n| --- |\n| v |\n").replace(/\n/g, ending);
+    const start = source.lastIndexOf("| h |"), end = source.lastIndexOf("| v |") + "| v |".length;
+    const model = cells.index(source, marked, protect);
+    const table = model.tables.find(item => model.view.offsets[item.start] === start);
+    check("failed extended-header width leaves the later native table at its exact original bounds",
+      table?.writable && table.rows.length === 2 && table.rows.every(r => r.cells.length === 1) &&
+      table.rows.map(r => r.cells[0].text).join(",") === "h,v" &&
+      model.view.offsets[table.end] === end && table.syntax.input === model.syntax &&
+      table.syntax.value.span.start === start && table.syntax.value.span.end === end);
+    if (!table?.writable) throw new Error("Later native h/v table is unavailable after failed header lookahead");
+    check("failed header probing retains both independent native code blocks",
+      ["```x" + ending + "b" + ending + "```", "```independent" + ending + "kept" + ending + "```"]
+        .every(code => model.blocks.some(block => block.type === "code" &&
+          block.raw.startsWith(normalized(code)))));
+    const cell = table.rows[1].cells[0], span = cell.syntax.content;
+    equal(cells.replaceCells({ mode: cells.Mode.UPDATE_TABLE, model, table, rows: table.rows },
+      [{ cell, text: "updated" }], marked, protect),
+    source.slice(0, span.start) + "updated" + source.slice(span.end),
+    "later ordinary Update preserves the failed-header prefix and both independent fences exactly");
+  });
   for (const ending of ["\n", "\r\n"]) run("multiple raw and structural " + JSON.stringify(ending), () => {
     const rust = snippet("let value = \"😀 | :smile: @@@html\";\n\n\t// 日本語", "rust", ending);
     const json = snippet('{\n\t"pipe": "a|b",\n\n  "html": "<b>&</b>"\n}', "application/json", ending);
@@ -342,17 +569,26 @@ function runRawTableO2() {
       marked, protect, [removed]), "| A | B |\n| :--- | ---: |\n",
     "deleting the final multiline body row retains the preceding delimiter ending at EOF");
   });
-  run("raw popup envelope and rejection", () => {
+  run("raw popup envelope and rejection", rawPopupEnvelopeTests);
+  function rawPopupEnvelopeTests() {
     const source = "| A | B |\n| --- | --- |\n| old | keep |", target = targetOf(source);
     const cell = target.rows[1].cells[0], code = snippet("x|y", "unknown");
-    equal(cells.replaceCells(target, [{ cell, text: "\t" + code + "  \n" }], marked, protect),
-      source.replace("old", "\t" + code + "  "), "popup padding is retained and final clipboard newline consumed");
-    for (const draft of ["```rust\nmissing", "```rust extra\nx\n```", code + "\n\n",
+    for (const draft of ["\t" + code + "  \n", code + "\n\n", " \t\r\n\r\n" + code + "\r\n \t\r\n"]) {
+      const name = "popup content splice retains every supplied exterior padding byte " + JSON.stringify(draft);
+      run(name, () => equal(cells.replaceCells(target, [{ cell, text: draft }], marked, protect),
+        source.replace("old", draft), name));
+      if (target.model.source !== source) throw new Error("Popup candidate mutated the captured source");
+    }
+    const secondBlock = code + "\n\n" + code;
+    for (const draft of ["```rust\nmissing", "```rust extra\nx\n```", secondBlock,
       code + "\nprose", "```sql\nSELECT 1;\n``` | collision\n```"]) {
       const error = errorOf(() => cells.replaceCells(target, [{ cell, text: draft }], marked, protect));
-      check("malformed popup Update rejects with cell-envelope and unchanged source",
+      check("malformed popup Update rejects with cell-envelope and unchanged source " + JSON.stringify(draft),
         error?.message === "tableCells.invalid" && error.diagnostic?.code === "cell-envelope" &&
         Number.isSafeInteger(error.diagnostic.at.start) && target.model.source === source, error?.stack);
+      if (draft === secondBlock) check("second-block diagnostic starts after the completed first popup envelope",
+        error?.diagnostic?.at?.start === code.length + 2 && error.diagnostic.at.end === draft.length,
+        error?.diagnostic);
     }
     const collision = "```sql\nSELECT 1;\n``` | collision\n```";
     const error = errorOf(() => cells.replaceCells(target, [{ cell, text: collision }], marked, protect));
@@ -364,7 +600,7 @@ function runRawTableO2() {
     check("an existing raw-cell incomplete single-line draft also rejects without source mutation",
       incomplete?.message === "tableCells.invalid" && incomplete.diagnostic?.code === "cell-envelope" &&
       rawTarget.model.source === rawSource);
-  });
+  }
   run("ordinary single-line backticks remain authored Markdown", () => {
     for (const text of ["```rust", "```rust extra", "```inline```"]) {
       const source = "| A | B |\n| --- | --- |\n| " + text + " | keep |", target = targetOf(source);

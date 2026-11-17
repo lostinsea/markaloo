@@ -28,6 +28,15 @@ function skipHorizontal(text, start, end) {
   return start;
 }
 
+function skipPadding(text, start) {
+  while (start < text.length) {
+    if (horizontal(text[start]) || text[start] === '\n') start++;
+    else if (text[start] === '\r' && text[start + 1] === '\n') start += 2;
+    else break;
+  }
+  return start;
+}
+
 function trimEnd(text, start, end) {
   while (end > start && horizontal(text[end - 1])) end--;
   return end;
@@ -57,12 +66,55 @@ function openingAt(text, slotStart, line) {
   };
 }
 
-function closerAt(text, line, width, table) {
+function closerAt(text, line, width, table, padded = false) {
   const end = ticksEnd(text, line.start, line.end);
   if (end - line.start < width) return null;
-  const after = skipHorizontal(text, end, line.end);
+  const after = padded ? skipPadding(text, end) : skipHorizontal(text, end, line.end);
   if (table ? text[after] !== '|' : after !== line.end) return null;
   return { end, after };
+}
+
+const tableFenceIndexes = new WeakMap();
+
+function tableFenceIndex(input) {
+  const { text, space } = input;
+  const cached = tableFenceIndexes.get(input);
+  if (cached && cached.text === text && cached.space === space) return cached.index;
+  const index = new Map();
+  const same = [];
+  const padded = [];
+  let cursor = text.length - 1;
+  // Failed speculative openers share this pass instead of each rescanning EOF.
+  while (cursor >= 0) {
+    const end = text.lastIndexOf('`', cursor) + 1;
+    if (!end) break;
+    let start = end - 1;
+    while (start > 0 && text[start - 1] === '`') start--;
+    cursor = start - 1;
+    const width = end - start;
+    if (width < 3) continue;
+    index.set(start, { same: same[width] || null, padded: padded[width] || null });
+    if (start > 0 && text[start - 1] !== '\n') continue;
+    const line = lineAt(text, start);
+    const closer = closerAt(text, line, width, true, true);
+    if (!closer) continue;
+    const result = { ...closer, line,
+      rowLine: lineAt(text, text.lastIndexOf('\n', closer.after - 1) + 1) };
+    for (let required = 3; required <= width; required++) {
+      padded[required] = result;
+      if (closer.after <= line.end) same[required] = result;
+    }
+  }
+  tableFenceIndexes.set(input, { text, space, index });
+  return index;
+}
+
+function rowOpening(text, slotStart, line, padded) {
+  const start = padded ? skipPadding(text, slotStart) : slotStart;
+  const openingLine = start > line.end ? lineAt(text, start) : line;
+  const opening = openingAt(text, start, openingLine);
+  return opening && opening.openingEol.end > opening.openingEol.start
+    ? { opening, vertical: start > line.end } : null;
 }
 
 function finishFence(text, opening, closingLine, markerEnd) {
@@ -107,12 +159,18 @@ function rowFences(row) {
   return row.cells.filter(cell => cell.kind === 'raw').map(cell => cell.fence);
 }
 
-function readRow(input, start) {
+function readRow(input, start, bodyColumns) {
   validate(input, start);
-  return readRowAt(input, start, false);
+  if (bodyColumns !== undefined && (!Number.isSafeInteger(bodyColumns) || bodyColumns <= 0)) {
+    throw new TypeError('Expected a positive safe integer BODY column constraint');
+  }
+  return readRowAt(input, start, false, bodyColumns === undefined ? null : bodyColumns);
 }
 
-function readRowAt(input, start, allowPlain) {
+const paddedRows = new WeakSet();
+
+function readRowAt(input, start, allowPlain, columns = null, padded = true,
+  headerContinuation = false) {
   const text = input.text;
   if (start === text.length) return null;
   let line = lineAt(text, start);
@@ -127,27 +185,34 @@ function readRowAt(input, start, allowPlain) {
   let slotStart = leadingPipe ? first + 1 : start;
   let cursor = slotStart;
   let sawPipe = leadingPipe !== null;
+  let speculative = false;
 
   while (true) {
-    const opening = rawEligible ? openingAt(text, slotStart, line) : null;
-    let cell = null;
-    if (opening && line.next > line.end) {
-      let closingLine = lineAt(text, line.next);
-      let closer = null;
-      while (closingLine.start < text.length) {
-        closer = closerAt(text, closingLine, opening.width, true);
-        if (closer) break;
-        closingLine = lineAt(text, closingLine.next);
+    let candidate = rawEligible ? rowOpening(text, slotStart, line, padded) : null;
+    const choices = candidate && tableFenceIndex(input).get(candidate.opening.marker.start);
+    const closer = choices && choices[padded ? 'padded' : 'same'];
+    if (candidate && candidate.vertical && !closer) {
+      if (speculative) {
+        return readRowAt(input, start, allowPlain, columns, headerContinuation ? padded : false);
       }
+      candidate = null;
+    }
+    let cell = null;
+    if (candidate) {
+      const { opening } = candidate;
       if (!closer) {
+        if (speculative) {
+          return readRowAt(input, start, allowPlain, columns, headerContinuation ? padded : false);
+        }
         fences.push(unfinishedFence(opening, text.length));
         return literal(input, start, text.length, fences, 'missing-fence', opening.marker);
       }
-      const fence = finishFence(text, opening, closingLine, closer.end);
+      speculative = speculative || candidate.vertical || closer.after > closer.line.end;
+      const fence = finishFence(text, opening, closer.line, closer.end);
       fences.push(fence);
       cell = { kind: 'raw', slot: span(slotStart, closer.after),
         content: span(opening.marker.start, closer.end), fence };
-      line = closingLine;
+      line = closer.rowLine;
       cursor = closer.after;
     } else {
       // Only escaped pipes are data in an ordinary GFM cell, including code spans.
@@ -170,8 +235,15 @@ function readRowAt(input, start, allowPlain) {
     cells.push(cell || inlineCell(text, slotStart, cursor));
     const pipe = span(cursor, cursor + 1);
     if (skipHorizontal(text, cursor + 1, line.end) === line.end) {
-      trailingPipe = pipe;
-      break;
+      const possible = padded && rawEligible &&
+        (headerContinuation || (columns !== null && cells.length < columns))
+        ? rowOpening(text, cursor + 1, line, true) : null;
+      const nextCloser = possible && possible.vertical &&
+        tableFenceIndex(input).get(possible.opening.marker.start).padded;
+      if (!nextCloser) {
+        trailingPipe = pipe;
+        break;
+      }
     }
     separators.push(pipe);
     slotStart = cursor + 1;
@@ -181,9 +253,13 @@ function readRowAt(input, start, allowPlain) {
   if (!sawPipe && !allowPlain) return null;
   const row = { span: span(start, line.end), ending: span(line.end, line.next),
     leadingPipe, trailingPipe, separators, cells };
+  if (speculative && (!trailingPipe || (columns !== null && cells.length !== columns))) {
+    return readRowAt(input, start, allowPlain, columns, headerContinuation ? padded : false);
+  }
   if (fences.length && !trailingPipe) {
     return literal(input, start, line.next, fences, 'columns', row.span);
   }
+  if (speculative) paddedRows.add(row);
   return complete(input, row, line.next);
 }
 
@@ -248,34 +324,61 @@ function readTable(input, start, { nativePlainBodyRun } = {}) {
   if (nativePlainBodyRun !== undefined && typeof nativePlainBodyRun !== 'function') {
     throw new TypeError('Expected a native plain-body callback');
   }
-  const headerRead = readRowAt(input, start, true);
-  if (!headerRead || headerRead.kind === 'literal') return headerRead;
+  return readTableAt(input, start, nativePlainBodyRun, true);
+}
+
+function readTableHeader(input, start) {
+  validate(input, start);
+  return readTableHeaderAt(input, start, true).result;
+}
+
+function readTableHeaderAt(input, start, padded, headerContinuation = padded) {
+  // Only a matching delimiter can commit continuation past a HEADER pipe.
+  const headerRead = readRowAt(input, start, true, null, padded, headerContinuation);
+  if (!headerRead || headerRead.kind === 'literal') return { result: headerRead, padded };
   const header = headerRead.value;
   const fences = rowFences(header);
   const plainHeader = !header.leadingPipe && !header.trailingPipe && !header.separators.length;
   // A single-column GFM delimiter need not contain a pipe.
-  const delimiterRead = readRowAt(input, headerRead.next, true);
+  const delimiterRead = readRowAt(input, headerRead.next, true, null, false);
   if (delimiterRead && delimiterRead.kind === 'literal') {
-    if (plainHeader) return null;
-    return literal(input, start, delimiterRead.next, fences.concat(delimiterRead.fences),
-      delimiterRead.diagnostic.code, delimiterRead.diagnostic.at);
+    if (paddedRows.has(header)) {
+      return readTableHeaderAt(input, start, headerContinuation ? padded : false, false);
+    }
+    if (plainHeader) return { result: null, padded };
+    return { result: literal(input, start, delimiterRead.next, fences.concat(delimiterRead.fences),
+      delimiterRead.diagnostic.code, delimiterRead.diagnostic.at), padded };
   }
   const delimiter = delimiterRead && delimiterRead.value;
   const align = delimiter && delimiterAlign(input.text, delimiter);
   if (!align || align.length !== header.cells.length) {
-    if (plainHeader) return null;
+    if (paddedRows.has(header)) {
+      return readTableHeaderAt(input, start, headerContinuation ? padded : false, false);
+    }
+    if (plainHeader) return { result: null, padded };
     const delimiterFences = delimiter ? rowFences(delimiter) : [];
-    if (!fences.length && !delimiterFences.length) return null;
+    if (!fences.length && !delimiterFences.length) return { result: null, padded };
     const line = lineAt(input.text, headerRead.next);
     const at = delimiter ? delimiter.span : span(line.start, line.end);
-    return literal(input, start, delimiterRead ? delimiterRead.next : line.next,
-      fences.concat(delimiterFences), align ? 'columns' : 'table-delimiter', at);
+    return { result: literal(input, start, delimiterRead ? delimiterRead.next : line.next,
+      fences.concat(delimiterFences), align ? 'columns' : 'table-delimiter', at), padded };
   }
+  return { result: complete(input, { span: span(start, delimiter.span.end),
+    ending: delimiter.ending, header, delimiter, align }, delimiterRead.next), padded };
+}
+
+function readTableAt(input, start, nativePlainBodyRun, padded) {
+  const context = readTableHeaderAt(input, start, padded);
+  const head = context.result;
+  if (!head || head.kind === 'literal') return head;
+  padded = context.padded;
+  const { header, delimiter, align } = head.value;
+  const fences = rowFences(header);
   const rows = [];
   let last = delimiter;
-  let next = delimiterRead.next;
+  let next = head.next;
   while (next < input.text.length) {
-    const result = readRow(input, next);
+    const result = readRowAt(input, next, false, header.cells.length, padded);
     if (!result) {
       if (header.cells.length !== 1 || !nativePlainBodyRun) break;
       const plain = readPlainBodyRun(input, next, nativePlainBodyRun);
@@ -307,18 +410,18 @@ function readTable(input, start, { nativePlainBodyRun } = {}) {
 function readCell(input) {
   validate(input, 0);
   const text = input.text;
-  const first = lineAt(text, 0);
-  const start = skipHorizontal(text, 0, first.end);
+  const start = skipPadding(text, 0);
+  const first = lineAt(text, start);
   const markerEnd = ticksEnd(text, start, first.end);
   if (markerEnd - start < 3) return null;
-  const opening = openingAt(text, 0, first);
+  const opening = openingAt(text, start, first);
   const marker = span(start, markerEnd);
   if (!opening || first.next === first.end) {
     return literal(input, 0, text.length, [], 'cell-envelope', marker);
   }
   let line = lineAt(text, first.next);
   while (line.start < text.length) {
-    const collision = closerAt(text, line, opening.width, true);
+    const collision = closerAt(text, line, opening.width, true, true);
     if (collision) {
       return literal(input, 0, text.length, [unfinishedFence(opening, text.length)],
         'cell-envelope', span(line.start, line.end));
@@ -326,12 +429,13 @@ function readCell(input) {
     const closer = closerAt(text, line, opening.width, false);
     if (closer) {
       const fence = finishFence(text, opening, line, closer.end);
-      if (line.next !== text.length) {
+      const after = skipPadding(text, closer.end);
+      if (after !== text.length) {
         return literal(input, 0, text.length, [fence], 'cell-envelope',
-          span(line.next, text.length));
+          span(after, text.length));
       }
-      return complete(input, { kind: 'raw', slot: span(0, line.end),
-        content: span(start, closer.end), fence }, line.next);
+      return complete(input, { kind: 'raw', slot: span(0, text.length),
+        content: span(start, closer.end), fence }, text.length);
     }
     line = lineAt(text, line.next);
   }
@@ -339,7 +443,7 @@ function readCell(input) {
     'cell-envelope', marker);
 }
 
-const tableSource = { readRow, readTable, readCell };
+const tableSource = { readRow, readTable, readCell, readTableHeader };
 if (typeof module !== 'undefined' && module.exports) module.exports = tableSource;
 if (typeof window !== 'undefined') window.MarkalooTableSource = tableSource;
 })();

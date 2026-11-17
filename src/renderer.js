@@ -15750,7 +15750,7 @@ function attachTableCellInput(cell, session) {
         previous.replaceWith(input);
         cell.input = input;
         cell.literal = true;
-        cell.literalSource = MarkalooInlineFormatting.normalise(text).replace(/\n/g, lineEnding);
+        cell.literalSource = text;
         tableCellInputs.set(input, cell);
         cell.engine = attachTableCellInput(cell, session);
         input.focus();

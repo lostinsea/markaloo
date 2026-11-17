@@ -44,6 +44,18 @@ require("./test-userdata-isolation");
 
 const absolute = file => path.join(root, ...file.split(/[\\/]/));
 const asset = file => path.join(process.env.MARKALOO_SAVED_CELL_ASSETS || root, ...file.split(/[\\/]/));
+const pastePaddingCases = [
+  {name:"lf",before:"\n",after:"",eol:"\n"},
+  {name:"crlf",before:"\r\n",after:"\r\n",eol:"\r\n"},
+  {name:"blank-lf",before:"\n \t\n",after:"\n\n",eol:"\n"},
+  {name:"mixed-blank",before:" \t\r\n\r\n",after:"\r\n \t\r\n",eol:"\n"},
+];
+const paddedMalformedPastes = [
+  ["unclosed","\n```json\n{}"],
+  ["incomplete-opener","\r\n \t\r\n```rust"],
+  ["second-block","\n```json\n{}\n```\n\n```json\n{}\n```"],
+  ["closer-collision","\r\n```sql\nSELECT 1;\n```| data\n```"],
+];
 const reverts = {
   "copy-feedback-authority": {
     file:"src\\renderer.js",
@@ -79,13 +91,50 @@ const reverts = {
   },
   "raw-paste-opener": {
     file:"src\\inline-formatting.js",
-    from:"/^[ \\t]*`{3,}[ \\t]*(?:[^\\s`]+[ \\t]*)?(?:\\r?\\n|$)/.test(plain)",
-    to:"/^[ \\t]*`{3}/.test(plain)",
+    from:"/^(?:[ \\t]|\\r?\\n)*`{3,}[ \\t]*(?:[^\\s`]+[ \\t]*)?(?:\\r?\\n|$)/.test(plain)",
+    to:"/^(?:[ \\t]|\\r?\\n)*`{3}/.test(plain)",
     expect:["```inline```","```rust extra"].flatMap(text => [
       "ordinary whole-cell paste "+text+" keeps semantic input",
       "ordinary whole-cell paste "+text+" can Update"]),
     mustPass:["genuine incomplete raw opener stays a repairable rejected draft",
       "saved cell native local undo restores exact mixed endings without a dirty transaction"],
+  },
+  "raw-paste-leading-padding": {
+    file:"src\\inline-formatting.js",
+    from:"/^(?:[ \\t]|\\r?\\n)*`{3,}[ \\t]*(?:[^\\s`]+[ \\t]*)?(?:\\r?\\n|$)/.test(plain)",
+    to:"/^[ \\t]*`{3,}[ \\t]*(?:[^\\s`]+[ \\t]*)?(?:\\r?\\n|$)/.test(plain)",
+    expect:[
+      ...pastePaddingCases.flatMap(({name}) => [
+        "ordinary padded raw paste "+name+" preserves exact draft",
+        "ordinary padded raw paste "+name+" keeps exact Update and reopen"]),
+      ...paddedMalformedPastes.map(([name]) =>
+        "ordinary padded malformed paste "+name+" keeps draft and unchanged Source"),
+    ],
+    mustPass:["```inline```","```rust extra"].flatMap(text => [
+      "ordinary whole-cell paste "+text+" keeps semantic input",
+      "ordinary whole-cell paste "+text+" can Update"]).concat([
+      "genuine incomplete raw opener stays a repairable rejected draft",
+      "ordinary partial-cell padded paste stays semantic",
+      ...["nbsp","bom","bare-cr"].map(name =>
+        "ordinary disallowed-padding control "+name+" stays semantic"),
+    ]),
+  },
+  "raw-paste-exact-endings": {
+    file:"src\\renderer.js",
+    from:"cell.literalSource = text;",
+    to:"cell.literalSource = MarkalooInlineFormatting.normalise(text).replace(/\\n/g, lineEnding);",
+    expect:pastePaddingCases.filter(({name}) => name !== "crlf").flatMap(({name}) => [
+      "ordinary padded raw paste "+name+" preserves exact draft",
+      "ordinary padded raw paste "+name+" keeps exact Update and reopen"]),
+    mustPass:[
+      "ordinary padded raw paste crlf preserves exact draft",
+      "ordinary padded raw paste crlf keeps exact Update and reopen",
+      "ordinary whole-cell paste ```inline``` keeps semantic input",
+      "ordinary whole-cell paste ```inline``` can Update",
+      "genuine incomplete raw opener stays a repairable rejected draft",
+      ...paddedMalformedPastes.map(([name]) =>
+        "ordinary padded malformed paste "+name+" keeps draft and unchanged Source"),
+    ],
   },
   "ordinary-row-width": {
     file:"src\\table-marked.js",
@@ -306,9 +355,10 @@ window.fixture = {
       throw new Error('Shipping popup did not open: '+JSON.stringify(notifications.slice(-1)));
   },
   input(column = 1) {return tableCellSession.rows[1].cells[column].input;},
-  paste(text, column = 1) {
+  paste(text, column = 1, whole = true) {
     const input = this.input(column); input.focus();
     const range = document.createRange(); range.selectNodeContents(input);
+    if (!whole) range.collapse(false);
     getSelection().removeAllRanges(); getSelection().addRange(range);
     const data = new DataTransfer(); data.setData('text/plain',text);
     input.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));
@@ -644,6 +694,59 @@ async function run() {
   const refused = await execute("fixture.rejectedUpdate()");
   check("genuine incomplete raw opener stays a repairable rejected draft",
     incomplete.literal && refused.open && refused.unchanged && refused.draft === "```rust",{incomplete,refused});
+  for (const {name,before,after,eol} of pastePaddingCases) {
+    const text = before + fence.replace(/\n/g,eol) + after;
+    await execute("fixture.load()");
+    await execute("fixture.open()");
+    const pasted = await execute("fixture.paste("+JSON.stringify(text)+")");
+    const draft = pasted.literal ? await execute("fixture.literalState()") : null;
+    check("ordinary padded raw paste "+name+" preserves exact draft",
+      pasted.literal && draft.source === text && draft.dirty,{pasted,draft});
+    if (!pasted.literal) {
+      check("ordinary padded raw paste "+name+" keeps exact Update and reopen",false,
+        {blocked:"Paste did not promote to the literal editor",pasted});
+      continue;
+    }
+    try {
+      const saved = await execute("fixture.update()");
+      const observed = await execute("fixture.reader("+JSON.stringify(saved.exact)+")");
+      await execute("fixture.open()");
+      const reopened = await execute("fixture.update()");
+      check("ordinary padded raw paste "+name+" keeps exact Update and reopen",
+        saved.exact === original.replace("replace me",() => text) &&
+        saved.history.length === 1 && saved.history[0] === original &&
+        observed.code === json && observed.rows === 3 && observed.columns === 3 &&
+        observed.neighbor === "escaped | neighbor" && observed.receipt === "bound" &&
+        reopened.exact === saved.exact && reopened.history.length === 1,
+        {saved,observed,reopened});
+    } catch (error) {
+      check("ordinary padded raw paste "+name+" keeps exact Update and reopen",false,error.stack);
+    }
+  }
+  for (const [name,text] of paddedMalformedPastes) {
+    await execute("fixture.load()");
+    await execute("fixture.open()");
+    const pasted = await execute("fixture.paste("+JSON.stringify(text)+")");
+    const rejected = pasted.literal ? await execute("fixture.rejectedUpdate()") : null;
+    check("ordinary padded malformed paste "+name+" keeps draft and unchanged Source",
+      pasted.literal && rejected.open && rejected.unchanged && !!rejected.error &&
+      rejected.draft === text.replace(/\r\n/g,"\n"),{pasted,rejected});
+  }
+  for (const [name,before] of [["nbsp","\u00a0"],["bom","\uFEFF"],["bare-cr","\r"]]) {
+    await execute("fixture.load()");
+    await execute("fixture.open()");
+    const pasted = await execute("fixture.paste("+JSON.stringify(before+fence)+")");
+    check("ordinary disallowed-padding control "+name+" stays semantic",!pasted.literal,pasted);
+  }
+  await execute("fixture.load()");
+  await execute("fixture.open()");
+  const partial = await execute("fixture.paste("+JSON.stringify("\n"+fence)+",1,false)");
+  check("ordinary partial-cell padded paste stays semantic",
+    !partial.literal && partial.text.startsWith("replace me"),partial);
+  if (process.argv.includes("--raw-paste-only")) {
+    check("raw paste guest has no external requests or unexpected errors",!blocked.length && !errors.length,{blocked,errors});
+    return;
+  }
   await execute("fixture.load()");
   await execute("fixture.open()");
   const pasted = await execute("fixture.paste("+JSON.stringify(fence)+")");

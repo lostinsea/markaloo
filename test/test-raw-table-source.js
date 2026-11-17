@@ -356,7 +356,7 @@ test('closed invalid delimiter and raw row width stop at the exact offending row
   assert.equal(unframedEnd.next, '| ```x\nA\n``` | tail\n'.length);
 });
 
-test('readCell preserves padding and consumes at most one final clipboard newline', () => {
+test('readCell owns every actual padding byte including final clipboard newlines', () => {
   for (const eol of ['\n', '\r\n']) {
     for (const final of ['', eol]) {
       const text = ' \t```c++' + eol + '😀 | data' + eol + '```` \t' + final;
@@ -365,7 +365,7 @@ test('readCell preserves padding and consumes at most one final clipboard newlin
       assert.equal(read.kind, 'complete');
       assert.equal(read.input, input);
       assert.equal(read.next, text.length);
-      assert.equal(cut(input, read.value.slot), text.slice(0, text.length - final.length));
+      assert.equal(cut(input, read.value.slot), text);
       assert.equal(cut(input, read.value.content), '```c++' + eol + '😀 | data' + eol + '````');
       assert.equal(cut(input, read.value.fence.body), '😀 | data');
     }
@@ -374,8 +374,8 @@ test('readCell preserves padding and consumes at most one final clipboard newlin
 
 test('readCell rejects malformed envelopes and identifies table-closer collisions', () => {
   for (const text of ['```x extra\nA\n```', '```x', '```x\nA',
-    '```x\nA\n```\n\n', '```x\nA\n```\nprose', '```x\nA\n ```',
-    '```x\nA\n```\n \t']) {
+    '```x\nA\n```\nprose', '```x\nA\n ```',
+    '```x\nA\n```\n\n```y\nB\n```']) {
     const read = source.readCell(snapshot(text));
     assert.equal(read.kind, 'literal', text);
     assert.equal(read.diagnostic.code, 'cell-envelope');
@@ -391,7 +391,8 @@ test('readCell rejects malformed envelopes and identifies table-closer collision
 test('browser global is DOM-free and has the same public functions', () => {
   const context = { window: {} };
   vm.runInNewContext(fs.readFileSync(require.resolve('../src/table-source'), 'utf8'), context);
-  assert.deepEqual(Object.keys(context.window.MarkalooTableSource), ['readRow', 'readTable', 'readCell']);
+  assert.deepEqual(Object.keys(context.window.MarkalooTableSource),
+    ['readRow', 'readTable', 'readCell', 'readTableHeader']);
   assert.equal(context.window.MarkalooTableSource.readCell({ text: '```\nx\n```', space: 'lexer' }).kind,
     'complete');
 });
@@ -483,6 +484,544 @@ test('immutable shared multilingual corpus is literal data in tables and popup e
         assert.equal(cut(input, table.value.header.cells[position].fence.body), body);
       }
     }
+  }
+});
+
+test('ordinary trailing-pipe rows never capture a later independent fenced block', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const gap of [eol, ' \t' + eol + eol]) {
+      for (const space of ['original', 'editor', 'lexer']) {
+        const table = '| Name |' + eol + '| --- |' + eol + '| value |' + eol;
+        const tail = gap + '```rust' + eol + 'independent | body' + eol + '```' + eol;
+        const input = snapshot(table + tail, space);
+        const read = source.readTable(input, 0);
+        assert.equal(read.input, input);
+        assert.equal(read.kind, 'complete');
+        assert.equal(read.value.hasRaw, false);
+        assert.equal(read.value.rows.length, 1);
+        assert.equal(read.next, table.length);
+        const row = source.readRow(input, table.indexOf('| value |'));
+        assert.equal(row.next, table.length);
+        assert.equal(row.value.cells.length, 1);
+        assert.equal(cut(input, row.value.cells[0].content), 'value');
+        const header = source.readRow(snapshot('| Header |' + eol + tail, space), 0);
+        assert.equal(header.kind, 'complete');
+        assert.equal(header.next, '| Header |'.length + eol.length);
+        assert.equal(header.value.cells[0].kind, 'inline');
+      }
+    }
+  }
+});
+
+test('padding-only and prose-prefixed popup input never invents fenced-cell authority', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const text of ['', ' \t', eol + ' \t' + eol,
+      'prose' + eol + eol + '```x' + eol + 'body' + eol + '```']) {
+      const input = snapshot(text, 'editor');
+      assert.equal(source.readCell(input), null);
+      assert.equal(input.text, text);
+    }
+  }
+});
+
+test('indented and shorter closer-looking physical lines remain exact raw body data', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const body = ' ``` | indented' + eol + '\t```` | indented' + eol +
+      '``` | shorter' + eol + '😀 | 日本語';
+    const envelope = '````unknown' + eol + body + eol + '````';
+    const input = snapshot('| ' + envelope + ' | neighbor |' + eol +
+      '| --- | --- |' + eol);
+    const table = source.readTable(input, 0);
+    assert.equal(table.kind, 'complete');
+    assert.equal(cut(input, table.value.header.cells[0].fence.body), body);
+    const cellInput = snapshot(envelope, 'editor');
+    const cell = source.readCell(cellInput);
+    assert.equal(cell.kind, 'complete');
+    assert.equal(cut(cellInput, cell.value.fence.body), body);
+  }
+});
+
+test('one fenced popup cell accepts exterior blank-line padding without moving body bytes', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const space of ['original', 'editor', 'lexer']) {
+      const prefix = ' \t' + eol + eol + '\t';
+      const body = '\uFEFF😀 | 日本語\u00a0\rbody' + eol + ' \t';
+      const block = '````c#' + eol + body + eol + '````';
+      const suffix = ' \t' + eol + '\t' + eol;
+      const text = prefix + block + suffix;
+      const input = snapshot(text, space);
+      const read = source.readCell(input);
+      assert.equal(read && read.kind, 'complete');
+      assert.equal(read.input, input);
+      assert.equal(read.input.space, space);
+      assert.equal(read.next, text.length);
+      assert.deepEqual(pair(read.value.slot), [0, text.length]);
+      assert.deepEqual(pair(read.value.content), [prefix.length, prefix.length + block.length]);
+      assert.equal(cut(input, read.value.content), block);
+      assert.equal(cut(input, read.value.fence.body), body);
+      assert.equal(input.text, text);
+    }
+  }
+});
+
+test('first-column table cells preserve exterior blank lines in header and body slots', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const position of ['header', 'body']) {
+      for (const space of ['original', 'editor', 'lexer']) {
+        const prefix = ' \t' + eol + eol + '\t';
+        const body = '\uFEFF🦀 | 日本語' + eol + ' ``` | indented data';
+        const block = '````rust' + eol + body + eol + '````';
+        const row = '|' + prefix + block + ' \t| neighbor |' + eol;
+        const ordinary = '| Name | Other |' + eol;
+        const delimiter = '| --- | --- |' + eol;
+        const text = '\uFEFF' + (position === 'header' ? row + delimiter :
+          ordinary + delimiter + row);
+        const input = snapshot(text, space);
+        const read = source.readTable(input, 1);
+        assert.equal(read && read.kind, 'complete');
+        assert.equal(read.input, input);
+        assert.equal(read.next, text.length);
+        assert.equal(read.value.hasRaw, true);
+        const selected = position === 'header' ? read.value.header : read.value.rows[0];
+        const cell = selected.cells[0];
+        assert.equal(selected.cells.length, 2);
+        assert.equal(cut(input, cell.slot), prefix + block + ' \t');
+        assert.equal(cut(input, cell.content), block);
+        assert.equal(cut(input, cell.fence.body), body);
+        assert.equal(cut(input, selected.cells[1].content), 'neighbor');
+      }
+    }
+  }
+});
+
+test('exterior BOM Unicode whitespace and bare CR never become popup padding', () => {
+  const block = '```json\n{"value":"😀"}\n```';
+  for (const outside of ['\uFEFF', '\u00a0', '\u2003', '\r']) {
+    for (const prefix of ['', ' \t\n\n']) {
+      assert.equal(source.readCell(snapshot(prefix + outside + block, 'editor')), null);
+    }
+    const read = source.readCell(snapshot(block + '\n \t' + outside, 'editor'));
+    assert.equal(read.kind, 'literal');
+    assert.equal(read.diagnostic.code, 'cell-envelope');
+  }
+});
+
+test('certified physical body width permits padded raw slots in every column and together', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const body = '😀 | 日本語' + eol + '\t``` | body data';
+    const block = '````c#' + eol + body + eol + '````';
+    const padding = ' \t' + eol + eol + '\t';
+    const slot = padding + block + padding;
+    for (const positions of [[0], [1], [2], [0, 1, 2]]) {
+      const slots = [' left ', ' middle ', ' right '];
+      for (const position of positions) slots[position] = slot;
+      const text = '| A | B | C |' + eol + '| --- | --- | --- |' + eol +
+        '|' + slots.join('|') + '|' + eol;
+      const input = snapshot(text);
+      const read = source.readTable(input, 0);
+      assert.equal(read.kind, 'complete');
+      assert.equal(read.input, input);
+      assert.equal(read.next, text.length);
+      assert.equal(read.value.rows.length, 1);
+      const row = read.value.rows[0];
+      assert.equal(row.cells.length, 3);
+      for (let column = 0; column < 3; column++) {
+        assert.equal(cut(input, row.cells[column].slot), slots[column]);
+        if (positions.includes(column)) {
+          assert.equal(row.cells[column].kind, 'raw');
+          assert.equal(cut(input, row.cells[column].content), block);
+          assert.equal(cut(input, row.cells[column].fence.body), body);
+        }
+      }
+    }
+  }
+});
+
+test('a completed body row never reopens even when the later fence has a full pipe witness', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const table = '| Name |' + eol + '| --- |' + eol + '| value |' + eol;
+    const tail = eol + '```x' + eol + 'independent' + eol + '``` | other |' + eol;
+    const read = source.readTable(snapshot(table + tail), 0);
+    assert.equal(read.kind, 'complete');
+    assert.equal(read.value.hasRaw, false);
+    assert.equal(read.value.rows.length, 1);
+    assert.equal(read.next, table.length);
+  }
+});
+
+test('optional BODY width binds only complete transactional raw-row continuation', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const text = '| left | \t' + eol + eol + '````rust' + eol + '😀 | data' + eol +
+      '```` \t' + eol + ' | right |' + eol;
+    const input = snapshot(text);
+    const unbound = source.readRow(input, 0);
+    assert.deepEqual(source.readRow(input, 0, undefined), unbound);
+    assert.equal(unbound.next, text.indexOf(eol) + eol.length);
+    assert.equal(unbound.value.cells.length, 1);
+    const bound = source.readRow(input, 0, 3);
+    assert.equal(bound.input, input);
+    assert.equal(bound.kind, 'complete');
+    assert.equal(bound.next, text.length);
+    assert.equal(bound.value.cells.length, 3);
+    assert.equal(cut(input, bound.value.cells[1].fence.body), '😀 | data');
+    assert.deepEqual(source.readRow(input, 0, 1), unbound, 'Nth pipe is terminal');
+    assert.deepEqual(source.readRow(input, 0, 2), unbound, 'wrong final width rolls back');
+    assert.deepEqual(source.readRow(input, 0, 4), unbound, 'short final width rolls back');
+  }
+  for (const width of [null, false, true, 0, -1, 0.5, NaN, Infinity, -Infinity,
+    Number.MAX_SAFE_INTEGER + 1, '2', 2n, {}, { bodyColumns: 2 }]) {
+    assert.throws(() => source.readRow(snapshot('| left |\n'), 0, width), TypeError);
+  }
+  const ordinary = snapshot('| left | right |\n');
+  assert.deepEqual(source.readRow(ordinary, 0, 1), source.readRow(ordinary, 0),
+    'a column constraint is not native row padding/truncation or table certification');
+  const malformed = snapshot('| ```rust\nunclosed\n');
+  assert.deepEqual(source.readRow(malformed, 0, 2), source.readRow(malformed, 0),
+    'independently committed same-line malformed ownership is unchanged');
+});
+
+test('shared header receipts stop before BODY and confer no native body authority', () => {
+  for (const header of ['| A | B |', 'A | B']) {
+    const prefix = header + '\r\n| :--- | ---: |\r\n';
+    const text = prefix + '| left | \r\n\r\n```x\n😀|data\n```\r\n | \r\n';
+    const input = snapshot(text, 'lexer');
+    const head = source.readTableHeader(input, 0);
+    const table = source.readTable(input, 0);
+    assert.equal(head.input, input);
+    assert.equal(head.kind, 'complete');
+    assert.equal(head.next, prefix.length);
+    assert.deepEqual(head.value.header, table.value.header);
+    assert.deepEqual(head.value.delimiter, table.value.delimiter);
+    assert.deepEqual(head.value.align, ['left', 'right']);
+    assert.deepEqual(pair(head.value.span), [0, prefix.length - 2]);
+    assert.equal(cut(input, head.value.ending), '\r\n');
+    assert.equal(table.value.rows[0].cells[1].kind, 'raw');
+    const refused = snapshot(prefix + 'plain\n| left | \n\n```x\nbody\n``` |\n');
+    let callbacks = 0;
+    const read = source.readTable(refused, 0, { nativePlainBodyRun() {
+      callbacks++;
+      throw new Error('multi-column native plain-body authority is not supported');
+    } });
+    assert.equal(callbacks, 0);
+    assert.equal(read.next, prefix.length);
+    assert.equal(read.value.rows.length, 0);
+    assert.equal(source.readTableHeader(refused, 0).next, prefix.length);
+  }
+  const malformedBody = snapshot('| H |\n| - |\n| ```x\nunclosed\n');
+  assert.equal(source.readTableHeader(malformedBody, 0).kind, 'complete');
+  assert.equal(source.readTable(malformedBody, 0).kind, 'literal');
+  for (const text of ['plain\nnot a delimiter\n', '| \n\n```x\nnot closed\n']) {
+    assert.equal(source.readTableHeader(snapshot(text), 0), null);
+  }
+  const malformedHeader = snapshot('| ```x\nunclosed\n');
+  assert.deepEqual(source.readTableHeader(malformedHeader, 0),
+    source.readTable(malformedHeader, 0));
+});
+
+test('complete shared HEADER witnesses admit padded raw cells in every column transactionally', () => {
+  const { cases } = require('./fixtures/table-code-literals');
+  for (const eol of ['\n', '\r\n']) {
+    for (const item of cases) {
+      const body = item.body.replace(/\n/g, eol) + eol + '\uFEFF😀 | 日本語' +
+        eol + ' ``` | indented' + eol + '``` | shorter';
+      const block = '````' + item.language + eol + body + eol + '````';
+      const padding = ' \t' + eol + eol + '\t';
+      for (const positions of [[0], [1], [2], [0, 2], [0, 1, 2]]) {
+        const slots = [' left ', ' middle ', ' right '];
+        for (const position of positions) slots[position] = padding + block + padding;
+        const header = '|' + slots.join('|') + '|' + eol;
+        const prefix = '\uFEFF' + header + '| :--- | ---: | :---: |' + eol;
+        const text = prefix + '| one | two | three |' + eol;
+        for (const space of ['original', 'editor', 'lexer']) {
+          const input = snapshot(text, space);
+          const head = source.readTableHeader(input, 1);
+          const table = source.readTable(input, 1);
+          assert.equal(head && head.kind, 'complete', item.id + ':' + positions);
+          assert.equal(head.input, input);
+          assert.equal(head.next, prefix.length);
+          assert.deepEqual(head.value.align, ['left', 'right', 'center']);
+          assert.deepEqual(head.value.header, table.value.header);
+          assert.equal(table.value.hasRaw, true);
+          assert.equal(table.value.rows.length, 1);
+          assert.equal(table.next, text.length);
+          let start = 2;
+          for (let column = 0; column < slots.length; column++) {
+            const cell = head.value.header.cells[column];
+            assert.deepEqual(pair(cell.slot), [start, start + slots[column].length]);
+            assert.equal(cut(input, cell.slot), slots[column]);
+            if (positions.includes(column)) {
+              assert.equal(cell.kind, 'raw');
+              assert.deepEqual(pair(cell.content),
+                [start + padding.length, start + padding.length + block.length]);
+              assert.equal(cut(input, cell.content), block);
+              assert.equal(cut(input, cell.fence.body), body);
+              assert.equal(cut(input, cell.fence.openingEol), eol);
+              assert.equal(cut(input, cell.fence.closingEol), eol);
+            } else {
+              assert.equal(cell.kind, 'inline');
+            }
+            start += slots[column].length + 1;
+          }
+          assert.equal(head.value.header.cells.length, 3);
+          assert.equal(input.text, text);
+        }
+      }
+    }
+  }
+});
+
+test('matching HEADER delimiter wins ambiguous continuation without widening unbound row authority', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const first = '| left |' + eol;
+    const text = first + eol + '```unknown' + eol + '😀 | data' + eol +
+      '```' + eol + '\t| right |' + eol + '| - | - | - |' + eol;
+    const input = snapshot(text);
+    const unbound = source.readRow(input, 0);
+    assert.equal(unbound.next, first.length);
+    assert.equal(unbound.value.cells.length, 1);
+    assert.equal(unbound.value.cells[0].kind, 'inline');
+    assert.deepEqual(source.readRow(input, 0, 1), unbound, 'BODY terminal pipe stays terminal');
+    const head = source.readTableHeader(input, 0);
+    assert.equal(head && head.kind, 'complete');
+    assert.equal(head.next, text.length);
+    assert.deepEqual(head.value.header.cells.map(cell => cell.kind), ['inline', 'raw', 'inline']);
+    assert.equal(cut(input, head.value.header.cells[1].fence.body), '😀 | data');
+    assert.equal(source.readTable(input, 0).value.hasRaw, true);
+    assert.deepEqual(source.readRow(input, 0), unbound, 'header evidence never leaks into row authority');
+  }
+});
+
+test('failed HEADER continuations restore prior null or literal receipts and raw evidence', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const first = '| left |' + eol;
+    const block = '```x' + eol + '😀 | data' + eol + '```';
+    const row = first + eol + block + eol + '| right |' + eol;
+    for (const text of [
+      first + eol + '```x' + eol + 'missing closer' + eol,
+      first + eol + block + eol + 'prose before | right |' + eol,
+      row + '| - | - |' + eol,
+      row + '| - | not-delimiter | - |' + eol,
+      row + eol + block + ' |' + eol + '| - | - | - |' + eol,
+      '|' + eol + block + eol + '|' + eol + block +
+        eol + '|' + eol + '| - |' + eol,
+      ...['\uFEFF', '\u00a0', '\u2003', '\r'].flatMap(outside => [
+        first + eol + outside + block + ' | right |' + eol + '| - | - | - |' + eol,
+        first + eol + block + eol + outside + '| right |' + eol + '| - | - | - |' + eol
+      ])
+    ]) {
+      const input = snapshot(text);
+      assert.equal(source.readTableHeader(input, 0), null, JSON.stringify(text));
+      assert.equal(source.readTable(input, 0), null, JSON.stringify(text));
+      assert.equal(input.text, text);
+    }
+    const oldRawHeader = '| ```x' + eol + 'first' + eol + '``` |' + eol;
+    const text = oldRawHeader + eol + block + ' | right |' + eol + '| - | - |' + eol;
+    const input = snapshot(text);
+    const head = source.readTableHeader(input, 0);
+    assert.equal(head.kind, 'literal');
+    assert.equal(head.diagnostic.code, 'table-delimiter');
+    assert.equal(head.next, oldRawHeader.length + eol.length);
+    assert.deepEqual(pair(head.span), [0, head.next]);
+    assert.deepEqual(pair(head.diagnostic.at), [oldRawHeader.length, oldRawHeader.length]);
+    assert.equal(head.fences.length, 1, 'failed new raw cells leave no fence evidence');
+    assert.equal(cut(input, head.fences[0].body), 'first');
+    assert.deepEqual(source.readTable(input, 0), head);
+  }
+});
+
+test('a completed ordinary table cannot donate HEADER ownership to an independent following fence', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const prefix = '| A | B |' + eol + '| - | - |' + eol;
+    const table = prefix + '| one | two |' + eol;
+    const tail = eol + '```x' + eol + 'independent | data' + eol +
+      '``` | neighbor |' + eol + '| - | - |' + eol;
+    const input = snapshot(table + tail);
+    const head = source.readTableHeader(input, 0);
+    assert.equal(head.next, prefix.length);
+    assert.ok(head.value.header.cells.every(cell => cell.kind === 'inline'));
+    const read = source.readTable(input, 0);
+    assert.equal(read.next, table.length);
+    assert.equal(read.value.hasRaw, false);
+    assert.equal(read.value.rows.length, 1);
+  }
+});
+
+test('Root HEADER controls preserve opaque bodies rollback and established table boundaries', () => {
+  const h1 = '| a |\n\n````x\n```inner\npayload\n```` |\n| --- | --- |\n| c | d |\n\n' +
+    '```outer\noutside\n```\n';
+  const h2 = '| a |\n\n```x\nb\n```\n\n|\n| --- |\n\n```independent\nkept\n```\n\n' +
+    '| h |\n| --- |\n| v |\n';
+  const h3 = '| h |\n| --- |\n| v |\n\n```x\noutside\n```\n\n|\n| --- | --- |\n| p | q |\n';
+  for (const eol of ['\n', '\r\n']) {
+    const success = snapshot(h1.replace(/\n/g, eol));
+    const head = source.readTableHeader(success, 0);
+    const table = source.readTable(success, 0);
+    assert.equal(head.kind, 'complete');
+    assert.equal(cut(success, head.value.header.cells[1].fence.body), '```inner' + eol + 'payload');
+    assert.equal(head.next, success.text.indexOf('| c | d |'));
+    assert.equal(table.value.rows.length, 1);
+    assert.equal(table.next, success.text.indexOf('| c | d |') + '| c | d |'.length + eol.length);
+    const failed = snapshot(h2.replace(/\n/g, eol));
+    assert.equal(source.readTableHeader(failed, 0), null);
+    assert.equal(source.readTable(failed, 0), null);
+    assert.equal(source.readRow(failed, 0).next, '| a |'.length + eol.length);
+    const later = source.readTable(failed, failed.text.lastIndexOf('| h |'));
+    assert.equal(later.kind, 'complete');
+    assert.equal(later.value.hasRaw, false);
+    assert.equal(later.value.rows.length, 1);
+    assert.equal(later.next, failed.text.length);
+    const independent = snapshot(h3.replace(/\n/g, eol));
+    const ordinary = source.readTable(independent, 0);
+    assert.equal(ordinary.kind, 'complete');
+    assert.equal(ordinary.value.hasRaw, false);
+    assert.equal(ordinary.value.rows.length, 1);
+    assert.equal(ordinary.next, ('| h |\n| --- |\n| v |\n').replace(/\n/g, eol).length);
+  }
+});
+
+test('identical HEADER substrings retain the caller-selected eligible start and absolute receipts', () => {
+  const occurrence = '| a |\n\n```x\nb\n```\n\n|\n| --- | --- |\n| c | d |\n';
+  for (const eol of ['\n', '\r\n']) {
+    const text = ('~~~~\n' + occurrence + '~~~~\n\n' + occurrence).replace(/\n/g, eol);
+    const start = text.lastIndexOf('| a |');
+    for (const space of ['original', 'editor', 'lexer']) {
+      const input = snapshot(text, space);
+      const head = source.readTableHeader(input, start);
+      const read = source.readTable(input, start);
+      assert.equal(head.input, input);
+      assert.equal(head.value.header.span.start, start);
+      assert.equal(head.value.header.cells[1].fence.marker.start, text.indexOf('```x', start));
+      assert.equal(cut(input, head.value.header.cells[1].fence.body), 'b');
+      assert.equal(read.input, input);
+      assert.equal(read.value.span.start, start);
+      assert.equal(read.next, text.length);
+      const other = snapshot(text, space);
+      assert.equal(source.readTableHeader(other, start).input, other);
+      assert.equal(source.readTableHeader(input, start).input, input);
+    }
+  }
+});
+
+test('exact five-tick popup rejects the second full block outside its completed first fence', () => {
+  const code = '`````unknown\nx|y\n`````';
+  const text = code + '\n\n' + code;
+  const input = snapshot(text, 'editor');
+  const read = source.readCell(input);
+  assert.equal(read.input, input);
+  assert.equal(read.kind, 'literal');
+  assert.equal(read.diagnostic.code, 'cell-envelope');
+  assert.deepEqual(pair(read.diagnostic.at), [code.length + 2, text.length]);
+  assert.equal(cut(input, read.fences[0].body), 'x|y');
+  assert.equal(cut(input, read.fences[0].closing), '`````');
+  for (const draft of ['\t' + code + '  \n', code + '\n\n',
+    ' \t\r\n\r\n' + code + '\r\n \t\r\n']) {
+    const padded = snapshot(draft, 'editor');
+    const accepted = source.readCell(padded);
+    assert.equal(accepted.kind, 'complete');
+    assert.equal(accepted.next, draft.length);
+    assert.equal(cut(padded, accepted.value.slot), draft);
+    assert.equal(cut(padded, accepted.value.content), code);
+    assert.equal(cut(padded, accepted.value.fence.body), 'x|y');
+  }
+});
+
+test('failed new body probes restore ordinary rows without inventing EOF refusal', () => {
+  const prefix = '| A | B |\n| --- | --- |\n';
+  for (const row of [
+    '| left | \n\n```x\nmissing closer\n',
+    '| left | \n\n```x\nbody\n```\nprose | not a suffix\n',
+    '| \n\n```x\nfirst\n``` | \n\n```y\nsecond is incomplete\n',
+    '| \n\n```x\nfirst\n``` | extra | over-width |\n'
+  ]) {
+    const input = snapshot(prefix + row);
+    const read = source.readTable(input, 0);
+    assert.equal(read.kind, 'complete');
+    assert.equal(read.value.hasRaw, false);
+    assert.equal(read.value.rows.length, 1);
+    assert.equal(read.value.rows[0].span.end, prefix.length + row.indexOf('\n'));
+    assert.equal(read.next, prefix.length + row.indexOf('\n') + 1);
+  }
+});
+
+test('only a whole whitespace suffix to a real pipe qualifies a padded table closer', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const body = '```' + eol + '| shorter width' + eol + '````' + eol +
+      'prose before | prevents closing' + eol + ' \t````` | indented data';
+    const block = '````json' + eol + body + eol + '`````';
+    const text = '| \t' + eol + block + ' \t' + eol + eol + '\t | other |' + eol +
+      '| --- | --- |' + eol;
+    const input = snapshot(text);
+    const read = source.readTable(input, 0);
+    assert.equal(read.kind, 'complete');
+    assert.equal(read.next, text.length);
+    assert.equal(cut(input, read.value.header.cells[0].content), block);
+    assert.equal(cut(input, read.value.header.cells[0].fence.body), body);
+    const popup = source.readCell(snapshot('```x' + eol + 'body' + eol +
+      '``` \t' + eol + eol + '\t | collision' + eol + '```', 'editor'));
+    assert.equal(popup.kind, 'literal');
+    assert.equal(popup.diagnostic.code, 'cell-envelope');
+  }
+});
+
+test('mutating a Snapshot never reuses closer positions from its earlier text', () => {
+  const input = { text: '| ```x\nshort\n``` |\n', space: 'original' };
+  const first = source.readRow(input, 0);
+  assert.equal(first.kind, 'complete');
+  input.text = '| ```x\nlonger unclosed body\n';
+  input.space = 'editor';
+  const second = source.readRow(input, 0);
+  assert.equal(second.input, input);
+  assert.equal(second.kind, 'literal');
+  assert.equal(second.diagnostic.code, 'missing-fence');
+  assert.equal(second.next, input.text.length);
+  input.text = '| ```x\n😀\n```` \n \t| other |\n';
+  input.space = 'lexer';
+  const third = source.readRow(input, 0);
+  assert.equal(third.input, input);
+  assert.equal(third.kind, 'complete');
+  assert.equal(third.next, input.text.length);
+  assert.equal(cut(input, third.value.cells[0].fence.body), '😀');
+});
+
+test('repeated failed vertical probes share linear closer-search work on one Snapshot', () => {
+  const context = vm.createContext({ window: {}, work: { searched: 0 } });
+  vm.runInContext(`
+    const forwardSearch = String.prototype.indexOf;
+    const backwardSearch = String.prototype.lastIndexOf;
+    String.prototype.indexOf = function (needle, start = 0) {
+      const found = forwardSearch.call(this, needle, start);
+      if (needle === '\\n') work.searched += (found < 0 ? this.length : found + 1) - start;
+      return found;
+    };
+    String.prototype.lastIndexOf = function (needle, start = this.length) {
+      const found = backwardSearch.call(this, needle, start);
+      if (needle === String.fromCharCode(96)) work.searched += start - found + 1;
+      return found;
+    };
+  `, context);
+  vm.runInContext(fs.readFileSync(require.resolve('../src/table-source'), 'utf8'), context);
+  const reader = context.window.MarkalooTableSource;
+  for (const count of [32, 128]) {
+    const unit = '| \n\n```unknown\nunclosed 😀 | body\n';
+    const input = snapshot(unit.repeat(count));
+    context.work.searched = 0;
+    for (let index = 0; index < count; index++) {
+      const start = index * unit.length;
+      const read = reader.readRow(input, start);
+      assert.equal(read.input, input);
+      assert.equal(read.kind, 'complete');
+      assert.equal(read.next, start + '| \n'.length);
+      assert.equal(read.value.cells[0].kind, 'inline');
+    }
+    const sharedWork = context.work.searched;
+    assert.ok(sharedWork > input.text.length, 'the search-work observer is alive');
+    assert.ok(sharedWork <= input.text.length * 8, 'failed probes must not rescan each suffix');
+    context.work.searched = 0;
+    for (let index = 0; index < count; index++) {
+      reader.readRow(snapshot(input.text), index * unit.length);
+    }
+    assert.ok(context.work.searched > sharedWork * count / 8,
+      'isolated Snapshot identities demonstrate the repeated-scan witness');
   }
 });
 

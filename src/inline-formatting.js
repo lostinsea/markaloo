@@ -1797,7 +1797,7 @@ window.MarkalooInlineFormatting = (() => {
       const ctx = context(event);
       if (!ctx) { reportError(new Error('tableCells.stale')); return; }
       const plain = event.clipboardData.getData('text/plain');
-      if (sourcePolicy.pasteRawFence && /^[ \t]*`{3,}[ \t]*(?:[^\s`]+[ \t]*)?(?:\r?\n|$)/.test(plain)) {
+      if (sourcePolicy.pasteRawFence && /^(?:[ \t]|\r?\n)*`{3,}[ \t]*(?:[^\s`]+[ \t]*)?(?:\r?\n|$)/.test(plain)) {
         if (cell.composing) { reportError(new Error('tableCells.composing')); return; }
         const before = ctx.range.cloneRange(), after = ctx.range.cloneRange();
         before.selectNodeContents(element); before.setEnd(ctx.range.startContainer, ctx.range.startOffset);

@@ -46,6 +46,16 @@ println!("{answer}");
   Header cells and multiple cells in one row are supported.
 - Use at least three backticks. A closer needs at least the opening width.
   Use a longer outer fence when the body contains a closing-looking line.
+- In every header and body cell, spaces, tabs and blank LF/CRLF lines may
+  surround one fence. These bytes stay in Source; rendered code and Copy use
+  only the code body. Other text or a second fenced block is not padding.
+- A complete header with a matching delimiter wins an ambiguous text/code
+  reading. A failed header probe leaves ordinary Markdown unchanged.
+  An ordinary code block cannot supply table cells.
+- Whole-cell paste into an ordinary table cell accepts this exterior padding.
+  Promotion to the literal editor keeps the supplied line endings unchanged.
+- A complete row's final pipe ends that row. A separate code block below it
+  does not become another cell.
 - Name the language explicitly. All locally bundled Prism grammars and aliases
   are available. Unknown and unlabelled fences stay plain code; no language is
   guessed or downloaded.
@@ -58,6 +68,7 @@ println!("{answer}");
   Ordinary inline backtick spans are not treated as raw cells.
 - Update changes the document, not disk. Save stays explicit. No-op edits keep
   the original source, including its BOM and line endings.
+- Opening recognized Markdown preserves its original BOM, line endings and text.
 - Local Undo/Redo keeps exact line endings when its saved version is unambiguous.
   An uncertain history result keeps the draft but blocks Update and structural
   changes. Cancel and reopen the table rather than guessing its source.

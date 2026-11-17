@@ -41,7 +41,7 @@ test('closed raw rows count every line and pipe without ordinary-fence discount'
 });
 
 test('missing closer remains undiscounted through EOF, including blank-line false recovery', () => {
-  const text = '| ```sql\nSELECT \'a|b\';\n\n| next | table |\n| --- | --- |\n``` \n| tail |\n';
+  const text = '| ```sql\nSELECT \'a|b\';\n\n| next | table |\n| --- | --- |\n``` \nprose\n| tail |\n';
   const read = source.readRow({ text, space: 'original' }, 0);
   assert.equal(read.kind, 'literal');
   assert.equal(read.diagnostic.code, 'missing-fence');
@@ -130,6 +130,193 @@ test('all immutable multilingual bodies stay undiscounted, never evaluated', () 
   }
 });
 
+test('ordinary trailing-pipe table and later independent fence retain separate cost windows', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const gap of [eol, ' \t' + eol + eol]) {
+      const table = '| Name |' + eol + '| --- |' + eol + '| value |' + eol;
+      const tail = gap + '```rust' + eol + 'independent | body' + eol + '```' + eol;
+      const text = table + tail;
+      const read = source.readTable({ text, space: 'original' }, 0);
+      assert.equal(read.value.hasRaw, false);
+      assert.equal(read.next, table.length);
+      const expected = undiscounted(text);
+      expected.fencedLines = 3;
+      expected.pipes--;
+      expected.units = expected.lines - 0.8 * expected.fencedLines + expected.pipes;
+      assert.deepEqual(helpers.estimateRenderUnits(text), expected);
+    }
+  }
+});
+
+test('raw first-cell openers after exterior blank lines remain wholly undiscounted', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const body = '😀 | 日本語' + eol + '| opaque | data |' + eol +
+      ' ``` | indented data';
+    const text = '| \t' + eol + eol + '\t```unknown' + eol + body + eol +
+      '``` | neighbor |' + eol + '| --- | --- |' + eol;
+    assert.deepEqual(helpers.estimateRenderUnits(text), undiscounted(text));
+  }
+});
+
+test('failed new whitespace lookahead preserves ordinary document-fence classification', () => {
+  for (const tail of ['A|B\nnot closed\n', 'A|B\n```\nprose | not a suffix\n']) {
+    const text = '| \n\n```rust\n' + tail;
+    const read = source.readRow({ text, space: 'original' }, 0);
+    assert.equal(read.kind, 'complete');
+    assert.equal(read.next, '| \n'.length);
+    assert.equal(read.value.cells[0].kind, 'inline');
+    const control = helpers.estimateRenderUnits('  ' + text.slice(2));
+    assert.ok(control.fencedLines > 0);
+    assert.deepEqual(helpers.estimateRenderUnits(text), {
+      ...control, pipes: control.pipes + 1, units: control.units + 1
+    });
+  }
+});
+
+test('shared header context protects padded BODY windows in every column with unframed headers too', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const header of ['| A | B | C |', 'A | B | C']) {
+      for (const position of [0, 1, 2]) {
+        const cells = [' left ', ' middle ', ' right '];
+        cells[position] = ' \t' + eol + eol + '````rust' + eol +
+          '```' + eol + '😀 | opaque' + eol + '````' + eol + '\t';
+        const text = header + eol + '| - | - | - |' + eol +
+          '|' + cells.join('|') + '|' + eol;
+        const read = source.readTable({ text, space: 'original' }, 0);
+        assert.equal(read.kind, 'complete');
+        assert.equal(read.value.rows[0].cells[position].kind, 'raw');
+        assert.deepEqual(helpers.estimateRenderUnits(text), undiscounted(text));
+      }
+    }
+  }
+});
+
+test('plain native boundaries never grant multi-column authority but keep raw costs conservative', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const width of [1, 2, 3]) {
+      const prefix = '|' + ' H |'.repeat(width) + eol +
+        '|' + ' - |'.repeat(width) + eol;
+      const cells = Array(width).fill(' left ');
+      cells[width - 1] = ' ' + eol + eol + '````rust' + eol +
+        '```' + eol + '😀 | data' + eol + '````' + eol + '\t';
+      const text = prefix + 'plain' + eol + '|' + cells.join('|') + '|' + eol;
+      const input = { text, space: 'original' };
+      const preliminary = source.readTable(input, 0);
+      assert.equal(preliminary.next, prefix.length);
+      let callbacks = 0;
+      const read = source.readTable(input, 0, { nativePlainBodyRun(request) {
+        callbacks++;
+        return { request, rowCount: 1 };
+      } });
+      assert.equal(callbacks, width === 1 ? 1 : 0);
+      assert.equal(read.next, width === 1 ? text.length : prefix.length);
+      assert.equal(read.value.hasRaw, width === 1);
+      assert.deepEqual(helpers.estimateRenderUnits(text), undiscounted(text));
+    }
+  }
+});
+
+test('terminal pipes and blank or ordinary-fence boundaries cannot reuse an old BODY width', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const table = '| A | B | C |' + eol + '| - | - | - |' + eol +
+      '| one | two | three |' + eol;
+    const tail = eol + '| value | ' + eol + eol + '```text' + eol +
+      'ordinary | body' + eol + '``` | independent |' + eol;
+    const text = table + tail;
+    const expected = undiscounted(text);
+    expected.fencedLines = 3;
+    expected.pipes -= 3;
+    expected.units = expected.lines - 0.8 * expected.fencedLines + expected.pipes;
+    assert.deepEqual(helpers.estimateRenderUnits(text), expected);
+    const fenced = table + '```x|label' + eol + '| ```rust' + eol +
+      'opaque | data' + eol + '```' + eol;
+    const control = helpers.estimateRenderUnits('```x|label' + eol + '| ```rust' + eol +
+      'opaque | data' + eol + '```' + eol);
+    assert.equal(control.fencedLines, 4);
+    assert.equal(control.pipes, 1, 'only the opener label pipe precedes the ordinary fence');
+    const before = helpers.estimateRenderUnits(table);
+    assert.deepEqual(helpers.estimateRenderUnits(fenced), {
+      units: before.units + control.units - 1,
+      lines: before.lines + control.lines - 1,
+      pipes: before.pipes + control.pipes,
+      fencedLines: control.fencedLines
+    });
+  }
+});
+
+test('complete padded HEADER witnesses protect every column and multiple cells without fence-state leaks', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const body = '```' + eol + '😀 | data' + eol + ' ``` | indented';
+    const slot = ' \t' + eol + eol + '````rust' + eol + body + eol + '````' + eol + '\t';
+    for (const positions of [[0], [1], [2], [0, 1, 2]]) {
+      const cells = [' left ', ' middle ', ' right '];
+      for (const position of positions) cells[position] = slot;
+      const raw = '|' + cells.join('|') + '|' + eol + '| - | - | - |' + eol;
+      const read = source.readTableHeader({ text: raw, space: 'original' }, 0);
+      assert.equal(read && read.kind, 'complete');
+      assert.deepEqual(helpers.estimateRenderUnits(raw), undiscounted(raw));
+      assert.deepEqual(helpers.estimateRenderUnits('\uFEFF' + raw), undiscounted('\uFEFF' + raw));
+      const ordinary = '```text' + eol + 'ordinary | code' + eol + '```' + eol + eol;
+      const text = ordinary + raw + eol + ordinary;
+      const expected = undiscounted(text);
+      expected.fencedLines = 6;
+      expected.pipes -= 2;
+      expected.units = expected.lines - 0.8 * expected.fencedLines + expected.pipes;
+      assert.deepEqual(helpers.estimateRenderUnits(text), expected);
+    }
+  }
+});
+
+test('failed HEADER witnesses leave independent document fences and ordinary table costs intact', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const first = '| left |' + eol + eol;
+    const block = '```x' + eol + 'ordinary | data' + eol + '```' + eol;
+    for (const text of [
+      first + block + '| right |' + eol + '| - | - |' + eol,
+      first + block + '| right |' + eol + '| - | invalid | - |' + eol,
+      first + block + '| right |' + eol + eol + block + '| - | - | - |' + eol,
+      first + '```x' + eol + 'unclosed | data' + eol
+    ]) {
+      assert.equal(source.readTableHeader({ text, space: 'original' }, 0), null);
+      const control = helpers.estimateRenderUnits(text.replace('| left |', '  left  '));
+      assert.ok(control.fencedLines > 0, 'the independent ordinary fence was counted');
+      assert.deepEqual(helpers.estimateRenderUnits(text), {
+        ...control, pipes: control.pipes + 2, units: control.units + 2
+      });
+    }
+    const ordinary = '| A | B |' + eol + '| - | - |' + eol + '| one | two |' + eol;
+    const text = ordinary + eol + block + '| neighbor |' + eol + '| - | - |' + eol;
+    assert.equal(source.readTable({ text, space: 'original' }, 0).next, ordinary.length);
+    const expected = undiscounted(text);
+    expected.fencedLines = 3;
+    expected.pipes--;
+    expected.units = expected.lines - 0.8 * expected.fencedLines + expected.pipes;
+    assert.deepEqual(helpers.estimateRenderUnits(text), expected);
+  }
+});
+
+test('Root H1 H2 H3 chronology and H4 repeated text keep conservative exact guard counts', () => {
+  const cases = [
+    { fencedLines: 3, text: '| a |\n\n````x\n```inner\npayload\n```` |\n| --- | --- |\n' +
+      '| c | d |\n\n```outer\noutside\n```\n' },
+    { fencedLines: 6, text: '| a |\n\n```x\nb\n```\n\n|\n| --- |\n\n' +
+      '```independent\nkept\n```\n\n| h |\n| --- |\n| v |\n' },
+    { fencedLines: 3, text: '| h |\n| --- |\n| v |\n\n```x\noutside\n```\n\n' +
+      '|\n| --- | --- |\n| p | q |\n' },
+    { fencedLines: 0, text: '~~~~\n| a |\n\n```x\nb\n```\n\n|\n| --- | --- |\n| c | d |\n' +
+      '~~~~\n\n| a |\n\n```x\nb\n```\n\n|\n| --- | --- |\n| c | d |\n' }
+  ];
+  for (const eol of ['\n', '\r\n']) {
+    for (const [index, item] of cases.entries()) {
+      const text = item.text.replace(/\n/g, eol);
+      const expected = undiscounted(text);
+      expected.fencedLines = item.fencedLines;
+      expected.units = expected.lines - 0.8 * expected.fencedLines + expected.pipes;
+      assert.deepEqual(helpers.estimateRenderUnits(text), expected, 'H' + (index + 1));
+    }
+  }
+});
+
 test('raw first row after a document BOM keeps its ticks out of ordinary fence state', () => {
   const text = '\uFEFF' + rawTable('```\nA|B\n~~~') + '\n```text\nordinary | code\n```\n';
   const expected = undiscounted(text);
@@ -143,16 +330,23 @@ test('browser global uses shared recognition, with explicit missing-provider fai
   const code = fs.readFileSync(require.resolve('../src/file-helpers-core'), 'utf8');
   let calls = 0;
   const context = { window: { MarkalooTableSource: {
-    readRow(input, start) {
+    readRow(input, start, bodyColumns) {
       calls++;
-      return source.readRow(input, start);
+      return source.readRow(input, start, bodyColumns);
+    },
+    readTableHeader(input, start) {
+      calls++;
+      return source.readTableHeader(input, start);
     }
   } }, navigator: { platform: 'Win32' } };
   vm.runInNewContext(code, context);
   const text = rawTable('| ```x\n'.repeat(1000) + 'tail|data');
-  const actual = context.window.MarkalooFileHelpers.estimateRenderUnits(text);
-  assert.deepEqual({ ...actual }, undiscounted(text));
-  assert.equal(calls, 1, 'opaque body lines must never restart shared lookahead');
+  for (const candidate of [text, '| \n\t\n' + text.slice(2)]) {
+    calls = 0;
+    const actual = context.window.MarkalooFileHelpers.estimateRenderUnits(candidate);
+    assert.deepEqual({ ...actual }, undiscounted(candidate));
+    assert.equal(calls, 1, 'one shared header receipt must protect the whole raw window');
+  }
   const missing = { window: {}, navigator: { platform: 'Win32' } };
   vm.runInNewContext(code, missing);
   assert.throws(() => missing.window.MarkalooFileHelpers.estimateRenderUnits(rawTable('A')),
@@ -199,8 +393,17 @@ if (process.argv.includes('--measure')) {
     incomplete: size => '| ````sql\n' + '| ```inner\nA|B 😀\n'.repeat(size),
     surrounding: size => '```text\nA|B\n```\n\n' + rawTable('A|B 😀\n'.repeat(size)) +
       '\n```text\nA|B\n```\n',
+    paddedClosed: size => '| \n\t\n' + rawTable('A|B 😀\n'.repeat(size)).slice(2),
+    paddedBody: size => '| A | B |\n| - | - |\n| left | \n\n````rust\n' +
+      'A|B 😀\n'.repeat(size) + '````\n\t|\n',
+    paddedHeader: size => '| left |\n\n````rust\n' +
+      'A|B 😀\n'.repeat(size) + '````\n\t| right |\n| - | - | - |\n',
+    paddedHeaderFailedProbes: size => '| left |\n\n```label\nunclosed\n'.repeat(size),
+    paddedFailedProbes: size => '| \n\n```label\nunclosed\n'.repeat(size),
     ordinaryProse: size => 'ordinary prose without a table\n'.repeat(size),
     ordinaryTables: size => '| a | b | c |\n| - | - | - |\n'.repeat(size),
+    ordinaryTablesWithFence: size => '```text\nordinary\n```\n\n' +
+      '| a | b | c |\n| - | - | - |\n'.repeat(size),
     ordinaryCode: size => '```text\n' + 'a|b\n'.repeat(size) + '```\n'
   };
   for (const [profile, build] of Object.entries(profiles)) {
