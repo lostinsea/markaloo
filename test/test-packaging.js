@@ -3768,7 +3768,7 @@ async function main() {
       "test:reading-mode": "node test/test-reading-mode-integration.js",
       "test:reading-viewport": "node test/test-reading-viewport.js",
       "test:syntax": "node --check test/test-language-highlighting.js && electron test/test-language-highlighting.js",
-      "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
+      "test:updates": "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-windows-update-launch.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js",
       "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
       "test:document-editor": "npm run test:editor-fixtures -- --companion && npm run test:editor-history -- --companion && node --check test/test-document-editor.js && electron test/test-document-editor.js",
       "test:editor-fixtures": "node test/test-document-editor-fixture-controls.js",
@@ -3901,7 +3901,7 @@ async function main() {
       process: { platform, argv: ["node", "fixture", ...args] },
     });
     check("the standard updates command actually selects combined acceptance and preserves its focused route",
-      pkg.scripts["test:updates"] === "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js" &&
+      pkg.scripts["test:updates"] === "node test/test-update-state.js && node test/test-update-schedule.js && node test/test-windows-update-launch.js && node test/test-update-release-notes.js --companion && node test/test-about-updates.js" &&
       JSON.stringify(aboutPhases([])) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "notes", "download-failure"]) &&
       JSON.stringify(aboutPhases([], "darwin")) === JSON.stringify(["combined", "discover", "offline", "equal", "newer", "malformed", "current", "daily", "notes"]) &&
       JSON.stringify(aboutPhases(["--combined"])) === '["combined"]');
