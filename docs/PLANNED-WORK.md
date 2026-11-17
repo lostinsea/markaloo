@@ -73,16 +73,28 @@ section is kept here so the register has a visible edge.
     Root received the exact path and hashes for native testing.
     This candidate is **NOT FULLY NATIVE QUALIFIED**. Building itself clears
     no gate; Root's bounded installed-candidate passes are recorded below.
-  - Nonpublishing hosted branch staging is **BLOCKED: WRITE ACCESS**.
+  - Nonpublishing hosted branch staging is **HELD: VERIFY PRIOR ACCOUNT ROUTING**.
     Requested staging SHA: `d2be6986025e11af036d4e370df2e6a7587989e9`;
     branch: `users/vinma-microsoft/markaloo-table-rendering`.
     Canonical `lostinsea/markaloo` and the active `release.yml` were verified.
-  - The single explicit branch-only push failed HTTP 403. Active account
-    `vinma_microsoft` has repository `pull: true`, `push: false`.
+  - The single explicit branch-only push failed HTTP 403. The account selected
+    for that invocation, `vinma_microsoft`, reported `pull: true`, `push: false`.
+    This proves that invocation lacked write access, not that publication
+    through the previously successful route is unavailable.
     No force, credential switch, shared remote change or alternate path was used.
     The remote integration branch remains absent; main remains `f79df9d2`.
     No dispatch, run URL or hosted artifacts exist; required hosted checks
-    are **NOT RUN**, not passed. Root received the access blocker.
+    are **NOT RUN**, not passed.
+  - Read-only GitHub records confirm the successful 0.14.0 route used the same
+    `release.yml` workflow, ID `332361844`, with actor `lostinsea`:
+    [branch staging](https://github.com/lostinsea/markaloo/actions/runs/43947495342)
+    on `release-candidate-0.14.0`, then
+    [tag build/publication](https://github.com/lostinsea/markaloo/actions/runs/43948978576)
+    on `v0.14.0`, both at `f79df9d28bf9c37f8af70099f6e141ca962134e5`.
+    Workflow actor metadata does not establish how credentials were selected.
+  - Root is recovering that account-routing mechanism. No write retries,
+    credential-content searches or identity switches while it is established.
+    Keep the exact requested staging target unchanged.
   - Use the established release path: matching package/root-lock versions,
     reviewed release preparation, then the normal hosted `release.yml`
     staging/build gates. Dispatch the eventual tag ref for publication;
@@ -91,8 +103,8 @@ section is kept here so the register has a visible edge.
     checks, platform builds, strict Windows archive checks, artifact
     completeness checks and tag-only attestation/publication.
   - Global proof initialization and broad local table-source inventory remain
-    exclusion-blocked. Current-user, silent-mode, real UAC and wider full-app
-    and platform gates remain open. The bounded cancel/default-update/Main Save
+    exclusion-blocked. Current-user receipt, silent-mode, real UAC and wider
+    full-app and platform gates remain open. The bounded cancel/default-update/Main Save
     passes below do not qualify unrun controls or clear the publication hold.
   - Preserve the unsigned 0.14.0 candidate as prior-three-fix evidence only.
     It is not a 0.14.1 release artifact and does not include the viewport fix.
@@ -131,13 +143,15 @@ section is kept here so the register has a visible edge.
   - This new guest also measured `EnableLUA=0`; the observation is no longer
     limited to the destroyed guest. No policy changes or UAC prompt occurred.
     Real accept/refuse remains **NOT EXERCISED**; nothing is inferred about
-    the host. Current-user and candidate silent-mode controls remain pending.
+    the host. Root now reports the actual UI current-user upgrade verified;
+    its detailed receipt is pending. Candidate silent-mode control is finishing,
+    not yet passed.
   - Root receipt: session `a945df13-28fd-4f94-b3b7-dcae77565b03`,
     `files\native0141\native-results.json`, with `main-save-check.json`
     and the actual `real-main-saved.md` alongside it.
     Global/excluded-source and full-platform qualification remain open.
-    Source/build/release holds and the hosted 403 blocker are unchanged;
-    requested hosted staging remains exactly `d2be6986`.
+    Source/build/release holds remain. Hosted account routing is under investigation.
+    Requested hosted staging remains exactly `d2be6986`.
 - `search-bar-readable-viewport` - **COMBINED CHECKS PASSED; BOUNDED NATIVE PASS**.
   - While search is visible, the readable area starts below its bar.
     Sticky table headings and other content must not hide behind it.
@@ -218,8 +232,9 @@ section is kept here so the register has a visible edge.
     in either; this says nothing about the host.
     The user offered to approve real UAC prompts when needed; Root will ask
     at an actual approval step. Do not change settings or bypass prompts.
-    Current-user and candidate `/S` controls remain pending. New 0.14.1 default
-    update, Cancel and no-argument setup visibility results are recorded above.
+    Root reports current-user UI upgrade verified; candidate `/S` remains pending.
+    New 0.14.1 default update, Cancel and no-argument setup visibility results
+    are recorded above.
   - Root preserved receipts and the viewed image before verified Sandbox
     teardown. A fresh software-graphics start failed; status then confirmed
     no running Sandbox. There was no blind restart.
