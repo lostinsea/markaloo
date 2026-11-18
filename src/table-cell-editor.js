@@ -282,7 +282,16 @@ window.MarkalooTableCells = (() => {
           row.syntax = originalRows[i];
           row.cells.forEach((cell, c) => { cell.syntax = originalRows[i].cells[c]; });
         });
-        table.delimiter.syntax = receipt.value.delimiter;
+        const delimiter = table.delimiter, originalDelimiter = receipt.value.delimiter;
+        delimiter.syntax = originalDelimiter;
+        if (view.offsets[delimiter.start] === originalDelimiter.span.start &&
+            delimiter.cells.length === originalDelimiter.cells.length &&
+            delimiter.cells.every((cell, i) => {
+              const { content } = originalDelimiter.cells[i];
+              return view.offsets[cell.start] === content.start && view.offsets[cell.end] === content.end;
+            })) {
+          delimiter.cells.forEach((cell, i) => { cell.syntax = originalDelimiter.cells[i]; });
+        }
       }
     }
     gapTo(text.length);
@@ -538,6 +547,11 @@ window.MarkalooTableCells = (() => {
     } else if (removed.size) fail('tableCells.invalid');
     const columnChange = projected.length !== width ||
       projected.some((column, i) => column.originalIndex !== i);
+    if (columnChange) {
+      const { delimiter } = table;
+      if (delimiter.syntax !== table.syntax.value.delimiter || delimiter.cells.length !== width ||
+          delimiter.cells.some((cell, i) => cell.syntax !== delimiter.syntax.cells[i])) fail('tableCells.invalid');
+    }
     const originalText = cell => cell.syntax.kind === 'raw' ?
       normalise(model.source.slice(cell.syntax.content.start, cell.syntax.content.end)) : cell.text;
     const values = entry => {

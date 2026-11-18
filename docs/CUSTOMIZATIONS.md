@@ -27,6 +27,19 @@ This approach means after an upstream merge, you only need to ensure these files
 
 ## Custom Features
 
+### Selecting heading text
+
+- A new mouse text-selection gesture that overlaps a heading does not toggle
+  its section, including when it selects the same range again.
+- Plain clicks still toggle all six heading levels. Heading links, keyboard
+  activation and selections elsewhere keep their existing behavior.
+- Browser `selectstart` distinguishes a new selection from a click that clears
+  an old selection. The click still checks the live heading range. It does not
+  delay clicks to predict a later double-click.
+- `test:heading-selection` checks the actual delegated listener without the app.
+  The separately selected `--heading-mouse-native` fixture checks real browser
+  mouse input in one disposable window, not the full app or physical devices.
+
 ### Explicit code languages in rendered tables
 
 - A complete cell can hold a multiline backtick fence:
@@ -138,6 +151,13 @@ println!("{answer}");
 
 - The installed updater launches interactive NSIS with `--updated` and optional
   `--force-run`. It does not add `/S` or hide the setup window.
+- For interactive `--updated` without explicit scope or destination options,
+  setup lets stock NSIS skip the scope chooser only when exactly one registration
+  matches the effective target and that folder contains the app and uninstaller.
+  Otherwise the stock flow stays in charge. For a qualified all-users update
+  that skips the chooser, canceling the standard UAC prompt cancels that attempt
+  without installing, falling back or reopening the chooser. The registration
+  supplies the scope; it does not identify which copy of the app launched setup.
 - Setup queues one standard window restore from the MUI GUI callback, after
   initialization, so older clients can hand off a hidden interactive setup.
   Silent setup and the uninstaller skip this callback. A queue failure reports
@@ -623,7 +643,12 @@ flowchart LR
   Stable column identities preserve original cell nodes, provenance and native
   history. Pure physical-slot patches update the header, delimiter and every row;
   unchanged alignment and outside source remain exact.
+  Edit table can insert a column and apply a complete fenced cell in one Update.
   Unsupported original-column projections refuse without adopting intermediate source.
+- Clearing a literal editor promoted by whole-cell paste restores the empty draft
+  only if the ordinary cell was originally exactly empty. This also applies to
+  newly added rows and columns. Existing padding is preserved, and other pending
+  table changes can still be applied without replacing that editor.
 - Delete column confirms the selected column's number and plain header text,
   with a numbered fallback for a header without text. Keep at least one column.
   Recheck the original captured source, selection and draft after confirmation.

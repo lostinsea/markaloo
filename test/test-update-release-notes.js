@@ -1,9 +1,12 @@
 "use strict";
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const vm = require("vm");
+const { spawnSync } = require("child_process");
 const { EventEmitter } = require("events");
 const { createUpdateReleaseNotes, NOTES_LIMITS: limits } = require("../src/update-release-notes");
+const { prepareReleaseNotes, verifyPublishedReleaseNotes } = require("../scripts/prepare-release-notes");
 
 const companion = process.argv.includes("--companion");
 if (process.argv.slice(2).some(value => value !== "--companion")) {
@@ -56,6 +59,180 @@ function fixture() {
 async function failure(promise) {
   try { await promise; return ""; }
   catch (error) { return error.message; }
+}
+
+function publication() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "markaloo-release-notes-"));
+  const version = "1.2.3", ref = `refs/tags/v${version}`;
+  const notesPath = path.join(root, "docs", `RELEASE-NOTES-${version}.md`);
+  const header = `# Markaloo ${version}\r\n\r\n`;
+  const body = header + "- Keep caf\u00e9 text and source line breaks.\r\n";
+  const writeNotes = value => fs.writeFileSync(notesPath, value);
+  const refused = expected => {
+    try { prepareReleaseNotes(root, ref); return false; }
+    catch (error) { return expected.test(error.message); }
+  };
+  try {
+    fs.mkdirSync(path.join(root, "docs"));
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }));
+    fs.writeFileSync(path.join(root, "docs", "RELEASE-NOTES-1.2.2.md"),
+      "# Markaloo 1.2.2\n\n- These are the wrong release's notes.\n");
+    check("publication refuses missing exact-version notes rather than using an adjacent release",
+      refused(/ENOENT/));
+    writeNotes(body);
+    check("publication selects the exact-version source without changing Unicode or line breaks",
+      prepareReleaseNotes(root, ref) === notesPath &&
+      fs.readFileSync(prepareReleaseNotes(root, ref), "utf8") === body);
+    const bareCrBody = body.replace(/\r\n/g, "\r");
+    writeNotes(bareCrBody);
+    let bareCrPath, bareCrError;
+    try { bareCrPath = prepareReleaseNotes(root, ref); }
+    catch (error) { bareCrError = error; }
+    check("publication accepts bare-CR Markdown without rewriting the published source",
+      bareCrPath === notesPath && fs.readFileSync(notesPath, "utf8") === bareCrBody,
+      bareCrError?.stack);
+    for (const tag of ["refs/heads/main", "refs/tags/v1.2.2", undefined]) {
+      let rejected = false;
+      try { prepareReleaseNotes(root, tag); }
+      catch (error) { rejected = error.message.includes(`require ${ref}`); }
+      check(`publication refuses the wrong release ref ${tag}`, rejected);
+    }
+    for (const [label, value] of [
+      ["empty", ""], ["whitespace", " \r\n\t"],
+      ["heading only", header], ["wrong version heading", "# Markaloo 1.2.2\n\n- A change.\n"],
+      ["fallback paragraph", header + "No release notes were provided for this version.\n"],
+      ["download boilerplate", header + "## Downloads\n\nChoose a download for your platform.\n"],
+      ["commented-out bullet", header + "<!--\n- This change is hidden.\n-->\n"],
+      ["backtick-fenced bullet", header + "```\n- This is only a code example.\n```\n"],
+      ["tilde-fenced bullet", header + "~~~\n- This is only a code example.\n~~~\n"],
+      ["unclosed heading comment", header + "## Changes <!--\n- This change is hidden.\n"],
+      ["reference-title bullet", header + '[link]: https://example.invalid "Title\n- Not a change.\n"\n'],
+      ["mixed-ending hidden fence", header + "## Fixes\r```\n- This is only a code example.\n"],
+    ]) {
+      writeNotes(value);
+      check(`publication refuses ${label} customer notes`, refused(/heading|customer change bullet/));
+    }
+    const atLimit = header + "- " + "x".repeat(limits.markdownChars - header.length - 2);
+    writeNotes(atLimit);
+    check("publication accepts notes at the actual update loader limit",
+      prepareReleaseNotes(root, ref) === notesPath);
+    writeNotes(atLimit + "x");
+    check("publication refuses notes the update loader cannot display", refused(/size limit/));
+    writeNotes(body);
+    const receipt = { tag_name: `v${version}`, draft: false, body };
+    let verified = false, verificationError;
+    try { verifyPublishedReleaseNotes(root, ref, receipt); verified = true; }
+    catch (error) { verificationError = error; }
+    check("publication readback accepts the exact published tag and original notes",
+      verified, verificationError?.stack);
+    for (const [label, value] of [
+      ["missing body", { ...receipt, body: undefined }],
+      ["empty body", { ...receipt, body: "" }],
+      ["whitespace body", { ...receipt, body: " \r\n" }],
+      ["changed body", { ...receipt, body: body + "- An unexpected change.\n" }],
+      ["wrong tag", { ...receipt, tag_name: "v1.2.2" }],
+      ["draft release", { ...receipt, draft: true }],
+    ]) {
+      let rejected = false;
+      try { verifyPublishedReleaseNotes(root, ref, value); }
+      catch (error) { rejected = error.message.startsWith("Published release notes do not match"); }
+      check(`publication readback rejects ${label}`, rejected);
+    }
+
+    const project = path.resolve(__dirname, "..");
+    const outputPath = path.join(root, "github-output");
+    const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", GITHUB_OUTPUT: outputPath };
+    delete env.NODE_OPTIONS;
+    fs.mkdirSync(path.join(root, "scripts"));
+    const script = path.join(root, "scripts", "prepare-release-notes.js");
+    fs.copyFileSync(path.join(project, "scripts", "prepare-release-notes.js"), script);
+    const accepted = spawnSync(process.execPath, [script, ref],
+      { env, encoding: "utf8", timeout: 10000 });
+    check("publication CLI emits the validated source as the release action output",
+      accepted.status === 0 && accepted.stdout.trim() === notesPath &&
+      fs.readFileSync(outputPath, "utf8") === `path=${notesPath}\n`, accepted.stderr || accepted.error);
+    fs.writeFileSync(outputPath, "");
+    const rejected = spawnSync(process.execPath, [script, "refs/heads/main"],
+      { env, encoding: "utf8", timeout: 10000 });
+    check("publication CLI fails without an action output for a mismatched release",
+      rejected.status === 1 && rejected.stdout === "" &&
+      rejected.stderr.includes("Release notes check failed") &&
+      fs.readFileSync(outputPath, "utf8") === "", rejected.error);
+    const receiptPath = path.join(root, "published-release.json");
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+    const verifiedCli = spawnSync(process.execPath, [script, ref, receiptPath],
+      { env, encoding: "utf8", timeout: 10000 });
+    check("publication CLI verifies the API readback without emitting a new publication path",
+      verifiedCli.status === 0 && verifiedCli.stdout.trim() ===
+        `Published release notes match ${ref}.` &&
+      fs.readFileSync(outputPath, "utf8") === "", verifiedCli.stderr || verifiedCli.error);
+    fs.writeFileSync(receiptPath, JSON.stringify({ ...receipt, body: "" }));
+    const emptyCli = spawnSync(process.execPath, [script, ref, receiptPath],
+      { env, encoding: "utf8", timeout: 10000 });
+    check("publication CLI fails clearly when the API readback body is empty",
+      emptyCli.status === 1 && emptyCli.stdout === "" &&
+      emptyCli.stderr.includes("Published release notes do not match") &&
+      fs.readFileSync(outputPath, "utf8") === "", emptyCli.error);
+
+    const workflow = fs.readFileSync(path.join(project, ".github", "workflows", "release.yml"), "utf8")
+      .replace(/\r\n/g, "\n");
+    const wired = text => {
+      const jobs = text.split("\n  create-release:\n");
+      if (jobs.length !== 2) return false;
+      const job = jobs[1].split(/\n  [\w-]+:\n/)[0];
+      if (/(?:^|\n)    continue-on-error:/.test(job)) return false;
+      const steps = job.split("\n      - ").slice(1);
+      const checkout = steps.findIndex(step => step.startsWith("name: Check out release source\n"));
+      const validate = steps.findIndex(step => step.startsWith("name: Validate release notes\n"));
+      const publish = steps.findIndex(step => step.startsWith("name: Create Release\n"));
+      const verify = steps.findIndex(step => step.startsWith("name: Verify published release notes\n"));
+      if (checkout < 0 || validate <= checkout || publish <= validate || verify <= publish) return false;
+      const readback = steps[verify].split("\n        run: |\n");
+      return readback.length === 2 &&
+        /uses: actions\/checkout@[a-f0-9]{40}\b/.test(steps[checkout]) &&
+        steps[checkout].includes("\n          path: release-source\n") &&
+        !/\n          ref:/.test(steps[checkout]) &&
+        steps[validate].includes("\n        id: release-notes\n") &&
+        steps[validate].includes("\n          RELEASE_REF: ${{ github.ref }}\n") &&
+        steps[validate].split("\n").find(line => line.startsWith("        run: ")) ===
+          '        run: node release-source/scripts/prepare-release-notes.js "$RELEASE_REF"' &&
+        !/\n        (?:if|continue-on-error):/.test(steps[validate] + steps[publish] + steps[verify]) &&
+        /uses: softprops\/action-gh-release@[a-f0-9]{40}\b/.test(steps[publish]) &&
+        steps[publish].includes("\n          body_path: ${{ steps.release-notes.outputs.path }}\n") &&
+        steps[verify].includes("\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n") &&
+        steps[verify].includes("\n          RELEASE_REF: ${{ github.ref }}\n") &&
+        readback[1].trimEnd() ===
+          '          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$RUNNER_TEMP/published-release.json"\n' +
+          '          node release-source/scripts/prepare-release-notes.js "$RELEASE_REF" "$RUNNER_TEMP/published-release.json"';
+    };
+    check("publication workflow gates the pinned release action on exact-source validated notes", wired(workflow));
+    const withoutGate = workflow.replace(/\n      - name: Validate release notes\n[\s\S]*?(?=\n      - )/, "");
+    check("publication workflow oracle rejects removal of the entire validation step",
+      withoutGate !== workflow && !wired(withoutGate));
+    for (const [label, original, replacement] of [
+      ["job-level ignored publication failure", "  create-release:\n",
+        "  create-release:\n    continue-on-error: true\n"],
+      ["missing body binding", "          body_path: ${{ steps.release-notes.outputs.path }}\n", ""],
+      ["missing validation command", '        run: node release-source/scripts/prepare-release-notes.js "$RELEASE_REF"', ""],
+      ["ignored validation failure", "        id: release-notes\n", "        id: release-notes\n        continue-on-error: true\n"],
+      ["skipped validation", "        id: release-notes\n", "        id: release-notes\n        if: false\n"],
+      ["shell-bypassed validation", '        run: node release-source/scripts/prepare-release-notes.js "$RELEASE_REF"',
+        '        run: node release-source/scripts/prepare-release-notes.js "$RELEASE_REF" || true'],
+      ["different source revision", "          path: release-source\n", "          path: release-source\n          ref: main\n"],
+      ["missing readback comparison",
+        '          node release-source/scripts/prepare-release-notes.js "$RELEASE_REF" "$RUNNER_TEMP/published-release.json"', ""],
+      ["ignored readback failure", "      - name: Verify published release notes\n",
+        "      - name: Verify published release notes\n        continue-on-error: true\n"],
+      ["shell-bypassed readback",
+        '          node release-source/scripts/prepare-release-notes.js "$RELEASE_REF" "$RUNNER_TEMP/published-release.json"',
+        '          node release-source/scripts/prepare-release-notes.js "$RELEASE_REF" "$RUNNER_TEMP/published-release.json" || true'],
+    ]) {
+      check(`publication workflow oracle rejects ${label}`,
+        workflow.includes(original) && !wired(workflow.replace(original, replacement)));
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 async function loader() {
@@ -458,7 +635,8 @@ async function disclosure() {
   await settle();
   f.click("updateNotesToggle"); f.click("updateNotesToggle");
   check("release notes empty result is cached honestly across re-expansion",
-    f.calls.length === 1 && f.element("updateNotesStatus").textContent.includes("No release notes"));
+    f.calls.length === 1 &&
+    f.element("updateNotesStatus").textContent === "No release notes were provided for this version.");
   f.apply({ ...f.initial, revision: 3, presentationVersion: "0.14.0", availableVersion: "0.14.0" });
   check("release notes target change under the same presentation resets to collapsed",
     f.element("updateNotesToggle").getAttribute("aria-expanded") === "false" && f.calls.length === 1);
@@ -525,6 +703,21 @@ async function disclosure() {
   retired.apply({ ...retired.initial, revision: 2, availableVersion: "0.14.0", presentationVersion: "0.14.0" });
   check("release notes authoritative replacement resets a retired in-flight disclosure",
     retired.element("updateNotesToggle").getAttribute("aria-expanded") === "false");
+}
+
+async function publishedBody() {
+  for (const body of ["", "# Markaloo 0.13.0\n\n- Fix table editing.\n"]) {
+    const service = fixture(), ui = toastFixture();
+    service.e.transport = () => response(body);
+    await settle();
+    ui.click("updateNotesToggle");
+    ui.calls[0].resolve(await service.load());
+    await settle();
+    check(`release notes carry the literal ${body ? "nonempty" : "empty"} published body through loader and popup`,
+      body ? ui.e.parsed[0] === body && ui.element("updateNotesBody").children.length === 1 :
+        ui.e.parsed.length === 0 && ui.element("updateNotesBody").children.length === 0 &&
+        ui.element("updateNotesStatus").textContent === "No release notes were provided for this version.");
+  }
 }
 
 function presentationOracle() {
@@ -733,10 +926,12 @@ async function presentationAdmission() {
 }
 
 (async () => {
+  publication();
   await loader();
   await boundaries();
   await preloadAndMain();
   await disclosure();
+  await publishedBody();
   presentationOracle();
   await presentationAdmission();
   const passed = results.filter(Boolean).length;

@@ -25,8 +25,12 @@ release that looks finished and is not.
 
 1. Bump `version` in **both** `package.json` and `package-lock.json`
    (`npm pkg set version=X.X.X`, then `npm install --package-lock-only`),
-   commit and push. `npm ci` in the workflow fails outright if the two
-   disagree.
+   and add `docs/RELEASE-NOTES-X.X.X.md` before committing and pushing.
+   Use `# Markaloo X.X.X`, optional `##` sections and short `- Change` bullets.
+   Start each bullet with plain text and wrap it with two-space indented text.
+   Escape `<` as `&lt;`. Raw HTML, code fences and standalone paragraphs are
+   not supported. Do not copy test results or internal delivery notes.
+   `npm ci` fails if the package versions disagree.
 2. Tag and push the tag:
    ```bash
    git tag -a vX.X.X -m "Markaloo X.X.X"
@@ -45,6 +49,13 @@ release that looks finished and is not.
    The `attest` job must complete before publication — `create-release`
    declares `needs: [release, attest]`, so a failed attestation blocks the
    release rather than yielding an unattested one.
+   The publisher checks out the same revision and requires notes for the exact
+   package version and tag. Missing, empty, heading-only or oversized notes
+   block publication. The validated file becomes the GitHub release body
+   shown in the update popup.
+   After publication, a read-only API check compares the actual tag and body
+   with those notes. An empty or different body fails the job. This detects a
+   bad publication; it cannot undo it and does not delete or change releases.
 5. After publication, verify a **downloaded** artifact rather than trusting the
    run page:
    ```bash
@@ -63,6 +74,13 @@ release that looks finished and is not.
 7. Inspect the actual Windows package and view its UI using an isolated profile.
    Do not install it unless installation is separately authorized. Linux/macOS
    builds and attestations do not prove live UI behavior on Windows.
+
+- Check the published notes with
+  `gh release view vX.X.X --repo lostinsea/markaloo --json body`.
+- Changing the source file alone does not repair an existing GitHub release.
+  A separately approved body edit can update its notes without rebuilding
+  or replacing assets. An already-open update notice may retain its cached
+  empty result until a new notice is shown.
 
 **Do not patch a gap in that sequence with `npm run release`.** A locally cut
 release carries no attestation, so uploading over an attested tag replaces

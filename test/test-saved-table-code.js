@@ -744,6 +744,155 @@ async function run() {
   check("ordinary partial-cell padded paste stays semantic",
     !partial.literal && partial.text.startsWith("replace me"),partial);
   if (process.argv.includes("--raw-paste-only")) {
+    const source = "# Before\r\n\r\n| Name | Control |\r\n| --- |  ---: |\r\n| sample | keep |\r\n\r\nAfter\r\n";
+    const reportedJSON = [
+      "{",
+      '  "id": "u-10482",',
+      '  "name": "Alex Johnson",',
+      '  "email": "alex.johnson@example.com",',
+      '  "roles": ["engineer", "reviewer"],',
+      '  "active": true,',
+      '  "createdAt": "2026-11-16T13:30:00-08:00"',
+      "}",
+    ].join("\n");
+    const reportedFence = "```json\n"+reportedJSON+"\n```";
+    const emptyBody = "| sample |  | keep |";
+    const emptyColumn = source.replace("| Name | Control |","| Name |  | Control |")
+      .replace("| --- |  ---: |","| --- | --- |  ---: |").replace("| sample | keep |",emptyBody);
+    const paddedBlank = "| sample |\t \t|";
+    const blankSource = source.replace("| sample | keep |",paddedBlank);
+    const blankWithColumn = blankSource.replace("| Name | Control |","| Name | Control  |  |")
+      .replace("| --- |  ---: |","| --- |  ---:  | --- |").replace(paddedBlank,"| sample |\t \t |  |");
+    const emptyRow = source.replace("| sample | keep |","|  |  |\r\n| sample | keep |");
+    const cases = [
+      ["combined","A1 Insert Right and exact JSON apply in one popup Update"],
+      ["retry","E1 refused inserted fence can be cleared and retried in the same textarea"],
+      ["two-step","E6 two-step control applies the empty column then JSON in its reopened slot"],
+      ["no-op","E3 existing empty restores exact source without a checkpoint"],
+      ["structural","E3 existing empty retains padding while a pending column applies"],
+      ["row","E4 clearing the new row cell applies just the empty row"],
+    ];
+    for (const [kind,name] of cases) {
+      const observed = {};
+      try {
+        const existing = kind === "no-op" || kind === "structural";
+        const initial = existing ? blankSource : source;
+        const insertColumn = kind !== "no-op" && kind !== "row";
+        await execute("fixture.load("+JSON.stringify(initial)+")");
+        observed.setup = await execute(`(() => {
+          fixture.open();
+          const draft = tableCellSession, before = draft.columns, rowCount = draft.rows.length;
+          const selected = draft.rows[1].cells[${kind === "structural" ? 1 : 0}];
+          const grid = tableCellGrid, container = selected.input.closest('.table-cell-sizing-container');
+          const sizing = () => {
+            const table = container?.querySelector(':scope > table');
+            const controls = container?.querySelector(':scope > .table-column-controls');
+            return {owned:container?.parentElement === grid && table === selected.container.closest('table') &&
+              grid.contains(selected.input) && !!controls,
+              handles:controls?.children.length ?? 0, width:table?.getBoundingClientRect().width ?? 0};
+          };
+          const entry = new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse'});
+          let entryDelivered = false;
+          grid.addEventListener('pointerover',event => {
+            entryDelivered = event === entry && event.target === selected.input;
+          },{once:true});
+          selected.input.focus({preventScroll:true});
+          const entryAccepted = selected.input.dispatchEvent(entry);
+          selectTableCell(draft,selected);
+          const buttonId = ${JSON.stringify(insertColumn ? "tableCellInsertRight" : kind === "row" ? "tableCellInsertAbove" : "")};
+          const button = buttonId && document.getElementById(buttonId);
+          const layout = sizing(), buttonEnabled = !!button && !button.disabled;
+          let ownedSelection = false, selectionError = '';
+          try { ownedSelection = currentSelectedTableCell(draft) === selected; }
+          catch (error) { selectionError = error.message; }
+          let clickDelivered = false;
+          const observeClick = event => { clickDelivered = event.target === button; };
+          if (buttonEnabled && ownedSelection && entryDelivered && entryAccepted &&
+              layout.owned && layout.handles === before && layout.width > 0) {
+            button.addEventListener('click',observeClick,{once:true});
+            button.click();
+            button.removeEventListener('click',observeClick);
+          }
+          const added = draft.columnOrder[${kind === "structural" ? 2 : 1}];
+          const insertedColumn = draft.columns === before + 1 && added.originalIndex === undefined &&
+            draft.rows.every(row => {
+              const cell = row.cells[${kind === "structural" ? 2 : 1}];
+              return row.cells.length === draft.columns && cell?.columnState === added && !cell.cell &&
+                cell.initialSource === '' && cell.input.textContent === '' && grid.contains(cell.input);
+            });
+          const addedRow = draft.rows[1];
+          const insertedRow = draft.rows.length === rowCount + 1 && !addedRow.original &&
+            addedRow.cells.length === before && addedRow.cells.every(cell =>
+              !cell.cell && cell.initialSource === '' && cell.input.textContent === '' && grid.contains(cell.input));
+          const slot = draft.rows[1].cells[1];
+          return {before,after:draft.columns,rowCount,afterRows:draft.rows.length,open:tableCellDialog.open,
+            sameSession:tableCellSession === draft, entryDelivered,entryAccepted,layout,buttonEnabled,clickDelivered,
+            ownedSelection,selectionError,insertedColumn,insertedRow,selectedAfter:draft.selectedCell?.column,
+            error:tableCellError.textContent,slot:{original:!!slot.cell,index:slot.columnState.originalIndex ?? null,
+              initiallyEmpty:slot.initialSource === '',literal:slot.literal},exact,history:history.slice()};
+        })()`);
+        const setup = observed.setup;
+        if (setup.before !== 2 || setup.rowCount !== 2 || !setup.open || !setup.sameSession || !setup.ownedSelection ||
+            setup.error || setup.exact !== initial || setup.history.length || !setup.slot.initiallyEmpty || setup.slot.literal ||
+            (existing ? !setup.slot.original || setup.slot.index !== 1 : setup.slot.original) ||
+            (kind === "row" && setup.slot.index !== 1))
+          throw new Error("Popup did not reach the captured originally empty ordinary slot");
+        if (insertColumn || kind === "row") {
+          if (!setup.entryDelivered || !setup.entryAccepted || !setup.layout.owned || setup.layout.handles !== 2 ||
+              setup.layout.width <= 0 || !setup.buttonEnabled || !setup.clickDelivered ||
+              (insertColumn ? setup.after !== 3 || !setup.insertedColumn || setup.afterRows !== 2 :
+                setup.after !== 2 || setup.afterRows !== 3 || !setup.insertedRow))
+            throw new Error("The real toolbar click did not create its uncommitted owned empty draft slot");
+        }
+        if (kind === "two-step") {
+          observed.first = await execute("fixture.update()");
+          if (observed.first.exact !== emptyColumn || JSON.stringify(observed.first.history) !== JSON.stringify([source]))
+            throw new Error("Two-step control first Update did not commit just the empty column");
+          await execute("fixture.open()");
+        }
+        const text = kind === "retry" ? reportedFence.slice(0,-3) : reportedFence;
+        observed.paste = await execute("fixture.paste("+JSON.stringify(text)+")");
+        if (!observed.paste.literal || observed.paste.text !== text) throw new Error("The new slot did not promote the exact literal draft");
+        if (kind === "retry" || existing || kind === "row") {
+          observed.retry = await execute(`(async () => {
+            const draft = tableCellSession, input = fixture.input();
+            const before = {value:input.value,exact,history:history.slice()};
+            let refusal;
+            if (${kind === "retry"}) {
+              const refused = await fixture.rejectedUpdate();
+              const sameDraft = tableCellSession === draft && fixture.input() === input;
+              refusal = {...refused,sameDraft,exact,history:history.slice()};
+              if (!refused.open || !refused.unchanged || !sameDraft ||
+                  refused.error !== i18n('tableCells.invalid') || refused.draft !== before.value) return {before,refusal};
+            }
+            input.focus();
+            input.select();
+            const deleted = document.execCommand('delete');
+            return {before,refusal,cleared:{deleted,sameDraft:tableCellSession === draft && fixture.input() === input,
+              value:input.value,exact,history:history.slice()}};
+          })()`);
+          const {before,refusal,cleared} = observed.retry;
+          if (before.value !== text || before.exact !== initial || before.history.length ||
+              (kind === "retry" && (refusal?.exact !== initial || refusal.history.length)) ||
+              !cleared?.deleted || !cleared.sameDraft || cleared.value !== "" || cleared.exact !== initial || cleared.history.length)
+            throw new Error("Refusal or clearing did not preserve the same draft, source and history");
+        }
+        observed.updated = await execute("fixture.update()");
+        observed.render = await execute("fixture.state()");
+        const expected = kind === "no-op" ? blankSource : kind === "structural" ? blankWithColumn :
+          kind === "row" ? emptyRow : kind === "retry" ? emptyColumn : emptyColumn.replace(emptyBody,() =>
+          kind === "combined" ? "| sample | "+reportedFence+" | keep |" : "| sample |  "+reportedFence+"| keep |");
+        const checkpoints = kind === "no-op" ? [] : kind === "two-step" ? [source,emptyColumn] : [initial];
+        check(name,observed.updated.exact === expected &&
+          JSON.stringify(observed.updated.history) === JSON.stringify(checkpoints) &&
+          !observed.render.open && observed.render.columns === (insertColumn ? 3 : 2) &&
+          observed.render.rows === (kind === "row" ? 3 : 2) &&
+          (existing || kind === "row" || observed.render.neighbor === "keep") &&
+          (kind === "combined" || kind === "two-step" ? observed.render.code === reportedJSON : observed.render.text === ""),observed);
+      } catch (error) {
+        check(name,false,{...observed,stack:error.stack});
+      }
+    }
     check("raw paste guest has no external requests or unexpected errors",!blocked.length && !errors.length,{blocked,errors});
     return;
   }

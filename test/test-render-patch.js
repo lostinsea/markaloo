@@ -28,6 +28,321 @@
 // threshold would be flaky on shared hardware and would not say what broke;
 // "the paragraph I edited is the only block that was replaced" is exact.
 
+if (process.argv.includes("--heading-selection") || process.argv.includes("--heading-mouse-native")) {
+  runHeadingSelection().catch(error => {
+    console.error("HEADING SETUP/EXECUTION FAILED", error.stack);
+    process.exitCode = 1;
+    if (process.argv.includes("--heading-mouse-native")) require("electron").app.quit();
+  });
+  return;
+}
+
+async function runHeadingSelection() {
+  const fs = require("node:fs"), path = require("node:path"), assert = require("node:assert/strict");
+  const native = process.argv.includes("--heading-mouse-native");
+  const outputArg = process.argv.find(arg => arg.startsWith("--heading-output="));
+  assert.ok(process.argv.slice(2).every(arg => arg === (native ? "--heading-mouse-native" : "--heading-selection") ||
+    (native && arg === outputArg)), "Heading modes cannot run the ordinary app suite");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "renderer.js"), "utf8");
+  const start = source.indexOf("let headingMouseGesture = null;", source.indexOf("function makeHeadersCollapsible("));
+  const end = source.indexOf("// Auto-expand collapsed sections when navigating via TOC", start);
+  assert.ok(start >= 0 && end > start, "The actual heading listener must exist");
+  const listener = source.slice(start, end);
+  const results = [];
+  const check = (name, ok, detail) => {
+    results.push({ name, ok: !!ok, ...(!ok ? { detail } : {}) });
+    console.log(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : "  -> " + JSON.stringify(detail)}`);
+  };
+  if (!native) {
+    const vm = require("node:vm");
+    const fixture = (level = 2) => {
+      let collapsed = false, calls = 0, selection = null;
+      const handlers = {}, windowHandlers = {};
+      const section = {};
+      const header = { id: "heading", tagName: "H" + level, nextElementSibling: section,
+        classList: { contains: () => collapsed }, ownerDocument: { getSelection: () => selection },
+        closest: selector => selector.includes("h" + level) ? header : null };
+      const nested = { tagName: "EM", closest: selector => selector === "a" ? null : header };
+      const link = { tagName: "SPAN", closest: selector => selector === "a" ? {} : header };
+      const viewer = { contains: node => node === header,
+        addEventListener(type, handler) { assert.equal(handlers[type], undefined); handlers[type] = handler; } };
+      vm.runInNewContext(listener, { viewer, window: { getSelection: () => selection,
+        addEventListener(type, handler) { windowHandlers[type] = handler; } },
+        readingCollapsibleSections: new WeakMap([[header, { section }]]),
+        setHeadersCollapsed(headers, value) { assert.equal(headers[0], header); collapsed = value; calls++; } });
+      return { header, nested, link, section, viewer,
+        select(ranges) { selection = ranges === null ? null : { rangeCount: ranges.length,
+          isCollapsed: ranges.every(range => range.collapsed), getRangeAt: index => ranges[index] }; },
+        range(intersects, collapsed = false) { return { collapsed, intersectsNode: node => intersects && node === header }; },
+        down(target = header) { handlers.mousedown({ target, button: 0 }); },
+        start() { handlers.selectstart(); },
+        cancel(type) { (handlers[type] || windowHandlers[type])(); },
+        click(target = header, detail = 1, pointerType) { handlers.click({ target, detail, pointerType }); },
+        state: () => ({ collapsed, calls }) };
+    };
+    for (let level = 1; level <= 6; level++) {
+      const f = fixture(level);
+      f.click();
+      check(`heading H${level} plain mouse click collapses`, f.state().collapsed && f.state().calls === 1);
+      f.click();
+      check(`heading H${level} second plain click expands`, !f.state().collapsed && f.state().calls === 2);
+      f.down(f.nested); f.start(); f.select([f.range(true)]);
+      f.click(f.nested);
+      check(`heading H${level} selected text does not toggle`, !f.state().collapsed && f.state().calls === 2);
+      const caret = fixture(level);
+      caret.select([caret.range(true, true)]);
+      caret.click(caret.nested);
+      check(`heading H${level} collapsed caret still toggles`, caret.state().collapsed && caret.state().calls === 1);
+    }
+    for (const [name, ranges] of [
+      ["reverse selection", f => [f.range(true)]],
+      ["heading enclosed by outside endpoints", f => [f.range(true)]],
+      ["later intersecting range", f => [f.range(false), f.range(true)]],
+    ]) {
+      const f = fixture(); f.down(); f.start(); f.select(ranges(f)); f.click();
+      check("heading preserves " + name, f.state().calls === 0, f.state());
+    }
+    for (const [name, ranges] of [
+      ["no selection", () => null], ["no ranges", () => []],
+      ["unrelated selection", f => [f.range(false)]],
+    ]) {
+      const f = fixture(); f.down(); f.start(); f.select(ranges(f)); f.click();
+      check("heading toggles with " + name, f.state().calls === 1, f.state());
+    }
+    for (const pointerType of ["", undefined, "touch", "pen"]) {
+      const f = fixture(); f.down(); f.start(); f.select([f.range(true)]);
+      f.click(f.header, 1, pointerType);
+      check("heading selection honors pointer type " + (pointerType === "" ? "(empty)" : String(pointerType)),
+        f.state().calls === (pointerType === "touch" || pointerType === "pen" ? 1 : 0), f.state());
+    }
+    const keyboard = fixture(); keyboard.select([keyboard.range(true)]); keyboard.click(keyboard.header, 0);
+    check("heading keyboard or programmatic activation keeps its behavior", keyboard.state().calls === 1);
+    const linked = fixture(); linked.click(linked.link);
+    check("heading nested link does not toggle", linked.state().calls === 0);
+    const stale = fixture(); stale.header.nextElementSibling = {};
+    stale.click();
+    check("heading refuses a replaced section", stale.state().calls === 0);
+    const outside = fixture(); outside.viewer.contains = () => false; outside.click();
+    check("heading refuses an outside heading", outside.state().calls === 0);
+    const repeated = fixture(), sameRange = repeated.range(true);
+    repeated.select([sameRange]); repeated.down(); repeated.start(); repeated.select([sameRange]); repeated.click();
+    check("heading preserves a fresh identical selection gesture", repeated.state().calls === 0);
+    const selectedClick = fixture(); selectedClick.select([selectedClick.range(true)]);
+    selectedClick.down(); selectedClick.click();
+    check("heading plain click with an old selection still toggles", selectedClick.state().calls === 1);
+    for (const type of ["dragstart", "pointercancel", "blur"]) {
+      const canceled = fixture(); canceled.down(); canceled.start(); canceled.select([canceled.range(true)]);
+      canceled.cancel(type); canceled.click();
+      check("heading clears abandoned gesture on " + type, canceled.state().calls === 1);
+    }
+    const nextClick = fixture(); nextClick.down(); nextClick.start(); nextClick.select([nextClick.range(true)]);
+    nextClick.click();
+    const callsBeforeNextClick = nextClick.state().calls;
+    nextClick.click();
+    check("heading selection receipt is consumed by one click", nextClick.state().calls === callsBeforeNextClick + 1);
+  } else {
+    assert.ok(outputArg, "Native heading checks require an explicit fresh owned output directory");
+    const output = path.resolve(outputArg.slice("--heading-output=".length));
+    assert.ok(!fs.existsSync(output), "Native heading output must be fresh");
+    fs.mkdirSync(output, { recursive: true });
+    const { app, BrowserWindow } = require("electron");
+    assert.equal(process.env.ELECTRON_RUN_AS_NODE, undefined);
+    assert.equal(process.env.NODE_OPTIONS, undefined);
+    for (const name of ["userData", "sessionData", "crashDumps"]) {
+      const directory = path.join(output, name);
+      fs.mkdirSync(directory);
+      app.setPath(name, directory);
+    }
+    app.setAppLogsPath(path.join(output, "logs"));
+    const css = fs.readFileSync(path.join(__dirname, "..", "src", "styles.css"), "utf8");
+    const cssStart = css.indexOf(".markdown-body h1,\n".replace(/\n/g, css.includes("\r\n") ? "\r\n" : "\n"), css.indexOf("COLLAPSIBLE HEADERS"));
+    const cssEnd = css.indexOf("/* Inline code outside", cssStart);
+    assert.ok(cssStart >= 0 && cssEnd > cssStart, "Actual heading CSS rules must exist");
+    await app.whenReady();
+    const win = new BrowserWindow({ width: 900, height: 600, show: true,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
+    const readyToShow = new Promise(resolve => win.once("ready-to-show", resolve));
+    const ownedPids = [{ role: "main", pid: process.pid }];
+    const requests = [];
+    win.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+      if (!details.url.startsWith("data:text/html,")) requests.push(details.url);
+      callback({ cancel: !details.url.startsWith("data:text/html,") });
+    });
+    win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.webContents.on("will-navigate", event => event.preventDefault());
+    const exec = code => win.webContents.executeJavaScript(code);
+    let executionError;
+    try {
+      await win.loadURL("data:text/html," + encodeURIComponent("<!doctype html><meta charset=utf-8><style>" +
+        "body{font:18px sans-serif;padding:32px}.markdown-body h1,.markdown-body h2,.markdown-body h3," +
+        ".markdown-body h4,.markdown-body h5,.markdown-body h6{font-size:24px;line-height:40px;margin:12px 0}" +
+        css.slice(cssStart, cssEnd) + "</style><div id=viewer class=markdown-body></div>"));
+      await readyToShow;
+      ownedPids.push(...app.getAppMetrics().filter(metric => metric.pid !== process.pid)
+        .map(metric => ({ role: metric.type, pid: metric.pid })));
+      await exec(`{
+        const viewer = document.getElementById("viewer");
+        let readingCollapsibleSections = new WeakMap(), toggles = 0, events = [], trace = [];
+        function selectionState() {
+          const selection = document.getSelection();
+          return { selected: selection.toString(), anchorOffset: selection.anchorOffset, focusOffset: selection.focusOffset,
+            ranges: Array.from({length: selection.rangeCount}, (_, index) => {
+              const range = selection.getRangeAt(index);
+              return { start: range.startOffset, end: range.endOffset,
+                startNode: range.startContainer.parentElement?.id, endNode: range.endContainer.parentElement?.id };
+            }) };
+        }
+        for (const type of ["mousedown", "selectstart", "mouseup", "dragstart", "dragend"]) {
+          viewer.addEventListener(type, () => trace.push({type, ...selectionState()}), true);
+        }
+        document.addEventListener("selectionchange", () => trace.push({type:"selectionchange", ...selectionState()}));
+        function setHeadersCollapsed(headers, collapsed) {
+          for (const header of headers) {
+            header.classList.toggle("collapsed", collapsed);
+            readingCollapsibleSections.get(header).section.classList.toggle("collapsed", collapsed);
+          }
+          toggles++;
+        }
+        viewer.addEventListener("click", event => {
+          const selection = document.getSelection(), header = document.getElementById("heading");
+          events.push({ detail: event.detail, pointerType: event.pointerType, target: event.target.tagName,
+            selected: selection.toString(), intersects: selection.rangeCount > 0 &&
+              !selection.getRangeAt(0).collapsed && selection.getRangeAt(0).intersectsNode(header) });
+        }, true);
+        ${listener}
+        window.headingFixture = {
+          reset(level) {
+            getSelection().removeAllRanges(); toggles = 0; events = []; trace = [];
+            viewer.innerHTML = "<h" + level + " id=heading><span id=words>Heading selection words</span> <a href='#target'><em>link</em></a></h" +
+              level + "><div class=collapsible-section id=section>Section body remains visible.</div><p id=other>Unrelated selectable text.</p>";
+            const header = document.getElementById("heading"), section = document.getElementById("section");
+            readingCollapsibleSections = new WeakMap([[header, { section }]]);
+            const node = document.getElementById("words").firstChild, range = document.createRange();
+            range.setStart(node, 0); range.setEnd(node, 18);
+            const rect = range.getBoundingClientRect(), heading = header.getBoundingClientRect();
+            return { start: { x: Math.ceil(rect.left + 1), y: Math.round(rect.top + rect.height / 2) },
+              end: { x: Math.floor(rect.right - 1), y: Math.round(rect.top + rect.height / 2) },
+              fold: { x: Math.ceil(heading.left + 2), y: Math.round(rect.top + rect.height / 2) } };
+          },
+          select(id = "words") {
+            const range = document.createRange(); range.selectNodeContents(document.getElementById(id));
+            getSelection().removeAllRanges(); getSelection().addRange(range);
+          },
+          snapshot() {
+            const header = document.getElementById("heading"), section = document.getElementById("section");
+            return { collapsed: header.classList.contains("collapsed"), bodyCollapsed: section.classList.contains("collapsed"),
+              toggles, ...selectionState(), events: events.slice(), trace: trace.slice() };
+          }
+        };
+        void 0;
+      }`);
+      const snapshot = () => exec("headingFixture.snapshot()");
+      const reset = async level => {
+        const points = await exec(`headingFixture.reset(${level})`);
+        const state = await snapshot();
+        assert.ok(!state.collapsed && !state.bodyCollapsed && !state.selected && state.toggles === 0 && !state.events.length,
+          "A safe fresh heading fixture must precede every independent case");
+        return points;
+      };
+      const mouse = async (from, to = from, allowTextDrag = false) => {
+        const prior = await snapshot(), before = prior.events.length;
+        win.webContents.sendInputEvent({ type: "mouseDown", ...from, button: "left", clickCount: 1 });
+        for (let step = 1; step <= 5; step++) {
+          win.webContents.sendInputEvent({ type: "mouseMove",
+            x: Math.round(from.x + (to.x - from.x) * step / 5),
+            y: Math.round(from.y + (to.y - from.y) * step / 5), modifiers: ["leftButtonDown"] });
+        }
+        win.webContents.sendInputEvent({ type: "mouseUp", ...to, button: "left", clickCount: 1 });
+        const deadline = Date.now() + 5000;
+        let state;
+        do {
+          state = await snapshot();
+          if (state.events.length > before) return state;
+          if (allowTextDrag && state.trace.slice(prior.trace.length).some(event => event.type === "dragstart")) return state;
+          await new Promise(resolve => setImmediate(resolve));
+        } while (Date.now() < deadline);
+        throw new Error("Mouse input did not produce the required observed click: " + JSON.stringify(state));
+      };
+      for (let level = 1; level <= 6; level++) {
+        let points = await reset(level);
+        const dragged = await mouse(points.start, points.end);
+        assert.ok(dragged.selected && dragged.events.at(-1).intersects && dragged.events.at(-1).detail === 1,
+          "The actual mouse drag must create a noncollapsed heading selection before the listener");
+        check(`native H${level} mouse selection leaves section expanded`,
+          !dragged.collapsed && !dragged.bodyCollapsed && dragged.toggles === 0, dragged);
+        if (level === 1 || level === 6) fs.writeFileSync(path.join(output, `h${level}-selected.png`),
+          (await win.webContents.capturePage()).toPNG());
+        points = await reset(level);
+        const clicked = await mouse(points.start);
+        check(`native H${level} plain mouse click collapses`,
+          clicked.collapsed && clicked.bodyCollapsed && clicked.toggles === 1 && !clicked.selected, clicked);
+        const expanded = await mouse(points.start);
+        check(`native H${level} next plain mouse click expands`,
+          !expanded.collapsed && !expanded.bodyCollapsed && expanded.toggles === 2, expanded);
+      }
+      let points = await reset(2);
+      await exec("headingFixture.select()");
+      const fold = await mouse(points.fold);
+      check("native fold click clears selection and toggles", fold.collapsed && fold.toggles === 1 && !fold.selected, fold);
+      await reset(2);
+      const linkPoint = await exec(`(() => { const rect = viewer.querySelector("a em").getBoundingClientRect();
+        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }; })()`);
+      const linked = await mouse(linkPoint);
+      check("native nested heading link does not toggle", !linked.collapsed && linked.toggles === 0, linked);
+      await reset(2);
+      const keyboard = await exec('headingFixture.select(); document.getElementById("heading").click(); headingFixture.snapshot()');
+      check("DOM zero-detail activation keeps selection and toggles",
+        keyboard.selected && keyboard.collapsed && keyboard.toggles === 1 && keyboard.events.at(-1).detail === 0, keyboard);
+      await reset(2);
+      const unrelated = await exec('headingFixture.select("other"); document.getElementById("heading").dispatchEvent(' +
+        'new MouseEvent("click", {bubbles:true,detail:1})); headingFixture.snapshot()');
+      check("DOM mouse-click contract ignores unrelated selection",
+        unrelated.selected && unrelated.collapsed && unrelated.toggles === 1 && !unrelated.events.at(-1).intersects, unrelated);
+      points = await reset(2);
+      await exec("headingFixture.select()");
+      const selectedClick = await mouse(points.start);
+      check("native plain click on selected heading text still toggles",
+        selectedClick.collapsed && selectedClick.toggles === 1, selectedClick);
+      points = await reset(2);
+      const firstDrag = await mouse(points.fold, points.end);
+      const repeatedDrag = await mouse(points.fold, points.end, true);
+      assert.ok(firstDrag.selected && repeatedDrag.selected === firstDrag.selected &&
+        JSON.stringify(repeatedDrag.ranges) === JSON.stringify(firstDrag.ranges),
+        "The native HTML text drag must preserve the exact selected heading range");
+      assert.ok(repeatedDrag.trace.slice(firstDrag.trace.length).some(event => event.type === "dragstart"),
+        "The repeated mouse gesture must actually enter native HTML text dragging");
+      check("native HTML text drag preserves selection without folding or a second click",
+        !repeatedDrag.collapsed && !repeatedDrag.bodyCollapsed && repeatedDrag.toggles === 0 &&
+        firstDrag.events.length === 1 && repeatedDrag.events.length === firstDrag.events.length, repeatedDrag);
+      check("heading fixture made no external requests", requests.length === 0, requests);
+    } catch (error) {
+      executionError = error;
+      console.error("NOT RUN remaining native heading checks after setup/execution failure; completed results retained.");
+      throw error;
+    } finally {
+      if (!win.isDestroyed()) await new Promise(resolve => {
+        win.once("closed", resolve);
+        win.close();
+      });
+      check("heading fixture closes its owned window", BrowserWindow.getAllWindows().length === 0);
+      const failed = results.filter(result => !result.ok).length;
+      fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({
+        status: executionError ? "SETUP/EXECUTION FAILED" : "complete",
+        error: executionError?.stack, results, failed, ownedPids, windowsAtTeardown: BrowserWindow.getAllWindows().length,
+        limits: "Isolated browser listener/mouse input, not full app, physical device, double-click, Save or Undo proof. " +
+          "Fresh identical-range selectstart and the click after drag cancellation are pure contracts, not native qualifications. " +
+          "Captured frames do not establish contemporaneous selection/state correlation.",
+      }, null, 2));
+      process.exitCode = failed ? 1 : 0;
+      app.quit();
+    }
+  }
+  const failed = results.filter(result => !result.ok).length;
+  console.log(`=== Heading selection: ${results.length - failed}/${results.length} passed ===`);
+  process.exitCode = failed ? 1 : 0;
+}
+
 const { app, BrowserWindow, ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");

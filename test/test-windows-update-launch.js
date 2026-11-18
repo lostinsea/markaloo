@@ -1,6 +1,6 @@
 "use strict";
 
-// Source/VM controls only. No installer, Electron process or installed profile runs.
+// Source/VM controls only. No installer, Electron app or installed profile runs.
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
@@ -193,6 +193,121 @@ check("setup restore queue failure reports an error and exits with its scratch r
   assert.match(callback, /MessageBox MB_OK\|MB_ICONSTOP "Markaloo setup could not show its window\. Run setup again\."\s+SetErrorLevel 2\s+Quit\s+done:/);
 });
 
-console.log("Source/VM only; native wizard visibility and installed upgrade NOT RUN.");
+function scopeHook() {
+  const hook = /!ifndef BUILD_UNINSTALLER\s+!ifdef allowToChangeInstallationDirectory\s+!macro customInstallMode\b([\s\S]*?)!macroend\s+!endif\s+!endif/.exec(installerSource);
+  assert(hook, "The assisted scope hook must be guarded out of the uninstaller");
+  return hook[1].split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith(";")).join("\n");
+}
+
+check("update scope hook leaves silent launches and explicit options to stock setup", () => {
+  const hook = scopeHook();
+  assert.deepEqual(hook.split("\n").slice(0, 27), [
+    "IfSilent markalooUpdateScopeDone", "Push $0", "Push $1", "Push $R9",
+    "${IfNot} ${isUpdated}", "${OrIf} ${isForAllUsers}", "${OrIf} ${isForCurrentUser}",
+    "Goto markalooUpdateScopeRestore", "${EndIf}",
+    "${GetParameters} $0",
+    '${GetOptions} $0 "/allusers" $1', "IfErrors +2", "Goto markalooUpdateScopeRestore",
+    '${GetOptions} $0 "/currentuser" $1', "IfErrors +2", "Goto markalooUpdateScopeRestore",
+    '${StdUtils.GetAllParameters} $0 "0"', "Push $0", 'Push "/D="', "Call StrContains", "Pop $1",
+    'StrCmp $1 "" 0 markalooUpdateScopeRestore',
+    "Push $0", 'Push "/d="', "Call StrContains", "Pop $1",
+    'StrCmp $1 "" 0 markalooUpdateScopeRestore',
+  ], "Reject silent, non-update and explicit options before considering registrations");
+  const destinationOptions = [...hook.matchAll(/^Push "(\/[Dd]=)"$/gm)].map(match => match[1]);
+  for (const [argumentsText, explicit] of [
+    ["--updated", false],
+    ["/D=C:\\Test User\\Markaloo", true],
+    ["/d=C:\\Test User\\Markaloo", true],
+    ["/D=", true],
+    ["/d=", true],
+  ]) {
+    assert.equal(destinationOptions.some(option => argumentsText.includes(option)), explicit, argumentsText);
+  }
+});
+
+check("update scope registration gate requires exactly one matching scope and directory", () => {
+  const hook = scopeHook();
+  const gate = /^StrCmp \$INSTDIR "" markalooUpdateScopeRestore\n\$\{If\} \$installMode == "([^"]+)"\n([\s\S]+?)\n\$\{ElseIf\} \$installMode == "([^"]+)"\n([\s\S]+?)\n\$\{Else\}\nGoto markalooUpdateScopeRestore\n\$\{EndIf\}$/m.exec(hook);
+  assert(gate, "Missing empty-target, scope or unknown-mode guard");
+  // Apply the source's comparisons to synthetic initMultiUser snapshots, not to the registry.
+  const arms = new Map([[gate[1], gate[2]], [gate[3], gate[4]]].map(([mode, body]) => [
+    mode, body.split("\n").map(line => {
+      const rule = /^StrCmp (\$\w+) (""|\$\w+) 0 markalooUpdateScopeRestore$/.exec(line);
+      assert(rule, `Unrecognized scope gate: ${line}`);
+      return rule.slice(1);
+    }),
+  ]));
+  assert.deepEqual([...arms.keys()].sort(), ["CurrentUser", "all"]);
+  const user = "C:\\Test User\\Markaloo";
+  const machine = "C:\\Test Programs\\Markaloo";
+  for (const [label, mode, hkcu, hklm, target, registrations, expected] of [
+    ["per-user control", "CurrentUser", user, "", user, 1, true],
+    ["per-machine control", "all", "", machine, machine, 1, true],
+    ["fresh machine default", "all", "", "", machine, 0, false],
+    ["same folder in both hives", "all", machine, machine, machine, 2, false],
+    ["stale HKLM must not disambiguate HKCU", "CurrentUser", user, "C:\\Removed Markaloo", user, 2, false],
+    ["stale HKCU must not disambiguate HKLM", "all", "C:\\Removed Markaloo", machine, machine, 2, false],
+    ["unexpected effective path", "CurrentUser", user, "", `${user}\\Elsewhere`, 1, false],
+    ["unexpected scope", "all", user, "", user, 1, false],
+    ["unrecognized scope", "unknown", user, "", user, 1, false],
+    ["empty effective path", "CurrentUser", user, "", "", 1, false],
+  ]) {
+    assert.equal([hkcu, hklm].filter(Boolean).length, registrations, `${label}: fixture registration count`);
+    const values = { $perUserInstallationFolder: hkcu, $perMachineInstallationFolder: hklm, $INSTDIR: target, '""': "" };
+    const rules = arms.get(mode);
+    const passes = Boolean(target && rules && rules.every(([left, right]) => {
+      assert(Object.hasOwn(values, left) && Object.hasOwn(values, right), `Unknown scope operands: ${left} ${right}`);
+      return values[left].toLowerCase() === values[right].toLowerCase();
+    }));
+    assert.equal(passes, expected, label);
+  }
+});
+
+check("update scope requires an unmodified destination and both installed files", () => {
+  const hook = scopeHook();
+  const files = /^Push \$INSTDIR\nPush "\$\{APP_FILENAME\}"\nCall StrContains\nPop \$1\nStrCmp \$1 "" markalooUpdateScopeRestore\n([\s\S]+?)\n\$\{If\} \$installMode == "all"$/m.exec(hook);
+  assert(files, "The directory rewrite guard must precede the installed-file checks and force flag");
+  const masks = files[1].split(/(?=^System::Call)/m).map(block => {
+    const check = /^System::Call 'kernel32::GetFileAttributesW\(w "\$INSTDIR\\\$\{(\w+)\}"\) i\.r1'\nIntOp \$1 \$1 & (0x[\da-f]+)\nStrCmp \$1 0 0 markalooUpdateScopeRestore$/i.exec(block.trim());
+    assert(check, `Unrecognized installed-file check: ${block}`);
+    return [check[1], Number(check[2])];
+  });
+  assert.deepEqual(masks.map(([file]) => file), ["APP_EXECUTABLE_FILENAME", "UNINSTALL_FILENAME"]);
+  // Model only the attribute values returned by the two real source lookups.
+  for (const [label, app, uninstaller, expected] of [
+    ["two files", 0x20, 0x20, true],
+    ["missing app", -1, 0x20, false],
+    ["missing uninstaller", 0x20, -1, false],
+    ["directory named like an executable", 0x10, 0x20, false],
+    ["reparse entry named like an uninstaller", 0x20, 0x400, false],
+  ]) {
+    assert.equal(masks.every(([, mask], index) => ([app, uninstaller][index] & mask) === 0), expected, label);
+  }
+});
+
+check("eligible interactive update sets only the matching stock force flag", () => {
+  const hook = scopeHook();
+  assert.match(hook, /\$\{If\} \$installMode == "all"\nStrCpy \$isForceMachineInstall "1"\n\$\{Else\}\nStrCpy \$isForceCurrentInstall "1"\n\$\{EndIf\}\nmarkalooUpdateScopeRestore:\nPop \$R9\nPop \$1\nPop \$0\nmarkalooUpdateScopeDone:$/);
+  assert.doesNotMatch(hook, /\b(?:Abort|Quit|Exec|UAC_RunElevated|SetShellVarContext|WriteRegStr)\b|StrCpy \$INSTDIR\b/);
+});
+
+check("stock install-mode page owns the skip and quits the outer forced-machine attempt after UAC", () => {
+  const stock = name => fs.readFileSync(path.join(root, "node_modules", "app-builder-lib", "templates", "nsis", name), "utf8");
+  const init = stock("installer.nsi");
+  const assisted = stock("assistedInstaller.nsh");
+  const page = stock("multiUserUi.nsh");
+  assert.match(init, /!insertmacro check64BitAndSetRegView[\s\S]+?!insertmacro initMultiUser/);
+  assert.match(assisted, /ReadRegStr \$perMachineInstallationFolder HKLM "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation[\s\S]+?ReadRegStr \$perUserInstallationFolder HKCU "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/);
+  assert.match(assisted, /!insertmacro skipPageIfUpdated\s+!insertmacro MUI_PAGE_DIRECTORY[\s\S]+?\$\{StrContains\} \$0 "\$\{APP_FILENAME\}" \$INSTDIR\s+\$\{If\} \$0 == ""\s+StrCpy \$INSTDIR "\$INSTDIR\\\$\{APP_FILENAME\}"/);
+  const contains = stock(path.join("include", "StrContains.nsh"));
+  assert.match(stock("multiUser.nsh"), /\$\{If\} \$R5 == "\/D="\s+\$\{OrIf\} \$R5 == "\/d="/);
+  assert.match(contains, /StrCmp \$STR_CONTAINS_VAR_3 \$STR_NEEDLE found/);
+  assert.match(contains, /Push `\$\{HAYSTACK\}`\s+Push `\$\{NEEDLE\}`\s+Call StrContains\s+Pop `\$\{OUT\}`/);
+  assert.match(page, /setInstallModePerAllUsers\s+Abort\s+\$\{endIf\}\s+StrCpy \$isForceMachineInstall "0"\s+StrCpy \$isForceCurrentInstall "0"\s+!ifmacrodef customInstallmode\s+!insertmacro customInstallMode\s+!endif\s+\$\{if\} \$isForceMachineInstall == "1"/);
+  assert.match(page, /\$\{OrIf\} \$\{isForAllUsers\}[\s\S]+?!insertmacro UAC_RunElevated\s+Quit\s+\$\{endIf\}\s+!insertmacro setInstallModePerAllUsers\s+Abort/);
+  assert.match(page, /\$\{if\} \$isForceCurrentInstall == "1"\s+\$\{OrIf\} \$\{isForCurrentUser\}[\s\S]+?!insertmacro setInstallModePerUser\s+Abort[\s\S]+?nsDialogs::Create/);
+});
+
+console.log("Source/VM only; NSIS compilation, native wizard/UAC and installed upgrade NOT RUN.");
 console.log(`=== ${results.filter(Boolean).length}/${results.length} passed ===`);
 process.exitCode = results.every(Boolean) ? 0 : 1;

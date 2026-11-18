@@ -1219,7 +1219,8 @@ window.MarkalooInlineFormatting = (() => {
     };
   }
 
-  function attachLiteralEditor({ element, source, baseline = source, ending, isCurrent, sourcePolicy = {}, reportError, clearError = () => {} }) {
+  function attachLiteralEditor({ element, source, baseline = source, ending, isCurrent, sourcePolicy = {},
+    reportError, clearError = () => {}, restoreEmptyBaseline = false }) {
     let exact = source, visible = normalise(source), composing = false, disposed = false;
     let position = 0, historyFailed = false;
     const listeners = [], versions = [{ visible, exact }];
@@ -1281,6 +1282,7 @@ window.MarkalooInlineFormatting = (() => {
         if (composing) fail('tableCells.composing');
         sync();
         validateHistory();
+        if (restoreEmptyBaseline && baseline === '' && exact === '') return '';
         const result = window.MarkalooTableSource.readCell({ text: exact, space: 'editor' });
         if (result?.kind !== 'complete') {
           const error = new Error('tableCells.invalid');

@@ -20,7 +20,7 @@ function runRawTableO2() {
   };
   const equal = (actual, expected, name) => check(name, actual === expected, { actual, expected });
   const normalized = value => value.replace(/\r\n|\r/g, "\n");
-  let cells, marked, fixture, ready = false;
+  let cells, inlineFormatting, marked, fixture, ready = false;
   const protect = (source, mask) => source
     .replace(/@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g, mask)
     .replace(/```mermaid[\r\n]+([\s\S]*?)```/g, mask);
@@ -43,6 +43,7 @@ function runRawTableO2() {
       vm.runInContext(fs.readFileSync(filename, "utf8"), context, { filename });
     }
     cells = context.window.MarkalooTableCells;
+    inlineFormatting = context.window.MarkalooInlineFormatting;
     fixture = require("./fixtures/table-code-literals.js");
     if (typeof context.window.MarkalooTableSource?.readCell !== "function" ||
         typeof context.window.MarkalooTableMarked?.create !== "function" ||
@@ -599,6 +600,193 @@ function runRawTableO2() {
     check("an existing raw-cell incomplete single-line draft also rejects without source mutation",
       incomplete?.message === "tableCells.invalid" && incomplete.diagnostic?.code === "cell-envelope" &&
       rawTarget.model.source === rawSource);
+    insertedColumnFenceTests();
+  }
+  function insertedColumnFenceTests() {
+    const fence = [
+      "```json",
+      "{",
+      '  "id": "u-10482",',
+      '  "name": "Alex Johnson",',
+      '  "email": "alex.johnson@example.com",',
+      '  "roles": ["engineer", "reviewer"],',
+      '  "active": true,',
+      '  "createdAt": "2026-11-16T13:30:00-08:00"',
+      "}",
+      "```",
+    ].join("\n");
+    const prefix = "\uFEFF# Before\r\n\r\n", suffix = "\r\n\r\nAfter\r\n";
+    const source = prefix + "| A | B |\r\n| --- |  ---: |\r\n| a | b |" + suffix;
+    const columns = [{ id: "a", originalIndex: 0 }, { id: "new" }, { id: "b", originalIndex: 1 }];
+    const insert = (target, header = "", body = "") => {
+      const order = values(target);
+      order[0].cells.splice(1, 0, header);
+      order[1].cells.splice(1, 0, body);
+      return cells.replaceStructure(target, [], order, columns, marked, protect);
+    };
+    const expected = (header = "", body = "") =>
+      prefix + row(["A", header, "B"]) + "\r\n| --- | --- |  ---: |\r\n" + row(["a", body, "b"]) + suffix;
+    for (const [at, slot] of ["header", "body"].entries()) {
+      const name = "A1 " + slot + ": one Update inserts an ordinary column with the exact JSON fence";
+      run(name, () => {
+        const target = targetOf(source);
+        check(slot + " combined Update starts with an ordinary writable table", !target.table.syntax.value.hasRaw);
+        try {
+          const [header, body] = at === 0 ? [fence, ""] : ["", fence];
+          const output = insert(target, header, body);
+          equal(output, expected(header, body), name);
+          const candidate = targetOf(output).table;
+          check(slot + " combined Update retains raw slot, empty sibling and right alignment",
+            candidate.rows[at].cells[1].syntax.kind === "raw" && candidate.rows[1 - at].cells[1].text === "" &&
+            JSON.stringify(candidate.token.align) === "[null,null,\"right\"]");
+        } finally {
+          equal(target.model.source, source, slot + " combined Update leaves its input Snapshot unchanged");
+        }
+      });
+    }
+    for (const [at, ending] of [[0, "\n"], [2, "\r\n"]]) {
+      run("A2 ordinary column edge " + at, () => {
+        const lines = ["| A | B |", "| --- |  ---: |", "| a | b |", "| c | d |"];
+        const original = lines.join(ending), target = targetOf(original), order = values(target);
+        const projected = columns.filter(column => column.originalIndex !== undefined);
+        projected.splice(at, 0, columns[1]);
+        const raw = fence.replace(/\n/g, ending);
+        order.forEach((entry, i) => entry.cells.splice(at, 0, i === 1 ? raw : ""));
+        const output = cells.replaceStructure(target, [], order, projected, marked, protect);
+        const insertSlot = (line, slot) => {
+          const slots = line.split("|");
+          slots.splice(at + 1, 0, slot);
+          return slots.join("|");
+        };
+        equal(output, lines.map((line, i) => insertSlot(line, i === 1 ? " --- " : i === 2 ? ` ${raw} ` : "  ")).join(ending),
+          "A2 column edge " + at + " preserves original slots, alignment and the other body row");
+      });
+    }
+    const ordinary = "| A | B |\n| --- |  ---: |\n| a | b |\n| c | d |";
+    for (const [at, direction] of [[1, "above"], [2, "below"]]) {
+      run("B1 ordinary row " + direction, () => {
+        const target = targetOf(ordinary), order = target.rows.map(original => ({ original }));
+        order.splice(at, 0, { id: "added", cells: [fence, ""] });
+        const expected = ordinary.split("\n");
+        expected.splice(at + 1, 0, row([fence, ""]));
+        equal(cells.replaceRows(target, [], order, marked, protect), expected.join("\n"),
+          "B1 row " + direction + " preserves the complete fence and original rows");
+      });
+    }
+    run("B2 ordinary row and column in one Update", () => {
+      const target = targetOf(ordinary), order = values(target);
+      order.forEach(entry => entry.cells.splice(1, 0, ""));
+      order.splice(2, 0, { id: "added", cells: ["", fence, ""] });
+      equal(cells.replaceStructure(target, [], order, columns, marked, protect),
+        ["| A |  | B |", "| --- | --- |  ---: |", "| a |  | b |", row(["", fence, ""]), "| c |  | d |"].join("\n"),
+        "B2 row and column apply the fence once while retaining right alignment");
+    });
+    run("C1 ordinary row and column deletion with a surviving fence", () => {
+      const original = "| A | B | C |\n| --- | :---: |  ---: |\n| a | b | c |\n| d | e | f |";
+      const target = targetOf(original), [header, removed, kept] = target.rows;
+      const projected = [{ id: "a", originalIndex: 0 }, { id: "c", originalIndex: 2 }];
+      const order = [{ original: header, cells: ["A", "C"] }, { original: kept, cells: [fence, "f"] }];
+      equal(cells.replaceStructure(target, [{ cell: kept.cells[0], text: fence }], order, projected,
+        marked, protect, [removed], [1]), ["| A | C |", "| --- |  ---: |", row([fence, "f"])].join("\n"),
+      "C1 deletes only the named row and column, preserving survivor framing and alignment");
+    });
+    const literal = (baseline, restoreEmptyBaseline) => {
+      const listeners = new Map();
+      const element = {
+        value: "",
+        addEventListener(type, handler) { listeners.set(type, handler); },
+        removeEventListener(type) { listeners.delete(type); },
+      };
+      const engine = inlineFormatting.attachLiteralEditor({
+        element, source: fence, baseline, restoreEmptyBaseline, ending: "\n",
+        isCurrent: () => true, reportError: error => { throw error; },
+      });
+      return { element, engine, edit(value, inputType = "deleteContentBackward") {
+        element.value = value;
+        listeners.get("input")({ inputType });
+      } };
+    };
+    for (const [id, label, retryText] of [["E1", "clear", ""], ["E2", "repair", fence]]) run(id + " same literal editor " + label, () => {
+      const target = targetOf(source), { element, engine, edit } = literal("", true);
+      const incomplete = fence.slice(0, -3);
+      try {
+        equal(engine.readSource(), fence, "promoted inserted literal editor reads the exact initial JSON fence");
+        edit(incomplete);
+        const error = errorOf(() => insert(target, "", engine.readSource()));
+        check("incomplete inserted literal Update refuses without changing the draft or input Snapshot",
+          error?.message === "tableCells.invalid" && error.diagnostic?.code === "cell-envelope" &&
+          element.value === incomplete && target.model.source === source, error?.stack);
+        edit(retryText, retryText ? "insertText" : "deleteContentBackward");
+        const retry = engine.readSource();
+        equal(retry, retryText, id + " same promoted literal engine reads the exact " + label);
+        equal(insert(target, "", retry), expected("", retryText), id + " same dialog applies the " + label);
+        equal(target.model.source, source, "successful retry leaves the input Snapshot unchanged");
+      } finally {
+        engine.dispose();
+      }
+    });
+    run("E3 existing ordinary empty restores exact slot with or without column changes", () => {
+      const original = source.replace("| a | b |", "| a |\t \t|");
+      const target = targetOf(original), cell = target.rows[1].cells[1];
+      const baseline = target.model.source.slice(cell.syntax.content.start, cell.syntax.content.end);
+      const { engine, edit } = literal(baseline, true);
+      try {
+        check("E3 existing empty has an owned zero-length ordinary content span",
+          baseline === "" && cell.syntax.kind === "inline" && engine.isDirty());
+        edit("");
+        const retry = engine.readSource();
+        check("E3 restored empty existing cell is not dirty", retry === "" && !engine.isDirty());
+        equal(cells.replaceRows(target, [], target.rows.map(original => ({ original })), marked, protect),
+          original, "E3 no structure change preserves exact source");
+        const order = values(target);
+        order[0].cells.splice(1, 0, "");
+        order[1].cells[1] = retry;
+        order[1].cells.splice(1, 0, "");
+        equal(cells.replaceStructure(target, [], order, columns, marked, protect),
+          expected().replace("| a |  | b |", "| a |  |\t \t|"), "E3 pending column change preserves original empty padding");
+      } finally {
+        engine.dispose();
+      }
+    });
+    run("E4 new row empty retry in an original column", () => {
+      const target = targetOf(ordinary), { engine, edit } = literal("", true);
+      try {
+        edit("");
+        const order = target.rows.map(original => ({ original }));
+        order.splice(2, 0, { id: "added", cells: [engine.readSource(), ""] });
+        equal(cells.replaceRows(target, [], order, marked, protect),
+          ordinary.replace("| c | d |", "|  |  |\n| c | d |"), "E4 clearing the fence applies just the new empty row");
+      } finally {
+        engine.dispose();
+      }
+    });
+    run("E5 literal empty retry does not broaden envelope acceptance", () => {
+      for (const [name, baseline, restoreEmptyBaseline, draft] of [
+        ["cleared existing raw slot", fence, false, ""],
+        ["cleared originally nonempty ordinary slot", "authored text", false, ""],
+        ["whitespace in inserted slot", "", true, " \t\n"],
+        ["prose in inserted slot", "", true, "not a fence"],
+      ]) {
+        const { element, engine, edit } = literal(baseline, restoreEmptyBaseline);
+        try {
+          edit(draft);
+          const error = errorOf(() => engine.readSource());
+          check(name + " is still refused without changing its draft",
+            error?.message === "tableCells.invalid" && error.diagnostic?.code === "cell-envelope" &&
+            element.value === draft, error?.stack);
+        } finally {
+          engine.dispose();
+        }
+      }
+    });
+    run("E6 two-step column insert then exact JSON fence Update", () => {
+      const first = insert(targetOf(source));
+      equal(first, expected(), "two-step control first applies the empty column");
+      const reopened = targetOf(first), cell = reopened.rows[1].cells[1];
+      equal(cells.replaceRows(reopened, [{ cell, text: fence }], reopened.rows.map(original => ({ original })),
+        marked, protect), expected().replace("| a |  | b |", "| a |  " + fence + "| b |"),
+      "two-step control reopens and applies the exact JSON fence within the existing slot framing");
+    });
   }
   run("ordinary single-line backticks remain authored Markdown", () => {
     for (const text of ["```rust", "```rust extra", "```inline```"]) {

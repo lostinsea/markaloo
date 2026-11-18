@@ -72,6 +72,11 @@ Manager and `Get-Process`.
 - In-app updates launch the interactive setup with a visible wizard, not `/S`.
   The app quits only after the installer process reports that it started.
   That handoff does not prove installation completed.
+- Interactive updates skip the scope chooser only when one registered install
+  matches the target and contains the app and uninstaller. Explicit options and
+  ambiguous updates keep their stock behavior. For a qualified all-users update
+  that skips the chooser, canceling the standard UAC prompt cancels that attempt
+  without installing, falling back or reopening the chooser.
 - Interactive setup also queues one window restore for older clients that hide
   its initial window. Silent setup and the uninstaller do not use this callback.
   Failure to queue the restore reports an error and stops setup.

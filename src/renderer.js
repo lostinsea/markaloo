@@ -7525,7 +7525,22 @@ function makeHeadersCollapsible() {
 // render, and re-attaching a handler to it each time would stack them - two
 // handlers toggle twice, so the section would stop responding to clicks
 // entirely. Delegation cannot accumulate.
+let headingMouseGesture = null;
+viewer.addEventListener('mousedown', (e) => {
+  const header = e.target.closest && e.target.closest('h1, h2, h3, h4, h5, h6');
+  headingMouseGesture = e.button === 0 && header && viewer.contains(header)
+    ? { header, selecting: false } : null;
+}, true);
+viewer.addEventListener('selectstart', () => {
+  if (headingMouseGesture) headingMouseGesture.selecting = true;
+});
+const clearHeadingMouseGesture = () => { headingMouseGesture = null; };
+viewer.addEventListener('dragstart', clearHeadingMouseGesture);
+viewer.addEventListener('pointercancel', clearHeadingMouseGesture);
+window.addEventListener('blur', clearHeadingMouseGesture);
 viewer.addEventListener('click', (e) => {
+  const selectingHeading = headingMouseGesture?.selecting && headingMouseGesture.header;
+  headingMouseGesture = null;
   const header = e.target.closest && e.target.closest('h1, h2, h3, h4, h5, h6');
   if (!header || !header.id || !viewer.contains(header)) return;
   // Don't toggle if the user clicked a link inside the heading
@@ -7533,6 +7548,15 @@ viewer.addEventListener('click', (e) => {
 
   const produced = readingCollapsibleSections.get(header);
   if (!produced || header.nextElementSibling !== produced.section) return;
+  // An old selection can survive a plain click until its default action.
+  // selectstart identifies a new selection gesture, even over the same range.
+  if (selectingHeading === header && e.detail > 0 && (!e.pointerType || e.pointerType === 'mouse')) {
+    const selection = header.ownerDocument.getSelection();
+    for (let index = 0; selection && index < selection.rangeCount; index++) {
+      const range = selection.getRangeAt(index);
+      if (!range.collapsed && range.intersectsNode(header)) return;
+    }
+  }
   // A table that was hidden when the window was last measured kept its old
   // breakout width (it could not be measured while display:none). Now that it
   // is on screen again it can be, and must be: without this, collapse at one
@@ -15730,7 +15754,7 @@ tableCellDialog.addEventListener('cancel', event => {
   closeTableCellEditor();
 });
 
-function attachTableCellInput(cell, session) {
+function attachTableCellInput(cell, session, restoreEmptyBaseline = false) {
   const ending = cell.rowState.original?.syntax?.ending;
   const rowEnding = ending && session.model.source.slice(ending.start, ending.end);
   const lineEnding = rowEnding || session.exact.match(/\r\n|\n/)?.[0] || '\n';
@@ -15742,6 +15766,8 @@ function attachTableCellInput(cell, session) {
     reportError: showTableCellError, clearError: () => { tableCellError.textContent = ''; },
     sourcePolicy: {
       pasteRawFence(text) {
+        // Only whole-cell promotion from an exactly empty ordinary baseline can restore absence of a fence.
+        const restoreEmptyBaseline = !cell.literal && cell.initialSource === '';
         const previous = cell.input, input = document.createElement('textarea');
         for (const { name, value } of previous.attributes) if (name !== 'contenteditable') input.setAttribute(name, value);
         input.classList.add('table-cell-literal');
@@ -15752,7 +15778,7 @@ function attachTableCellInput(cell, session) {
         cell.literal = true;
         cell.literalSource = text;
         tableCellInputs.set(input, cell);
-        cell.engine = attachTableCellInput(cell, session);
+        cell.engine = attachTableCellInput(cell, session, restoreEmptyBaseline);
         input.focus();
         session.sizing?.refresh();
       },
@@ -15775,7 +15801,7 @@ function attachTableCellInput(cell, session) {
     },
   };
   return cell.literal ? MarkalooInlineFormatting.attachLiteralEditor({
-    ...options, source: cell.literalSource, baseline: cell.initialSource, ending: lineEnding,
+    ...options, source: cell.literalSource, baseline: cell.initialSource, ending: lineEnding, restoreEmptyBaseline,
   }) : MarkalooInlineFormatting.attachInlineEditor(options);
 }
 // Noneditable header cells still contain authored links.
