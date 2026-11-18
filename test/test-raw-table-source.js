@@ -14,7 +14,7 @@ function test(name, run) {
     console.log(`PASS ${name}`);
   } catch (error) {
     failures.push({ name, error });
-    console.error(`FAIL ${name}\n${error.stack}`);
+    console.error(`FAIL ${name}  -> ${error.stack}`);
   }
 }
 const snapshot = (text, space = 'original') => Object.freeze({ text, space });

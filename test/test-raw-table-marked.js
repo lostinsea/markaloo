@@ -7,7 +7,7 @@ const { cases } = require('./fixtures/table-code-literals');
 let passed = 0, failed = 0;
 const test = (name, body) => {
   try { body(); passed++; console.log('PASS ' + name); }
-  catch (error) { failed++; console.error('FAIL ' + name + '\n' + error.stack); }
+  catch (error) { failed++; console.error('FAIL ' + name + '  -> ' + error.stack); }
 };
 const ticks = '`'.repeat(4);
 const snippet = (body, language = 'rust', eol = '\n') =>

@@ -12,8 +12,7 @@ function runRawTableO2() {
   const envelopeOnly = process.argv.includes("--envelope-only");
   const check = (name, ok, detail) => {
     results.push({ name, ok: !!ok });
-    console.log((ok ? "PASS " : "FAIL ") + name +
-      (!ok && detail !== undefined ? " -> " + JSON.stringify(detail) : ""));
+    console.log((ok ? "PASS " : "FAIL ") + name + (!ok && detail !== undefined ? "  -> " + JSON.stringify(detail) : ""));
   };
   const run = (name, action) => {
     try { action(); }
