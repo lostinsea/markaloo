@@ -3837,11 +3837,18 @@ async function main() {
     const ciCalls = ciCommands.flatMap(name => orderedCalls(pkg.scripts, name) || []);
     check("ordinary CI executes the complete feature gate before legacy tabs",
       ciCommands.length > 0 && beforeLegacy(ciCalls), JSON.stringify(ciCommands));
+    const editPositionStep = ordinaryJob.match(/^      - name: Check Edit mode position\r?\n([\s\S]*?)(?=^      - |(?![\s\S]))/m)?.[1];
     check("ordinary CI reaches the Node actor gate through npm test without changing job budgets",
-      ciCommands.length === 1 && ciCommands[0] === "test" &&
+      ciCommands.join(" ") === "test:edit-position test" &&
+        editPositionStep?.replace(/\r\n/g, "\n").trim() ===
+          "if: ${{ always() && steps.install_dependencies.outcome == 'success' }}\n" +
+          "        run: npm run test:edit-position" &&
+        pkg.scripts["test:edit-position"] ===
+          "node --check test/test-edit-mode-position.js && electron test/test-edit-mode-position.js" &&
+        standardCalls?.includes("test:edit-position") === false &&
         pkg.scripts.test.startsWith("npm run test:actor-contracts && ") &&
         /^    timeout-minutes: 45\s*$/m.test(ordinaryJob) &&
-        /^    timeout-minutes: 60\s*$/m.test(auditJob));
+        /^    timeout-minutes: 60\s*$/m.test(auditJob), JSON.stringify(ciCommands));
     const fixtureScripts = { test: "npm run test:features && npm run test:tabs",
       "test:features": featureScripts.map(name => "npm run " + name).join(" && "),
       "test:tabs": "electron test/test-tab-refresh.js",

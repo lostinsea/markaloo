@@ -2390,9 +2390,12 @@ async function discardHistoryContracts() {
     c.renderMarkdown = (content, ...args) => { c.viewer.textContent = content; return render(content, ...args); };
     return f;
   };
-  const actualOpenPrimer = context => vm.runInContext(between(renderer,
-    "\n    captureEditSessionBaseline(true);\n",
-    "\n    if (!editorScroll.enter())"), context);
+  const actualOpenPrimer = context => {
+    // The history fixture primes exact editor content, not scroll or paint.
+    const snapshot = "\n    exactTypingSource = window.CustomTabs.snapshotExactEditorContent();";
+    const primer = between(renderer, "\n    captureEditSessionBaseline(true);\n", snapshot);
+    vm.runInContext(primer + snapshot, context);
+  };
   const execute = async (f, body) => {
     let settled = false;
     const outcome = vm.runInContext(body, f.context, { timeout: 1000 })
