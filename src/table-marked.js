@@ -25,6 +25,51 @@
 
   const mayHaveRaw = text => /(?:^|\n)\uFEFF?\|[^\r\n]*(?:\r?\n[ \t]*)*`{3}/.test(text);
 
+  function observeBlocks(parser, input) {
+    const spans = [];
+    let before, valid = true;
+    const close = (end, tokens) => {
+      if (!before || end <= before.start || before.tokens !== tokens ||
+          tokens[before.count - 1] !== before.last) {
+        valid = false;
+        return;
+      }
+      let token = null, acceptedEnd = null;
+      if (tokens.length === before.count + 1) {
+        token = tokens.at(-1);
+        acceptedEnd = end;
+        if (token.raw.length !== end - before.start) valid = false;
+      } else if (tokens.length !== before.count || before.last?.raw.length < before.rawLength) {
+        valid = false;
+      } else if (before.last?.raw.length > before.rawLength) {
+        token = before.last;
+      }
+      // An omitted block severs ownership even if a later iteration appends
+      // to the same token. Keep the initial acceptance separate from extensions.
+      const last = spans.at(-1);
+      if (last?.token === token && last.end === before.start) last.end = end;
+      else spans.push({ start: before.start, end, token, acceptedEnd });
+    };
+    // Marked runs the last registered block extension first. Observe the root
+    // suffix before any recognizer runs, without claiming or clipping it.
+    parser.use({ extensions: [{
+      name: 'markalooBlockConsumption',
+      level: 'block',
+      tokenizer(remaining, tokens) {
+        if (tokens !== this.lexer.tokens) return;
+        const start = input.length - remaining.length;
+        if (before) close(start, tokens);
+        else if (remaining !== input || tokens.length) valid = false;
+        const last = tokens.at(-1);
+        before = { start, tokens, count: tokens.length, last, rawLength: last?.raw.length };
+      },
+    }] });
+    // A silent early exit is not evidence that the final suffix was consumed.
+    const tokens = parser.lexer(input, { ...parser.defaults, silent: false });
+    if (input.length) close(input.length, tokens);
+    return valid ? { tokens, spans } : null;
+  }
+
   function createTableReader(input, marked) {
     const text = input.text, space = input.space, receipts = new Map();
     let tables;
@@ -83,7 +128,7 @@
         }
         const raw = read && (read.kind === 'literal' || read.value.cells.some(cell => cell.kind === 'raw'));
         const entry = { start: at, end: raw ? read.next : next, raw: !!raw, projected };
-        let value = delimiters.get(at) || line;
+        let value = delimiters.get(at) || line.replace(/\r/g, '\n');
         if (raw) {
           value = read.kind === 'complete' ? '| ' + read.value.cells.map(() => 'cell').join(' | ') + ' |'
             : '<!-- opaque unfinished table row -->';
@@ -97,28 +142,18 @@
         normalizedAt += text.slice(at, entry.end).replace(/\r\n?/g, '\n').length;
         at = entry.end;
       }
-      const projection = chunks.join(''), tokens = native.lexer(projection);
-      const forward = [], backward = [];
-      let cursor = 0;
-      for (const token of tokens) {
-        const at = projection.indexOf(token.raw, cursor);
-        forward.push(at);
-        if (at >= 0) cursor = at + token.raw.length;
-      }
-      cursor = projection.length;
-      for (let i = tokens.length - 1; i >= 0; i--) {
-        const at = projection.lastIndexOf(tokens[i].raw, cursor - tokens[i].raw.length);
-        backward[i] = at;
-        if (at >= 0) cursor = at;
-      }
+      const trace = observeBlocks(native, chunks.join(''));
       const byProjection = new Map(entries.map((entry, index) => [entry.projected, index]));
       tables = new Map();
+      if (!trace) return;
       const certified = new Set();
-      for (let i = 0; i < tokens.length; i++) {
-        const token = tokens[i], first = byProjection.get(forward[i]);
-        if (token.type !== 'table' || first === undefined || forward[i] !== backward[i]) continue;
-        const rows = entries.slice(first, first + token.rows.length + 2);
-        if (rows.length !== token.rows.length + 2) continue;
+      for (const { start, token, acceptedEnd } of trace.spans) {
+        if (token?.type !== 'table' || acceptedEnd === null) continue;
+        const first = byProjection.get(start), rowCount = token.rows.length + 2;
+        if (first === undefined) continue;
+        const rows = entries.slice(first, first + rowCount);
+        if (rows.length !== rowCount || rows.at(-1).projected >= acceptedEnd ||
+            entries[first + rowCount]?.projected < acceptedEnd) continue;
         const table = { rows, byStart: new Map(rows.map((row, index) => [row.start, index])),
           end: rows[rows.length - 1].end };
         tables.set(rows[0].start, table);
@@ -274,6 +309,10 @@
     return parser;
   }
 
+  function lexWithSpans(marked, input) {
+    return observeBlocks(create(marked), input);
+  }
+
   function protectedRanges(text, marked, rawHtmlFence) {
     if (!mayHaveRaw(text)) return [];
     const offsets = [], parts = [];
@@ -314,5 +353,5 @@
     return ranges;
   }
 
-  return { extension, create, createTableReader, protectedRanges, messages };
+  return { extension, create, createTableReader, lexWithSpans, protectedRanges, messages };
 });

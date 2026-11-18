@@ -55,23 +55,31 @@ window.MarkalooTableCells = (() => {
         (token.items || []).flatMap(item => markdownTables(item.tokens || []))));
   }
 
-  function htmlTableRegions(raw, render) {
+  function htmlTableRegions(raw, render, owned = [{ start: 0, end: raw.length }]) {
     const template = document.createElement('template');
     template.innerHTML = render(raw);
     if (!template.content.querySelector('table')) return [];
     const expected = template.innerHTML, attribute = 'data-markaloo-cell-source';
     const marker = 'markaloo-cell-end-';
-    if (raw.includes(attribute) || raw.includes(marker)) return null;
+    if (owned.some(({ start, end }) => {
+      const part = raw.slice(start, end);
+      return part.includes(attribute) || part.includes(marker);
+    })) return null;
     const starts = [], ends = [];
-    const annotated = raw.replace(/<table(?=[\t\n\f\r />])|<\/table[\t\n\f\r ]*>/gi, (tag, offset) => {
-      if (tag[1] !== '/') {
-        starts.push(offset);
-        return tag + ' ' + attribute + '="' + (starts.length - 1) + '"';
-      }
-      ends.push(offset + tag.length);
-      return tag + '<!--' + marker + (ends.length - 1) + '-->';
-    });
-    template.innerHTML = render(annotated);
+    let annotated = '', copied = 0;
+    for (const { start, end } of owned) {
+      annotated += raw.slice(copied, start) +
+        raw.slice(start, end).replace(/<table(?=[\t\n\f\r />])|<\/table[\t\n\f\r ]*>/gi, (tag, offset) => {
+          if (tag[1] !== '/') {
+            starts.push(start + offset);
+            return tag + ' ' + attribute + '="' + (starts.length - 1) + '"';
+          }
+          ends.push(start + offset + tag.length);
+          return tag + '<!--' + marker + (ends.length - 1) + '-->';
+        });
+      copied = end;
+    }
+    template.innerHTML = render(annotated + raw.slice(copied));
     const regions = [];
     for (const table of template.content.querySelectorAll('table')) {
       const id = table.getAttribute(attribute), after = table.nextSibling;
@@ -99,12 +107,13 @@ window.MarkalooTableCells = (() => {
   function index(source, marked, protect) {
     const view = sourceView(source), syntax = Object.freeze({ text: source, space: 'original' });
     const adapter = window.MarkalooTableMarked;
-    if (typeof adapter?.createTableReader !== 'function') fail('tableCells.mapping');
+    if (typeof adapter?.lexWithSpans !== 'function') fail('tableCells.mapping');
     const readTable = adapter.createTableReader(syntax, marked);
     const bom = view.text[0] === '\uFEFF' ? 1 : 0;
-    const discover = adapter.create(marked).lexer(view.text.slice(bom));
-    const protectedSpans = discover.filter(token => token.type === 'markalooRawTable')
-      .map(token => ({ start: bom + token.at, end: bom + token.at + token.raw.length }));
+    const rawProviderOwns = ({ token, start, acceptedEnd }) =>
+      token.at === start && token.syntax.next === acceptedEnd;
+    const discover = adapter.lexWithSpans(marked, view.text.slice(bom));
+    if (!discover) fail('tableCells.mapping');
     let text = '', copied = 0;
     const mask = value => {
       const result = protect(value, match => match.replace(/[^\n]/g, ' '));
@@ -112,45 +121,43 @@ window.MarkalooTableCells = (() => {
       return result;
     };
     // Raw fences and malformed literal regions are opaque even to Mermaid and HTML extraction.
-    for (const span of protectedSpans) {
-      if (!Number.isSafeInteger(span.start) || span.start < copied || span.end > view.text.length) {
-        fail('tableCells.mapping');
-      }
-      text += mask(view.text.slice(copied, span.start)) + view.text.slice(span.start, span.end);
-      copied = span.end;
+    for (const span of discover.spans) {
+      if (span.acceptedEnd === null || span.token?.type !== 'markalooRawTable') continue;
+      if (!rawProviderOwns(span)) fail('tableCells.mapping');
+      const start = bom + span.start, end = bom + span.acceptedEnd;
+      text += mask(view.text.slice(copied, start)) + view.text.slice(start, end);
+      copied = end;
     }
     text += mask(view.text.slice(copied));
-    const input = text.slice(bom), parser = adapter.create(marked), tokens = parser.lexer(input);
+    const trace = adapter.lexWithSpans(marked, text.slice(bom));
+    if (!trace) fail('tableCells.mapping');
+    const { tokens, spans } = trace;
     const links = tokens.links;
     const tables = [], otherTables = [], blocks = [];
     let cursor = bom, htmlCoveredUntil = bom;
-    const ignored = raw => !raw || /^[ \t\n]*$/.test(raw) ||
-      adapter.create(marked).lexer(raw).every(token => token.type === 'space');
     const gapTo = end => {
       const raw = text.slice(cursor, end);
-      // Public tokens omit definitions and may coalesce whitespace across them.
-      // Certify every skipped byte with a fresh public lexer, never a private tokenizer patch.
-      if (!ignored(raw)) fail('tableCells.mapping');
       if (raw) blocks.push({ start: cursor, end, type: 'space', raw });
       cursor = end;
     };
-    for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
-      const token = tokens[tokenIndex];
-      if (token.type === 'space') continue;
-      let start = token.type === 'markalooRawTable' ? bom + token.at : text.indexOf(token.raw, cursor);
-      if (token.type !== 'markalooRawTable') {
-        while (start >= 0 && (start !== bom && text[start - 1] !== '\n' ||
-            !ignored(text.slice(cursor, start)))) start = text.indexOf(token.raw, start + 1);
+    for (let i = 0; i < spans.length; i++) {
+      const span = spans[i], { token, acceptedEnd } = span;
+      if (!token || token.type === 'space') continue;
+      if (acceptedEnd === null) {
+        // A detached LF belongs to the physical gap, not the preceding block.
+        if (/[^\n]/.test(text.slice(bom + span.start, bom + span.end))) fail('tableCells.mapping');
+        continue;
       }
-      if (start < cursor || !text.startsWith(token.raw, start)) fail('tableCells.mapping');
+      const start = bom + span.start, end = bom + span.end;
+      const raw = text.slice(start, end);
       gapTo(start);
-      cursor = start + token.raw.length;
-      blocks.push({ start, end: cursor, type: token.type, raw: token.raw });
+      cursor = end;
+      blocks.push({ start, end, type: token.type, raw });
       if (token.type === 'markalooRawTable') {
         const receipt = readTable(view.offsets[start]);
-        const consumed = receipt && normalise(source.slice(view.offsets[start], receipt.next));
-        // Marked may append a following blank line to the preceding public token.
-        if (!receipt || !token.raw.startsWith(consumed) || /[^ \t\n]/.test(token.raw.slice(consumed.length))) {
+        if (!rawProviderOwns(span) || !receipt ||
+            receipt.next !== view.offsets[bom + acceptedEnd] ||
+            text.slice(start, bom + acceptedEnd) !== normalise(source.slice(view.offsets[start], receipt.next))) {
           fail('tableCells.mapping');
         }
         if (receipt.kind === 'literal' || receipt.kind === 'refusal') {
@@ -182,8 +189,14 @@ window.MarkalooTableCells = (() => {
           let itemStart = start;
           const items = token.type === 'list' ? token.items : [token];
           for (const item of items) {
-            const offsets = text.startsWith(item.raw, itemStart) &&
-              projectContainer(item.raw, item.text, itemStart);
+            const itemRaw = item === token ? raw : item.raw;
+            const itemEnd = itemStart + itemRaw.length;
+            if (itemEnd > end) {
+              if (itemStart < end) otherTables.push({ start: itemStart, end, uncertain: true });
+              break;
+            }
+            const offsets = text.startsWith(itemRaw, itemStart) &&
+              projectContainer(itemRaw, item.text, itemStart);
             let child;
             if (offsets) {
               child = index(item.text, marked, value => value);
@@ -192,7 +205,7 @@ window.MarkalooTableCells = (() => {
               if (JSON.stringify(actual.map(table => table.raw)) !==
                   JSON.stringify(markdownTables(item.tokens || []))) child = null;
             }
-            if (!child) otherTables.push({ start: itemStart, end: itemStart + item.raw.length, uncertain: true });
+            if (!child) otherTables.push({ start: itemStart, end: itemEnd, uncertain: true });
             else {
               for (const table of [...child.tables, ...child.otherTables]) {
                 otherTables.push({ ...table, kind: table.kind || 'markdown',
@@ -200,7 +213,7 @@ window.MarkalooTableCells = (() => {
                   start: offsets[table.start], end: offsets[table.end - 1] + 1 });
               }
             }
-            itemStart += item.raw.length;
+            itemStart = itemEnd;
           }
         } else {
           if (start < htmlCoveredUntil) continue;
@@ -209,17 +222,22 @@ window.MarkalooTableCells = (() => {
             parsed.links = links;
             return renderer.parser(parsed);
           };
-          let end = cursor, regions = htmlTableRegions(token.raw, render);
+          let htmlEnd = end, regions = htmlTableRegions(raw, render);
+          const owned = [{ start: 0, end: end - start }];
           // Blank lines can split one raw HTML table across Markdown tokens.
-          // Do not strand its uncertainty on only the opening tag.
-          for (let next = tokenIndex + 1; regions === null && next < tokens.length; next++) {
-            end += tokens[next].raw.length;
-            if (/<\/table[\s>]/i.test(tokens[next].raw)) {
-              regions = htmlTableRegions(text.slice(start, end), render);
+          // Keep the context intact but never annotate tags in an omitted gap.
+          for (let next = i + 1; regions === null && next < spans.length; next++) {
+            const later = spans[next];
+            if (!later.token || later.acceptedEnd === null) continue;
+            const from = bom + later.start;
+            htmlEnd = bom + later.end;
+            owned.push({ start: from - start, end: htmlEnd - start });
+            if (/<\/table[\s>]/i.test(text.slice(from, htmlEnd))) {
+              regions = htmlTableRegions(text.slice(start, htmlEnd), render, owned);
             }
           }
-          htmlCoveredUntil = end;
-          if (regions === null) otherTables.push({ start, end, uncertain: true });
+          htmlCoveredUntil = htmlEnd;
+          if (regions === null) otherTables.push({ start, end: htmlEnd, uncertain: true });
           else for (const region of regions) {
             otherTables.push({ kind: 'html', start: start + region.start, end: start + region.end });
           }
@@ -228,7 +246,10 @@ window.MarkalooTableCells = (() => {
       }
       const rows = [];
       let offset = start;
-      const lines = token.raw.trimEnd().split('\n');
+      // Keep native row layout, but bound it by the lexer acceptance, not by
+      // trailing whitespace that Marked may later append to the public token.
+      const tableSource = text.slice(start, bom + acceptedEnd).trimEnd();
+      const lines = tableSource.split('\n');
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         rows.push({ start: offset, end: offset + line.length,
@@ -240,7 +261,7 @@ window.MarkalooTableCells = (() => {
       const writable = actual.length === expected.length && actual.every((row, r) =>
         row.cells.length === expected[r].length && row.cells.every((cell, c) =>
           cell.text === expected[r][c].text));
-      tables.push({ start, end: start + token.raw.trimEnd().length, rows: actual, delimiter: rows[1],
+      tables.push({ start, end: start + tableSource.length, rows: actual, delimiter: rows[1],
         token, writable });
       const table = tables.at(-1), originalStart = view.offsets[start];
       const receipt = originalStart === 0 || originalStart === 1 && source[0] === '\uFEFF' ||

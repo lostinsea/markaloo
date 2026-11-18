@@ -638,6 +638,33 @@ function runRawTableO2() {
       errorOf(() => cells.replaceCells(stale, [], marked, protect))?.message === "tableCells.invalid");
   });
   run("reference definition controls", () => {
+    duplicateReferenceSourceTest(cells, marked, protect, check);
+    const adjacent = "[r]: /first\n[r]: /second\n| A | B |\n| --- | --- |\n| [r] | ok |";
+    let adjacentModel, edited;
+    const adjacentError = errorOf(() => {
+      adjacentModel = cells.index(adjacent, marked, protect);
+      const target = cells.resolveSource(adjacentModel, 25, adjacent.length, cells.Mode.UPDATE_TABLE);
+      edited = cells.replaceCells(target, [{ cell: target.rows[1].cells[1], text: "changed" }], marked, protect);
+    });
+    check("consecutive definitions with single LF separators retain exact table authority and survive a cell edit",
+      adjacentModel?.tables.length === 1 && adjacentModel.tables[0].start === 25 &&
+      adjacentModel.links.r?.href === "/first" && edited === adjacent.replace("| [r] | ok |", "| [r] | changed |"),
+      adjacentError?.message);
+    const heading = "[r]: /first\n\n# Heading\n[r]: /second\n| A | B |\n| --- | --- |\n| [r] | ok |";
+    let headingTarget, headingEdit;
+    const headingError = errorOf(() => {
+      const model = cells.index(heading, marked, protect);
+      headingTarget = cells.resolveSource(model, 36, heading.length, cells.Mode.UPDATE_TABLE);
+      headingEdit = cells.replaceCells(headingTarget, [{ cell: headingTarget.rows[1].cells[1], text: "changed" }],
+        marked, protect);
+    });
+    const headingModel = headingTarget?.model, headingBlock = headingModel?.blocks.find(block => block.type === "heading");
+    check("a heading's synthetic LF cannot own the omitted definition or shift a real cell edit",
+      headingModel?.tables.length === 1 && headingTarget.table.start === 36 && headingModel.links.r?.href === "/first" &&
+      headingBlock?.raw === "# Heading\n" && headingModel.blocks.some(block => block.type === "space" &&
+        block.start === headingBlock.end && block.end === 36 && block.raw === "[r]: /second\n") &&
+      content(headingTarget, headingTarget.rows[1].cells[1]) === "ok" &&
+      headingEdit === heading.replace("| [r] | ok |", "| [r] | changed |"), headingError?.message);
     const code = snippet("literal :smile: @@@html\n| opaque |", "unknown");
     for (const definitions of ["[r]: https://example.invalid/r\n\n",
       "\n[r]: https://example.invalid/r\n\n[s]: /s\n\n"]) {
@@ -655,6 +682,81 @@ function runRawTableO2() {
       check("definition URL and multiline title duplicates cannot steal a later paragraph source span",
         paragraph?.start === source.lastIndexOf("same") && paragraph.raw === "same" && model.links.r);
     }
+    const source = '[r]: /first\n\n[r]: /duplicate\n"same\nend"\n\n"same';
+    let model, error;
+    try { model = cells.index(source, marked, protect); }
+    catch (caught) { error = caught.message; }
+    const paragraph = model?.blocks.find(block => block.type === "paragraph");
+    check("a duplicate with a next-line title cannot consume a partial definition gap",
+      paragraph?.start === source.lastIndexOf('"same') && paragraph.raw === '"same' &&
+      model.links.r?.href === "/first", error);
+    const table = "[r | Other\n--- | ---\n1 | 2";
+    const overlap = "[r | Other --- | --- 1 | 2 ]: /first\n\n" + table + "\n\n" + table + "\n]: /second\n\n" + table;
+    let indexed;
+    const overlapError = errorOf(() => { indexed = cells.index(overlap, marked, protect); });
+    check("a duplicate reference starting with a whole table cannot steal the later table's source start",
+      indexed?.tables.length === 2 && indexed.tables[0].start === 38 && indexed.tables[1].start === 105 &&
+      indexed.links["r | other --- | --- 1 | 2 "]?.href === "/first", overlapError?.message);
+    let overlapTarget, overlapEdit;
+    const overlapEditError = errorOf(() => {
+      overlapTarget = cells.resolveSource(indexed, 105, overlap.length, cells.Mode.UPDATE_TABLE);
+      overlapEdit = cells.replaceCells(overlapTarget, [{ cell: overlapTarget.rows[1].cells[1], text: "changed" }],
+        marked, protect);
+    });
+    check("the later identical table has its own projection receipt and an edit leaves the decoy untouched",
+      overlapTarget?.table.syntax?.input === indexed?.syntax &&
+      overlapTarget?.table.syntax?.value.span.start === 105 &&
+      overlapEdit === overlap.slice(0, 105) + table.replace("1 | 2", "1 | changed"), overlapEditError?.message);
+    const prefix = "[r]: /first\n\n| A | B |\n| --- | --- |\n| [r] | before |\n\n[r]: /second\n";
+    const later = "| C | D |\n| --- | --- |\n| [r] | after |", suffix = "\n\n\n# End";
+    const separated = prefix + later + suffix, laterTarget = targetOf(separated, 1);
+    check("a synthetic space token cannot jump the native projection past a later table receipt",
+      laterTarget.table.start === prefix.length && laterTarget.table.syntax?.input === laterTarget.model.syntax &&
+      laterTarget.table.syntax?.value.span.start === prefix.length &&
+      cells.replaceCells(laterTarget, [{ cell: laterTarget.rows[1].cells[1], text: "changed" }],
+        marked, protect) === prefix + later.replace("after", "changed") + suffix);
+  });
+  run("consumed definition extents and their opposite", () => {
+    const paragraph = 'Paragraph\n[r]: /inside "paragraph text"';
+    const prefix = "[r]: /first\n\n" + paragraph + "\n\n# Last\n";
+    const tail = '[r]: /eof\n"title\n<table> inside title\nend"';
+    const source = prefix + tail, model = cells.index(source, marked, protect);
+    check("a definition-looking paragraph stays content and an omitted multiline title remains a gap through EOF",
+      model.links.r?.href === "/first" && model.otherTables.length === 0 &&
+      model.blocks.find(block => block.type === "paragraph")?.raw.trimEnd() === paragraph &&
+      model.blocks.at(-1)?.type === "space" && model.blocks.at(-1).start === prefix.length &&
+      model.blocks.at(-1).end === source.length && model.blocks.at(-1).raw === tail);
+  });
+  run("nested blocks are not observed as root consumption", () => {
+    const nested = ["| Nested | B |", "| --- | --- |", "| x | y |"];
+    const root = "| Root | B |\n| --- | --- |\n| x | ok |";
+    for (const prefix of [nested.map(line => "> " + line).join("\n") + "\n\n",
+      "- item\n\n" + nested.map(line => "  " + line).join("\n") + "\n\n"]) {
+      const source = prefix + root, target = targetOf(source);
+      check("a nested table keeps its own unsupported region before the writable root table",
+        target.model.tables.length === 1 && target.table.start === prefix.length &&
+        target.model.otherTables.length === 1 && target.model.otherTables[0].end <= prefix.length &&
+        target.model.otherTables[0].kind === "markdown" &&
+        cells.replaceCells(target, [{ cell: target.rows[1].cells[1], text: "changed" }], marked, protect) ===
+          prefix + root.replace("ok", "changed"));
+    }
+  });
+  run("raw provider keeps fenced definitions and original BOM/CRLF slices", () => {
+    const prefix = "\uFEFF[r]: /first\r\n\r\n";
+    const body = '[r]: /fenced\n[r]: /not-a-link "literal"\n```mermaid\nA-->B\n```';
+    const code = snippet(body, "text", "\r\n");
+    const raw = ["| A | B |", "| --- | --- |", "| " + code + " | ok |"].join("\r\n");
+    const suffix = "\r\n\r\n[r]: /second\r\n\r\n# After";
+    const source = prefix + raw + suffix, target = targetOf(source);
+    const fence = target.rows[1].cells[0], cell = target.rows[1].cells[1];
+    check("raw ownership wins for definition-like fence lines without extending into an omitted duplicate",
+      target.model.tables.length === 1 && target.model.links.r?.href === "/first" &&
+      target.table.start === normalized(prefix).length && target.table.syntax?.input === target.model.syntax &&
+      target.table.syntax?.value.span.start === prefix.length && target.table.syntax?.value.hasRaw &&
+      content(target, fence) === code && content(target, cell) === "ok" &&
+      target.model.blocks.some(block => block.type === "space" && block.raw.includes("[r]: /second")) &&
+      cells.replaceCells(target, [{ cell, text: "changed" }], marked, protect) ===
+        prefix + raw.replace(" | ok |", " | changed |") + suffix);
   });
   run("existing ordinary structural rows", () => structuralRowSourceTests(cells, marked, protect, check));
   run("existing ordinary shared operations", () => sharedTableSourceTests(cells, marked, protect, check));
@@ -751,14 +853,32 @@ function summary() {
   console.log(line);
   return failed ? 1 : 0;
 }
-const lf = text => text.replace(/\r\n|\r/g, "\n");
-const table = [
-  "| Name | Detail | Reference |",
-  "| :--- | ---: | :---: |",
-  "| **alpha** | `code` and *emphasis* | [same][r] ![dot](cell.svg) |",
-  "| second | emoji 😀 and escaped \\| pipe | plain |",
-  "| third | unchanged _spelling_ | [same][r] |",
-].join("\r\n");
+function lf(text) {
+  return text.replace(/\r\n|\r/g, "\n");
+}
+function ordinaryTableFixture() {
+  return [
+    "| Name | Detail | Reference |",
+    "| :--- | ---: | :---: |",
+    "| **alpha** | `code` and *emphasis* | [same][r] ![dot](cell.svg) |",
+    "| second | emoji 😀 and escaped \\| pipe | plain |",
+    "| third | unchanged _spelling_ | [same][r] |",
+  ].join("\r\n");
+}
+function duplicateReferenceSourceTest(cells, marked, protect, check) {
+  const table = ordinaryTableFixture();
+  const definitions = "[r]: https://example.invalid/first\n\n[r]: https://example.invalid/second\n\n" +
+    lf(table) + "\n\n[r]: https://example.invalid/third\n\n" + lf(table) + "\n\n[r]: https://example.invalid/fourth\n";
+  let duplicates;
+  try { duplicates = cells.index(definitions, marked, protect); }
+  catch (error) { duplicates = { error: error.message }; }
+  check("duplicate reference definitions never shift a later identical table or its effective reference",
+    duplicates.tables?.length === 2 &&
+    duplicates.tables[0].start === definitions.indexOf("| Name") &&
+    duplicates.tables[1].start === definitions.lastIndexOf("| Name") &&
+    duplicates.links.r.href === "https://example.invalid/first", duplicates.error);
+}
+const table = ordinaryTableFixture();
 const prefix = "# Cells\r\n\r\n[r]: https://example.invalid/reference\r\n\r\nBefore prose\r\n\r\n";
 const between = "\r\n\r\nMiddle prose (identical tables are intentional)\r\n\r\n";
 const suffix = "\n\nAfter prose\rTail 😀 without an ending";
@@ -1000,16 +1120,7 @@ async function sourceTests(core = false) {
     const protectedModel = cells.index(masked, marked, protect);
     check("protected blocks do not borrow the following table offsets",
       protectedModel.tables.length === 1 && protectedModel.tables[0].start === lf(masked).indexOf("| Name"));
-    const definitions = "[r]: https://example.invalid/first\n\n[r]: https://example.invalid/second\n\n" +
-      lf(table) + "\n\n[r]: https://example.invalid/third\n\n" + lf(table) + "\n\n[r]: https://example.invalid/fourth\n";
-    let duplicates;
-    try { duplicates = cells.index(definitions, marked, protect); }
-    catch (error) { duplicates = { error: error.message }; }
-    check("duplicate reference definitions never shift a later identical table or its effective reference",
-      duplicates.tables?.length === 2 &&
-      duplicates.tables[0].start === definitions.indexOf("| Name") &&
-      duplicates.tables[1].start === definitions.lastIndexOf("| Name") &&
-      duplicates.links.r.href === "https://example.invalid/first", duplicates.error);
+    duplicateReferenceSourceTest(cells, marked, protect, check);
     const isolated = ["first", "second", "third"].map(label => {
       const source = "[r]: https://example.invalid/" + label + "\n\n" + lf(table);
       const indexed = cells.index(source, marked, protect);
@@ -2517,7 +2628,8 @@ async function columnSizingSourceTests(cells, movement = false) {
   check("cell data minimum matches the shared reader floor without changing row labels or editable padding",
     styles.match(/\.table-cell-grid th, \.table-cell-grid td \{([^}]*)\}/)?.[1].includes("min-width: 48px") &&
     styles.includes(".table-cell-grid th:first-child { min-width: 65px; padding: 8px; }") &&
-    styles.match(/\.table-cell-grid \[contenteditable\] \{([^}]*)\}/)?.[1].includes("padding: 8px"));
+    /(?:^|;)\s*padding:\s*8px\s*;/.test(styles.match(
+      /\.table-cell-grid :is\(\[contenteditable\], \.table-cell-literal\) \{([^}]*)\}/)?.[1] ?? ""));
   check("the native resizable dialog uses window width and reserves a stable grid scrollbar budget",
     styles.match(/\.table-cell-dialog \{([^}]*)\}/)?.[1].includes("width: calc(100vw - 48px)") &&
     styles.match(/\.table-cell-dialog \{([^}]*)\}/)?.[1].includes("resize: both") &&

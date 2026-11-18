@@ -1111,10 +1111,15 @@ async function run() {
       const vm = require("vm");
       const markedModule = await import(require("url").pathToFileURL(require.resolve("marked")).href);
       const context = vm.createContext({
-        window: {}, document: {}, crypto: require("crypto").webcrypto,
+        document: {}, crypto: require("crypto").webcrypto,
         ResizeObserver: class {}, MutationObserver: class {},
         console: { warn() {} }, marked: markedModule,
       });
+      context.window = context;
+      for (const name of ["table-source.js", "table-marked.js"]) {
+        const filename = path.join(__dirname, "..", "src", name);
+        vm.runInContext(fs.readFileSync(filename, "utf8"), context, { filename });
+      }
       vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "editor-scroll.js"), "utf8") +
         `\nwindow.mapping=window.createEditorScroll({
           editor:{addEventListener(){}},preview:{addEventListener(){}},
