@@ -1272,7 +1272,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     range.setStart(first.node, first.offset); range.setEnd(last.node, last.offset);
     return range.toString() === candidate.display ? range : null;
   }
-  function readingLayout(parent, scroller, publication, cache = new Map()) {
+  function readingLayout(parent, scroller, publication, cache = new Map(), modePseudoBefore = null,
+    allowOffscreenUnowned = false) {
     if (cache.has(parent)) return cache.get(parent);
     if (!(scroller instanceof Element) || !scroller.isConnected ||
         (scroller !== preview && !scroller.contains(preview)) ||
@@ -1298,7 +1299,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       cache.set(parent, hidden);
       return hidden;
     }
-    let reached = false;
+    let reached = false, inFlow = true, unownedClip = null;
     for (const { node, style } of ancestry) {
       if (node === scroller) reached = true;
       if (['IFRAME', 'SVG', 'MATH', 'CANVAS', 'SCRIPT', 'STYLE', 'TEMPLATE'].includes(node.tagName) ||
@@ -1314,7 +1315,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           ['::before', '::after'].some(pseudo => {
             const content = getComputedStyle(node, pseudo).content;
             return !['none', 'normal', '""'].includes(content) &&
-              !(pseudo === '::before' && publication?.pseudos.get(node) === content);
+              !(pseudo === '::before' &&
+                (publication?.pseudos.get(node) === content || modePseudoBefore?.(node) === content));
           })) return null;
       const box = node.getBoundingClientRect();
       const zoom = scale(node);
@@ -1331,12 +1333,20 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         if ((scrollsY && !/^(auto|scroll)$/.test(style.overflowY)) ||
             (scrollsX && !/^(auto|scroll)$/.test(style.overflowX))) return null;
         const owners = publication?.owners.filter(owner => owner.element === node) || [];
-        if (owners.length !== 1 || nested.length >= readingLimits.nested) return null;
-        const owner = owners[0];
-        if (publication.owners.filter(other => other.start === owner.start && other.end === owner.end &&
-            other.kind === owner.kind && other.tag === owner.tag && other.role === owner.role).length !== 1) return null;
-        nested.push({ scroller: node, start: owner.start, end: owner.end, kind: owner.kind, tag: owner.tag, role: owner.role });
+        if (owners.length === 0 && allowOffscreenUnowned) {
+          // Defer this refusal until the active scrollport is known.
+          if (unownedClip || !inFlow || !scrollsY || !(node.clientHeight > 0) || !(box.height > 0) ||
+              !/^(block|inline-block|flow-root|flex|inline-flex|grid|inline-grid)$/.test(style.display)) return null;
+          unownedClip = box;
+        } else {
+          if (owners.length !== 1 || nested.length >= readingLimits.nested) return null;
+          const owner = owners[0];
+          if (publication.owners.filter(other => other.start === owner.start && other.end === owner.end &&
+              other.kind === owner.kind && other.tag === owner.tag && other.role === owner.role).length !== 1) return null;
+          nested.push({ scroller: node, start: owner.start, end: owner.end, kind: owner.kind, tag: owner.tag, role: owner.role });
+        }
       }
+      if (allowOffscreenUnowned && (!/^(static|relative)$/.test(style.position) || style.cssFloat !== 'none')) inFlow = false;
       if (xClip || yClip) {
         const borders = [style.borderLeftWidth, style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth]
           .map(value => typeof value === 'string' && /^\d+(?:\.\d+)?px$/.test(value) ? parseFloat(value) * zoom : NaN);
@@ -1374,6 +1384,15 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         node.clientWidth, node.clientHeight, node.scrollWidth, node.scrollHeight, node.clientLeft, node.clientTop]);
     }
     if (!reached) return null;
+    if (unownedClip) {
+      // The border box encloses the scrollport without rounding its edges.
+      const [, , , , top, , height] = chain.find(row => row[0] === scroller);
+      if (!(scroller.clientHeight > 0) || !(height > 0) ||
+          !(unownedClip.bottom <= top || unownedClip.top >= top + height)) return null;
+      const hidden = { hidden: true, offscreenUnowned: true };
+      cache.set(parent, hidden);
+      return hidden;
+    }
     const layout = { clip, chain, nested, rounded };
     cache.set(parent, layout);
     return layout;
@@ -1441,7 +1460,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       if (!rects) return { unsupported: true };
       if (!rects.some(rect => readingIntersects(rect, clip))) return null;
       const width = node.data.codePointAt(from) > 0xFFFF ? 2 : 1;
-      if (to - from === width) return { index: from };
+      if (to - from === width) return { index: from, end: to, rect: rects.length === 1 ? rects[0] : null };
       let middle = (from + to) >>> 1;
       if (splitsReadingScalar(node.data, middle)) middle--;
       if (middle <= from) middle = from + width;
@@ -1449,6 +1468,25 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       return find(from, middle) || find(middle, to);
     };
     return find(0, node.length);
+  }
+  function captureModeCharacter(node, { index, end, rect }, layout, scroller, modePseudoBefore) {
+    if (!rect || layout.nested.length) return null;
+    const [, , , , oldTop, , , oldScale] = layout.chain.find(row => row[0] === scroller);
+    // Keep the offset in viewport pixels: the two scrollports can have different scales.
+    const offset = rect.top - oldTop - scroller.clientTop * oldScale;
+    if (!Number.isFinite(offset)) return null;
+    const parent = node.parentElement, data = node.data;
+    return target => {
+      if (!node.isConnected || node.parentElement !== parent || node.data !== data || !preview.contains(node)) return null;
+      const current = readingLayout(parent, target, null, undefined, modePseudoBefore);
+      if (!current || current.hidden || !(target.clientHeight > 0)) return null;
+      const range = document.createRange();
+      range.setStart(node, index); range.setEnd(node, end);
+      const rects = readingRects(range);
+      if (rects?.length !== 1 || !readingIntersects(rects[0], current.clip, false)) return null;
+      const [, , , , top, , , targetScale] = current.chain.find(row => row[0] === target);
+      return (rects[0].top - top - target.clientTop * targetScale - offset) / targetScale;
+    };
   }
   function readingReceipt(publication, candidate, range, scroller, geometry, alignment) {
     const nested = Object.freeze(geometry.nested.map((entry, index) =>
@@ -1460,29 +1498,43 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     }, geometry });
     return receipt;
   }
-  function captureVisibleText(scroller) {
+  function captureVisibleText(scroller, onModeCharacter = null, modePseudoBefore = null) {
     lastReadingCaptureFailure = null;
     const entered = readingEpoch, enteredBinding = bindingEpoch;
     const publication = currentReadingPublication();
-    if (!publication) return readingFailure('unavailable', 'presentation-unbound-or-stale');
-    const groups = new Map(publication.groups.map(group => [group.element, group])), contents = new Map(), layouts = new Map();
+    let sourceRefusal = publication ? null : readingFailure('unavailable', 'presentation-unbound-or-stale');
+    if (sourceRefusal && !onModeCharacter) return sourceRefusal;
+    const groups = new Map(publication?.groups.map(group => [group.element, group])), contents = new Map(), layouts = new Map();
     for (const { node } of textNodes(preview).nodes) {
-      const layout = readingLayout(node.parentElement, scroller, publication, layouts);
-      if (!layout) return readingFailure('unsupported', 'unverifiable-clipping-chain');
+      // The unbound mode scan can recognize heading decoration without a Source publication.
+      const layout = readingLayout(node.parentElement, scroller, publication, layouts,
+        publication ? null : modePseudoBefore, !!onModeCharacter);
+      if (!layout) return sourceRefusal || readingFailure('unsupported', 'unverifiable-clipping-chain');
+      // Skipping this box permits mode geometry, not an exact-source receipt.
+      if (layout.offscreenUnowned) sourceRefusal ??= readingFailure('unsupported', 'unverifiable-clipping-chain');
       if (layout.hidden) continue;
       const visible = firstVisibleReadingOffset(node, layout.clip);
       if (!visible) continue;
-      if (visible.unsupported) return readingFailure('unsupported', 'unverifiable-text-fragments');
-      let element = node.parentElement;
-      while (element && element !== preview && !groups.has(element)) element = element.parentElement;
-      const group = groups.get(element);
-      if (group && !contents.has(group)) contents.set(group, textNodes(group.element));
-      const content = contents.get(group);
-      const base = content?.nodes.find(entry => entry.node === node)?.start;
-      const position = base + visible.index;
-      const run = group?.runs.find(run => position >= run.from && position < run.from + run.display.length);
-      const candidate = run && readingAtom(publication, group, run, position - run.from);
-      if (!candidate) return readingFailure('unsupported', 'visible-text-without-exact-bounded-provenance');
+      if (visible.unsupported) return sourceRefusal || readingFailure('unsupported', 'unverifiable-text-fragments');
+      let candidate;
+      if (!sourceRefusal) {
+        let element = node.parentElement;
+        while (element && element !== preview && !groups.has(element)) element = element.parentElement;
+        const group = groups.get(element);
+        if (group && !contents.has(group)) contents.set(group, textNodes(group.element));
+        const content = contents.get(group);
+        const base = content?.nodes.find(entry => entry.node === node)?.start;
+        const position = base + visible.index;
+        const run = group?.runs.find(run => position >= run.from && position < run.from + run.display.length);
+        candidate = run && readingAtom(publication, group, run, position - run.from);
+      }
+      if (!candidate) {
+        if (onModeCharacter && entered === readingEpoch && enteredBinding === bindingEpoch) {
+          const measure = captureModeCharacter(node, visible, layout, scroller, modePseudoBefore);
+          if (measure) onModeCharacter(measure);
+        }
+        return sourceRefusal || readingFailure('unsupported', 'visible-text-without-exact-bounded-provenance');
+      }
       const failure = { stage: 'range-reconstruction', blockKind: candidate.blockKind, runKind: candidate.runKind };
       const range = readingRange(candidate), geometry = range && readingGeometry(range, scroller, true, publication, candidate, failure);
       if (!geometry || geometry.hidden) {
@@ -1500,7 +1552,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       return Object.freeze({ status: 'captured', value,
         receipt: readingReceipt(publication, candidate, range, scroller, geometry, alignment) });
     }
-    return readingFailure('missing', 'no-visible-text');
+    return sourceRefusal || readingFailure('missing', 'no-visible-text');
   }
   function validReadingValue(value) {
     const keys = (value, names) => value && typeof value === 'object' &&

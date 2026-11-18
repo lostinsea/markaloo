@@ -4,17 +4,9 @@
   !define MUI_CUSTOMFUNCTION_GUIINIT MarkalooRestoreInteractiveSetup
   Function MarkalooRestoreInteractiveSetup
     IfSilent done
-    Push $0
-    ; Old clients hide setup. Restore after NSIS applies its startup show state.
-    System::Call 'user32::PostMessageW(p $HWNDPARENT, i 0x0112, p 0xF120, p 0) i.r0'
-    StrCmp $0 0 failed
-    Pop $0
-    Return
-    failed:
-    Pop $0
-    MessageBox MB_OK|MB_ICONSTOP "Markaloo setup could not show its window. Run setup again."
-    SetErrorLevel 2
-    Quit
+    ; Restore setup for old clients without leaving a queued restore that can
+    ; undo the stock page's later hide before elevation (WM_SYSCOMMAND/SC_RESTORE).
+    SendMessage $HWNDPARENT 0x0112 0xF120 0
     done:
   FunctionEnd
 !endif

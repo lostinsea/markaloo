@@ -1558,7 +1558,10 @@ function refreshReadingPresentation() {
 }
 
 function captureReadingLocation() {
-  const result = editorScroll.captureVisibleText(getViewerScroller());
+  return readingLocationResult(editorScroll.captureVisibleText(getViewerScroller()));
+}
+
+function readingLocationResult(result) {
   let observedStatus;
   if ((observedStatus = result.status) !== 'captured') {
     if ((observedStatus = result.status) === 'unavailable' && readingDisplay?.published) {
@@ -1812,16 +1815,41 @@ return async function changeCurrentDocumentEditor(open) {
       (!open && hasUnsavedChanges && !exitConsent) ||
       (exitConsent && !exitConsent.isCurrent()) ||
       !mayMutateRendererDocument('toggle-edit-mode-before-layout')) return;
-  const capturedPosition = captureReadingLocation();
+  const captureGeneration = renderGeneration, captureRevision = readingPresentationRevision;
+  let measureModeCharacter = null;
+  const capturedPosition = readingLocationResult(editorScroll.captureVisibleText(getViewerScroller(), measure => {
+    measureModeCharacter = measure;
+  }, node => readingPseudoRecords.get(node)));
   const modeIntent = readingViewport.beginIntent();
   if (!isCurrent() || !readingViewport.isIntentCurrent(modeIntent)) return;
   hideDocumentContextMenus();
-  editorModeRevision++;
+  const modeRevision = ++editorModeRevision;
   setEditorPresentation(open);
-  const modeRevision = editorModeRevision;
+  const modePermit = measureModeCharacter && readingViewport.capturePermit();
   const modeCurrent = () => window.CustomTabs.getActiveTab() === tab &&
     fileOpenSequence === sequence && editorModeRevision === modeRevision &&
     currentSaveDocumentIdentity()?.documentGeneration === generation;
+  const restoreModeCharacter = () => {
+    // A DOM character is useful only before a render can replace it.
+    const measure = measureModeCharacter;
+    measureModeCharacter = null;
+    const current = () => modeCurrent() && isEditMode === open && !frozenForShutdown() &&
+      renderGeneration === captureGeneration && readingPresentationRevision === captureRevision &&
+      readingViewport.isIntentCurrent(modeIntent) && readingViewport.isPermitCurrent(modePermit);
+    if (!measure || capturedPosition.status === 'captured' || !current()) return;
+    const scroller = getViewerScroller();
+    const delta = measure(scroller);
+    if (!Number.isFinite(delta) || delta === 0) return;
+    const top = scroller.scrollTop + delta, left = scroller.scrollLeft;
+    if (![top, left].every(Number.isFinite) || getViewerScroller() !== scroller || !current()) return;
+    editorScroll.previewNavigation();
+    const report = error => console.warn('Reading position could not be preserved after the mode change:', error);
+    try {
+      scroller.scrollTo({ top, left, behavior: 'instant' })?.catch(report);
+    } catch (error) {
+      report(error);
+    }
+  };
   const restoreModePosition = async () => {
     if (!modeCurrent() || capturedPosition.status !== 'captured' ||
         !readingViewport.isIntentCurrent(modeIntent)) return;
@@ -1843,7 +1871,9 @@ return async function changeCurrentDocumentEditor(open) {
     captureEditSessionBaseline(true);
     if (markdownEditor.value !== originalMarkdown.replace(/\r\n?/g, '\n')) markdownEditor.value = originalMarkdown;
     exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
-    if (!editorScroll.enter()) {
+    const previewReady = editorScroll.enter();
+    restoreModeCharacter();
+    if (!previewReady) {
       const viewport = { preservePosition: true };
       const initial = renderMarkdown(markdownEditor.value, 'full', viewport);
       await Promise.all([initial, viewport.completion]);
@@ -1877,6 +1907,7 @@ return async function changeCurrentDocumentEditor(open) {
     // Leaving edit mode gives the width back; tables widened against the narrow
     // split-view viewer must grow to match.
     applyTableBreakout();
+    restoreModeCharacter();
     const previewPending = previewDebounceTimer !== null;
     cancelEditorDeferredWork();
 

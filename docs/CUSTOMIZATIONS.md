@@ -158,13 +158,14 @@ println!("{answer}");
   that skips the chooser, canceling the standard UAC prompt cancels that attempt
   without installing, falling back or reopening the chooser. The registration
   supplies the scope; it does not identify which copy of the app launched setup.
-- Setup queues one standard window restore from the MUI GUI callback, after
-  initialization, so older clients can hand off a hidden interactive setup.
-  Silent setup and the uninstaller skip this callback. A queue failure reports
-  an error and stops setup before installation.
+- The MUI GUI callback sends the standard window restore synchronously for
+  older clients that launch setup hidden. No queued restore remains to undo
+  the stock page's later hide before all-users elevation. Silent setup skips
+  the restore, and the uninstaller does not include the callback.
 - Detachment, process-start acknowledgement, document approval and duplicate
   prevention stay unchanged. A started process is not a completed installation.
-- Source/VM checks cannot qualify a visible wizard or a completed upgrade.
+- Source/VM checks cannot qualify wizard visibility, UAC handoff or
+  cancellation, or upgrade completion.
 
 ### Reading history foundation
 
@@ -375,6 +376,12 @@ println!("{answer}");
   and known table-breakout translation, and preserves editor selection/source,
   dirty/Undo state and horizontal offsets. There is no nearest-heading or
   top-of-document substitute.
+- When exact Source provenance is unavailable, Edit/Exit can align the same
+  live character once before any repaint. This fallback does not record
+  history or authorize document changes, and it cannot recover removed text.
+- `test\test-edit-mode-position.js` uses native scrolling, the real Edit/Exit
+  event handlers, and the saved-position restoration code. It does not cover
+  full app startup, the Main process, or the customer's document.
 - Discard restores captured nested horizontal offsets only after its private
   Source handoff validates the replacement owners. Layout-only mode changes and
   clean pending previews keep their current horizontal positions; Reader and

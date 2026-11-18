@@ -177,20 +177,23 @@ check("setup retains both busy-process refusals and the real cleanup failure war
   assert.match(include, /Pop \$R0\s+Pop \$R1\s+\$\{If\} \$R0 != 0\s+DetailPrint "Folia removal could not be completed/);
   assert.match(include, /MessageBox MB_OK\|MB_ICONEXCLAMATION "Folia removal could not be completed/);
 });
-check("interactive setup queues one pointer-safe restore from its installer-only GUI callback", () => {
+function setupRestoreCallback() {
   const guard = /!ifndef BUILD_UNINSTALLER\s+!define MUI_CUSTOMFUNCTION_GUIINIT MarkalooRestoreInteractiveSetup\s+Function MarkalooRestoreInteractiveSetup\b([\s\S]*?)FunctionEnd\s+!endif/.exec(installerSource);
   assert(guard, "The installer-only MUI callback must be wired before the stock template");
-  const callback = guard[1];
-  assert.match(callback, /IfSilent done\s+Push \$0/);
-  assert.match(callback, /System::Call 'user32::PostMessageW\(p \$HWNDPARENT, i 0x0112, p 0xF120, p 0\) i\.r0'/);
-  assert.equal((callback.match(/System::Call/g) || []).length, 1);
-  assert.doesNotMatch(callback, /ShowWindow|BringToFront|Sleep|Timer|Exec/);
+  return guard[1].split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith(";"));
+}
+
+check("the installer-only GUI callback bypasses restore for silent setup", () => {
+  const callback = setupRestoreCallback();
+  assert.equal(callback[0], "IfSilent done");
+  assert.equal(callback.at(-1), "done:");
 });
-check("setup restore queue failure reports an error and exits with its scratch register restored", () => {
-  const callback = /Function MarkalooRestoreInteractiveSetup\b([\s\S]*?)FunctionEnd/.exec(installerSource)?.[1];
-  assert(callback);
-  assert.match(callback, /StrCmp \$0 0 failed\s+Pop \$0\s+Return\s+failed:\s+Pop \$0/);
-  assert.match(callback, /MessageBox MB_OK\|MB_ICONSTOP "Markaloo setup could not show its window\. Run setup again\."\s+SetErrorLevel 2\s+Quit\s+done:/);
+check("interactive setup completes its restore before the stock page can hide for UAC", () => {
+  const restore = setupRestoreCallback().slice(1, -1);
+  assert.doesNotMatch(restore.join("\n"), /\bPostMessage[AW]?\b/i,
+    "A queued restore can outlive GUIINIT and undo the stock page's hide");
+  assert.deepEqual(restore, ["SendMessage $HWNDPARENT 0x0112 0xF120 0"],
+    "Send WM_SYSCOMMAND/SC_RESTORE inline without treating its result as queue status");
 });
 
 function scopeHook() {
@@ -304,7 +307,7 @@ check("stock install-mode page owns the skip and quits the outer forced-machine 
   assert.match(contains, /StrCmp \$STR_CONTAINS_VAR_3 \$STR_NEEDLE found/);
   assert.match(contains, /Push `\$\{HAYSTACK\}`\s+Push `\$\{NEEDLE\}`\s+Call StrContains\s+Pop `\$\{OUT\}`/);
   assert.match(page, /setInstallModePerAllUsers\s+Abort\s+\$\{endIf\}\s+StrCpy \$isForceMachineInstall "0"\s+StrCpy \$isForceCurrentInstall "0"\s+!ifmacrodef customInstallmode\s+!insertmacro customInstallMode\s+!endif\s+\$\{if\} \$isForceMachineInstall == "1"/);
-  assert.match(page, /\$\{OrIf\} \$\{isForAllUsers\}[\s\S]+?!insertmacro UAC_RunElevated\s+Quit\s+\$\{endIf\}\s+!insertmacro setInstallModePerAllUsers\s+Abort/);
+  assert.match(page, /\$\{OrIf\} \$\{isForAllUsers\}[\s\S]+?ShowWindow \$HWNDPARENT \$\{SW_HIDE\}\s+!insertmacro UAC_RunElevated\s+Quit\s+\$\{endIf\}\s+!insertmacro setInstallModePerAllUsers\s+Abort/);
   assert.match(page, /\$\{if\} \$isForceCurrentInstall == "1"\s+\$\{OrIf\} \$\{isForCurrentUser\}[\s\S]+?!insertmacro setInstallModePerUser\s+Abort[\s\S]+?nsDialogs::Create/);
 });
 

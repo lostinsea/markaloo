@@ -1,6 +1,6 @@
 {
   "name": "markaloo",
-  "version": "0.14.6",
+  "version": "0.14.7",
   "productName": "Markaloo",
   "description": "Markaloo - a fast, offline markdown viewer with tabs, Mermaid diagrams and live reload",
   "main": "src/entry.mjs",
@@ -49,6 +49,7 @@
     "test:toc": "node --check test/test-toc.js && electron test/test-toc.js",
     "test:toc-toolbar": "node --check test/test-toc-toolbar.js && node test/test-toc-toolbar.js",
     "test:reading": "node --check test/test-reading.js && node test/test-reading.js",
+    "test:edit-position": "node --check test/test-edit-mode-position.js && electron test/test-edit-mode-position.js",
     "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     "test:reading-history": "node test/test-reading-history.js",
     "test:reading-consumers": "node test/test-reading-history-consumers.js",

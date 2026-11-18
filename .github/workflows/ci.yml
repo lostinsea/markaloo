@@ -130,6 +130,10 @@ jobs:
           "table-cells=$tableExit`neditor-scroll=$scrollExit`nshared-supplemental=$sharedSupplementalExit`nmermaid=$mermaidExit" | Set-Content ci-test-results\exit-codes.txt
           if ($tableExit -ne 0 -or $scrollExit -ne 0 -or $mermaidExit -ne 0) { exit 1 }
 
+      - name: Check Edit mode position
+        if: ${{ always() && steps.install_dependencies.outcome == 'success' }}
+        run: npm run test:edit-position
+
       - name: Retain Windows table and scroll evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
