@@ -9811,7 +9811,7 @@ require("./test-userdata-isolation");
     }
     const createSource = "\uFEFF# Shared Create 😀\r\n\r\n";
     const createFixture = await fresh("shared-create", createSource);
-    const createDocumentSource = createSource.slice(1);
+    const createDocumentSource = createSource;
     check("the owned BOM fixture follows file-open policy while retaining exact CRLF document source",
       (await state()).exact === createDocumentSource, await state());
     await page(() => {
