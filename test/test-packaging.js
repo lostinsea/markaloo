@@ -2302,20 +2302,35 @@ async function main() {
       customTabsFileHelpersGuard,
     }),
   );
+  // Only the Node arm of the shared table-source binding may import a module.
+  const guardedTableSourceImport =
+    /^[ \t]*const tableSource = typeof module !== 'undefined' && module\.exports\s*\?\s*require\('\.\/table-source'\)\s*:\s*window\.MarkalooTableSource;[ \t]*\r?$/m;
+  const coreRequiresUnexpectedNode = source =>
+    /require\s*\(/.test(source.replace(guardedTableSourceImport, ""));
   check(
     "SEC-08 file-helpers.js remains a Node adapter over the browser core",
     /require\s*\(\s*["']\.\/file-helpers-core["']\s*\)/.test(fileHelpersAdapterSource) &&
       /readMarkdownFile/.test(fileHelpersAdapterSource) &&
       /sendIPCResult/.test(fileHelpersAdapterSource) &&
       /\.\.\.fileHelpersCore/.test(fileHelpersAdapterSource) &&
-      !/require\s*\(/.test(fileHelpersCoreSource),
+      !coreRequiresUnexpectedNode(fileHelpersCoreSource),
     JSON.stringify({
       adapterRequiresCore: /require\s*\(\s*["']\.\/file-helpers-core["']\s*\)/.test(
         fileHelpersAdapterSource,
       ),
       adapterExportsCore: /\.\.\.fileHelpersCore/.test(fileHelpersAdapterSource),
-      coreRequiresNode: /require\s*\(/.test(fileHelpersCoreSource),
+      coreRequiresUnexpectedNode: coreRequiresUnexpectedNode(fileHelpersCoreSource),
     }),
+  );
+  const guardedImport = "const tableSource = typeof module !== 'undefined' && module.exports\n" +
+    "  ? require('./table-source')\n  : window.MarkalooTableSource;";
+  check(
+    "SEC-08 browser core allows only the guarded table-source import",
+    !coreRequiresUnexpectedNode(guardedImport) &&
+      coreRequiresUnexpectedNode("const tableSource = require('./table-source');") &&
+      coreRequiresUnexpectedNode(guardedImport.replace("./table-source", "fs")) &&
+      coreRequiresUnexpectedNode(guardedImport + "\nrequire('fs');") &&
+      coreRequiresUnexpectedNode(guardedImport + "\n" + guardedImport),
   );
   check(
     "SEC-08 renderer crypto and tab byte consumers use browser primitives without Node crypto or Buffer",

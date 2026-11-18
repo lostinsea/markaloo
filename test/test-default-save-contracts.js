@@ -6000,6 +6000,7 @@ async function generationNavigationSetupContracts() {
     "\n// ============================================\n// IPC HANDLERS - File Operations");
   const restoreRoute = between(main, 'ipcMain.handle("restore-document-session",',
     '\nipcMain.handle("save-document-session-layout",');
+  const documentContentFromDisk = between(main, "function documentContentFromDisk(", "\n}\n") + "\n}";
   const prepareRoute = between(main, 'ipcMain.handle("prepare-document-disk-adoption",',
     "\nfunction diskAdoptionAuthorityIsCurrent(");
   const authority = between(main, "function diskAdoptionAuthorityIsCurrent(",
@@ -6077,7 +6078,7 @@ async function generationNavigationSetupContracts() {
       isApprovalSender: event => event.sender === wc && event.senderFrame === frame,
       ipcMain: { handle: (name, handler) => handlers.set(name, handler),
         on: (name, handler) => handlers.set(name, handler) },
-      SUPPORTED_EXTENSIONS: { markdown: [".md"], mermaid: [".mmd"] }, dialog,
+      SUPPORTED_EXTENSIONS: { markdown: [".md"], mermaid: [".mmd"] }, dialog, path,
       markdownSnapshotPromise: async filePath => {
         assert.equal(filePath, file); trace.push("snapshot");
         return { content: seed, modifiedTime: 3, diskVersion: { ...version },
@@ -6186,7 +6187,7 @@ async function generationNavigationSetupContracts() {
     vm.runInContext("let updateMainDialogDepth = 0, updateSchedule = null;\n" +
       between(main, "function trackUpdateDialog(promise) {", "\nfunction mainDialogs() {") + "\n" +
       capture + "\n" + chooser + "\n" + restoreRoute + "\n" +
-      prepareRoute + "\n" + authority + "\n" + committedCheck + "\n" + commit + "\n" +
+      documentContentFromDisk + "\n" + prepareRoute + "\n" + authority + "\n" + committedCheck + "\n" + commit + "\n" +
       identity + "\n" + ownerKey + "\n" + versionNormalizer + "\n" + closingOwner + "\n" +
       startupState + "\n" + startupDeadline + "\n" +
       (options.noStartupInvalidation
