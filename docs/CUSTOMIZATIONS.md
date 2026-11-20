@@ -557,7 +557,9 @@ Update/Cancel controls remain usable.
 
 ```mermaid
 flowchart LR
-    N["Insert table"] --> C["Choose initial dimensions"]
+    N["Insert table"] --> P{"Can a table go here?"}
+    P -- Yes --> C["Choose initial dimensions"]
+    P -- No --> W["Show where to move the cursor"]
     C --> D["Shared visual cell grid"]
     A["Right-click a table in either pane"] --> B["Edit table"]
     S["Select rows in either pane"] --> R["Edit selected rows"]

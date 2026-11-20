@@ -1877,7 +1877,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       observing = true;
     }
   }
-  function sourceGeometry() {
+  function sourceGeometry(source = committed.source, bindings = committed.bindings) {
     const started = performance.now();
     const style = getComputedStyle(editor);
     const keys = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
@@ -1898,30 +1898,30 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       mirror.style.width = editor.clientWidth + 'px';
       mirrorKey = key;
     }
-    const boundaries = [...new Set([0, committed.source.length, ...committed.bindings.flatMap(binding =>
+    const boundaries = [...new Set([0, source.length, ...bindings.flatMap(binding =>
       [binding.start, binding.end, ...binding.lines, ...(binding.codeLines || []).map(line => line.offset)])])]
       .sort((a, b) => a - b);
     const offsets = [];
     for (let i = 0; i < boundaries.length; i++) {
-      let from = boundaries[i], end = boundaries[i + 1] ?? committed.source.length;
+      let from = boundaries[i], end = boundaries[i + 1] ?? source.length;
       offsets.push(from);
       while (end - from > 512) {
         let stop = from + 512;
-        while (stop > from && !/\s/.test(committed.source[stop - 1])) stop--;
+        while (stop > from && !/\s/.test(source[stop - 1])) stop--;
         if (stop === from) stop = from + 512;
-        if (/[\uDC00-\uDFFF]/.test(committed.source[stop])) stop--;
+        if (/[\uDC00-\uDFFF]/.test(source[stop])) stop--;
         offsets.push(stop);
         from = stop;
       }
     }
     const offsetKey = offsets.join(',');
-    if (mirrorText !== committed.source || mirrorOffsets !== offsetKey) {
+    if (mirrorText !== source || mirrorOffsets !== offsetKey) {
       const previous = sourceMarkers;
       const matches = (before, after) => {
         const oldFrom = previous[before].from, newFrom = offsets[after];
-        return (oldFrom === mirrorText.length) === (newFrom === committed.source.length) &&
+        return (oldFrom === mirrorText.length) === (newFrom === source.length) &&
           mirrorText.slice(oldFrom, previous[before + 1]?.from ?? mirrorText.length) ===
-            committed.source.slice(newFrom, offsets[after + 1] ?? committed.source.length);
+            source.slice(newFrom, offsets[after + 1] ?? source.length);
       };
       let prefix = 0, suffix = 0;
       while (prefix < previous.length && prefix < offsets.length && matches(prefix, prefix)) prefix++;
@@ -1938,8 +1938,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         else if (i >= offsets.length - suffix) span = previous[i - offsets.length + previous.length].span;
         else {
           span = document.createElement('span');
-          span.textContent = committed.source.slice(offsets[i], offsets[i + 1] ?? committed.source.length) ||
-            (offsets[i] === committed.source.length ? '\u200b' : '');
+          span.textContent = source.slice(offsets[i], offsets[i + 1] ?? source.length) ||
+            (offsets[i] === source.length ? '\u200b' : '');
           fragment.append(span);
         }
         markers.push({ from: offsets[i], span });
@@ -1951,7 +1951,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         mirror.replaceChildren(fragment);
       }
       sourceMarkers = markers;
-      mirrorText = committed.source;
+      mirrorText = source;
       mirrorOffsets = offsetKey;
     }
     const written = performance.now();
@@ -1969,21 +1969,24 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       return positions.get(offset);
     };
   }
-  function sourceLineAt(clientX, clientY) {
-    if (!usable() || committed.source !== editor.value || !Number.isFinite(clientX) ||
-        !Number.isFinite(clientY)) return null;
+  function sourceLineAt(clientX, clientY, { live = false } = {}) {
+    const source = editor.value, mapped = usable() && committed.source === source;
+    if ((!mapped && !(live && active() && !frozen())) ||
+        !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
     const rect = editor.getBoundingClientRect(), style = getComputedStyle(editor);
     const scaleX = rect.width / editor.offsetWidth, scaleY = rect.height / editor.offsetHeight;
     if (!(scaleX > 0) || !(scaleY > 0)) return null;
     const x = (clientX - rect.left) / scaleX - editor.clientLeft;
     const y = (clientY - rect.top) / scaleY - editor.clientTop;
     const paddingTop = parseFloat(style.paddingTop), lineHeight = parseFloat(style.lineHeight);
-    if (x < parseFloat(style.paddingLeft) || x >= editor.clientWidth - parseFloat(style.paddingRight) ||
+    if (x < (live ? 0 : parseFloat(style.paddingLeft)) ||
+        x >= editor.clientWidth - (live ? 0 : parseFloat(style.paddingRight)) ||
         y < paddingTop || y >= editor.clientHeight - parseFloat(style.paddingBottom) ||
         !Number.isFinite(lineHeight) || lineHeight <= 0) return null;
-    const sourceY = sourceGeometry(), starts = [0];
-    for (let i = 0; i < committed.source.length; i++) {
-      if (committed.source[i] === '\n') starts.push(i + 1);
+    // Click placement needs the textarea layout, not a committed preview parse.
+    const sourceY = mapped ? sourceGeometry() : sourceGeometry(source, []), starts = [0];
+    for (let i = 0; i < source.length; i++) {
+      if (source[i] === '\n') starts.push(i + 1);
     }
     const contentY = y + editor.scrollTop;
     let low = 0, high = starts.length;
@@ -1992,9 +1995,12 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       if (sourceY(starts[middle]) <= contentY) low = middle + 1;
       else high = middle;
     }
-    if (!low || contentY >= sourceY(committed.source.length) + lineHeight) return null;
+    if (!low) return null;
+    if (contentY >= sourceY(source.length) + lineHeight) {
+      return live ? { start: source.length, end: source.length } : null;
+    }
     const index = low - 1, start = starts[index];
-    const end = index + 1 < starts.length ? starts[index + 1] - 1 : committed.source.length;
+    const end = index + 1 < starts.length ? starts[index + 1] - 1 : source.length;
     return { start, end };
   }
 

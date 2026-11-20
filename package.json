@@ -78,6 +78,7 @@
     "test:saved-table-code": "node test/test-saved-table-code.js",
     "test:table-popup-wrap": "node test/test-table-popup-wrap.js",
     "test:table-cells": "npm run test:table-cells-source && npm run test:table-cells-ui",
+    "test:table-cells-click": "electron test/test-table-cell-editor.js --click",
     "test:table-cells-ui": "electron test/test-table-cell-editor.js --partition=input && electron test/test-table-cell-editor.js --partition=remaining && electron test/test-table-cell-editor.js --partition=shared",
     "test:table-cells-source": "node --check src/table-cell-editor.js && node --check test/test-table-cell-editor.js && node test/test-table-cell-editor.js --source",
     "test:theme": "node --check test/test-theme.js && electron test/test-theme.js",

@@ -2218,6 +2218,75 @@ const SAVED_TABLE_CODE_REVERTS = [
 
 const REVERTS = [
   {
+    id: "TABLE-INSERT-CLICK-CARET",
+    what: "use the restored textarea selection instead of the clicked placement",
+    file: RENDERER,
+    from: "  const insertionPoint = clicked === undefined ? markdownEditor.selectionStart : clicked;",
+    to: "  const insertionPoint = clicked === null ? null : markdownEditor.selectionStart;",
+    suite: "test:table-cells-click",
+    expect: [
+      /^Insert table opens dimensions at the target caret: (blank EOF|blank before heading|retry below new prose|retry below new heading|between a table and prose|scrolled blank between prose blocks after wrapped text|redirect after a closed js fence|redirect after a closed mermaid fence)$/,
+    ],
+    mustPass: [
+      /^trusted Insert menu keeps the prior selection and uses the intended input route: blank EOF$/,
+      /^Insert table applies at the clicked boundary: keyboard context menu at the caret$/,
+      /^Explicit Save preserves exact Markdown including untouched empty table cells$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 8,
+  },
+  {
+    id: "TABLE-INSERT-LIVE-LINE",
+    what: "require the preview to finish before accepting a new blank line",
+    file: RENDERER,
+    from: "    const line = before ? sourceLine ?? editorScroll.sourceLineAt(x, y, { live: true }) : null;",
+    to: "    const line = before ? sourceLine : null;",
+    suite: "test:table-cells-click",
+    expect: [
+      /^Insert table opens dimensions at the target caret: retry below new prose$/,
+      /^Insert table opens dimensions at the target caret: fresh document with caret already at the boundary$/,
+      /^Insert table opens dimensions at the target caret: empty document$/,
+    ],
+    mustPass: [
+      /^trusted Insert menu keeps the prior selection and uses the intended input route: retry below new prose$/,
+      /^Insert table applies at the clicked boundary: retry below new heading$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+  },
+  {
+    id: "TABLE-INSERT-LATE-WARNING",
+    what: "let an unsafe location reach the table setup and grid",
+    file: RENDERER,
+    from: "          MarkalooTableCells.insertTable(model, insertionOffset, [['Header']], marked, protectTableSource, mode);",
+    to: "          if (!model) MarkalooTableCells.insertTable(model, insertionOffset, [['Header']], marked, protectTableSource, mode);",
+    suite: "test:table-cells-click",
+    expect: [
+      /^Insert table warns before dimensions: paragraph continuation$/,
+      /^Insert table warns before dimensions: inside an existing table$/,
+    ],
+    mustPass: [
+      /^A late refusal retains the actual draft for correction: paragraph continuation$/,
+      /^Insert table applies at the clicked boundary: retry below new prose$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "TABLE-INSERT-EMPTY-DEFAULTS",
+    what: "write placeholder prose into untouched new body cells",
+    file: RENDERER,
+    from: "      values: Array(columns).fill('') });",
+    to: "      values: Array.from({ length: columns }, (_, column) => `Cell ${row + 1},${column + 1}`) });",
+    suite: "test:table-cells-click",
+    expect: [
+      /^Insert grid serializes edited values and empty untouched body cells: (retry below new prose|retry below new heading|fresh document with caret already at the boundary)$/,
+      /^Preview renders all eight columns and three rows with untouched cells empty$/,
+    ],
+    mustPass: [
+      /^Insert table applies at the clicked boundary: retry below new prose$/,
+      /^Insert table applies at the clicked boundary: fresh document with caret already at the boundary$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+  },
+  {
     id: "WINDOWS-SETUP-HIDDEN-CLIENT",
     what: "leave setup hidden when an older updater suppresses its initial window",
     file: path.join(ROOT, "build", "installer.nsh"),

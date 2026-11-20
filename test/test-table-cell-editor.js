@@ -965,7 +965,7 @@ const ROOT = path.resolve(__dirname, "..");
 const perfOnly = process.argv.includes("--perf");
 const baseline = process.argv.includes("--baseline");
 const dirtyOpenProbe = process.argv.includes("--probe-dirty-open");
-const proof = process.env.MARKALOO_CELL_PROOF;
+const proof = process.env.MARKALOO_CELL_PROOF || (process.argv.includes("--click") ? "click" : undefined);
 const groups = ["selection", "rows", "splice", "inline", "menus", "provenance",
   "noop", "input", "click", "transaction", "adoption", "stale", "keyboard", "formatting", "many", "shared"];
 const uiGroups = groups.slice(4);
@@ -4783,6 +4783,8 @@ function rendererDialogGuardScript(id, marker, guardStage) {
         Object.defineProperty(window,kind,{configurable:true,writable:true,value:guarded});
       }
       let expectedDialog=null,originalCalls=0,inputTicket=null,inputSequence=0;
+      const isCellMenuItem=item=>item===document.getElementById('ctxEditTable')||
+        item===document.getElementById('ctxInsertTable');
       const releaseInput=ticket=>{
         if(!ticket||inputTicket!==ticket)return;
         ticket.item.removeEventListener('mousedown',ticket.observe,true);
@@ -4792,7 +4794,7 @@ function rendererDialogGuardScript(id, marker, guardStage) {
       };
       const currentInput=ticket=>ticket&&!ticket.consumed&&performance.now()<ticket.expires&&
         ticket.dialog===document.getElementById('tableCellDialog')&&
-        ticket.item===document.getElementById('ctxEditTable')&&
+        isCellMenuItem(ticket.item)&&
         ticket.dialog.isConnected&&ticket.item.isConnected&&
         ticket.dialog.ownerDocument===document&&ticket.item.ownerDocument===document&&
         ticket.isCurrent()===true;
@@ -4835,7 +4837,7 @@ function rendererDialogGuardScript(id, marker, guardStage) {
         if(expectedDialog||inputTicket||!(dialog instanceof HTMLDialogElement)||
             !(item instanceof HTMLElement)||typeof request.isCurrent!=='function'||
             dialog!==document.getElementById('tableCellDialog')||
-            item!==document.getElementById('ctxEditTable')||!dialog.isConnected||!item.isConnected||
+            !isCellMenuItem(item)||!dialog.isConnected||!item.isConnected||
             dialog.ownerDocument!==document||item.ownerDocument!==document||request.isCurrent()!==true) {
           return refuse('invalid-cell-input-authorization');
         }
@@ -5902,7 +5904,7 @@ require("./test-userdata-isolation");
     await exec("document.getElementById('openFile').click();true");
     try {
       await wait(label + " DOM paint", `currentFilePath===${JSON.stringify(file)}&&
-        viewer.querySelector('h1')?.textContent===${JSON.stringify(heading)}&&
+        ${heading === null ? "!viewer.textContent.trim()" : `viewer.querySelector('h1')?.textContent===${JSON.stringify(heading)}`}&&
         !loadingScreen.classList.contains('active')`);
     } catch (error) {
       const actual = await exec(`({path:currentFilePath,owner:window.CustomTabs.getActiveTabId(),
@@ -8263,6 +8265,251 @@ require("./test-userdata-isolation");
       fs.readFileSync(imeFixture.file, "utf8") === original, { imeCompletion, imeAfter });
   }
   async function click() {
+    const mouse = async (target, button) => {
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await bounded("Insert table trusted mouse input", win.webContents.debugger.sendCommand(
+          "Input.dispatchMouseEvent", { type, ...target, button, clickCount: 1 }));
+      }
+    };
+    const armInsertMenu = () => page(() => {
+      const item = ctxInsertTable, rect = item.getBoundingClientRect(), selection = tableMenuSelection;
+      const exact = window.CustomTabs.snapshotExactEditorContent();
+      const x = Math.round(rect.left + rect.width / 2), y = Math.round(rect.top + rect.height / 2);
+      if (!selection.isCurrent() || !item.contains(document.elementFromPoint(x, y))) {
+        throw new Error("Insert table item is not hittable on the current document");
+      }
+      const ticket = window.__cellDialogGuard.armCellInput({ dialog: tableCellDialog, item,
+        isCurrent: () => tableMenuSelection === selection && currentDocumentActionOwner() === selection.tab &&
+          isEditMode && markdownEditor.value === selection.source &&
+          window.CustomTabs.snapshotExactEditorContent() === exact });
+      return { x, y, ticket };
+    });
+    async function placeTable(label, fixture, { text, linesBelow = 1, expected, columns = 1, dataRows = 0,
+      populated = true, caretOnTarget = false, save = false, keyboard = false, insertionAt, scrolled = false,
+      pendingPreview = false, padding = false, stale = false, below = false, selected = false }) {
+      const previous = await state(), previousSaves = saves.length;
+      let diskExpected = fixture.body;
+      const { x, y, original, target, hit, bounds } = await page(async (text, linesBelow, caretOnTarget, padding, below, selected) => {
+        const source = markdownEditor.value, anchor = source.lastIndexOf(text);
+        if (anchor < 0) throw new Error("Missing editor text above the expected insertion point");
+        let target = anchor;
+        for (let i = 0; i < linesBelow; i++) {
+          target = source.indexOf("\n", target) + 1;
+          if (!target) throw new Error("Missing expected target line");
+        }
+        const original = caretOnTarget ? target : anchor + 2;
+        markdownEditor.focus();
+        markdownEditor.setSelectionRange(original, selected ? source.length : original);
+        const point = __cells.sourcePoint(selected ? target + 5 : target);
+        const rect = markdownEditor.getBoundingClientRect();
+        const x = padding ? Math.ceil(rect.left + markdownEditor.clientLeft + 1) : point.x;
+        const y = below ? Math.round(point.y + 3 * parseFloat(getComputedStyle(markdownEditor).lineHeight)) : point.y;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        window.__insertWitness = null;
+        markdownEditor.addEventListener("contextmenu", event => {
+          window.__insertWitness = { trusted: event.isTrusted, button: event.button, caret: markdownEditor.selectionStart,
+            end: markdownEditor.selectionEnd, previewCurrent: editorScroll.isCurrentSource(markdownEditor.value) };
+        }, { capture: true, once: true });
+        const element = document.elementFromPoint(x, y);
+        return { x, y, original, target, hit: element === markdownEditor,
+          bounds: [element?.id, markdownEditor.scrollTop, markdownEditor.getBoundingClientRect().toJSON()] };
+      }, text, linesBelow, caretOnTarget, padding, below, selected);
+      if (keyboard) {
+        await exec("markdownEditor.focus();true");
+        win.webContents.sendInputEvent({ type: "keyDown", keyCode: "F10", modifiers: ["shift"] });
+        win.webContents.sendInputEvent({ type: "keyUp", keyCode: "F10", modifiers: ["shift"] });
+      } else {
+        if (!hit) throw new Error("Insert table target point is outside the visible textarea: " +
+          JSON.stringify({ label, x, y, bounds }));
+        await mouse({ x, y }, "right");
+      }
+      await wait("Insert table context menu", "contextMenu.classList.contains('visible')");
+      const witness = await exec(`({...__insertWitness,restored:markdownEditor.selectionStart,
+        line:tableMenuSelection.sourceLine,scroll:markdownEditor.scrollTop})`);
+      check("trusted Insert menu keeps the prior selection and uses the intended input route: " + label,
+        witness.trusted && (keyboard ? witness.button !== 2 : pendingPreview ? !witness.previewCurrent :
+          padding || below ? witness.previewCurrent && !witness.line : witness.line?.start === target) &&
+          (!selected || witness.end > witness.caret) &&
+          witness.caret === target && witness.restored === original && (!scrolled || witness.scroll > 0),
+        { ...witness, original, target });
+      const menu = await armInsertMenu();
+      try {
+        if (stale) await exec("window.CustomTabs.captureDialogContext();true");
+        await mouse({ x: menu.x, y: menu.y }, "left");
+        const opening = await exec(`({open:tableCellDialog.open,setup:!tableCellSetup.hidden,offset:tableCellSession?.insertionOffset,
+          trustedModal:window.__cellDialogGuard.cellInputState().consumed,
+          noticeVisible:document.getElementById('notificationToast').classList.contains('show'),
+          notification:document.getElementById('notificationMessage').textContent})`);
+        const offset = insertionAt ?? target;
+        if (expected) {
+          check("Insert table opens dimensions at the target caret: " + label,
+            opening.open && opening.setup && opening.trustedModal && opening.offset === offset, opening);
+        } else {
+          check("Insert table warns before dimensions: " + label,
+            !opening.open && opening.noticeVisible &&
+              opening.notification.includes(stale ? "Choose Insert Table again" : "Move the cursor"), opening);
+        }
+        if (opening.open) {
+          await page((columns, dataRows) => {
+            tableCellColumns.value = columns;
+            tableCellDataRows.value = dataRows;
+            tableCellStart.click();
+          }, columns, dataRows);
+          if (populated) {
+            for (const at of new Set([0, (dataRows + 1) * columns - 1])) {
+              await page(at => { __cells.inputs()[at].focus(); document.execCommand("selectAll"); }, at);
+              await bounded("Insert grid trusted text input", win.webContents.insertText(at ? "Last value" : "Fixture"));
+            }
+          }
+          const draft = Array.from({ length: dataRows + 1 }, (_, row) => Array.from({ length: columns },
+            (_, column) => populated && !row && !column ? "Fixture" :
+              populated && dataRows && row === dataRows && column === columns - 1 ? "Last value" :
+              row ? "" : `Header ${column + 1}`));
+          const readDraft = () => exec("tableCellSession.rows.map(row=>row.cells.map(cell=>cell.engine.readSource()))");
+          const serialized = await readDraft();
+          check("Insert grid serializes edited values and empty untouched body cells: " + label,
+            JSON.stringify(serialized) === JSON.stringify(draft), serialized);
+          const rows = [...serialized];
+          rows.splice(1, 0, Array(columns).fill("---"));
+          const markdown = rows.map(row => "| " + row.join(" | ") + " |").join(previous.exact.includes("\r\n") ? "\r\n" : "\n");
+          const completion = await update(), after = await state();
+          check("Insert table applies at the clicked boundary: " + label,
+            expected ? !completion.open && !completion.error && after.exact === expected(markdown) &&
+              after.undo === previous.undo + 1 && await exec(`markdownEditor.selectionStart===${offset}+
+                MarkalooTableCells.normalise(${JSON.stringify(expected(markdown))}).length-
+                MarkalooTableCells.normalise(${JSON.stringify(previous.exact)}).length`) : completion.open && !completion.applied &&
+              after.exact === previous.exact && after.undo === previous.undo,
+            { completion, source: after.exact, offset: opening.offset });
+          if (completion.open) {
+            check("A late refusal retains the actual draft for correction: " + label,
+              JSON.stringify(await readDraft()) === JSON.stringify(serialized));
+          } else if (save && expected) {
+            const displayed = await exec(`Array.from(viewer.querySelector('table')?.rows ?? [],
+              row=>Array.from(row.cells,cell=>cell.textContent.trim()))`);
+            check("Preview renders all eight columns and three rows with untouched cells empty",
+              JSON.stringify(displayed) === JSON.stringify(draft), displayed);
+            diskExpected = expected(markdown);
+            const witness = await documentWitness({ ...fixture, body: diskExpected });
+            const delivery = observeMainDeliveries((channel, result) => channel === "save-markdown-result" &&
+              saves.slice(previousSaves).some(request => matchesSaveRequest(request, witness) && matchesSaveResult(result, request)));
+            try {
+              await exec("saveButton.click();true");
+              await waitMain("authored table Save completed", () => delivery.records.some(record => record.args[1]?.success));
+              await wait("authored table Save settled", "!window.getPendingSaveStatus().pending");
+              check("Explicit Save preserves exact Markdown including untouched empty table cells",
+                saves.length === previousSaves + 1 && fs.readFileSync(fixture.file, "utf8") === diskExpected);
+              if (proof === "click" && process.env.MARKALOO_CELL_EVIDENCE) await screenshot("insert-empty-cells-preview");
+            } finally { delivery.restore(); }
+          } else if (expected) {
+            await exec("undoButton.click();true");
+            await wait("Insert placement document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
+          }
+        }
+        const final = await state(), saved = diskExpected !== fixture.body;
+        check("Insert placement preserves document ownership and exact bytes: " + label,
+          final.exact === (saved ? diskExpected : previous.exact) && final.owner === previous.owner &&
+            saves.length === previousSaves + Number(saved) && fs.readFileSync(fixture.file, "utf8") === diskExpected, final);
+      } finally {
+        await page(ticket => window.__cellDialogGuard.finishCellInput(ticket), menu.ticket);
+        await cancel();
+      }
+    }
+    const lead = "# Placement\r\n\r\n";
+    await placeTable("blank EOF", await fresh("insert-eof", lead + "Alpha\r\n"), {
+      text: "Alpha", expected: table => lead + "Alpha\r\n\r\n" + table,
+    });
+    const beforeHeading = "\uFEFF" + lead + "Alpha\r\n\r\n";
+    await placeTable("blank before heading", await fresh("insert-before-heading", beforeHeading + "# Beta\n"), {
+      text: "Alpha", expected: table => beforeHeading + table + "\r\n\r\n# Beta\n",
+    });
+    const existing = await fresh("insert-retry", "# Existing\n\n| A |\n| - |\n| B |\n\nAlpha\nBeta");
+    await placeTable("paragraph continuation", existing, { text: "Alpha", caretOnTarget: true, columns: 8, dataRows: 3 });
+    for (const [label, added, text, linesBelow, populated, pendingPreview] of [
+      ["retry below new prose", "\n\nNew prose\n", "New prose", 1, true, true],
+      ["retry below new heading", "\n\n## New heading\n\n\n", "New heading", 3, false, false],
+    ]) {
+      const before = await state(), exact = before.exact + added;
+      await exec("__cells.source(markdownEditor.value.length,markdownEditor.value.length);true");
+      await bounded("Insert retry trusted document typing", win.webContents.insertText(added));
+      if (!pendingPreview) await wait("typed Markdown is current", `editorScroll.isCurrentSource(${JSON.stringify(exact)})`);
+      check("Insert retry uses the same document after native typing: " + label,
+        (await state()).owner === before.owner && (await state()).exact === exact && before.path === existing.file);
+      await placeTable(label, existing, { text, linesBelow, columns: 8, dataRows: 3, populated, pendingPreview,
+        expected: table => exact + (exact.endsWith("\n\n") ? "" : "\n") + table });
+    }
+    const control = await fresh("insert-caret-control", "# Clean\n\nAlpha\n");
+    await placeTable("fresh document with caret already at the boundary", control, {
+      text: "Alpha", caretOnTarget: true, columns: 8, dataRows: 3, save: true, padding: true,
+      expected: table => "# Clean\n\nAlpha\n\n" + table,
+    });
+    const empty = await fresh("insert-empty", "", null);
+    await placeTable("empty document", empty, {
+      text: "", linesBelow: 0, caretOnTarget: true, below: true, expected: table => table,
+    });
+    await placeTable("right click inside selected prose",
+      await fresh("insert-selected-prose", "# Selected\n\nSelected prose must not be used as the click point."), {
+        text: "Selected prose", linesBelow: 0, caretOnTarget: true, selected: true,
+      });
+    const tablePrefix = "# Neighbor\n\n| A |\n| - |\n| B |\n", tableSuffix = "\nNext paragraph.\n";
+    const neighbor = await fresh("insert-next-to-table", tablePrefix + tableSuffix);
+    await placeTable("inside an existing table", neighbor, { text: "| - |", caretOnTarget: true });
+    await placeTable("between a table and prose", neighbor, {
+      text: "| B |", expected: table => tablePrefix + "\n" + table + "\n" + tableSuffix,
+    });
+    const scrolledPrefix = "# Wrapped insertion\n\n" + "Leading line.\n".repeat(36) +
+      "\n" + "Wrapped prose ".repeat(120).trimEnd() + "\n\n";
+    const scrolledSuffix = "Next paragraph.\n\n" + "Trailing text.\n".repeat(36);
+    const scrolledFixture = await fresh("insert-wrapped", scrolledPrefix + scrolledSuffix);
+    await placeTable("scrolled blank between prose blocks after wrapped text", scrolledFixture, {
+      text: "Wrapped prose", linesBelow: 1, scrolled: true,
+      expected: table => scrolledPrefix + table + "\n\n" + scrolledSuffix,
+    });
+    const keyPrefix = "# Keyboard\n\nAlpha\n\n";
+    await placeTable("keyboard context menu at the caret", await fresh("insert-keyboard", keyPrefix + "Beta"), {
+      text: "Alpha", keyboard: true, caretOnTarget: true,
+      expected: table => keyPrefix + table + "\n\nBeta",
+    });
+    await placeTable("document context changes while the menu is open",
+      await fresh("insert-stale-menu", "# Stale menu\n\nFirst paragraph.\n\nSecond paragraph.\n"), {
+        text: "Second paragraph.", stale: true, caretOnTarget: true,
+      });
+    const previewSource = "# Preview selection\n\nSelected preview prose.\n";
+    await fresh("insert-preview-cancel", previewSource);
+    const previewPoint = await page(() => {
+      markdownEditor.setSelectionRange(markdownEditor.value.length, markdownEditor.value.length);
+      window.__insertPreviewText = viewer.querySelector("p").firstChild;
+      getSelection().setBaseAndExtent(__insertPreviewText, 18, __insertPreviewText, 0);
+      const rect = getSelection().getRangeAt(0).getBoundingClientRect();
+      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    });
+    await mouse(previewPoint, "right");
+    const previewMenu = await armInsertMenu();
+    try {
+      check("Preview Insert captures an actual backward text selection",
+        await exec(`tableMenuSelection.origin==='preview'&&tableMenuSelection.anchorNode===__insertPreviewText&&
+        tableMenuSelection.focusNode===__insertPreviewText&&tableMenuSelection.anchorOffset===18&&
+        tableMenuSelection.focusOffset===0`));
+      // The menu click may collapse the DOM selection. Make this independent of OS focus behavior.
+      await exec("getSelection().removeAllRanges();true");
+      await mouse({ x: previewMenu.x, y: previewMenu.y }, "left");
+      check("Preview Insert uses the source caret to open its shared setup",
+        await exec("tableCellDialog.open&&tableCellSession.insertionOffset===markdownEditor.value.length"));
+      await cancel();
+      check("Preview Insert Cancel restores the original backward selection without changing the document",
+        await exec(`getSelection().anchorNode===__insertPreviewText&&getSelection().focusNode===__insertPreviewText&&
+          getSelection().anchorOffset===18&&getSelection().focusOffset===0`) &&
+        (await state()).exact === previewSource);
+    } finally {
+      await page(ticket => window.__cellDialogGuard.finishCellInput(ticket), previewMenu.ticket);
+      await cancel();
+    }
+    for (const [kind, code] of [["js", "const value = 1;"], ["mermaid", "graph TD\nA-->B"]]) {
+      const fenced = "# Fence\n\n```" + kind + "\n" + code + "\n```\n", suffix = "\nFollowing text.";
+      await placeTable("redirect after a closed " + kind + " fence", await fresh("insert-" + kind, fenced + suffix), {
+        text: "```" + kind, insertionAt: fenced.length,
+        expected: table => fenced + "\n" + table + "\n" + suffix,
+      });
+    }
     const nativeClick = async point => {
       win.webContents.sendInputEvent({ type: "mouseMove", ...point });
       win.webContents.sendInputEvent({ type: "mouseDown", button: "right", clickCount: 1, ...point });
@@ -10370,23 +10617,37 @@ require("./test-userdata-isolation");
       await exec("window.MarkalooDialogs=__columnDialogs;true");
     }
     if (!coreFunction) await sharedOpeningWidths();
-    await fresh("shared-refusal", "# Shared refusal\n\nOrdinary prose remains unchanged.");
-    await page(() => {
+    const refusalSource = "# Shared refusal\n\nOrdinary prose remains unchanged.";
+    await fresh("shared-refusal", refusalSource);
+    const refusalSaves = saves.length;
+    const earlyRefusal = await page(() => {
       __cells.source(markdownEditor.value.indexOf("prose"), markdownEditor.value.indexOf("prose"));
       return __cells.action(MarkalooTableCells.Mode.INSERT);
     });
+    check("Create refuses a paragraph continuation before setup without changing source, Undo or Save",
+      earlyRefusal.visible && !earlyRefusal.opened && earlyRefusal.error.includes("Move the cursor") &&
+      (await state()).exact === refusalSource && (await state()).undo === 0 && saves.length === refusalSaves,
+      earlyRefusal);
+    const validCreate = await page(() => {
+      __cells.source(markdownEditor.value.length, markdownEditor.value.length);
+      return __cells.action(MarkalooTableCells.Mode.INSERT);
+    });
+    if (!validCreate.opened) throw new Error("Could not open a valid insertion to test late refusal");
     await exec("tableCellStart.click();true");
+    await mouse("tableCellSession.rows[0].cells[0].input");
+    await bounded("Create late refusal trusted draft input", win.webContents.insertText("Retained draft"));
     const refusedBefore = await draft();
-    const refusalSaves = saves.length;
+    // A competing document action invalidates the dialog after its placement check.
+    await exec("window.CustomTabs.captureDialogContext();true");
     await exec("tableCellUpdate.click();true");
-    await wait("invalid insertion position refuses", "tableCellError.textContent.length>0&&!tableCellSession.submitting");
+    await wait("stale draft refuses", "tableCellError.textContent.includes('The document changed')&&!tableCellSession.submitting");
     const refusedAfter = await draft();
     const refusalState = await exec(`({open:tableCellDialog.open,applied:tableCellSession.applied,
       error:tableCellError.textContent})`);
-    check("Create invalid embedding keeps its draft/source/history and never Saves",
+    check("Create late refusal keeps its actual draft, exact source and Undo without saving",
       JSON.stringify(refusedAfter) === JSON.stringify(refusedBefore) &&
       refusalState.open && !refusalState.applied && saves.length === refusalSaves &&
-      refusalSaves === sharedSaves,
+      refusalSaves === sharedSaves && (await state()).exact === refusalSource && (await state()).undo === 0,
       { before: refusedBefore, after: refusedAfter, refusalState, refusalSaves, observedSaves: saves.length });
     const priorMode = await exec("tableCellSession.mode");
     await exec("openTableCellEditor('invalid-mode');true");

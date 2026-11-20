@@ -952,6 +952,8 @@ const UI_STRINGS = {
   'tableCells.createScope': '${rows} data rows, ${columns} columns. Insert adds this table without saving.',
   'tableCells.createHelp': 'Tab: next cell. Enter / Shift+Enter: next / previous row. Ctrl+Enter: insert. Escape: cancel.',
   'tableCells.insertPosition': 'A table cannot be inserted here. Cancel and move the cursor between paragraphs or other content.',
+  'tableCells.insertPositionOpen': 'A table cannot be inserted here. Move the cursor to a blank line between blocks or at the end of the document.',
+  'tableCells.insertMenuStale': 'The document changed while the menu was open. Choose Insert Table again at the intended location.',
   'tableCells.scope': '${rows} rows, ${columns} columns. Only these cells will be updated.',
   'tableCells.help': 'Tab: next cell. Enter / Shift+Enter: next / previous row. Ctrl+Enter: update. Escape: cancel.',
   'tableCells.row': 'Row ${row}',
@@ -14864,7 +14866,7 @@ ctxInsertMermaid && ctxInsertMermaid.addEventListener('click', () => {
 // Insert Table → open TableInsertDialog
 ctxInsertTable && ctxInsertTable.addEventListener('click', () => {
   hideContextMenu();
-  openTableCellEditor(TableCellMode.INSERT);
+  openTableCellEditor(TableCellMode.INSERT, tableMenuSelection);
 });
 
 // Edit Mermaid — open dialog prefilled with existing code
@@ -14958,11 +14960,21 @@ function captureTableMenuSelection(x, y, event) {
   const before = event?.isTrusted && event.button === 2 && pointer?.tab === tab &&
     pointer.source === source && pointer.mode === mode && pointer.sequence === sequence &&
     pointer.origin === origin && pointer.x === x && pointer.y === y ? pointer : null;
+  const sourceLine = origin === 'markdown' ? editorScroll.sourceLineAt(x, y) : null;
+  // Keep the clicked insertion point separate from the selection restored for other actions.
+  let insertionPoint;
+  if (event?.isTrusted && event.button === 2 && origin === 'markdown') {
+    const line = before ? sourceLine ?? editorScroll.sourceLineAt(x, y, { live: true }) : null;
+    const caret = markdownEditor.selectionStart;
+    // Chromium can leave a selection intact when clicked inside it; its start isn't the hit.
+    if (line && caret === markdownEditor.selectionEnd && caret >= line.start && caret <= line.end) insertionPoint = caret;
+    else insertionPoint = line && /^[ \t]*$/.test(source.slice(line.start, line.end)) ? line.start : null;
+  }
   tableMenuSelection = {
     tab, source, mode, sequence,
     origin,
     tableNode: rightClickTarget === markdownEditor ? null : rightClickTarget?.closest?.('table'),
-    sourceLine: rightClickTarget === markdownEditor ? editorScroll.sourceLineAt(x, y) : null,
+    sourceLine, insertionPoint,
     start: before ? before.start : markdownEditor.selectionStart,
     end: before ? before.end : markdownEditor.selectionEnd,
     direction: before ? before.direction : markdownEditor.selectionDirection,
@@ -15528,41 +15540,54 @@ function populateTableCellGrid(session, displayRows) {
   session.cells[0]?.input.focus();
 }
 
-function captureTableInsertionSelection() {
+function captureTableInsertionSelection(menu) {
   const tab = currentDocumentActionOwner();
   if (!isEditMode || !tab || !mayMutateRendererDocument('table-create-open')) throw new Error('tableCells.stale');
   if (editorHistoryComposing()) throw new Error('tableCells.composing');
   const exact = window.CustomTabs.snapshotExactEditorContent(), source = markdownEditor.value;
   if (MarkalooTableCells.normalise(exact) !== source) throw new Error('tableCells.stale');
   const mode = editorModeRevision, sequence = fileOpenSequence, interaction = editorInteractionRevision;
-  const isCurrent = window.CustomTabs.captureDialogContext(tab), current = window.getSelection();
+  if (menu !== undefined && !menu?.isCurrent()) throw new Error('tableCells.insertMenuStale');
+  const clicked = menu?.insertionPoint;
+  const insertionPoint = clicked === undefined ? markdownEditor.selectionStart : clicked;
+  const isCurrent = window.CustomTabs.captureDialogContext(tab);
   return { tab, source, mode, sequence,
-    origin: tableMenuSelection?.isCurrent() ? tableMenuSelection.origin : 'markdown',
+    origin: menu?.origin ?? 'markdown', insertionPoint,
     start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
     direction: markdownEditor.selectionDirection,
-    range: current?.rangeCount === 1 ? current.getRangeAt(0).cloneRange() : null,
-    anchorNode: current?.anchorNode, anchorOffset: current?.anchorOffset,
-    focusNode: current?.focusNode, focusOffset: current?.focusOffset,
+    range: menu?.range, anchorNode: menu?.anchorNode, anchorOffset: menu?.anchorOffset,
+    focusNode: menu?.focusNode, focusOffset: menu?.focusOffset,
     isCurrent: () => isCurrent() && isEditMode && currentDocumentActionOwner() === tab &&
       editorModeRevision === mode && fileOpenSequence === sequence &&
       editorInteractionRevision === interaction && markdownEditor.value === source,
   };
 }
 
-function openTableCellEditor(mode) {
+function openTableCellEditor(mode, menu) {
   hideContextMenu();
   let opened = null;
   try {
     MarkalooTableCells.validateMode(mode);
     if (tableCellSession) closeTableCellEditor();
     tableColumnSizing.cancel();
-    const selection = mode === TableCellMode.INSERT ? captureTableInsertionSelection() : tableMenuSelection;
+    const selection = mode === TableCellMode.INSERT ? captureTableInsertionSelection(menu) : tableMenuSelection;
     if (!selection?.isCurrent()) throw new Error('tableCells.stale');
     const exact = window.CustomTabs.snapshotExactEditorContent();
     const model = MarkalooTableCells.index(exact, marked, protectTableSource);
-    let target = null;
+    let target = null, insertionOffset;
     switch (mode) {
       case TableCellMode.INSERT:
+        if (selection.insertionPoint === null) throw new Error('tableCells.insertPositionOpen');
+        insertionOffset = skipPastCodeBlock(selection.source, selection.insertionPoint);
+        // Check a plain table before setup; the actual edited rows are still validated on Insert.
+        try {
+          MarkalooTableCells.insertTable(model, insertionOffset, [['Header']], marked, protectTableSource, mode);
+        } catch (error) {
+          if (error instanceof Error && error.message === 'tableCells.insertPosition') {
+            throw new Error('tableCells.insertPositionOpen');
+          }
+          throw error;
+        }
         break;
       case TableCellMode.UPDATE_ROWS:
         target = selection.origin === 'markdown'
@@ -15577,7 +15602,7 @@ function openTableCellEditor(mode) {
               node => editorScroll.tableSource(node), mode);
         break;
     }
-    const session = { mode, selection, target, model, columnOrder: [],
+    const session = { mode, selection, target, model, insertionOffset, columnOrder: [],
       get columns() { return this.columnOrder.length; },
       exact, cells: [], rows: [], deletedRows: new Set(), deletedColumns: new Set(), nextRowId: 1,
       nextColumnId: 1, ready: false, submitting: false, applied: false };
@@ -15592,7 +15617,6 @@ function openTableCellEditor(mode) {
     tableCellColumnScope.textContent = i18n('tableCells.columnsScope');
     tableCellError.textContent = '';
     if (mode === TableCellMode.INSERT) {
-      session.insertionOffset = skipPastCodeBlock(selection.source, selection.start);
       tableCellGrid.replaceChildren();
       tableCellGrid.hidden = true;
       tableCellSetup.hidden = false;
@@ -15641,7 +15665,7 @@ function startTableCellCreation() {
     const displayRows = [{ original: null, editable: true, header: true,
       values: Array.from({ length: columns }, (_, column) => `Header ${column + 1}`) }];
     for (let row = 0; row < rows; row++) displayRows.push({ original: null, editable: true, header: false,
-      values: Array.from({ length: columns }, (_, column) => `Cell ${row + 1},${column + 1}`) });
+      values: Array(columns).fill('') });
     populateTableCellGrid(session, displayRows);
   } catch (error) {
     showTableCellError(error);

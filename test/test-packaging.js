@@ -1808,7 +1808,7 @@ async function main() {
       const body = source.slice(start, end + 2);
       return body.includes(tail) ? body : "";
     };
-    const open = bodyOf(rendererSource, "function openTableCellEditor(mode)",
+    const open = bodyOf(rendererSource, "function openTableCellEditor(mode, menu)",
       "console.error('Table cell editor could not open:', error)");
     const create = bodyOf(rendererSource, "function startTableCellCreation()",
       "showTableCellError(error)");
@@ -1840,7 +1840,7 @@ async function main() {
         modelStructure.includes("return candidate;") &&
         bodyOf(rendererSource.replace("session.cells[0]?.input.focus();", ""),
           "function populateTableCellGrid(session, displayRows)", "session.cells[0]?.input.focus()") === "" &&
-        bodyOf("", "function openTableCellEditor(mode)", "console.error") === "");
+        bodyOf("", "function openTableCellEditor(mode, menu)", "console.error") === "");
     check("column-removal contracts extract the actual shared confirmation transaction and attribute-only labeler",
       [confirmColumn, confirmRow, confirmRemoval, removeColumn, iconLabel].every(body => body !== "") &&
       bodyOf(rendererSource.replace(confirmRemoval, confirmRemoval.replace("tableCellGrid.inert = false;", "")),
@@ -1860,7 +1860,7 @@ async function main() {
       dialog.includes('id="tableCellGrid"') && dialog.includes('id="tableCellError"') &&
         (shell.match(/\bid="tableCellDialog"/g) || []).length === 1 &&
         /const tableCellDialog = document\.getElementById\('tableCellDialog'\);/.test(rendererSource) &&
-        /ctxInsertTable && ctxInsertTable\.addEventListener\('click', \(\) => \{\s*hideContextMenu\(\);\s*openTableCellEditor\(TableCellMode\.INSERT\);\s*\}\);/.test(rendererSource) &&
+        /ctxInsertTable && ctxInsertTable\.addEventListener\('click', \(\) => \{\s*hideContextMenu\(\);\s*openTableCellEditor\(TableCellMode\.INSERT, tableMenuSelection\);\s*\}\);/.test(rendererSource) &&
         /ctxEditTable\?\.addEventListener\('click', \(\) => openTableCellEditor\(TableCellMode\.UPDATE_TABLE\)\);/.test(rendererSource) &&
         /ctxEditSelectedRows\?\.addEventListener\('click', \(\) => openTableCellEditor\(TableCellMode\.UPDATE_ROWS\)\);/.test(rendererSource) &&
         /MarkalooTableCells\.validateMode\(mode\);/.test(open) &&
@@ -1885,8 +1885,7 @@ async function main() {
         /populateTableCellGrid\(session, displayRows\);/.test(create) &&
         /tableCellUpdate\.disabled = true;[\s\S]*?tableCellDialog\.showModal\(\);/.test(open));
     check("shared Edit scope derives header permissions from the captured source rows",
-      /case TableCellMode\.INSERT:\s*break;/.test(open) &&
-        /case TableCellMode\.UPDATE_ROWS:[\s\S]*?MarkalooTableCells\.resolveSource\(model, selection\.start, selection\.end, mode\)[\s\S]*?MarkalooTableCells\.resolvePreview\(model, selection\.range, viewer,[\s\S]*?break;/.test(open) &&
+      /case TableCellMode\.UPDATE_ROWS:[\s\S]*?MarkalooTableCells\.resolveSource\(model, selection\.start, selection\.end, mode\)[\s\S]*?MarkalooTableCells\.resolvePreview\(model, selection\.range, viewer,[\s\S]*?break;/.test(open) &&
         /case TableCellMode\.UPDATE_TABLE:[\s\S]*?MarkalooTableCells\.resolveSourceLine\(model, selection\.sourceLine, mode\)[\s\S]*?MarkalooTableCells\.resolvePreviewTable\(model, selection\.tableNode, viewer,[\s\S]*?break;/.test(open) &&
         /const header = target\.table\.rows\[0\];\s*const displayRows = target\.rows\.includes\(header\) \? target\.rows : \[header, \.\.\.target\.rows\];\s*populateTableCellGrid\(session, displayRows\.map\(original =>\s*\(\{ original, header: original === header, editable: target\.rows\.includes\(original\) \}\)\)\);/.test(open));
     check("shared table draft counts use live rows and columns in a read-only status",
