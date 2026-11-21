@@ -55,7 +55,7 @@ function windowsHistoryKeysEnabled(argv, platform) {
 }
 let inspection, windowsHistoryKeys;
 let readingHistoryNoop;
-let readerBranchReplacement, releaseHistoryBatch, publicationProducers;
+let readerBranchReplacement, releaseHistoryBatch, publicationProducers, htmlOrigin;
 function releaseHistoryBatchEnabled(argv, otherScenario, holds) {
   const options = argv.filter(value => value.startsWith("--release-history"));
   if (options.length && (options.length !== 1 || options[0] !== "--release-history-batch" || otherScenario || holds)) {
@@ -80,6 +80,11 @@ try {
     windowsHistoryKeys || readingHistoryNoop || readerBranchReplacement, inspection.enabled);
   publicationProducers = publicationProducersEnabled(process.argv,
     windowsHistoryKeys || readingHistoryNoop || readerBranchReplacement || releaseHistoryBatch, inspection.enabled);
+  htmlOrigin = process.argv.includes("--html-origin");
+  if (htmlOrigin && (windowsHistoryKeys || readingHistoryNoop || readerBranchReplacement ||
+      releaseHistoryBatch || publicationProducers || inspection.enabled)) {
+    throw new Error("--html-origin requires a dedicated invocation");
+  }
 } catch (error) { fatal(error); }
 ({ app, BrowserWindow, dialog, shell } = require("electron"));
 if (!app) fatal(new Error("Use the separately authorized Electron entry, not plain Node"));
@@ -143,7 +148,18 @@ const secondMarkdown = publicationProducers ?
     .replace("## Native history Tail", "| Gamma value | Description |\n| --- | --- |\n| 2 | Collapsible table |\n\n## Native history Tail") :
   markdown.replace(/Native history/g, "Other history");
 if (releaseHistoryBatch || publicationProducers) fs.writeFileSync(secondFixture, secondMarkdown);
-const chooserSequence = releaseHistoryBatch ? [fixture, secondFixture, fixture] :
+const originCases = htmlOrigin ? ["Markdown", "HTML"].flatMap(kind => ["link", "TOC"].map(route => {
+  const file = path.join(evidence, `${kind}-${route}.md`);
+  const origin = kind === "HTML" ? "<p>Runbook overview</p>" : "Runbook overview";
+  const source = ["# Native history Alpha", paragraph("Before", 8), origin,
+    "[Jump to Gamma](#native-history-gamma)", paragraph("Between", 8),
+    "## Native history Beta", paragraph("Beta", 8),
+    "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n";
+  fs.writeFileSync(file, source);
+  return { kind, route, file, source };
+})) : [];
+const chooserSequence = htmlOrigin ? originCases.map(({ file }) => file) :
+  releaseHistoryBatch ? [fixture, secondFixture, fixture] :
   publicationProducers ? [fixture, secondFixture] : [fixture];
 
 function check(name, ok, detail) {
@@ -487,6 +503,20 @@ function installHistoryProbe(releaseHistoryBatch = false) {
     documentState, position, input,
     noOpState, noOpObservation: null, failedClippedObservation: null,
     save(name) { saved[name] = location(); return saved[name]; },
+    originStates() {
+      intact();
+      const { back, forward } = realControls.availability();
+      return [back, forward, !controlsState.back.disabled, !controlsState.forward.disabled];
+    },
+    async fragmentJump(index) {
+      intact();
+      const issued = jumps[index];
+      ensure(jumps.length === index + 1 && issued?.target === viewer.querySelector("#native-history-gamma") &&
+        issued.block === "start" && issued.handle?.completion, "Expected one real Gamma fragment request");
+      const record = await issued.handle.completion;
+      intact();
+      return record;
+    },
     remember(name, point) {
       intact();
       ensure(releaseHistoryBatch && point?.version === 1, "Only the release route may import a captured Source point");
@@ -786,6 +816,7 @@ async function run() {
     app.getPath("userData") === isolation.USER_DATA_DIR &&
       app.getPath("sessionData") === isolation.USER_DATA_DIR &&
       isolation.USER_DATA_DIR !== isolation.REAL_USER_DATA && isolation.POST_WIPE_ENTRIES === 0);
+  if (htmlOrigin) return runHtmlOrigin();
   const fixtureCost = isLargeDocument(markdown);
   demand("the first fixture cannot invoke the large-document confirmation", fixtureCost.large === false, fixtureCost);
   const allowance = { window: observedMain, fixture, consumed: false };
@@ -1143,7 +1174,8 @@ async function finish(error) {
   if (finishing) return fatal(new Error("Ordinary finish entered twice"));
   finishing = true;
   let keepalive = null, destroyed = false, reported = false;
-  check(publicationProducers ? "all publication producer scenarios reach their exact terminal boundary" :
+  check(htmlOrigin ? "all origin scenarios reach their terminal boundary" :
+    publicationProducers ? "all publication producer scenarios reach their exact terminal boundary" :
     releaseHistoryBatch ? "all finite release history scenarios reach their terminal boundary" :
     readerBranchReplacement ? "all successful Forward-branch replacement scenarios reach their terminal boundary" :
     readingHistoryNoop ? "all same-position TOC scenarios reach their terminal boundary" :
@@ -1183,12 +1215,12 @@ async function finish(error) {
   const finalSources = sourceHashes();
   check("product source hashes are unchanged through the entire native invocation", isDeepStrictEqual(initialSources, finalSources));
   check("dialog and external-application guards survive teardown", guardsIntact());
-  check(releaseHistoryBatch || publicationProducers ? "only the exact fixture chooser sequence was consumed and none remains armed" :
+  check(releaseHistoryBatch || publicationProducers || htmlOrigin ? "only the exact fixture chooser sequence was consumed and none remains armed" :
     "only one exact fixture chooser was consumed and none remains armed",
     chooserCalls === chooserSequence.length && chooserAllowance === null);
   cleanExit = completed && !error && destroyed && reported && !!keepalive && results.length > 0 && results.every(result => result.ok);
   fs.writeFileSync(path.join(evidence, "receipt.json"), JSON.stringify({
-    scope: publicationProducers ? "inline-image-and-bulk-publication-producers" :
+    scope: htmlOrigin ? "same-document-HTML-origin" : publicationProducers ? "inline-image-and-bulk-publication-producers" :
       releaseHistoryBatch ? "finite-release-search-and-timeline-batch" :
       readerBranchReplacement ? "successful-forward-branch-replacement-milestone" :
       readingHistoryNoop ? "same-position-toc-history-milestone" :
@@ -1208,7 +1240,10 @@ async function finish(error) {
       secondFixture: { path: secondFixture, bytes: Buffer.byteLength(secondMarkdown), sha256: digest(secondMarkdown) } } : {}),
     inspection: { enabled: inspection.enabled, visualAcceptance: null, checkpoints: inspection.checkpoints,
       helperSha256: digest(fs.readFileSync(path.join(__dirname, "reading-history-inspection.js"))) },
-    boundaries: publicationProducers ? [
+    boundaries: htmlOrigin ? [
+      "Trusted Electron fragment clicks and actual TOC and toolbar handlers in fresh tabs",
+      "Default-zoom Reader; exact Source endpoints and DOM geometry, not packaged upgrade or displayed-pixel qualification",
+    ] : publicationProducers ? [
       "Actual inline-image, Collapse All and Expand All producers; two surviving H1 destinations in prose then tables",
       "Actual TOC and toolbar handlers with real Source/alignment checks; default-zoom Reader only",
       "Capture/restore/navigation performance investigation is deferred; no timing result or budget is claimed",
@@ -1240,7 +1275,7 @@ async function finish(error) {
       "Search text is trusted native insertion; synchronous input listener clicks the actual toolbar before debounce",
       "Captures are retained but must be viewed separately before acceptance"],
   }, null, 2) + "\n");
-  const footer = publicationProducers ? "reading-history-publication-producers" :
+  const footer = htmlOrigin ? "reading-history-html-origin" : publicationProducers ? "reading-history-publication-producers" :
     releaseHistoryBatch ? "reading-history-release-batch" :
     readerBranchReplacement ? "reading-history-branch-replacement" :
     readingHistoryNoop ? "reading-history-noop" :
@@ -1262,6 +1297,121 @@ app.whenReady().then(async () => {
   } catch (caught) { error = caught; }
   await finish(error);
 }).catch(fatal);
+
+async function runHtmlOrigin() {
+  const api = method => exec("window.__readingHistoryNative." + method);
+  const atOrigin = "(" + function inspectOrigin(place) {
+    const paragraphs = [...viewer.querySelectorAll("p")].filter(element => element.textContent === "Runbook overview");
+    if (paragraphs.length !== 1) throw new Error("Expected one rendered Runbook overview paragraph");
+    const range = document.createRange(), node = paragraphs[0].firstChild;
+    range.setStart(node, 0); range.setEnd(node, 1);
+    const scroller = getViewerScroller(), bounds = scroller.getBoundingClientRect();
+    const top = () => (range.getBoundingClientRect().top - bounds.top) / scrollerScale(scroller) - scroller.clientTop;
+    if (place) scroller.scrollTo({ top: scroller.scrollTop + top() - 3, behavior: "instant" });
+    const result = window.readingLocationAdapter.capture();
+    return { top: top(), scrollTop: scroller.scrollTop, result: { status: result.status, reason: result.reason,
+      text: result.location?.text } };
+  }.toString() + ")";
+  for (const [index, { kind, route, file, source }] of originCases.entries()) {
+    const label = `${kind} ${route}`;
+    const allowance = { window: observedMain, fixture: file, consumed: false };
+    chooserAllowance = allowance;
+    await exec("document.getElementById('openFile').click();true");
+    await waitReady(label + " admitted Source and DOM", `currentFilePath===${JSON.stringify(file)} &&
+      originalMarkdown===${JSON.stringify(source)} && readingDisplay?.source?.source===originalMarkdown &&
+      viewer.querySelector('#native-history-gamma')?.textContent==='Native history Gamma' &&
+      !loadingScreen.classList.contains('active') && readingRenderCompletion===null &&
+      window.readingLocationAdapter.available()`);
+    demand(label + " opens a distinct admitted document", allowance.consumed && chooserCalls === index + 1);
+    await exec(`if (indexPanel.classList.contains('visible') !== ${route === "TOC"})
+      document.getElementById('toggleTocBtn').click();true`);
+    await waitReady(label + " stable drawer layout", `indexPanel.classList.contains('visible')===${route === "TOC"} &&
+      !indexPanel.getAnimations().some(animation => animation.playState === 'running') &&
+      window.readingLocationAdapter.available()`);
+    await exec(atOrigin + "(true)");
+    const origin = await exec(atOrigin + "(false)");
+    await exec("(" + installHistoryProbe.toString() + ")()");
+    const empty = [false, false, false, false], backOnly = [true, false, true, false];
+    demand(label + " starts on the rendered paragraph with empty history",
+      origin.scrollTop > 100 && Math.abs(origin.top - 3) <= 1 && isDeepStrictEqual(await api("originStates()"), empty), origin);
+    const target = route === "TOC" ? "beta" : "gamma";
+    let record;
+    if (route === "link") {
+      const point = await exec(`(() => {
+        const anchor = viewer.querySelector('a[href="#native-history-gamma"]');
+        const rect = anchor.getBoundingClientRect();
+        const x = Math.round((rect.left + rect.right) / 2), y = Math.round((rect.top + rect.bottom) / 2);
+        if (document.elementFromPoint(x, y) !== anchor) throw new Error("Fragment link is not hit-testable");
+        return { x, y };
+      })()`);
+      observedContents.sendInputEvent({ ...point, type: "mouseDown", button: "left", clickCount: 1 });
+      observedContents.sendInputEvent({ ...point, type: "mouseUp", button: "left", clickCount: 1 });
+      await waitReady(label + " actual fragment dispatch", "window.__readingHistoryNative.releaseCounts().jumps===1");
+      record = await api("fragmentJump(0)");
+    } else {
+      ({ record } = await api("jump('Native history Beta')"));
+    }
+    const arrival = await api("save('destination')");
+    const reached = await api("position('destination')");
+    demand(label + " first jump genuinely reaches its heading", record.status === "completed" &&
+      record.scope === "request-offsets" && record.travel === "observed-travel" &&
+      arrival.text.start === source.indexOf(`Native history ${target === "beta" ? "Beta" : "Gamma"}`) &&
+      reached.scrollTop > origin.scrollTop + 100, { record, reached });
+    const states = await api("originStates()");
+    const originStart = source.indexOf("Runbook overview");
+    const canReturn = isDeepStrictEqual(states, backOnly);
+    check(label + " first jump enables Back only", canReturn, { states, origin });
+    if (canReturn) {
+      await api("history(-1)");
+      const restored = await exec(atOrigin + "(false)");
+      check(label + " Back returns to the exact paragraph and enables Forward only",
+        restored.result.status === "captured" && restored.result.text.start === originStart &&
+        Math.abs(restored.top - origin.top) <= 1 && Math.abs(restored.scrollTop - origin.scrollTop) <= 1 &&
+        isDeepStrictEqual(await api("originStates()"), [false, true, false, true]), { origin, restored });
+      await api("history(1)");
+      const forward = await api("position('destination')");
+      check(label + " Forward returns to the exact heading and enables Back only",
+        Math.abs(forward.scrollTop - reached.scrollTop) <= 1 && isDeepStrictEqual(await api("originStates()"), backOnly),
+        { reached, forward });
+    } else {
+      console.log(`BLOCKED ${label} Back and Forward roundtrip: Back did not enable`);
+    }
+    await api("dispose()");
+  }
+  const mapping = await exec("(" + function mapLiteralParagraphs() {
+    const textOf = "Runbook overview";
+    const literal = `<p>${textOf}</p>`;
+    const cases = [
+      ["repeated exact occurrences", `# ${textOf}\r\n\r\n${literal}\r\n\r\n${literal}`, [0, 1]],
+      ["transformed entity", "<p>&#82;unbook overview</p>", []],
+      ["sanitized child", "<p>Runbook<script>removed</script> overview</p>", []],
+      ["multi-root HTML", `${literal}<p>Another paragraph</p>`, []],
+    ];
+    return cases.map(([name, text, admitted]) => {
+      const source = editorScroll.source(text), root = document.createElement("div");
+      const normalized = text.replace(/\r\n/g, "\n");
+      root.innerHTML = sanitizeHtml(source.parse(marked));
+      const before = root.cloneNode(true);
+      source.detach(root, sanitizeHtml);
+      const paragraphs = [...root.querySelectorAll("p")].filter(node => node.textContent === textOf);
+      const offsets = paragraphs.flatMap(node => (source.readingTextSpecs.get(node)?.runs || []).map(run =>
+        [run.view.at(0), run.view.at(run.display.length), run.display]));
+      const starts = [...normalized.matchAll(/<p>Runbook overview<\/p>/g)].map(match => match.index + 3);
+      const expected = admitted.map(index => [starts[index], starts[index] + textOf.length, textOf]);
+      return { name, offsets, expected, paragraphs: paragraphs.length, unchanged: root.isEqualNode(before),
+        editable: paragraphs.some(node => source.textSpecs.has(node)) };
+    });
+  }.toString() + ")()");
+  for (const value of mapping) {
+    // Even the rejected inputs must really display the same paragraph.
+    demand(value.name + " preserves the same canonical paragraph without edit authority",
+      value.paragraphs === (value.name === "repeated exact occurrences" ? 2 : 1) &&
+      value.unchanged && !value.editable, value);
+    check(value.name + " maps only proved reading offsets", isDeepStrictEqual(value.offsets, value.expected), value);
+  }
+  const alive = await proveSentinelAlive(observedMain, sentinel);
+  demand("the error sentinel detects both deliberately provoked channels", alive.console && alive.dom, alive);
+}
 
 // Keep this opt-in itinerary outside the accepted source-extraction boundaries.
 async function runReaderBranchReplacement() {

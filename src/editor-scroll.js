@@ -331,11 +331,13 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         [...(token.tokens || []), ...(token.items || [])].some(containsHtml);
       const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null, readingOnly = false) => {
         let cursor = 0;
+        let exactPrefix = true;
         for (const token of items || []) {
           if (!token.raw || token.type === 'checkbox') continue;
           let at = view.text.indexOf(token.raw, cursor);
           while (topLevel && token.type !== 'space' && at > 0 && view.text[at - 1] !== '\n') at = view.text.indexOf(token.raw, at + 1);
           if (at < 0) {
+            exactPrefix = false;
             this.warn('unmatched ' + token.type + ' child input');
             // An uncertain subtree must not borrow a later repeated occurrence.
             const lines = token.raw.split('\n').length - 1;
@@ -346,6 +348,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             continue;
           }
           const tokenView = sliceView(view, at, at + token.raw.length);
+          if (readingEnabled && topLevel && exactPrefix && at > cursor && /\S/.test(view.text.slice(cursor, at))) {
+            exactPrefix = false;
+          }
           if (!readingOnly && topLevel && at > cursor && /^\s*$/.test(view.text.slice(cursor, at)) &&
               view.exact(cursor) && view.exact(at)) {
             this.captureGaps.push({ start: view.at(cursor), end: view.at(at) });
@@ -373,6 +378,16 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
+          if (readingEnabled && exactPrefix && topLevel && token.type === 'html') {
+            // A literal paragraph can supply a reading anchor without making raw HTML editable.
+            // Do not infer the occurrence from matching rendered text after an unexplained token gap.
+            const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(tokenView.text);
+            if (literal && tokenView.exact(0) && tokenView.exact(end) &&
+                this.source.slice(tokenView.at(0), tokenView.at(end)) === tokenView.text.slice(0, end)) {
+              const start = literal[1].length + 3;
+              spans.get(token).readingHtmlParagraph = sliceView(tokenView, start, start + literal[2].length);
+            }
+          }
           if (token.type === 'markalooRawTable') {
             const descriptor = spans.get(token), read = token.syntax;
             descriptor.kind = read.kind === 'complete' ? 'table' : 'literal';
@@ -650,6 +665,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             if (nodes.length !== 1 || !node.isEqualNode(nodes[0])) {
               this.warn('opaque multi-root HTML block');
               continue;
+            }
+            const view = descriptor.readingHtmlParagraph;
+            if (view && node.parentNode === root && node.tagName === 'P' && node.childNodes.length === 1 &&
+                node.firstChild.nodeType === Node.TEXT_NODE && node.firstChild.data === view.text) {
+              this.readingTextSpecs.set(node, { text: view.text, runs: [{ from: 0, display: view.text, view }] });
             }
           }
           bindings.set(node, descriptor);

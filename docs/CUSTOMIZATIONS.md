@@ -177,6 +177,10 @@ println!("{answer}");
   per-actual-tab consumer records TOC, fragment and genuine Search jumps using
   current instant-request completion and execution permits. Ordinary scrolling,
   mode/tab switches and Notes-panel jumps do not append history.
+- A top-level literal HTML paragraph such as `<p>Runbook overview</p>` can be a
+  reading-history stop. The source mapper verifies the exact text occurrence
+  against the sanitized paragraph. It does not grant edit authority or guess a
+  stop when it cannot verify the text or its layout.
 - After manual scrolling away from a saved destination, Back first restores that
   destination. This return leaves the entire timeline and Forward branch unchanged.
   The next Back visits the older entry. The oldest saved destination can also
