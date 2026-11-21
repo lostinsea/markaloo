@@ -148,16 +148,24 @@ const secondMarkdown = publicationProducers ?
     .replace("## Native history Tail", "| Gamma value | Description |\n| --- | --- |\n| 2 | Collapsible table |\n\n## Native history Tail") :
   markdown.replace(/Native history/g, "Other history");
 if (releaseHistoryBatch || publicationProducers) fs.writeFileSync(secondFixture, secondMarkdown);
-const originCases = htmlOrigin ? ["Markdown", "HTML"].flatMap(kind => ["link", "TOC"].map(route => {
+const originCases = htmlOrigin ? [
+  ...["Markdown", "HTML"].flatMap(kind => ["link", "TOC"].map(route => [kind, route])),
+  ["HTML with first reference", "link"],
+  ["HTML with reference", "link"],
+].map(([kind, route]) => {
   const file = path.join(evidence, `${kind}-${route}.md`);
-  const origin = kind === "HTML" ? "<p>Runbook overview</p>" : "Runbook overview";
-  const source = ["# Native history Alpha", paragraph("Before", 8), origin,
-    "[Jump to Gamma](#native-history-gamma)", paragraph("Between", 8),
+  const origin = kind === "Markdown" ? "Runbook overview" : "<p>Runbook overview</p>";
+  const duplicate = kind === "HTML with reference";
+  const reference = duplicate || kind === "HTML with first reference";
+  const source = ["# Native history Alpha",
+    ...(reference ? ["[guide]: #native-history-gamma"] : []), paragraph("Before", 8),
+    ...(duplicate ? ["[guide]: /guide"] : []), origin,
+    reference ? "[Jump to Gamma][guide]" : "[Jump to Gamma](#native-history-gamma)", paragraph("Between", 8),
     "## Native history Beta", paragraph("Beta", 8),
     "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n";
   fs.writeFileSync(file, source);
   return { kind, route, file, source };
-})) : [];
+}) : [];
 const chooserSequence = htmlOrigin ? originCases.map(({ file }) => file) :
   releaseHistoryBatch ? [fixture, secondFixture, fixture] :
   publicationProducers ? [fixture, secondFixture] : [fixture];

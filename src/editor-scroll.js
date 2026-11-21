@@ -329,15 +329,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const containsHtml = token => token.type === 'html' ||
         [...(token.tokens || []), ...(token.items || [])].some(containsHtml);
+      let readingHtmlStarts, finishReadingHtml;
       const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null, readingOnly = false) => {
         let cursor = 0;
-        let exactPrefix = true;
         for (const token of items || []) {
           if (!token.raw || token.type === 'checkbox') continue;
           let at = view.text.indexOf(token.raw, cursor);
           while (topLevel && token.type !== 'space' && at > 0 && view.text[at - 1] !== '\n') at = view.text.indexOf(token.raw, at + 1);
           if (at < 0) {
-            exactPrefix = false;
             this.warn('unmatched ' + token.type + ' child input');
             // An uncertain subtree must not borrow a later repeated occurrence.
             const lines = token.raw.split('\n').length - 1;
@@ -348,9 +347,6 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             continue;
           }
           const tokenView = sliceView(view, at, at + token.raw.length);
-          if (readingEnabled && topLevel && exactPrefix && at > cursor && /\S/.test(view.text.slice(cursor, at))) {
-            exactPrefix = false;
-          }
           if (!readingOnly && topLevel && at > cursor && /^\s*$/.test(view.text.slice(cursor, at)) &&
               view.exact(cursor) && view.exact(at)) {
             this.captureGaps.push({ start: view.at(cursor), end: view.at(at) });
@@ -378,9 +374,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
-          if (readingEnabled && exactPrefix && topLevel && token.type === 'html') {
+          if (topLevel && readingHtmlStarts?.get(token) === at) {
             // A literal paragraph can supply a reading anchor without making raw HTML editable.
-            // Do not infer the occurrence from matching rendered text after an unexplained token gap.
             const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(tokenView.text);
             if (literal && tokenView.exact(0) && tokenView.exact(end) &&
                 this.source.slice(tokenView.at(0), tokenView.at(end)) === tokenView.text.slice(0, end)) {
@@ -485,6 +480,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const hooks = new marked.Hooks();
       hooks.processAllTokens = tokens => {
+        finishReadingHtml?.(rootView.text.length, tokens);
         this.captureGaps = [];
         locate(tokens, rootView, true);
         return tokens;
@@ -545,7 +541,33 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       this.renderMapping = coarseHtml => {
         this.coarseHtml = coarseHtml;
         this.descriptors = [];
-        return window.MarkalooTableMarked.create(marked, { annotate }).parse(this.text, { renderer, hooks });
+        const parser = window.MarkalooTableMarked.create(marked, { annotate });
+        readingHtmlStarts = finishReadingHtml = null;
+        if (readingEnabled && /<p>/i.test(rootView.text)) {
+          // Use Marked's root consumption, including definitions it omits from the token list.
+          readingHtmlStarts = new WeakMap();
+          let previous, exactInput = false;
+          finishReadingHtml = (end, tokens) => {
+            if (!exactInput || !previous || previous.tokens !== tokens || tokens.length !== previous.count + 1 ||
+                tokens[previous.count - 1] !== previous.last) return;
+            const token = tokens.at(-1), { start } = previous;
+            if (token.type === 'html' && end - start === token.raw.length && rootView.text.startsWith(token.raw, start)) {
+              readingHtmlStarts.set(token, start);
+            }
+          };
+          parser.use({ extensions: [{
+            name: 'markalooReadingHtmlConsumption',
+            level: 'block',
+            tokenizer(remaining, tokens) {
+              if (tokens !== this.lexer.tokens) return;
+              if (!previous) exactInput = remaining === rootView.text && tokens.length === 0;
+              const start = rootView.text.length - remaining.length;
+              finishReadingHtml(start, tokens);
+              previous = { start, tokens, count: tokens.length, last: tokens.at(-1) };
+            },
+          }] });
+        }
+        return parser.parse(this.text, { renderer, hooks });
       };
       const html = window.MarkalooTableMarked.create(marked).parse(this.text);
       try {

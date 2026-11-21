@@ -2005,25 +2005,18 @@ const READING_LOCATION_REVERTS = [
     id: "READING-HISTORY-HTML-ORIGIN",
     what: "lose the exact reading origin of a same-document jump from a literal HTML paragraph",
     file: EDITOR_SCROLL, suite: "test:reading-history-html-origin",
-    from: "        let cursor = 0;\n        let exactPrefix = true;\n",
-    to: "        let cursor = 0;\n",
+    from: "      let readingHtmlStarts, finishReadingHtml;\n",
+    to: "",
     // Restore the release source, not a synthetic refusal in the jump consumer.
     also: [
       {
-        from: "            exactPrefix = false;\n            this.warn('unmatched ' + token.type + ' child input');",
-        to: "            this.warn('unmatched ' + token.type + ' child input');",
-      },
-      {
-        from: "          if (readingEnabled && topLevel && exactPrefix && at > cursor && /\\S/.test(view.text.slice(cursor, at))) {\n" +
-          "            exactPrefix = false;\n" +
-          "          }\n",
+        from: "        finishReadingHtml?.(rootView.text.length, tokens);\n",
         to: "",
       },
       {
         from: [
-          "          if (readingEnabled && exactPrefix && topLevel && token.type === 'html') {",
+          "          if (topLevel && readingHtmlStarts?.get(token) === at) {",
           "            // A literal paragraph can supply a reading anchor without making raw HTML editable.",
-          "            // Do not infer the occurrence from matching rendered text after an unexplained token gap.",
           "            const literal = /^( {0,3})<p>([^<\\n\\0]+)<\\/p>[ \\t\\n]*$/i.exec(tokenView.text);",
           "            if (literal && tokenView.exact(0) && tokenView.exact(end) &&",
           "                this.source.slice(tokenView.at(0), tokenView.at(end)) === tokenView.text.slice(0, end)) {",
@@ -2033,6 +2026,38 @@ const READING_LOCATION_REVERTS = [
           "          }\n",
         ].join("\n"),
         to: "",
+      },
+      {
+        from: [
+          "        const parser = window.MarkalooTableMarked.create(marked, { annotate });",
+          "        readingHtmlStarts = finishReadingHtml = null;",
+          "        if (readingEnabled && /<p>/i.test(rootView.text)) {",
+          "          // Use Marked's root consumption, including definitions it omits from the token list.",
+          "          readingHtmlStarts = new WeakMap();",
+          "          let previous, exactInput = false;",
+          "          finishReadingHtml = (end, tokens) => {",
+          "            if (!exactInput || !previous || previous.tokens !== tokens || tokens.length !== previous.count + 1 ||",
+          "                tokens[previous.count - 1] !== previous.last) return;",
+          "            const token = tokens.at(-1), { start } = previous;",
+          "            if (token.type === 'html' && end - start === token.raw.length && rootView.text.startsWith(token.raw, start)) {",
+          "              readingHtmlStarts.set(token, start);",
+          "            }",
+          "          };",
+          "          parser.use({ extensions: [{",
+          "            name: 'markalooReadingHtmlConsumption',",
+          "            level: 'block',",
+          "            tokenizer(remaining, tokens) {",
+          "              if (tokens !== this.lexer.tokens) return;",
+          "              if (!previous) exactInput = remaining === rootView.text && tokens.length === 0;",
+          "              const start = rootView.text.length - remaining.length;",
+          "              finishReadingHtml(start, tokens);",
+          "              previous = { start, tokens, count: tokens.length, last: tokens.at(-1) };",
+          "            },",
+          "          }] });",
+          "        }",
+          "        return parser.parse(this.text, { renderer, hooks });",
+        ].join("\n"),
+        to: "        return window.MarkalooTableMarked.create(marked, { annotate }).parse(this.text, { renderer, hooks });",
       },
       {
         from: [
@@ -2048,6 +2073,8 @@ const READING_LOCATION_REVERTS = [
     expect: [
       /^HTML link first jump enables Back only$/,
       /^HTML TOC first jump enables Back only$/,
+      /^HTML with first reference link first jump enables Back only$/,
+      /^HTML with reference link first jump enables Back only$/,
       /^repeated exact occurrences maps only proved reading offsets$/,
     ],
     mustPass: [
@@ -2058,6 +2085,12 @@ const READING_LOCATION_REVERTS = [
       /^HTML TOC opens a distinct admitted document$/,
       /^HTML TOC starts on the rendered paragraph with empty history$/,
       /^HTML TOC first jump genuinely reaches its heading$/,
+      /^HTML with first reference link opens a distinct admitted document$/,
+      /^HTML with first reference link starts on the rendered paragraph with empty history$/,
+      /^HTML with first reference link first jump genuinely reaches its heading$/,
+      /^HTML with reference link opens a distinct admitted document$/,
+      /^HTML with reference link starts on the rendered paragraph with empty history$/,
+      /^HTML with reference link first jump genuinely reaches its heading$/,
       /^Markdown link first jump enables Back only$/,
       /^Markdown link Back returns to the exact paragraph and enables Forward only$/,
       /^Markdown link Forward returns to the exact heading and enables Back only$/,
@@ -2074,7 +2107,7 @@ const READING_LOCATION_REVERTS = [
       /^product source hashes are unchanged through the entire native invocation$/,
       /^only the exact fixture chooser sequence was consumed and none remains armed$/,
     ],
-    expectedFailureCount: 3,
+    expectedFailureCount: 5,
   },
   {
     id: "R1499", what: "discard the existing atom geometry gate's bounded failure detail",
