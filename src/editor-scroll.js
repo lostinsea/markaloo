@@ -1674,8 +1674,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   }
   function captureVisibleText(scroller, onModeCharacter = null, modePseudoBefore = null) {
     lastReadingCaptureFailure = null;
+    return scanVisibleText(scroller, currentReadingPublication(), onModeCharacter, modePseudoBefore);
+  }
+  function scanVisibleText(scroller, publication, onModeCharacter, modePseudoBefore) {
     const entered = readingEpoch, enteredBinding = bindingEpoch;
-    const publication = currentReadingPublication();
     let sourceRefusal = publication ? null : readingFailure('unavailable', 'presentation-unbound-or-stale');
     if (sourceRefusal && !onModeCharacter) return sourceRefusal;
     const groups = new Map(publication?.groups.map(group => [group.element, group])), contents = new Map(), layouts = new Map();
@@ -1683,7 +1685,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       // The unbound mode scan can recognize heading decoration without a Source publication.
       const layout = readingLayout(node.parentElement, scroller, publication, layouts,
         publication ? null : modePseudoBefore, !!onModeCharacter);
-      if (!layout) return sourceRefusal || readingFailure('unsupported', 'unverifiable-clipping-chain');
+      if (!layout) {
+        // A partial publication may not own an earlier heading's decoration.
+        // Recheck from the top for mode alignment only; it cannot grant a reading receipt.
+        if (publication && onModeCharacter && entered === readingEpoch && enteredBinding === bindingEpoch) {
+          scanVisibleText(scroller, null, onModeCharacter, modePseudoBefore);
+        }
+        return sourceRefusal || readingFailure('unsupported', 'unverifiable-clipping-chain');
+      }
       // Skipping this box permits mode geometry, not an exact-source receipt.
       if (layout.offscreenUnowned) sourceRefusal ??= readingFailure('unsupported', 'unverifiable-clipping-chain');
       if (layout.hidden) continue;
