@@ -2048,7 +2048,7 @@ const READING_LOCATION_REVERTS = [
       /^html-only (?:manual position|restoration producer) passage 0: switch 1 openEditorBtn (?:preserves visible passage|keeps intentional top)$/,
       /^html-offscreen (?:manual position|restoration producer) passage (?:50|96): offscreen owner permits mode-only character$/,
       /^partial HTML publication permits mode-only character without history authority$/,
-      /^forced entry keeps exact interior character(?: alignment)?$/,
+      /^forced entry keeps (?:exact interior character|interior character alignment)$/,
     ],
     mustPass: [
       /^markdown manual position passage 50: switch 1 openEditorBtn preserves visible passage$/,
