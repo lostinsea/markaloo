@@ -1683,6 +1683,7 @@ async function injectActualProbe(f, site, enabled, options = {}) {
   // The receiving VM must not inherit Node's selector or hand-built probe locals.
   const sender = vm.createContext({
     releaseHistoryBatch: enabled,
+    ordered: options.ordered ?? false,
     exec(code) {
       emitted.push(code);
       if (options.dropArgument) {
@@ -1840,14 +1841,16 @@ function assertNonreleaseProbe(f, api) {
   assert.equal(api.dispose(), true);
 }
 
-test("the separate HTML-origin probe always omits the release selector", async () => {
+test("the separate HTML-origin probe always disables the release selector", async () => {
   assert.deepEqual(htmlOriginProbeSites.map(site => site.trim()), [
-    'await exec("(" + installHistoryProbe.toString() + ")()");',
+    'await exec("(" + installHistoryProbe.toString() + `)(false,${ordered})`);',
   ]);
-  const f = injectedReleaseFixture();
   // A true sender-side selector must not enable release-only methods at this site.
-  const api = await injectActualProbe(f, htmlOriginProbeSites[0], true);
-  assertNonreleaseProbe(f, api);
+  for (const ordered of [false, true]) {
+    const f = injectedReleaseFixture();
+    const api = await injectActualProbe(f, htmlOriginProbeSites[0], true, { ordered });
+    assertNonreleaseProbe(f, api);
+  }
 });
 
 for (const [index, site] of probeInstallationSites.entries()) {
@@ -1897,8 +1900,8 @@ for (const [method, args] of [
   ["remember", ["point", { version: 1 }]], ["armIssuedBack", []], ["armCanceledRequest", []],
 ]) {
   test("the actual injected " + method + " regression reproduces the lost Node closure when reverted", async () => {
-    const mutant = installedProbeSource.replace("function installHistoryProbe(releaseHistoryBatch = false)",
-      "function installHistoryProbe()");
+    const mutant = installedProbeSource.replace("function installHistoryProbe(releaseHistoryBatch = false, ",
+      "function installHistoryProbe(");
     assert.notEqual(mutant, installedProbeSource);
     const f = injectedReleaseFixture();
     const api = await injectActualProbe(f, probeInstallationSites[0], true, { source: mutant });

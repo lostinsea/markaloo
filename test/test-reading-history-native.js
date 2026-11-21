@@ -153,23 +153,32 @@ const originCases = htmlOrigin ? [
   ["HTML with first reference", "link"],
   ["HTML with reference", "link"],
   ["HTML with adjacent duplicate", "link"],
+  ["HTML before a hidden heading twin", "link"],
+  ["HTML before a hidden heading twin", "TOC"],
+  ["Markdown across a hidden heading twin", "TOC"],
 ].map(([kind, route]) => {
   const file = path.join(evidence, `${kind}-${route}.md`);
   const origin = kind === "Markdown" ? "Runbook overview" : "<p>Runbook overview</p>";
   const adjacent = kind === "HTML with adjacent duplicate";
+  const ordered = kind.endsWith("hidden heading twin");
+  const start = kind === "Markdown across a hidden heading twin";
   const duplicate = kind === "HTML with reference";
   const reference = adjacent || duplicate || kind === "HTML with first reference";
   const definition = "[guide]: #native-history-gamma";
   // No blank line: a separate space token would advance the legacy mapper past the hidden copy.
   const originBlock = adjacent ? `${definition}\n[guide]: /guide "title\n${origin}\nend"\n${origin}` : origin;
-  const source = ["# Native history Alpha",
+  const source = ordered ? ["# Start", paragraph("Before", 8),
+    `${definition}\n[guide]: /guide "title\n${origin}\n\n## Middle\n\nend"\n${origin}`,
+    "## Middle", "[Jump to Gamma][guide]", paragraph("Between", 8),
+    "## Native history Gamma", paragraph("Gamma", 8), "## Destination", paragraph("After", 8)].join("\n\n") + "\n" :
+    ["# Native history Alpha",
     ...(reference && !adjacent ? [definition] : []), paragraph("Before", 8),
     ...(duplicate ? ["[guide]: /guide"] : []), originBlock,
     reference ? "[Jump to Gamma][guide]" : "[Jump to Gamma](#native-history-gamma)", paragraph("Between", 8),
     "## Native history Beta", paragraph("Beta", 8),
     "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n";
   fs.writeFileSync(file, source);
-  return { kind, route, file, source, adjacent };
+  return { kind, route, file, source, adjacent, ordered, start };
 }) : [];
 const chooserSequence = htmlOrigin ? originCases.map(({ file }) => file) :
   releaseHistoryBatch ? [fixture, secondFixture, fixture] :
@@ -418,7 +427,7 @@ async function inspectCheckpoint(checkpoint, point, imageName, logical, action) 
 }
 
 // This function is serialized into the real renderer; Node --check parses its body too.
-function installHistoryProbe(releaseHistoryBatch = false) {
+function installHistoryProbe(releaseHistoryBatch = false, observeUnpublished = false) {
   const ensure = (condition, message) => { if (!condition) throw new Error(message); };
   const realControls = window.readingHistoryControls, adapter = window.readingLocationAdapter;
   const controlsState = readingHistoryControlState, realJump = scrollElementIntoView;
@@ -429,7 +438,7 @@ function installHistoryProbe(releaseHistoryBatch = false) {
   let issueHook = null, issuedBack = null, canceledRequest = null;
   ensure(controlsState?.core === realControls, "The installed toolbar must own the real history core");
   ensure(Object.isFrozen(adapter) && adapter.capture === captureReadingLocation &&
-    typeof adapter.restore === "function" && adapter.available(),
+    typeof adapter.restore === "function" && (adapter.available() || observeUnpublished),
     "The production location adapter must be installed, not a substitute");
   function intact() {
     ensure(window.readingHistoryControls === realControls && window.readingLocationAdapter === adapter &&
@@ -1315,10 +1324,11 @@ app.whenReady().then(async () => {
 
 async function runHtmlOrigin() {
   const api = method => exec("window.__readingHistoryNative." + method);
-  const atOrigin = "(" + function inspectOrigin(place) {
-    const paragraphs = [...viewer.querySelectorAll("p")].filter(element => element.textContent === "Runbook overview");
-    if (paragraphs.length !== 1) throw new Error("Expected one rendered Runbook overview paragraph");
-    const range = document.createRange(), node = paragraphs[0].firstChild;
+  const atOrigin = "(" + function inspectOrigin(place, start) {
+    const text = start ? "Start" : "Runbook overview";
+    const matches = [...viewer.querySelectorAll(start ? "h1" : "p")].filter(element => element.textContent === text);
+    if (matches.length !== 1) throw new Error("Expected one rendered " + text);
+    const range = document.createRange(), node = matches[0].firstChild;
     range.setStart(node, 0); range.setEnd(node, 1);
     const scroller = getViewerScroller(), bounds = scroller.getBoundingClientRect();
     const top = () => (range.getBoundingClientRect().top - bounds.top) / scrollerScale(scroller) - scroller.clientTop;
@@ -1327,7 +1337,7 @@ async function runHtmlOrigin() {
     return { top: top(), scrollTop: scroller.scrollTop, result: { status: result.status, reason: result.reason,
       text: result.location?.text } };
   }.toString() + ")";
-  for (const [index, { kind, route, file, source, adjacent }] of originCases.entries()) {
+  for (const [index, { kind, route, file, source, adjacent, ordered, start }] of originCases.entries()) {
     const label = `${kind} ${route}`;
     const allowance = { window: observedMain, fixture: file, consumed: false };
     chooserAllowance = allowance;
@@ -1336,20 +1346,24 @@ async function runHtmlOrigin() {
       originalMarkdown===${JSON.stringify(source)} && readingDisplay?.source?.source===originalMarkdown &&
       viewer.querySelector('#native-history-gamma')?.textContent==='Native history Gamma' &&
       !loadingScreen.classList.contains('active') && readingRenderCompletion===null &&
-      window.readingLocationAdapter.available()`);
+      ${ordered ? "readingDisplay.finalized" : "window.readingLocationAdapter.available()"}`);
     demand(label + " opens a distinct admitted document", allowance.consumed && chooserCalls === index + 1);
     await exec(`if (indexPanel.classList.contains('visible') !== ${route === "TOC"})
       document.getElementById('toggleTocBtn').click();true`);
     await waitReady(label + " stable drawer layout", `indexPanel.classList.contains('visible')===${route === "TOC"} &&
       !indexPanel.getAnimations().some(animation => animation.playState === 'running') &&
-      window.readingLocationAdapter.available()`);
-    await exec(atOrigin + "(true)");
-    const origin = await exec(atOrigin + "(false)");
-    await exec("(" + installHistoryProbe.toString() + ")()");
+      !window.CustomTabs.__scrollRestorePending() &&
+      ${ordered ? "readingDisplay.finalized" : "window.readingLocationAdapter.available()"}`);
+    if (!start) await exec(atOrigin + "(true,false)");
+    const origin = await exec(atOrigin + `(false,${start})`);
+    await exec("(" + installHistoryProbe.toString() + `)(false,${ordered})`);
     const empty = [false, false, false, false], backOnly = [true, false, true, false];
-    demand(label + " starts on the rendered paragraph with empty history",
-      origin.scrollTop > 100 && Math.abs(origin.top - 3) <= 1 && isDeepStrictEqual(await api("originStates()"), empty), origin);
-    const target = route === "TOC" ? "beta" : "gamma";
+    demand(label + (start ? " starts on the rendered Start heading with empty history" :
+      " starts on the rendered paragraph with empty history"),
+      (start ? origin.scrollTop <= 1 && origin.top >= 0 : origin.scrollTop > 100 && Math.abs(origin.top - 3) <= 1) &&
+      isDeepStrictEqual(await api("originStates()"), empty), origin);
+    const heading = start ? "Destination" : ordered || route === "link" ? "Native history Gamma" : "Native history Beta";
+    const headingStart = source.lastIndexOf(heading);
     let record;
     if (route === "link") {
       const point = await exec(`(() => {
@@ -1357,7 +1371,8 @@ async function runHtmlOrigin() {
         const rect = anchor.getBoundingClientRect();
         const x = Math.round((rect.left + rect.right) / 2), y = Math.round((rect.top + rect.bottom) / 2);
         if (document.elementFromPoint(x, y) !== anchor) throw new Error("Fragment link is not hit-testable");
-        if (${adjacent}) {
+        if (${adjacent || ordered}) {
+          window.__htmlOriginTrustedClick = false;
           anchor.addEventListener("click", event => { window.__htmlOriginTrustedClick = event.isTrusted; }, { once: true });
         }
         return { x, y };
@@ -1366,26 +1381,34 @@ async function runHtmlOrigin() {
       observedContents.sendInputEvent({ ...point, type: "mouseUp", button: "left", clickCount: 1 });
       await waitReady(label + " actual fragment dispatch", "window.__readingHistoryNative.releaseCounts().jumps===1");
       record = await api("fragmentJump(0)");
-      if (adjacent) {
+      if (adjacent || ordered) {
         demand(label + " first fragment link click is trusted", await exec("window.__htmlOriginTrustedClick === true"));
       }
     } else {
-      ({ record } = await api("jump('Native history Beta')"));
+      ({ record } = await api(`jump(${JSON.stringify(heading)})`));
     }
-    const arrival = await api("save('destination')");
-    const reached = await api("position('destination')");
+    const destination = ordered ? await exec(`(${function visibleHeading(text) {
+      const scroller = getViewerScroller(), bounds = scroller.getBoundingClientRect();
+      const target = [...viewer.querySelectorAll("h2")].find(node => node.textContent === text);
+      const rect = target?.getBoundingClientRect(), captured = window.readingLocationAdapter.capture();
+      return { visible: !!rect && rect.top < bounds.bottom && rect.bottom > bounds.top,
+        scrollTop: scroller.scrollTop, start: captured.location?.text.start, reason: captured.reason };
+    }.toString()})(${JSON.stringify(heading)})`) : null;
+    const arrival = !ordered || destination.start !== undefined ? await api("save('destination')") : null;
+    const reached = arrival ? await api("position('destination')") : null;
     demand(label + " first jump genuinely reaches its heading", record.status === "completed" &&
       record.scope === "request-offsets" && record.travel === "observed-travel" &&
-      arrival.text.start === source.indexOf(`Native history ${target === "beta" ? "Beta" : "Gamma"}`) &&
-      reached.scrollTop > origin.scrollTop + 100, { record, reached });
+      (ordered ? destination.visible && destination.scrollTop > origin.scrollTop + 100 :
+        arrival.text.start === headingStart && reached.scrollTop > origin.scrollTop + 100), { record, reached, destination });
+    if (ordered) check(label + " captures the exact destination", arrival?.text.start === headingStart, destination);
     const states = await api("originStates()");
-    const originStart = source.lastIndexOf("Runbook overview");
+    const originStart = start ? source.indexOf("Start") : source.lastIndexOf("Runbook overview");
     const canReturn = isDeepStrictEqual(states, backOnly);
     check(label + " first jump enables Back only", canReturn, { states, origin });
-    if (canReturn) {
+    if (canReturn && reached) {
       await api("history(-1)");
-      const restored = await exec(atOrigin + "(false)");
-      check(label + " Back returns to the exact paragraph and enables Forward only",
+      const restored = await exec(atOrigin + `(false,${start})`);
+      check(label + ` Back returns to the exact ${start ? "Start heading" : "paragraph"} and enables Forward only`,
         restored.result.status === "captured" && restored.result.text.start === originStart &&
         Math.abs(restored.top - origin.top) <= 1 && Math.abs(restored.scrollTop - origin.scrollTop) <= 1 &&
         isDeepStrictEqual(await api("originStates()"), [false, true, false, true]), { origin, restored });
@@ -1395,7 +1418,7 @@ async function runHtmlOrigin() {
         Math.abs(forward.scrollTop - reached.scrollTop) <= 1 && isDeepStrictEqual(await api("originStates()"), backOnly),
         { reached, forward });
     } else {
-      console.log(`BLOCKED ${label} Back and Forward roundtrip: Back did not enable`);
+      console.log(`BLOCKED ${label} Back and Forward roundtrip: Back or exact destination unavailable`);
     }
     await api("dispose()");
   }
@@ -1431,6 +1454,39 @@ async function runHtmlOrigin() {
       value.unchanged && !value.editable, value);
     check(value.name + " maps only proved reading offsets", isDeepStrictEqual(value.offsets, value.expected), value);
   }
+  const [mixed, conflict] = await exec("(" + function mapHiddenTitle() {
+    const map = (block, tag) => {
+      const text = `# Start\n\n[guide]: /one\n[guide]: /two "title\n<p>Runbook overview</p>\n\n${block}\n\nend"\n<p>Runbook overview</p>\n\n${block}\n\n## Destination\n`;
+      const source = editorScroll.source(text), root = document.createElement("div");
+      root.innerHTML = sanitizeHtml(source.parse(marked));
+      const before = root.cloneNode(true), bindings = source.detach(root, sanitizeHtml);
+      const paragraph = root.querySelector("p"), middle = root.querySelector(tag);
+      const offsets = (map, node) => (map.get(node)?.runs || []).map(({ view, display }) =>
+        [view.at(0), view.at(display.length), display]);
+      return { unchanged: root.isEqualNode(before), order: [...root.children].map(node => node.textContent),
+        html: offsets(source.readingTextSpecs, paragraph), heading: offsets(source.readingTextSpecs, middle),
+        htmlEdit: offsets(source.textSpecs, paragraph), headingEdit: offsets(source.textSpecs, middle),
+        headingBinding: bindings.get(middle)?.start, hiddenHeading: text.indexOf(block),
+        prefix: block.indexOf("Middle"), destination: offsets(source.readingTextSpecs, root.lastElementChild),
+        destinationStart: text.lastIndexOf("Destination"),
+        visibleHtml: text.lastIndexOf("Runbook overview"), visibleHeading: text.lastIndexOf("Middle") };
+    };
+    return [map("## Middle", "h2"), map("> Middle", "blockquote")];
+  }.toString() + ")()");
+  demand("hidden heading twin preserves sanitized DOM and legacy edit and search bindings", mixed.unchanged &&
+    isDeepStrictEqual(mixed.order, ["Start", "Runbook overview", "Middle", "Destination"]) &&
+    mixed.htmlEdit.length === 0 && mixed.headingBinding === mixed.hiddenHeading &&
+    isDeepStrictEqual(mixed.headingEdit, [[mixed.hiddenHeading + 3, mixed.hiddenHeading + 9, "Middle"]]), mixed);
+  check("hidden heading twin maps the visible HTML paragraph", isDeepStrictEqual(mixed.html,
+    [[mixed.visibleHtml, mixed.visibleHtml + 16, "Runbook overview"]]), mixed);
+  check("hidden heading twin maps the visible Markdown heading", isDeepStrictEqual(mixed.heading,
+    [[mixed.visibleHeading, mixed.visibleHeading + 6, "Middle"]]), mixed);
+  demand("unproved blockquote neighbor uses the legacy offsets in an unchanged DOM", conflict.unchanged &&
+    isDeepStrictEqual(conflict.order, ["Start", "Runbook overview", "\nMiddle\n", "Destination"]) &&
+    isDeepStrictEqual(conflict.heading, [[conflict.hiddenHeading + conflict.prefix,
+      conflict.hiddenHeading + conflict.prefix + 6, "Middle"]]), conflict);
+  check("unproved blockquote neighbor does not add an out-of-order HTML reading run", conflict.html.length === 0 &&
+    isDeepStrictEqual(conflict.destination, [[conflict.destinationStart, conflict.destinationStart + 11, "Destination"]]), conflict);
   const alive = await proveSentinelAlive(observedMain, sentinel);
   demand("the error sentinel detects both deliberately provoked channels", alive.console && alive.dom, alive);
 }
