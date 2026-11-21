@@ -1171,6 +1171,7 @@ async function sourceTests(core = false) {
   }
   const { closedBacktickFenceEnd } = context.window.MarkalooTableMarked;
   const rawHtmlFence = /@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g;
+  const relocate = (text, offset) => closedBacktickFenceEnd(marked, text, offset, rawHtmlFence);
   for (const [label, exact, after] of [
     ["longer closing fence beside literal backticks, with BOM and CRLF",
       "\uFEFF````text\r\n```\r\nBody\r\n`````\r\n\r\nNext", "\nNext"],
@@ -1181,9 +1182,34 @@ async function sourceTests(core = false) {
     ["nested quoted fence", "> Earlier prose\n>\n> > ```text\n> > Body\n> > ```\n\nNext", "\nNext"],
   ]) {
     const text = lf(exact), offset = text.indexOf("Body");
-    const actual = closedBacktickFenceEnd(marked, text, offset, rawHtmlFence);
+    const actual = relocate(text, offset);
     check("Raw Insert redirects only a real closed fence: " + label,
       actual === (after ? text.indexOf(after) : offset), { actual, offset });
+  }
+  for (const [label, before, after = "", target = "Body"] of [
+    ["last list item", "- earlier\n- ```js\n  Body\n  ```\n", "\nTail\n"],
+    ["list inside quote", "> 12. ```js\n>     Body\n>     ```\n", "\nTail\n"],
+    ["quote inside list", "- Intro\n  > ```js\n  > Body\n  > ```\n", "\nTail\n"],
+    ["nested list", "- Intro\n  - ```js\n    Body\n    ```\n", "\nTail\n"],
+    ["list closer with trailing spaces", "- ```js\n  Body\n  ```  \n", "\nTail\n"],
+    ["quoted EOF with LF", "> ```js\n> Body\n> ```\n"],
+    ["quoted EOF without LF", "> ```js\n> Body\n> ```"],
+    ["nonterminal list item", "- ```js\n  Body\n  ```\n- Following item\n", "\nTail\n", null],
+    ["unclosed fence in final item", "- ```js\n  Body\n", "", null],
+    ["gap after list", "- ```js\n  Body\n  ```\n", "\nTail\n", ""],
+  ]) {
+    const text = before + after, model = cells.index(text, marked, protect);
+    const caret = target === "" ? before.length : text.indexOf(target ?? "Body");
+    const actual = relocate(text, caret);
+    let inserted, error;
+    try { inserted = cells.insertTable(model, actual, [["Header"], [""]], marked, protect, cells.Mode.INSERT); }
+    catch (failure) { error = failure.message; }
+    const pad = before.endsWith("\n") ? "\n" : "\n\n";
+    const table = "| Header |\n| --- |\n|  |";
+    check("Raw Insert preserves terminal container ownership and exact source: " + label,
+      target === null ? actual === caret && error === "tableCells.insertPosition" :
+        actual === before.length && inserted?.source === before + pad + table + (after ? "\n" : "") + after,
+      { actual, caret, error, inserted });
   }
   // Count complete-suffix searches instead of depending on a machine's elapsed time.
   const observeHtmlSearches = vm.runInContext(`(pattern, action) => {
@@ -1210,6 +1236,23 @@ async function sourceTests(core = false) {
       () => closedBacktickFenceEnd(marked, text, target, rawHtmlFence));
     check("Raw Insert keeps the correct fence ownership " + label, observed.offset === (redirected ?? target), observed);
     check("Raw Insert does not repeatedly search the document suffix " + label, observed.searches <= 2, observed);
+  }
+  const paragraphs = "Synthetic paragraph.\n\n".repeat(200);
+  const opaqueThenFence = "@@@html\n```not-a-fence\nopaque\n@@@\n\n```js\nBody\n```";
+  const quote = value => value.split("\n").map(line => line ? "> " + line : ">").join("\n");
+  for (const [label, prefix, block] of [
+    ["one quotation frame", "", quote(paragraphs + opaqueThenFence)],
+    ["successive quotation calls sharing one token array", "> Prelude\nlazy continuation\n",
+      quote(paragraphs + opaqueThenFence)],
+    ["separate sibling list item frames", "- " + paragraphs.trimEnd().replace(/\n(?=S)/g, "\n  ") + "\n",
+      "- " + (paragraphs + opaqueThenFence).replace(/\n(?=[^\n])/g, "\n  ")],
+  ]) {
+    const text = prefix + block + "\n\nTail\n", body = text.lastIndexOf("Body");
+    const observed = observeHtmlSearches(rawHtmlFence.source, () => relocate(text, body));
+    check("Raw Insert keeps nested opaque ownership: " + label, observed.offset === text.indexOf("\n\nTail") + 1,
+      observed);
+    check("Raw Insert reuses opaque lookahead within each nested lexer call: " + label, observed.searches <= 6,
+      observed);
   }
   const rawTable = "| Header | Other |\r\n| --- | --- |\r\n| ```json\r\n{}\r\n``` | value |\r\n";
   const protectedPrefix = hiddenOpener.replace(/\n/g, "\r\n") +
@@ -8659,6 +8702,14 @@ require("./test-userdata-isolation");
       evidence: "insert-after-quoted-crlf-fence",
       expected: table => quoted + "\r\n" + table + "\r\n" + quoteTail,
     });
+    const list = "# Terminal list fence\n\n- Earlier item\n- ```js\n  let x = 1;\n  ```\n";
+    const listTail = "\nTail\n";
+    await placeTable("redirect after a closed fence in the last list item",
+      await fresh("insert-terminal-list-fence", list + listTail), {
+        text: "- ```js", insertionAt: list.length, caretOnTarget: true,
+        evidence: "insert-after-terminal-list-fence",
+        expected: table => list + "\n" + table + "\n" + listTail,
+      });
     const gaps = await fresh("insert-typed-gaps", [
       "# Placement", "", "```text", "First", "```", "", "Gap before heading.", "",
       "## Next", "", "```js", "const second = 2;", "```", "", "Gap before tail.", "", "## Tail", "", "End.",
