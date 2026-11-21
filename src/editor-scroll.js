@@ -329,7 +329,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const containsHtml = token => token.type === 'html' ||
         [...(token.tokens || []), ...(token.items || [])].some(containsHtml);
-      let readingHtmlStarts, finishReadingHtml;
+      let readingRootSpans, finishReadingRoot;
       const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null, readingOnly = false) => {
         let cursor = 0;
         for (const token of items || []) {
@@ -374,15 +374,25 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
-          const readingHtmlAt = topLevel ? readingHtmlStarts?.get(token) : undefined;
-          if (readingHtmlAt !== undefined) {
-            // A skipped reference title can contain the same HTML. Use the parser's span only for reading.
-            const readingView = sliceView(view, readingHtmlAt, readingHtmlAt + token.raw.length);
-            const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(readingView.text);
-            if (literal && readingView.exact(0) && readingView.exact(end) &&
-                this.source.slice(readingView.at(0), readingView.at(end)) === readingView.text.slice(0, end)) {
-              const start = literal[1].length + 3;
-              spans.get(token).readingHtmlParagraph = sliceView(readingView, start, start + literal[2].length);
+          const proved = topLevel && readingRootSpans?.get(token);
+          if (proved && view.text.slice(proved.start, proved.end) === token.raw &&
+              (token.type === 'html' || proved.start !== at)) {
+            const readingView = sliceView(view, proved.start, proved.end);
+            const exactBlock = candidate => candidate.exact(0) && candidate.exact(end) &&
+              this.source.slice(candidate.at(0), candidate.at(end)) === token.raw.slice(0, end);
+            const descriptor = spans.get(token);
+            if (token.type === 'html') {
+              const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(readingView.text);
+              if (literal && exactBlock(readingView)) {
+                const start = literal[1].length + 3;
+                descriptor.readingHtmlParagraph = sliceView(readingView, start, start + literal[2].length);
+              }
+            } else {
+              // Keep the inline projection, but place it in the occurrence the parser consumed.
+              // Null refuses reading if either copy cannot be tied to the exact normalized block.
+              descriptor.readingDisplacement = exactBlock(tokenView) && exactBlock(readingView) ? {
+                start: tokenView.at(0), end: tokenView.at(end), shift: readingView.at(0) - tokenView.at(0),
+              } : null;
             }
           }
           if (token.type === 'markalooRawTable') {
@@ -482,7 +492,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const hooks = new marked.Hooks();
       hooks.processAllTokens = tokens => {
-        finishReadingHtml?.(rootView.text.length, tokens);
+        finishReadingRoot?.(rootView.text.length, tokens);
         this.captureGaps = [];
         locate(tokens, rootView, true);
         return tokens;
@@ -544,27 +554,28 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         this.coarseHtml = coarseHtml;
         this.descriptors = [];
         const parser = window.MarkalooTableMarked.create(marked, { annotate });
-        readingHtmlStarts = finishReadingHtml = null;
+        readingRootSpans = finishReadingRoot = null;
         if (readingEnabled && /<p>/i.test(rootView.text)) {
           // Use Marked's root consumption, including definitions it omits from the token list.
-          readingHtmlStarts = new WeakMap();
+          readingRootSpans = new WeakMap();
           let previous, exactInput = false;
-          finishReadingHtml = (end, tokens) => {
+          finishReadingRoot = (end, tokens) => {
             if (!exactInput || !previous || previous.tokens !== tokens || tokens.length !== previous.count + 1 ||
                 tokens[previous.count - 1] !== previous.last) return;
             const token = tokens.at(-1), { start } = previous;
-            if (token.type === 'html' && end - start === token.raw.length && rootView.text.startsWith(token.raw, start)) {
-              readingHtmlStarts.set(token, start);
+            if (['html', 'heading', 'paragraph'].includes(token.type) &&
+                end - start === token.raw.length && rootView.text.startsWith(token.raw, start)) {
+              readingRootSpans.set(token, { start, end });
             }
           };
           parser.use({ extensions: [{
-            name: 'markalooReadingHtmlConsumption',
+            name: 'markalooReadingRootConsumption',
             level: 'block',
             tokenizer(remaining, tokens) {
               if (tokens !== this.lexer.tokens) return;
               if (!previous) exactInput = remaining === rootView.text && tokens.length === 0;
               const start = rootView.text.length - remaining.length;
-              finishReadingHtml(start, tokens);
+              finishReadingRoot(start, tokens);
               previous = { start, tokens, count: tokens.length, last: tokens.at(-1) };
             },
           }] });
@@ -669,6 +680,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     detachAnnotations(root, consumed, sanitize) {
       const bindings = new WeakMap();
       const runs = [], codeRuns = [];
+      const certifiedReading = new Set();
       for (const node of root.querySelectorAll(`[${this.attribute}]`)) {
         const value = node.getAttribute(this.attribute);
         if (!value.startsWith(this.nonce + ':')) continue;
@@ -694,6 +706,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             if (view && node.parentNode === root && node.tagName === 'P' && node.childNodes.length === 1 &&
                 node.firstChild.nodeType === Node.TEXT_NODE && node.firstChild.data === view.text) {
               this.readingTextSpecs.set(node, { text: view.text, runs: [{ from: 0, display: view.text, view }] });
+              certifiedReading.add(node);
             }
           }
           bindings.set(node, descriptor);
@@ -747,9 +760,19 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         }
         if (from !== undefined && view.text === run.display) {
           if (!run.descriptor.readingOnly) this.textSpecs.get(run.block).runs.push({ from, display: run.display, view });
-          if (readingEnabled) this.readingTextSpecs.get(run.block).runs.push({
-            from, display: run.display, view, ...(run.descriptor.readingOnly ? { kind: 'table' } : {}),
-          });
+          if (readingEnabled) {
+            const displacement = bindings.get(run.block)?.readingDisplacement;
+            if (displacement === undefined) {
+              this.readingTextSpecs.get(run.block).runs.push({
+                from, display: run.display, view, ...(run.descriptor.readingOnly ? { kind: 'table' } : {}),
+              });
+            } else if (displacement && owners.get(run.descriptor.owner) === run.block &&
+                view.at(0) >= displacement.start && view.at(view.text.length) <= displacement.end) {
+              const readingView = { ...view, at: offset => view.at(offset) + displacement.shift };
+              this.readingTextSpecs.get(run.block).runs.push({ from, display: run.display, view: readingView });
+              certifiedReading.add(run.block);
+            }
+          }
         } else if (from !== undefined) {
           this.warn('unverified inline text transformation');
         }
@@ -771,6 +794,31 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           specs.runs.sort((a, b) => a.from - b.from);
           this.readingTextSpecs.set(block, specs);
         }
+      }
+      if (certifiedReading.size) {
+        // A newly proved group must not invalidate unrelated history if a different
+        // kind of block still has an older projection. Never fall back to a known wrong copy.
+        let previousEnd = -1;
+        const pending = [];
+        const flush = nextStart => {
+          for (const [node, group] of pending) {
+            const last = group.at(-1), end = last.view.at(last.display.length);
+            if (group[0].view.at(0) >= previousEnd && end <= nextStart) previousEnd = end;
+            else this.readingTextSpecs.delete(node);
+          }
+          pending.length = 0;
+        };
+        for (const node of root.children) {
+          const group = this.readingTextSpecs.get(node)?.runs;
+          if (!group?.length) continue;
+          if (certifiedReading.has(node)) pending.push([node, group]);
+          else {
+            flush(group[0].view.at(0));
+            const last = group.at(-1);
+            previousEnd = last.view.at(last.display.length);
+          }
+        }
+        flush(Infinity);
       }
       for (const template of root.querySelectorAll('template')) this.detachAnnotations(template.content, consumed, sanitize);
       return bindings;
