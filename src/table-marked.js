@@ -320,11 +320,49 @@
       hooks: null, renderer: null, tokenizer: null, walkTokens: null });
   }
 
+  const rawHtmlPattern = /@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/;
+
   function rawHtmlDiscovery(rawHtmlFence, frames) {
     const flags = rawHtmlFence.flags.replace(/[gy]/g, '');
     const search = new RegExp(rawHtmlFence.source, flags);
     const atStart = new RegExp(rawHtmlFence.source, flags + 'y');
-    const nextMatch = frames && new RegExp(rawHtmlFence.source, flags + 'g');
+    const bounded = frames && !flags && rawHtmlFence.source === rawHtmlPattern.source;
+    const nextMatch = frames && !bounded && new RegExp(rawHtmlFence.source, flags + 'g');
+    const marker = '@@@html';
+    const closer = /[\r\n][ \t]*@@@/g, argsEnd = /[)\r\n]/g, headerEnd = /[ \t]*[\r\n]/y;
+    function lastCloser(frame, at) {
+      if (frame.lastCloser === undefined) {
+        // The opener only needs one line break before the last closer's
+        // separator. The full tokenizer still decides what it consumes.
+        closer.lastIndex = at + marker.length;
+        frame.lastCloser = -1;
+        for (let match; (match = closer.exec(frame.input));) frame.lastCloser = match.index;
+      }
+      return frame.lastCloser;
+    }
+    function findOpener(frame, at) {
+      const text = frame.input;
+      for (let found = text.indexOf(marker, at); found !== -1 && found < lastCloser(frame, found);
+           found = text.indexOf(marker, found + 1)) {
+        const afterMarker = found + marker.length;
+        if (text[afterMarker] === '(') {
+          // Multiple malformed/nested argument starts can share one
+          // terminator. Scan that line's remaining arguments only once.
+          if (frame.argsEnd === undefined || frame.argsEnd <= afterMarker) {
+            argsEnd.lastIndex = afterMarker + 1;
+            frame.argsEnd = argsEnd.exec(text)?.index ?? text.length;
+            headerEnd.lastIndex = frame.argsEnd + 1;
+            frame.withArgs = text[frame.argsEnd] === ')' && headerEnd.test(text) &&
+              headerEnd.lastIndex - 1 < frame.lastCloser;
+          }
+          if (frame.withArgs) return found;
+        } else {
+          headerEnd.lastIndex = afterMarker;
+          if (headerEnd.test(text) && headerEnd.lastIndex - 1 < frame.lastCloser) return found;
+        }
+      }
+      return Infinity;
+    }
     return {
       name: 'markalooRawHtmlDiscovery',
       level: 'block',
@@ -335,12 +373,20 @@
         // native syntax consumed a match, seek again from the new suffix.
         const at = frame.input.length - value.length;
         if (frame.next < at) {
-          nextMatch.lastIndex = at;
-          frame.next = nextMatch.exec(frame.input)?.index ?? Infinity;
+          if (bounded) frame.next = findOpener(frame, at);
+          else {
+            nextMatch.lastIndex = at;
+            frame.next = nextMatch.exec(frame.input)?.index ?? Infinity;
+          }
         }
         return frame.next - at;
       },
       tokenizer(value) {
+        const frame = bounded && frames.get(this.lexer);
+        if (frame) {
+          const at = frame.input.length - value.length;
+          if (!value.startsWith(marker) || at >= lastCloser(frame, at)) return;
+        }
         atStart.lastIndex = 0;
         const match = atStart.exec(value);
         if (match) return { type: 'markalooRawHtmlDiscovery', raw: match[0] };
@@ -371,7 +417,22 @@
     const lines = container.replace(/\n+$/, '').split('\n');
     const projected = child.split('\n');
     const first = lines.length - projected.length;
-    return first >= 0 && projected.every((line, i) => stripPrefix(lines[first + i], first + i) === line);
+    return first >= 0 && projected.every((line, i) => {
+      const stripped = stripPrefix(lines[first + i], first + i);
+      return stripped === line || i === projected.length - 1 &&
+        stripped?.startsWith(line) && /^[ \t]+$/.test(stripped.slice(line.length));
+    });
+  }
+
+  function expandListMarkerTabs(line, column) {
+    if (!line.includes('\t')) return line;
+    let expanded = '';
+    for (const char of line) {
+      const width = char === '\t' ? 4 - column % 4 : 1;
+      expanded += char === '\t' ? ' '.repeat(width) : char;
+      column += width;
+    }
+    return expanded;
   }
 
   function terminalFenceBodyStart(token, raw) {
@@ -382,29 +443,41 @@
     while (child.type !== 'code') {
       if (child.type === 'list') {
         child = child.items.at(-1);
-        if (!child || !spelling.endsWith(child.raw)) return null;
+        if (!child || !spelling.replace(/[ \t]+$/, '').endsWith(child.raw)) return null;
         spelling = child.raw;
       }
       const container = child;
       child = container.tokens?.at(-1);
+      // A list can leave horizontal residue on its closer line as a
+      // separate token. The physical line projection below must still agree.
+      if (child?.type === 'space' && /^[ \t]+$/.test(child.raw)) child = container.tokens.at(-2);
       if (!child) return null;
       const childRaw = child.raw.replace(/\n+$/, ''), projected = container.text?.replace(/\n+$/, '');
       // The parser must own the complete terminal child, not just text
       // resembling its fence somewhere on the last physical lines.
-      if (projected !== childRaw && !projected?.endsWith('\n' + childRaw)) return null;
+      const ownsEnd = text => text === childRaw || text?.endsWith('\n' + childRaw);
+      if (!ownsEnd(projected) && !ownsEnd(projected?.replace(/[ \t]+$/, ''))) return null;
       if (container.type === 'blockquote') {
         if (!projectsTerminalChild(spelling, childRaw, line => {
           const prefix = /^ {0,3}>[ \t]?/.exec(line);
           return prefix && line.slice(prefix[0].length);
         })) return null;
       } else if (container.type === 'list_item') {
-        const bullet = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?= |$)( *)/.exec(spelling.split('\n', 1)[0]);
+        const line = spelling.split('\n', 1)[0];
+        const bullet = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?=[ \t]|$)/.exec(line);
         if (!bullet) return null;
-        const indent = bullet[0].length - bullet[1].length +
-          (bullet[1].length > 4 ? 1 : Math.max(1, bullet[1].length));
+        // Marked expands marker-line tabs by column, but continuation
+        // tabs are always four spaces. Only expand the compared spelling.
+        const width = bullet[0].length;
+        const first = expandListMarkerTabs(line.slice(width), width);
+        const leading = /^ */.exec(first)[0].length;
+        const indent = width + (leading > 4 ? 1 : Math.max(1, leading));
         const spaces = ' '.repeat(indent);
-        if (!projectsTerminalChild(spelling, childRaw, (line, i) =>
-          i === 0 || line.startsWith(spaces) || /^ *$/.test(line) ? line.slice(indent) : null)) return null;
+        if (!projectsTerminalChild(spelling, childRaw, (line, i) => {
+          if (i === 0) return first.slice(indent - width);
+          const expanded = line.replace(/\t/g, '    ');
+          return expanded.startsWith(spaces) || /^ *$/.test(expanded) ? expanded.slice(indent) : null;
+        })) return null;
       } else return null;
       spelling = childRaw;
     }
