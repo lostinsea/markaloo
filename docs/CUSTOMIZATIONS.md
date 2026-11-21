@@ -388,6 +388,9 @@ println!("{answer}");
 - When exact Source provenance is unavailable, Edit/Exit can align the same
   live character once before any repaint. This fallback does not record
   history or authorize document changes, and it cannot recover removed text.
+  A partial Source publication can refuse the reading layout (for example,
+  when it does not own a raw HTML heading's decoration). Edit/Exit can still
+  use the private layout check without changing that refusal for Back/Forward.
 - `test\test-edit-mode-position.js` uses native scrolling, the real Edit/Exit
   event handlers, and the saved-position restoration code. It does not cover
   full app startup, the Main process, or the customer's document.

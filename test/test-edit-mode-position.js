@@ -60,7 +60,7 @@ const receipt = {
 };
 const check = (name, ok, detail) => {
   receipt.assertions.push({ name, ok: !!ok, detail });
-  console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
+  console.log(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : "  -> " + JSON.stringify(detail)}`);
 };
 let win;
 const exec = code => win.webContents.executeJavaScript(code, true);
@@ -285,12 +285,30 @@ async function run() {
           interiorTop = range.getBoundingClientRect().top - bounds.top;
           interiorLineHeight = parseFloat(getComputedStyle(interior.node.parentElement).lineHeight);
         }
+        const reading = captureReadingLocation(), atom = reading.location?.text;
+        let exactLiteral = false;
+        if (atom?.blockKind === "P" && atom.runKind === "text") {
+          const from = originalMarkdown.lastIndexOf("<p>", atom.start) + 3;
+          const to = originalMarkdown.indexOf("</p>", atom.start);
+          const paragraph = visible[0], text = paragraph?.firstChild;
+          if (from >= 3 && atom.start >= from && atom.end <= to &&
+              originalMarkdown.slice(atom.start, atom.end) === atom.display &&
+              paragraph?.childNodes.length === 1 && text?.nodeType === Node.TEXT_NODE &&
+              text.data === originalMarkdown.slice(from, to)) {
+            const range = document.createRange();
+            range.setStart(text, atom.start - from);
+            range.setEnd(text, atom.end - from);
+            const rect = range.getBoundingClientRect();
+            exactLiteral = rect.bottom > bounds.top && rect.top < bounds.bottom &&
+              Math.abs(rect.top - bounds.top - scroller.clientTop - atom.alignment.top) <= 1;
+          }
+        }
         return { mode: isEditMode, top: scroller.scrollTop, max: scroller.scrollHeight - scroller.clientHeight,
           interiorVisible, interiorTop, interiorLineHeight, interiorOffset: interior?.offset, renderGeneration,
           earlierBlockOffscreen: offscreenBlock ? offscreenBlock.getBoundingClientRect().bottom < bounds.top : null,
           nestedTextVisible, nestedOverflowing: offscreenBlock ? offscreenBlock.scrollHeight > offscreenBlock.clientHeight : null,
           escapingTextVisible: escaping ? escaping.bottom > bounds.top && escaping.top < bounds.bottom : null,
-          visible: visible.map(p => p.textContent.slice(0, 12)), reading: captureReadingLocation(),
+          visible: visible.map(p => p.textContent.slice(0, 12)), reading, exactLiteral,
           diagnostics: editorScroll.diagnostics(), failure: lastReadingRestoreFailure };
       },
     };
@@ -323,13 +341,11 @@ async function run() {
           probe.status === probe.ordinary.status && probe.reason === probe.ordinary.reason &&
           probe.reason === before.reading.reason, probe);
       }
-      const exactCaptureExpected = kind === "markdown" || kind === "html" && index === 0;
-      const refusal = kind === "html-only" || kind === "html-offscreen" ? "presentation-unbound-or-stale"
-        : kind.endsWith("-offscreen") ? "unverifiable-clipping-chain" : "visible-text-without-exact-bounded-provenance";
+      const exactCaptureExpected = kind === "markdown" || kind === "html";
       check(`${label}: capture authority control`, exactCaptureExpected
-        ? before.reading.status === "captured"
+        ? before.reading.status === "captured" && (kind !== "html" || index === 0 || before.exactLiteral)
         : before.reading.status === "unavailable" &&
-          before.reading.reason === refusal, before);
+          before.reading.reason === "unverifiable-clipping-chain", before);
       for (const [step, id] of ["openEditorBtn", "exitEditBtn", "toggleEdit", "exitEditBtn"].entries()) {
         await exec(`document.getElementById(${JSON.stringify(id)}).click();true`);
         await exec("fixture.settle().then(()=>true)");
@@ -359,7 +375,8 @@ async function run() {
   check("visible nested text setup", nested.nestedTextVisible && nested.nestedOverflowing, nested);
   const nestedProbe = await exec("fixture.probeModeCapture()");
   check("visible unsupported nested text refuses mode-only character", nestedProbe.calls === 0 &&
-    nestedProbe.status === "unavailable", nestedProbe);
+    nestedProbe.status === "unsupported" && nestedProbe.reason === "unverifiable-clipping-chain" &&
+    nestedProbe.status === nestedProbe.ordinary.status && nestedProbe.reason === nestedProbe.ordinary.reason, nestedProbe);
   await exec("fixture.locate(50);fixture.escapeNestedText();true");
   const escaping = await exec("fixture.capture()");
   check("escaping nested text setup", escaping.earlierBlockOffscreen && escaping.escapingTextVisible &&
@@ -372,6 +389,10 @@ async function run() {
   const interiorBefore = await exec("fixture.capture()");
   check("HTML first-visible interior character setup", interiorBefore.interiorVisible === true &&
     interiorBefore.interiorOffset > 1000 && interiorBefore.reading.status === "unavailable", interiorBefore);
+  const interiorProbe = await exec("fixture.probeModeCapture()");
+  check("partial HTML publication permits mode-only character without history authority", interiorProbe.calls === 1 &&
+    interiorProbe.status === "unsupported" && interiorProbe.reason === "unverifiable-clipping-chain" &&
+    interiorProbe.status === interiorProbe.ordinary.status && interiorProbe.reason === interiorProbe.ordinary.reason, interiorProbe);
   await exec("fixture.forceEntryRender();document.getElementById('openEditorBtn').click();true");
   await exec("fixture.settle().then(()=>true)");
   const interiorAfter = await exec("fixture.capture()");
@@ -387,7 +408,7 @@ async function run() {
   }
   const provenance = await exec("fixture.capture()");
   check("DOM position does not grant history provenance", provenance.reading.status === "unavailable" &&
-    provenance.reading.reason === "presentation-unbound-or-stale", provenance);
+    provenance.reading.reason === "unverifiable-clipping-chain", provenance);
   await exec("document.getElementById('exitEditBtn').click();true");
   await exec("fixture.settle().then(()=>true)");
   await exec("fixture.locate(50);fixture.supersedeEntry();document.getElementById('openEditorBtn').click();true");
@@ -406,6 +427,11 @@ app.whenReady().then(run).catch(error => {
   const output = process.env.MARKALOO_EDIT_POSITION_RECEIPT;
   if (output) fs.writeFileSync(output, JSON.stringify(receipt, null, 2));
   console.log(JSON.stringify({ passed: receipt.passed, assertions: receipt.assertions.length,
-    errors: receipt.errors, windowsAfterCleanup: receipt.windowsAfterCleanup, storage }));
+    errors: receipt.errors, notRun: receipt.notRun, windowsAfterCleanup: receipt.windowsAfterCleanup, storage }));
+  if (receipt.errors.length || receipt.notRun.length || receipt.windowsAfterCleanup !== 0) {
+    console.error("FAIL harness did not complete cleanly");
+  } else {
+    console.log(`=== ${receipt.assertions.filter(assertion => assertion.ok).length}/${receipt.assertions.length} passed ===`);
+  }
   app.exit(receipt.passed ? 0 : 1);
 });
