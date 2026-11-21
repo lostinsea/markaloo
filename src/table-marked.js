@@ -25,7 +25,7 @@
 
   const mayHaveRaw = text => /(?:^|\n)\uFEFF?\|[^\r\n]*(?:\r?\n[ \t]*)*`{3}/.test(text);
 
-  function observeBlocks(parser, input) {
+  function observeBlocks(parser, input, frames) {
     const spans = [];
     let before, valid = true;
     const close = (end, tokens) => {
@@ -65,7 +65,24 @@
       },
     }] });
     // A silent early exit is not evidence that the final suffix was consumed.
-    const tokens = parser.lexer(input, { ...parser.defaults, silent: false });
+    const options = { ...parser.defaults, silent: false };
+    let tokens;
+    if (frames && !options.pedantic) {
+      const lexer = new parser.Lexer(options);
+      const blockTokens = lexer.blockTokens;
+      lexer.blockTokens = function (remaining, ...args) {
+        const outer = frames.get(this);
+        // Marked may reuse the same token array with different dequoted input.
+        // Cache only within this invocation, whose input is consumed by suffix.
+        frames.set(this, { input: remaining, next: -1 });
+        try { return blockTokens.call(this, remaining, ...args); }
+        finally {
+          if (outer) frames.set(this, outer);
+          else frames.delete(this);
+        }
+      };
+      tokens = lexer.lex(input);
+    } else tokens = parser.lexer(input, options);
     if (input.length) close(input.length, tokens);
     return valid ? { tokens, spans } : null;
   }
@@ -303,33 +320,27 @@
       hooks: null, renderer: null, tokenizer: null, walkTokens: null });
   }
 
-  function rawHtmlDiscovery(rawHtmlFence, input) {
+  function rawHtmlDiscovery(rawHtmlFence, frames) {
     const flags = rawHtmlFence.flags.replace(/[gy]/g, '');
     const search = new RegExp(rawHtmlFence.source, flags);
     const atStart = new RegExp(rawHtmlFence.source, flags + 'y');
-    const rootSearch = input === undefined ? null : new RegExp(rawHtmlFence.source, flags + 'g');
-    const roots = new WeakMap();
+    const nextMatch = frames && new RegExp(rawHtmlFence.source, flags + 'g');
     return {
       name: 'markalooRawHtmlDiscovery',
       level: 'block',
       start(value) {
-        const state = roots.get(this.lexer);
-        if (!state?.root) return search.exec(value)?.index;
-        // Marked asks about the current root suffix minus its first character.
-        // Reuse the next match even when a native token takes precedence over it.
-        const at = input.length - value.length;
-        if (state.next < at) {
-          rootSearch.lastIndex = at;
-          state.next = rootSearch.exec(input)?.index ?? Infinity;
+        const frame = frames?.get(this.lexer);
+        if (!frame) return search.exec(value)?.index;
+        // Marked asks about the current suffix minus its first character. If
+        // native syntax consumed a match, seek again from the new suffix.
+        const at = frame.input.length - value.length;
+        if (frame.next < at) {
+          nextMatch.lastIndex = at;
+          frame.next = nextMatch.exec(frame.input)?.index ?? Infinity;
         }
-        return state.next - at;
+        return frame.next - at;
       },
-      tokenizer(value, tokens) {
-        if (rootSearch) {
-          let state = roots.get(this.lexer);
-          if (!state) roots.set(this.lexer, state = { next: -1 });
-          state.root = tokens === this.lexer.tokens;
-        }
+      tokenizer(value) {
         atStart.lastIndex = 0;
         const match = atStart.exec(value);
         if (match) return { type: 'markalooRawHtmlDiscovery', raw: match[0] };
@@ -340,7 +351,7 @@
 
   function create(marked, options) {
     const parser = nativeParser(marked);
-    const discovery = options?.rawHtmlFence ? [rawHtmlDiscovery(options.rawHtmlFence, options.rawHtmlInput)] : [];
+    const discovery = options?.rawHtmlFence ? [rawHtmlDiscovery(options.rawHtmlFence, options.rawHtmlFrames)] : [];
     parser.use({ extensions: [...discovery, extension({ ...options, marked })] });
     return parser;
   }
@@ -356,36 +367,71 @@
     return closer && closer[1].length >= opener[1].length ? opener[0].length : null;
   }
 
-  function quotedFenceBodyStart(quote, raw) {
-    let code = quote, depth = 0;
-    while (code?.type === 'blockquote') {
-      depth++;
-      code = code.tokens.at(-1);
+  function projectsTerminalChild(container, child, stripPrefix) {
+    const lines = container.replace(/\n+$/, '').split('\n');
+    const projected = child.split('\n');
+    const first = lines.length - projected.length;
+    return first >= 0 && projected.every((line, i) => stripPrefix(lines[first + i], first + i) === line);
+  }
+
+  function terminalFenceBodyStart(token, raw) {
+    if (token.type === 'code') return explicitFence(raw);
+    if (token.type !== 'blockquote' && token.type !== 'list') return null;
+    const physical = raw.replace(/\n+$/, '');
+    let child = token, spelling = physical;
+    while (child.type !== 'code') {
+      if (child.type === 'list') {
+        child = child.items.at(-1);
+        if (!child || !spelling.endsWith(child.raw)) return null;
+        spelling = child.raw;
+      }
+      const container = child;
+      child = container.tokens?.at(-1);
+      if (!child) return null;
+      const childRaw = child.raw.replace(/\n+$/, ''), projected = container.text?.replace(/\n+$/, '');
+      // The parser must own the complete terminal child, not just text
+      // resembling its fence somewhere on the last physical lines.
+      if (projected !== childRaw && !projected?.endsWith('\n' + childRaw)) return null;
+      if (container.type === 'blockquote') {
+        if (!projectsTerminalChild(spelling, childRaw, line => {
+          const prefix = /^ {0,3}>[ \t]?/.exec(line);
+          return prefix && line.slice(prefix[0].length);
+        })) return null;
+      } else if (container.type === 'list_item') {
+        const bullet = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?= |$)( *)/.exec(spelling.split('\n', 1)[0]);
+        if (!bullet) return null;
+        const indent = bullet[0].length - bullet[1].length +
+          (bullet[1].length > 4 ? 1 : Math.max(1, bullet[1].length));
+        const spaces = ' '.repeat(indent);
+        if (!projectsTerminalChild(spelling, childRaw, (line, i) =>
+          i === 0 || line.startsWith(spaces) || /^ *$/.test(line) ? line.slice(indent) : null)) return null;
+      } else return null;
+      spelling = childRaw;
     }
-    if (code?.type !== 'code') return null;
-    const fenced = code.raw.replace(/\n+$/, '');
-    if (explicitFence(fenced) === null) return null;
-    // Only the final child can redirect past the quote. Verify its exact
-    // source lines; a lazy continuation is not evidence that a fence closed.
-    const lines = raw.split('\n').slice(-fenced.split('\n').length);
-    const markers = new RegExp(`^(?: {0,3}>[ \\t]?){${depth}}`);
-    if (lines.some(line => !markers.test(line)) ||
-        lines.map(line => line.replace(markers, '')).join('\n') !== fenced) return null;
-    return raw.length - lines.join('\n').length + lines[0].length + 1;
+    if (explicitFence(spelling) === null) return null;
+    // Each certified projection preserves line count. Map the first body line
+    // back to the original span without depending on stripped prefix widths.
+    const lines = physical.split('\n'), fenceLines = spelling.split('\n').length;
+    return physical.length - lines.slice(lines.length - fenceLines + 1).join('\n').length;
   }
 
   function closedBacktickFenceEnd(marked, text, offset, rawHtmlFence) {
     if (!text.includes('```')) return offset;
     const bom = Number(text[0] === '\uFEFF');
     const input = text.slice(bom);
-    const trace = observeBlocks(create(marked, { rawHtmlFence, rawHtmlInput: input }), input);
+    const frames = new WeakMap();
+    const trace = observeBlocks(create(marked, { rawHtmlFence, rawHtmlFrames: frames }), input, frames);
     const span = trace?.spans.find(({ start, acceptedEnd }) =>
       acceptedEnd !== null && offset >= bom + start && offset < bom + acceptedEnd);
-    if (!span) return offset;
+    if (!span?.token) return offset;
     const start = bom + span.start, end = bom + span.acceptedEnd, raw = text.slice(start, end);
-    const body = span.token?.type === 'code' ? explicitFence(raw) :
-      span.token?.type === 'blockquote' ? quotedFenceBodyStart(span.token, raw) : null;
-    return body !== null && offset >= start + body ? end + Number(text[end] === '\n') : offset;
+    const body = terminalFenceBodyStart(span.token, raw);
+    if (body === null || offset < start + body) return offset;
+    // Marked trims the last list item. Never stop partway through its closer.
+    if (text[end] === '\n') return end + 1;
+    if (text[end - 1] === '\n') return end;
+    const restOfLine = /^[ \t]*(?:\n|$)/.exec(text.slice(end));
+    return restOfLine ? end + restOfLine[0].length : offset;
   }
 
   function protectedRanges(text, marked, rawHtmlFence) {
