@@ -1169,6 +1169,19 @@ async function sourceTests(core = false) {
     if (movementOnly) await columnSizingSourceTests(cells, true);
     return;
   }
+  const { closedBacktickFenceEnd } = context.window.MarkalooTableMarked;
+  for (const [label, exact, after] of [
+    ["longer closing fence beside literal backticks, with BOM and CRLF",
+      "\uFEFF````text\r\n```\r\nBody\r\n`````\r\n\r\nNext", "\nNext"],
+    ["unclosed fence", "```text\nBody\n\nNext", null],
+    ["fence-shaped text inside raw HTML", "@@@html\n```text\nBody\n```\n@@@\n\nNext", null],
+  ]) {
+    const text = lf(exact), offset = text.indexOf("Body");
+    const actual = closedBacktickFenceEnd(marked, text, offset,
+      /@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g);
+    check("Raw Insert redirects only a real closed fence: " + label,
+      actual === (after ? text.indexOf(after) : offset), { actual, offset });
+  }
   const shared = context.window.MarkalooInlineFormatting;
   const caretSource = shared.attachInlineEditor.toString();
   const nativeInputHandlers = caretSource.slice(caretSource.indexOf("listen(element, 'beforeinput'"),
@@ -8265,11 +8278,14 @@ require("./test-userdata-isolation");
       fs.readFileSync(imeFixture.file, "utf8") === original, { imeCompletion, imeAfter });
   }
   async function click() {
-    const mouse = async (target, button) => {
-      for (const type of ["mousePressed", "mouseReleased"]) {
-        await bounded("Insert table trusted mouse input", win.webContents.debugger.sendCommand(
-          "Input.dispatchMouseEvent", { type, ...target, button, clickCount: 1 }));
-      }
+    const mouse = async (target, button, moveX = 0) => {
+      const dispatch = (type, options) => bounded("Insert table trusted mouse input",
+        win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type, ...options }));
+      const buttons = button === "right" ? 2 : 1;
+      await dispatch("mousePressed", { ...target, button, buttons, clickCount: 1 });
+      const end = { x: target.x + moveX, y: target.y };
+      if (moveX) await dispatch("mouseMoved", { ...end, buttons });
+      await dispatch("mouseReleased", { ...end, button, buttons: 0, clickCount: 1 });
     };
     const armInsertMenu = () => page(() => {
       const item = ctxInsertTable, rect = item.getBoundingClientRect(), selection = tableMenuSelection;
@@ -8286,7 +8302,8 @@ require("./test-userdata-isolation");
     });
     async function placeTable(label, fixture, { text, linesBelow = 1, expected, columns = 1, dataRows = 0,
       populated = true, caretOnTarget = false, save = false, keyboard = false, insertionAt, scrolled = false,
-      pendingPreview = false, padding = false, stale = false, below = false, selected = false, bottomPadding }) {
+      pendingPreview = false, padding = false, stale = false, below = false, selected = false, bottomPadding,
+      moveX = 0, cancelOnly = false, evidence }) {
       const previous = await state(), previousSaves = saves.length;
       let diskExpected = fixture.body;
       if (bottomPadding) {
@@ -8294,7 +8311,7 @@ require("./test-userdata-isolation");
           "getComputedStyle(document.getElementById('notificationToast')).opacity==='0'", 8300);
       }
       const { x, y, original, target, hit, bounds, bottom } = await page(async (
-        text, linesBelow, caretOnTarget, padding, below, selected, bottomPadding) => {
+        text, linesBelow, caretOnTarget, padding, below, selected, bottomPadding, moveX) => {
         const source = markdownEditor.value, anchor = source.lastIndexOf(text);
         if (anchor < 0) throw new Error("Missing editor text above the expected insertion point");
         let target = anchor;
@@ -8330,14 +8347,23 @@ require("./test-userdata-isolation");
         }
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         window.__insertWitness = null;
+        const pointerEvents = [], observer = new AbortController();
+        if (moveX) for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+          markdownEditor.addEventListener(type, event => {
+            pointerEvents.push([event.type, event.isTrusted, event.clientX, event.clientY, event.buttons]);
+          }, { capture: true, signal: observer.signal });
+        }
         markdownEditor.addEventListener("contextmenu", event => {
+          observer.abort();
           window.__insertWitness = { trusted: event.isTrusted, button: event.button, caret: markdownEditor.selectionStart,
-            end: markdownEditor.selectionEnd, previewCurrent: editorScroll.isCurrentSource(markdownEditor.value) };
+            end: markdownEditor.selectionEnd, previewCurrent: editorScroll.isCurrentSource(markdownEditor.value),
+            x: event.clientX, y: event.clientY, pointerEvents };
         }, { capture: true, once: true });
         const element = document.elementFromPoint(x, y);
-        return { x, y, original, target, bottom, hit: element === markdownEditor,
+        return { x, y, original, target, bottom,
+          hit: element === markdownEditor && document.elementFromPoint(x + moveX, y) === markdownEditor,
           bounds: [element?.id, markdownEditor.scrollTop, markdownEditor.getBoundingClientRect().toJSON()] };
-      }, text, linesBelow, caretOnTarget, padding, below, selected, bottomPadding ?? null);
+      }, text, linesBelow, caretOnTarget, padding, below, selected, bottomPadding ?? null, moveX);
       if (bottomPadding) {
         check("Insert probes bottom padding after a wrapped line at the intended scroll position: " + label,
           bottom.inPadding && bottom.wrapped && bottom.outside === null &&
@@ -8351,11 +8377,22 @@ require("./test-userdata-isolation");
       } else {
         if (!hit) throw new Error("Insert table target point is outside the visible textarea: " +
           JSON.stringify({ label, x, y, bounds }));
-        await mouse({ x, y }, "right");
+        await mouse({ x, y }, "right", moveX);
       }
       await wait("Insert table context menu", "contextMenu.classList.contains('visible')");
       const witness = await exec(`({...__insertWitness,restored:markdownEditor.selectionStart,
         line:tableMenuSelection.sourceLine,scroll:markdownEditor.scrollTop,sourceEnd:markdownEditor.value.length})`);
+      if (moveX) {
+        const movement = [
+          ["pointerdown", true, x, y, 2], ["pointermove", true, x + moveX, y, 2],
+          ["pointerup", true, x + moveX, y, 0],
+        ];
+        check("Insert sees trusted right-button movement on the same visible source line: " + label,
+          JSON.stringify(witness.pointerEvents.filter(event => event[0] !== "pointermove" || event[4] === 2)) ===
+            JSON.stringify(movement) &&
+            witness.trusted && witness.button === 2 && witness.x === x + moveX && witness.y === y &&
+            witness.caret === target && witness.line?.start === target, { witness, movement, target });
+      }
       check("trusted Insert menu keeps the prior selection and uses the intended input route: " + label,
         witness.trusted && (keyboard ? witness.button !== 2 : pendingPreview ? !witness.previewCurrent :
           padding || below || bottomPadding ? witness.previewCurrent && !witness.line : witness.line?.start === target) &&
@@ -8363,7 +8400,7 @@ require("./test-userdata-isolation");
           (bottomPadding ? Math.abs(witness.scroll - bottom.scrollTop) < 1 && witness.caret > original &&
             (bottomPadding === "clipped" ? witness.caret < witness.sourceEnd : witness.caret <= witness.sourceEnd) :
             witness.caret === target) &&
-          witness.restored === original && (!scrolled || witness.scroll > 0),
+          (cancelOnly || witness.restored === original) && (!scrolled || witness.scroll > 0),
         { ...witness, original, target });
       const menu = await armInsertMenu();
       try {
@@ -8374,7 +8411,14 @@ require("./test-userdata-isolation");
           noticeVisible:document.getElementById('notificationToast').classList.contains('show'),
           notification:document.getElementById('notificationMessage').textContent})`);
         const offset = insertionAt ?? target;
-        if (expected) {
+        if (cancelOnly) {
+          await cancel();
+          check("Insert Cancel restores the distinct prior source caret after a moved click",
+            opening.open && opening.setup && opening.trustedModal && opening.offset === target &&
+              original !== target && witness.restored === original &&
+              await exec(`markdownEditor.selectionStart===${original}&&markdownEditor.selectionEnd===${original}`),
+            { opening, witness, original, target });
+        } else if (expected) {
           check("Insert table opens dimensions at the target caret: " + label,
             opening.open && opening.setup && opening.trustedModal && opening.offset === offset,
             bottomPadding ? { ...opening, bottom, witness, x, y } : opening);
@@ -8385,7 +8429,7 @@ require("./test-userdata-isolation");
         }
         const captureBottom = bottomPadding && proof === "click" && process.env.MARKALOO_CELL_EVIDENCE;
         if (captureBottom && !opening.open) await screenshot("insert-bottom-padding-" + bottomPadding);
-        if (opening.open) {
+        if (opening.open && !cancelOnly) {
           await page((columns, dataRows) => {
             tableCellColumns.value = columns;
             tableCellDataRows.value = dataRows;
@@ -8438,6 +8482,10 @@ require("./test-userdata-isolation");
               if (proof === "click" && process.env.MARKALOO_CELL_EVIDENCE) await screenshot("insert-empty-cells-preview");
             } finally { delivery.restore(); }
           } else if (expected) {
+            if (evidence && proof === "click" && process.env.MARKALOO_CELL_EVIDENCE) {
+              await wait("inserted table preview reflects the new source", "editorScroll.isCurrentSource(markdownEditor.value)");
+              await screenshot(evidence);
+            }
             await exec("undoButton.click();true");
             await wait("Insert placement document Undo", "!undoRedoRendering&&editorScroll.isCurrentSource(markdownEditor.value)");
           }
@@ -8556,6 +8604,54 @@ require("./test-userdata-isolation");
         expected: table => fenced + "\n" + table + "\n" + suffix,
       });
     }
+    const gaps = await fresh("insert-typed-gaps", [
+      "# Placement", "", "```text", "First", "```", "", "Gap before heading.", "",
+      "## Next", "", "```js", "const second = 2;", "```", "", "Gap before tail.", "", "## Tail", "", "End.",
+    ].join("\n"));
+    let typed = gaps.body;
+    async function addBlankLines(text, count) {
+      const before = await state(), offset = typed.indexOf(text) + text.length;
+      if (!typed.includes(text)) throw new Error("Missing prose for trusted Enter");
+      await exec(`markdownEditor.focus();markdownEditor.setSelectionRange(${offset},${offset});true`);
+      for (let i = 0; i < count; i++) {
+        const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
+        await bounded("Insert blank line via trusted Enter", win.webContents.debugger.sendCommand("Input.dispatchKeyEvent",
+          { type: "keyDown", ...enter, text: "\r", unmodifiedText: "\r" }));
+        await bounded("Release trusted Enter", win.webContents.debugger.sendCommand("Input.dispatchKeyEvent",
+          { type: "keyUp", ...enter }));
+      }
+      typed = typed.slice(0, offset) + "\n".repeat(count) + typed.slice(offset);
+      const after = await state();
+      check("Trusted Enter creates exact blank lines in the current document below: " + text,
+        after.exact === typed && after.owner === before.owner && after.path === gaps.file, after);
+      if (after.exact !== typed || after.owner !== before.owner || after.path !== gaps.file) {
+        throw new Error("Trusted Enter did not create the intended fixture in the owned document");
+      }
+      await wait("preview reflects trusted Enter", "editorScroll.isCurrentSource(markdownEditor.value)");
+      return offset + 1;
+    }
+    const fenceGap = 1 + await addBlankLines("Gap before heading.", 3);
+    await placeTable("fresh blank between two closed fences", gaps, {
+      text: "Gap before heading.", linesBelow: 2, caretOnTarget: true, evidence: "insert-between-closed-fences",
+      expected: table => typed.slice(0, fenceGap) + table + typed.slice(fenceGap),
+    });
+    const midGap = await addBlankLines("Gap before tail.", 3);
+    const middle = {
+      text: "Gap before tail.", caretOnTarget: true,
+      expected: table => typed.slice(0, midGap) + "\n" + table + typed.slice(midGap),
+    };
+    await placeTable("stationary right-click on the same legal blank", gaps, middle);
+    await placeTable("two-pixel right-button movement on a legal blank", gaps, { ...middle, moveX: 2 });
+    await placeTable("cancel after a moved click from a different caret", gaps, {
+      text: middle.text, moveX: 2, cancelOnly: true,
+    });
+    await placeTable("larger right-button movement on a legal blank", gaps, {
+      ...middle, moveX: 12, expected: undefined,
+    });
+    await addBlankLines("End.", 1);
+    const eof = { text: "End.", caretOnTarget: true, expected: table => typed + "\n" + table };
+    await placeTable("stationary right-click on the same visible EOF blank", gaps, eof);
+    await placeTable("two-pixel right-button movement on a visible EOF blank", gaps, { ...eof, moveX: 2 });
     const nativeClick = async point => {
       win.webContents.sendInputEvent({ type: "mouseMove", ...point });
       win.webContents.sendInputEvent({ type: "mouseDown", button: "right", clickCount: 1, ...point });

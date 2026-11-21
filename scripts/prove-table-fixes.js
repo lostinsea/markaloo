@@ -2226,13 +2226,14 @@ const REVERTS = [
     suite: "test:table-cells-click",
     expect: [
       /^Insert table opens dimensions at the target caret: (blank EOF|blank before heading|retry below new prose|retry below new heading|between a table and prose|scrolled blank between prose blocks after wrapped text|bottom padding with the final wrapped line visible|redirect after a closed js fence|redirect after a closed mermaid fence)$/,
+      /^Insert Cancel restores the distinct prior source caret after a moved click$/,
     ],
     mustPass: [
       /^trusted Insert menu keeps the prior selection and uses the intended input route: blank EOF$/,
       /^Insert table applies at the clicked boundary: keyboard context menu at the caret$/,
       /^Explicit Save preserves exact Markdown including untouched empty table cells$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 9,
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 10,
   },
   {
     id: "TABLE-INSERT-LIVE-LINE",
@@ -2252,6 +2253,43 @@ const REVERTS = [
       /^Insert table applies at the clicked boundary: retry below new heading$/,
     ],
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+  },
+  {
+    id: "TABLE-INSERT-CLOSED-FENCE-GAP",
+    what: "mistake a closing fence for an opener and displace Insert from a legal blank line",
+    file: RENDERER,
+    from:
+      "        insertionOffset = selection.origin === 'markdown'\n" +
+      "          ? window.MarkalooTableMarked.closedBacktickFenceEnd(marked, selection.source, selection.insertionPoint, RAW_HTML_FENCE)\n" +
+      "          : skipPastCodeBlock(selection.source, selection.insertionPoint);",
+    to: "        insertionOffset = skipPastCodeBlock(selection.source, selection.insertionPoint);",
+    suite: "test:table-cells-click",
+    expect: [/^Insert table opens dimensions at the target caret: fresh blank between two closed fences$/],
+    mustPass: [
+      /^Trusted Enter creates exact blank lines in the current document below: Gap before heading\.$/,
+      /^Insert table applies at the clicked boundary: redirect after a closed (js|mermaid) fence$/,
+      /^Insert table applies at the clicked boundary: two-pixel right-button movement on a legal blank$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
+  },
+  {
+    id: "TABLE-INSERT-MOVED-CLICK",
+    what: "drop the native click receipt when the right button moves a few pixels within the same line",
+    file: RENDERER,
+    from: "  if (matches && !before && origin === 'markdown' && sameTableMenuSourceLine(pointer, x, y, interaction)) {",
+    to: "  if (false) {",
+    suite: "test:table-cells-click",
+    expect: [
+      /^Insert table opens dimensions at the target caret: two-pixel right-button movement on (a legal blank|a visible EOF blank)$/,
+      /^Insert Cancel restores the distinct prior source caret after a moved click$/,
+    ],
+    mustPass: [
+      /^Insert sees trusted right-button movement on the same visible source line: two-pixel right-button movement on (a legal blank|a visible EOF blank)$/,
+      /^Insert table applies at the clicked boundary: stationary right-click on the same (legal blank|visible EOF blank)$/,
+      /^Insert table warns before dimensions: larger right-button movement on a legal blank$/,
+      /^Insert table warns before dimensions: bottom padding with the final wrapped line clipped$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
   },
   {
     id: "TABLE-INSERT-BOTTOM-PADDING",
