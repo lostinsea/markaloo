@@ -470,8 +470,9 @@
         // tabs are always four spaces. Only expand the compared spelling.
         const width = bullet[0].length;
         const first = expandListMarkerTabs(line.slice(width), width);
-        const leading = /^ */.exec(first)[0].length;
-        const indent = width + (leading > 4 ? 1 : Math.max(1, leading));
+        // A blank marker line has no content indentation in Marked.
+        const leading = first.trim() ? /^ */.exec(first)[0].length : 1;
+        const indent = width + (leading > 4 ? 1 : leading);
         const spaces = ' '.repeat(indent);
         if (!projectsTerminalChild(spelling, childRaw, (line, i) => {
           if (i === 0) return first.slice(indent - width);
