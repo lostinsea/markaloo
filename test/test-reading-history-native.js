@@ -156,20 +156,25 @@ const originCases = htmlOrigin ? [
   ["HTML before a hidden heading twin", "link"],
   ["HTML before a hidden heading twin", "TOC"],
   ["Markdown across a hidden heading twin", "TOC"],
-].map(([kind, route]) => {
+  ["HTML before adjacent heading twins", "link", "adjacent-headings"],
+  ["HTML before a hidden fence twin", "TOC", "fenced-code"],
+  ["Markdown across a hidden fence twin", "TOC", "fenced-code"],
+].map(([kind, route, regression]) => {
   const file = path.join(evidence, `${kind}-${route}.md`);
   const origin = kind === "Markdown" ? "Runbook overview" : "<p>Runbook overview</p>";
   const adjacent = kind === "HTML with adjacent duplicate";
-  const ordered = kind.endsWith("hidden heading twin");
-  const start = kind === "Markdown across a hidden heading twin";
+  const ordered = kind.endsWith("hidden heading twin") || !!regression;
+  const start = kind.startsWith("Markdown across");
   const duplicate = kind === "HTML with reference";
   const reference = adjacent || duplicate || kind === "HTML with first reference";
   const definition = "[guide]: #native-history-gamma";
   // No blank line: a separate space token would advance the legacy mapper past the hidden copy.
   const originBlock = adjacent ? `${definition}\n[guide]: /guide "title\n${origin}\nend"\n${origin}` : origin;
+  const hidden = regression ? "# Middle" + (regression === "fenced-code" ? "\n\n```\nx\n```" : "") : "## Middle\n";
+  const visible = hidden.trimEnd() + (regression === "adjacent-headings" ? "\n# Neighbor" : "");
   const source = ordered ? ["# Start", paragraph("Before", 8),
-    `${definition}\n[guide]: /guide "title\n${origin}\n\n## Middle\n\nend"\n${origin}`,
-    "## Middle", "[Jump to Gamma][guide]", paragraph("Between", 8),
+    `${definition}\n[guide]: /guide "title\n${origin}\n\n${hidden}\nend"\n${origin}`,
+    visible, "[Jump to Gamma][guide]", paragraph("Between", 8),
     "## Native history Gamma", paragraph("Gamma", 8), "## Destination", paragraph("After", 8)].join("\n\n") + "\n" :
     ["# Native history Alpha",
     ...(reference && !adjacent ? [definition] : []), paragraph("Before", 8),
@@ -178,7 +183,7 @@ const originCases = htmlOrigin ? [
     "## Native history Beta", paragraph("Beta", 8),
     "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n";
   fs.writeFileSync(file, source);
-  return { kind, route, file, source, adjacent, ordered, start };
+  return { kind, route, file, source, adjacent, ordered, start, regression };
 }) : [];
 const chooserSequence = htmlOrigin ? originCases.map(({ file }) => file) :
   releaseHistoryBatch ? [fixture, secondFixture, fixture] :
@@ -1337,7 +1342,7 @@ async function runHtmlOrigin() {
     return { top: top(), scrollTop: scroller.scrollTop, result: { status: result.status, reason: result.reason,
       text: result.location?.text } };
   }.toString() + ")";
-  for (const [index, { kind, route, file, source, adjacent, ordered, start }] of originCases.entries()) {
+  for (const [index, { kind, route, file, source, adjacent, ordered, start, regression }] of originCases.entries()) {
     const label = `${kind} ${route}`;
     const allowance = { window: observedMain, fixture: file, consumed: false };
     chooserAllowance = allowance;
@@ -1414,9 +1419,10 @@ async function runHtmlOrigin() {
         isDeepStrictEqual(await api("originStates()"), [false, true, false, true]), { origin, restored });
       await api("history(1)");
       const forward = await api("position('destination')");
+      const forwardSource = regression ? await exec("window.readingLocationAdapter.capture().location?.text.start") : headingStart;
       check(label + " Forward returns to the exact heading and enables Back only",
-        Math.abs(forward.scrollTop - reached.scrollTop) <= 1 && isDeepStrictEqual(await api("originStates()"), backOnly),
-        { reached, forward });
+        forwardSource === headingStart && Math.abs(forward.scrollTop - reached.scrollTop) <= 1 &&
+        isDeepStrictEqual(await api("originStates()"), backOnly), { reached, forward, forwardSource });
     } else {
       console.log(`BLOCKED ${label} Back and Forward roundtrip: Back or exact destination unavailable`);
     }
@@ -1481,11 +1487,12 @@ async function runHtmlOrigin() {
     [[mixed.visibleHtml, mixed.visibleHtml + 16, "Runbook overview"]]), mixed);
   check("hidden heading twin maps the visible Markdown heading", isDeepStrictEqual(mixed.heading,
     [[mixed.visibleHeading, mixed.visibleHeading + 6, "Middle"]]), mixed);
-  demand("unproved blockquote neighbor uses the legacy offsets in an unchanged DOM", conflict.unchanged &&
+  demand("unproved blockquote neighbor keeps the legacy edit and search offsets in an unchanged DOM", conflict.unchanged &&
     isDeepStrictEqual(conflict.order, ["Start", "Runbook overview", "\nMiddle\n", "Destination"]) &&
-    isDeepStrictEqual(conflict.heading, [[conflict.hiddenHeading + conflict.prefix,
+    isDeepStrictEqual(conflict.headingEdit, [[conflict.hiddenHeading + conflict.prefix,
       conflict.hiddenHeading + conflict.prefix + 6, "Middle"]]), conflict);
-  check("unproved blockquote neighbor does not add an out-of-order HTML reading run", conflict.html.length === 0 &&
+  check("unproved blockquote neighbor withholds only its hidden reading run", conflict.heading.length === 0 &&
+    isDeepStrictEqual(conflict.html, [[conflict.visibleHtml, conflict.visibleHtml + 16, "Runbook overview"]]) &&
     isDeepStrictEqual(conflict.destination, [[conflict.destinationStart, conflict.destinationStart + 11, "Destination"]]), conflict);
   const alive = await proveSentinelAlive(observedMain, sentinel);
   demand("the error sentinel detects both deliberately provoked channels", alive.console && alive.dom, alive);

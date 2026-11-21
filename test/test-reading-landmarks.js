@@ -7,7 +7,10 @@ const marked = require("marked");
 let source = fs.readFileSync(path.join(__dirname, "..", "src", "editor-scroll.js"), "utf8");
 const inlineSource = fs.readFileSync(path.join(__dirname, "..", "src", "inline-formatting.js"), "utf8");
 const tableSource = fs.readFileSync(path.join(__dirname, "..", "src", "table-cell-editor.js"), "utf8");
+const tableParserSources = ["table-source.js", "table-marked.js"].map(file =>
+  fs.readFileSync(path.join(__dirname, "..", "src", file), "utf8"));
 const firstTextOnly = process.argv.includes("--first-text");
+const rootProvenanceOnly = process.argv.includes("--root-provenance");
 if (process.argv.includes("--original-first-text")) {
   assert.ok(firstTextOnly, "the lookup revert is limited to the focused controls");
   const lookup = [
@@ -57,6 +60,7 @@ class Box {
     }
   }
   get firstChild() { return this.childNodes[0] || null; }
+  get children() { return this.childNodes.filter(node => node instanceof Box); }
   get parentElement() { return this.parentNode; }
   get ownerDocument() { return this.doc || this.parentNode?.ownerDocument; }
   get isConnected() { return this.root || !!this.parentNode?.isConnected; }
@@ -85,6 +89,16 @@ class Box {
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   isEqualNode(other) { return this.outerHTML === other.outerHTML; }
+  normalize() {
+    for (let i = 0; i < this.childNodes.length; i++) {
+      const node = this.childNodes[i];
+      if (node instanceof Box) node.normalize();
+      else while (this.childNodes[i + 1] instanceof Text) {
+        const next = this.childNodes.splice(i + 1, 1)[0];
+        node.data += next.data; next.parentNode = null;
+      }
+    }
+  }
   replaceWith(...children) {
     const parent = this.parentNode, at = parent.childNodes.indexOf(this);
     parent.childNodes.splice(at, 1, ...children);
@@ -96,7 +110,7 @@ class Box {
 const walk = root => root.childNodes.flatMap(node => node instanceof Text ? [node] : walk(node));
 
 function fixture({ bound = true, sourceIdentity = true, active = false, implementation = source, rendererCallbacks = false,
-  onWalker = null } = {}) {
+  onWalker = null, verifyDetached = false } = {}) {
   const effects = { frames: 0, observers: 0, selections: 0, scrolls: 0, focuses: 0 };
   const metrics = { ranges: 0, rects: 0, boxes: 0, styles: 0 };
   const reads = {};
@@ -125,6 +139,13 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
       return { nextNode: () => nodes[at++] || null };
     },
     createElement(tag) {
+      if (verifyDetached && (tag === "template" || tag === "div")) {
+        const target = new Box();
+        const element = tag === "div" ? target : { content: target };
+        Object.defineProperty(element, "innerHTML", { get: Object.getOwnPropertyDescriptor(Box.prototype, "innerHTML").get,
+          set: html => parseFixtureHtml(target, html) });
+        return element;
+      }
       assert.equal(tag, "textarea", "only production entity decoding needs an element in these fixtures");
       return { set innerHTML(html) {
         this.value = decode(html);
@@ -175,15 +196,17 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
     pane.scrollIntoView = () => { effects.scrolls++; };
   }
   class Observer { observe() { effects.observers++; } disconnect() {} }
-  const sandbox = vm.createContext({ window: { dispatchEvent() {} }, document: doc,
+  const sandbox = vm.createContext({ document: doc, marked, dispatchEvent() {},
     Node: { TEXT_NODE: 3, ELEMENT_NODE: 1 }, NodeFilter: { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 },
     Element: Box, Event: class {}, ResizeObserver: Observer, MutationObserver: Observer,
     crypto: require("node:crypto"), performance: { now: () => 0 },
     getComputedStyle: (node, pseudo) => { metrics.styles++; return pseudo ? { content: "none" } : node.style; },
     requestAnimationFrame: () => ++effects.frames, cancelAnimationFrame() {},
   });
+  sandbox.window = sandbox;
   vm.runInContext(inlineSource, sandbox);
   vm.runInContext(tableSource, sandbox);
+  for (const parserSource of tableParserSources) vm.runInContext(parserSource, sandbox);
   vm.runInContext(implementation, sandbox);
   const controller = sandbox.window.createEditorScroll({ editor, preview,
     active: () => active, frozen: () => { reads.frozen?.(); return frozen; },
@@ -200,23 +223,14 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
       readingSourceIdentity: exactSource => sandbox.readingSourceIdentity(exactSource) } : {}) });
   const rect = (left = 10, top = 10, width = 8, height = 16) =>
     ({ left, top, right: left + width, bottom: top + height, width, height });
-  const decode = value => value.replace(/&(?:amp|lt|gt|quot|#39|#x1f600|#128512|fjlig);/gi, entity =>
-    ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'",
+  const decode = value => value.replace(/&(?:amp|lt|gt|quot|#39|#82|#x1f600|#128512|fjlig);/gi, entity =>
+    ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&#82;": "R",
       "&#x1f600;": "\u{1f600}", "&#128512;": "\u{1f600}", "&fjlig;": "fj" })[entity.toLowerCase()]);
-  function render(text, { emoji = value => value, duplicate = false, retained = null, beforeReplace = null,
-    beforeDetach = null } = {}) {
-    const mapped = controller.source(text);
-    mapped.prepare(emoji);
-    const html = mapped.parse(marked);
-    const textDescriptors = mapped.descriptors.filter(descriptor => descriptor.kind === "text");
-    for (const descriptor of textDescriptors) assert.ok(mapped.mappingHtml.includes(
-      `${mapped.nonce}:${mapped.descriptors.indexOf(descriptor)}`), "real mapping HTML carries this text annotation");
-    const rootDescriptors = mapped.descriptors.filter(descriptor => descriptor.root && descriptor.kind !== "text");
-    assert.ok(rootDescriptors.length, "real Marked emitted a block owner");
+  function parseFixtureHtml(detached, html) {
     // Read only the explicit Marked fixture subset. Unknown or repaired markup
     // is a test error, not a pretend browser parse.
-    const detached = new Box(), stack = [detached];
-    for (const piece of mapped.mappingHtml.match(/<[^>]*>|[^<]+/g) || []) {
+    const stack = [detached];
+    for (const piece of html.match(/<[^>]*>|[^<]+/g) || []) {
       if (!piece.startsWith("<")) {
         const node = new Text(decode(piece)), parent = stack.at(-1);
         if (/^\s+$/.test(node.data) && ["DIV", "BLOCKQUOTE", "TABLE", "THEAD", "TBODY", "TR"].includes(parent.tagName)) node.geometry = () => [];
@@ -235,13 +249,30 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
       if (tag !== "BR" && tag !== "IMG") stack.push(node);
     }
     assert.equal(stack.length, 1, "fixture markup closes every container");
-    const blocks = rootDescriptors.map(descriptor => detached.querySelectorAll("*").find(node =>
+    return detached;
+  }
+  function render(text, { emoji = value => value, duplicate = false, retained = null, beforeReplace = null,
+    beforeDetach = null } = {}) {
+    const mapped = controller.source(text);
+    mapped.prepare(emoji);
+    const html = mapped.parse(marked);
+    const textDescriptors = mapped.descriptors.filter(descriptor => descriptor.kind === "text");
+    for (const descriptor of textDescriptors) assert.ok(mapped.mappingHtml.includes(
+      `${mapped.nonce}:${mapped.descriptors.indexOf(descriptor)}`), "real mapping HTML carries this text annotation");
+    const rootDescriptors = mapped.descriptors.filter(descriptor => descriptor.root && descriptor.kind !== "text");
+    assert.ok(rootDescriptors.length, "real Marked emitted a block owner");
+    const detached = parseFixtureHtml(new Box(), verifyDetached ? html : mapped.mappingHtml);
+    const blocks = verifyDetached ? detached.children : rootDescriptors.map(descriptor => detached.querySelectorAll("*").find(node =>
       node.getAttribute(mapped.attribute) === `${mapped.nonce}:${mapped.descriptors.indexOf(descriptor)}`));
     assert.ok(blocks.every(Boolean), "real mapping HTML owns every block");
     const fresh = blocks[0];
     beforeDetach?.({ mapped, detached, blocks });
-    const bindings = mapped.detachAnnotations(detached, new Set(), value => value);
-    assert.equal(mapped.invalidAnnotations, undefined, "actual annotation ownership/order verification accepts fixture");
+    const canonical = detached.outerHTML;
+    const bindings = verifyDetached ? mapped.detach(detached, value => value) :
+      mapped.detachAnnotations(detached, new Set(), value => value);
+    assert.equal(mapped.invalidAnnotations, verifyDetached ? false : undefined,
+      "actual annotation ownership/order verification accepts fixture");
+    if (verifyDetached) assert.equal(detached.outerHTML, canonical, "verification does not change the canonical DOM");
     for (const block of blocks) if (mapped.textSpecs.has(block)) {
       assert.equal(mapped.textSpecs.get(block).text, block.textContent, "production detachAnnotations verified ordered rendered text");
     }
@@ -264,7 +295,7 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
         const target = node === block ? adopted[i] : node;
         return { fresh: node, body: target, wrapper: null, controls: [], decorations: [],
           code: bindings.get(node).readingCode ? target.querySelectorAll("code")[0] : null };
-      }) }));
+      }) })).filter(pair => !verifyDetached || mapped.readingTextSpecs.has(pair.fresh));
     admit(mapped);
     return { mapped, fresh, blocks: adopted, html, textDescriptors, bindings, associations, codes: preview.querySelectorAll("code") };
   }
@@ -291,6 +322,7 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
 let passed = 0, total = 0;
 function test(name, run) {
   if (firstTextOnly && !name.startsWith("first-text:")) return;
+  if (rootProvenanceOnly && !name.startsWith("root provenance:")) return;
   total++;
   try { run(); passed++; console.log("PASS " + name); }
   catch (error) { console.log("FAIL " + name + "  -> " + error.stack); }
@@ -301,6 +333,90 @@ function captured(f) {
   assert.ok(result.value.end > result.value.start);
   assert.equal(result.receipt.range.toString(), result.value.display);
   return result;
+}
+
+const adjacentHeadingSource = '# Start\n\n[guide]: /one\n[guide]: /two "title\n<p>Origin</p>\n\n# Middle\nend"\n<p>Origin</p>\n\n# Middle\n# Dest';
+const fencedTwinSource = '# Start\n\n[guide]: /one\n[guide]: /two "title\n<p>Origin</p>\n\n# Middle\n\n```\nx\n```\nend title!"\n<p>Origin</p>\n\n# Middle\n\n```\nx\n```\n\n# Dest';
+const rootProvenanceCases = [
+  { name: "adjacent headings", text: adjacentHeadingSource,
+    stops: [["H1", "Start", 2], ["P", "Origin", 76], ["H1", "Middle", 90, 61], ["H1", "Dest", 99]] },
+  { name: "fenced code twin", text: fencedTwinSource, fence: 69,
+    stops: [["H1", "Start", 2], ["P", "Origin", 94], ["H1", "Middle", 108, 61], ["PRE", "x", 120], ["H1", "Dest", 129]] },
+  { name: "plain paragraph twin",
+    text: '# Start\n\n[guide]: /one\n[guide]: /two "title\n<p>Origin</p>\n\nMiddle body\n\nend"\n<p>Origin</p>\n\nMiddle body\n\n# Dest',
+    stops: [["H1", "Start"], ["P", "Origin"], ["P", "Middle body", undefined, 59], ["H1", "Dest"]] },
+  { name: "paragraph twin without HTML",
+    text: '# Start\n\n[guide]: /one\n[guide]: /two "title\nMiddle body\nend"\nMiddle body\n\n# Dest',
+    stops: [["H1", "Start"], ["P", "Middle body", undefined, 44], ["H1", "Dest"]] },
+  { name: "unproved nested quote",
+    text: '# Start\n\n[guide]: /one\n[guide]: /two "title\n<p>Origin</p>\n\n> Middle\n\nend"\n<p>Origin</p>\n\n> Middle\n\n# Dest',
+    stops: [["H1", "Start"], ["P", "Origin"], ["BLOCKQUOTE", "Middle", null, 61], ["H1", "Dest"]] },
+  { name: "heading newline must not bridge a skipped definition",
+    // Marked appends the LF after /three to Middle.raw, leaving only the hidden
+    // copy contiguous. The legacy binding stays, but cannot authorize reading.
+    text: '# Start\n\n[guide]: /one\n[guide]: /two "title\n\n# Middle\n\nend"\n# Middle\n[guide]: /three\n# Dest',
+    stops: [["H1", "Start"], ["H1", "Middle", null, 47], ["H1", "Dest"]] },
+  { name: "single definition", text: '# Start\n\n[guide]: /one\n<p>Origin</p>\n\n[Middle][guide]\n\n# Dest',
+    stops: [["H1", "Start"], ["P", "Origin"], ["P", "Middle"], ["H1", "Dest"]] },
+  { name: "two visible identical blocks", text: '# Start\n\n<p>Origin</p>\n\n# Middle\n\n<p>Origin</p>\n\n# Middle\n\n# Dest',
+    stops: [["H1", "Start"], ["P", "Origin", 12], ["H1", "Middle", 26], ["P", "Origin", 37],
+      ["H1", "Middle", 51], ["H1", "Dest"]] },
+  { name: "non-exact HTML character", text: "# Start\n\n<p>&#82;unbook overview</p>\n\n# Dest",
+    stops: [["H1", "Start"], ["P", "Runbook overview", null], ["H1", "Dest"]] },
+];
+for (const { name, text, stops, fence } of rootProvenanceCases) {
+  const setup = () => {
+    const f = fixture({ verifyDetached: true }), rendered = f.render(text);
+    assert.deepEqual(rendered.blocks.map(node => [node.tagName, node.textContent.trim()]),
+      stops.map(([tag, display]) => [tag, display]));
+    const bound = f.bind(rendered), published = f.publish(rendered);
+    assert.equal(bound.status, "bound", JSON.stringify(bound));
+    assert.equal(published.status, "published", JSON.stringify(published));
+    return { f, rendered };
+  };
+  test("root provenance: " + name + " leaves edit and search binding unchanged", () => {
+    const { rendered } = setup();
+    for (const [i, [tag, display, , editStart]] of stops.entries()) {
+      const node = rendered.blocks[i], edit = rendered.mapped.textSpecs.get(node);
+      if (tag === "P" && node.firstChild instanceof Text &&
+          (display === "Origin" || display === "Runbook overview")) assert.equal(edit, undefined);
+      if (editStart !== undefined) {
+        assert.equal(text.slice(editStart, editStart + display.length), display, "the old occurrence really exists");
+        assert.equal(edit.runs[0].view.at(0), editStart, "legacy text binding");
+        assert.equal(rendered.mapped.textGroups.find(group => group.element === node).runs[0].view.at(0), editStart,
+          "legacy search text group");
+      }
+      if (tag === "PRE") {
+        assert.equal(edit, undefined);
+        assert.equal(rendered.bindings.get(node)?.start, fence, "legacy fence owner binding");
+      }
+    }
+  });
+  for (const [i, [tag, display, start]] of stops.entries()) {
+    test(`root provenance: ${name} reads ${display} at block ${i + 1}`, () => {
+      const { f, rendered } = setup();
+      for (const node of walk(f.preview)) {
+        let block = node.parentElement;
+        while (block.parentElement !== f.preview) block = block.parentElement;
+        node.geometry = block === rendered.blocks[i] ? (from, to) => [f.rect(10 + from, 10, to - from)] : () => [];
+      }
+      const result = f.capture();
+      if (start === null) {
+        assert.equal(rendered.mapped.readingTextSpecs.get(rendered.blocks[i])?.runs.length ?? 0, 0,
+          "an unproved visible copy must not inherit the hidden source span");
+        assert.equal(result.status, "unsupported");
+        assert.equal(result.reason, "visible-text-without-exact-bounded-provenance");
+        return;
+      }
+      const expected = start ?? text.lastIndexOf(display);
+      assert.equal(text.slice(expected, expected + display.length), display, "the expected source is exact");
+      assert.deepEqual(Array.from(rendered.mapped.readingTextSpecs.get(rendered.blocks[i])?.runs || [],
+        run => [run.view.at(0), run.view.at(run.display.length), run.display]),
+      [[expected, expected + display.length, display]], "detached reading span");
+      assert.equal(result.status, "captured", result.reason);
+      assert.equal(result.value.start, expected, "published reading position");
+    });
+  }
 }
 
 test("first-text: the original wide corpus block needs no per-cell lookup walkers", () => {
