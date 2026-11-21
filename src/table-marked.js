@@ -303,14 +303,44 @@
       hooks: null, renderer: null, tokenizer: null, walkTokens: null });
   }
 
+  function rawHtmlDiscovery(rawHtmlFence) {
+    const pattern = new RegExp(rawHtmlFence.source, rawHtmlFence.flags.replace(/[gy]/g, ''));
+    return {
+      name: 'markalooRawHtmlDiscovery',
+      level: 'block',
+      start: value => pattern.exec(value)?.index,
+      tokenizer(value) {
+        const match = pattern.exec(value);
+        if (match?.index === 0) return { type: 'markalooRawHtmlDiscovery', raw: match[0] };
+      },
+      renderer: () => '',
+    };
+  }
+
   function create(marked, options) {
     const parser = nativeParser(marked);
-    parser.use({ extensions: [extension({ ...options, marked })] });
+    const discovery = options?.rawHtmlFence ? [rawHtmlDiscovery(options.rawHtmlFence)] : [];
+    parser.use({ extensions: [...discovery, extension({ ...options, marked })] });
     return parser;
   }
 
   function lexWithSpans(marked, input) {
     return observeBlocks(create(marked), input);
+  }
+
+  function closedBacktickFenceEnd(marked, text, offset, rawHtmlFence) {
+    if (!text.includes('```')) return offset;
+    const bom = Number(text[0] === '\uFEFF');
+    const trace = observeBlocks(create(marked, { rawHtmlFence }), text.slice(bom));
+    const span = trace?.spans.find(({ token, start, acceptedEnd }) =>
+      token?.type === 'code' && acceptedEnd !== null && offset >= bom + start && offset < bom + acceptedEnd);
+    if (!span) return offset;
+    // Code tokens can also be indented or unclosed. Only a separate, explicit closing line can move the caret.
+    const start = bom + span.start, end = bom + span.acceptedEnd, raw = text.slice(start, end);
+    const opener = /^ {0,3}(`{3,})[^`\n]*\n/.exec(raw);
+    if (!opener || offset < start + opener[0].length) return offset;
+    const closer = /^ {0,3}(`{3,}) *$/.exec(raw.slice(raw.lastIndexOf('\n') + 1));
+    return closer && closer[1].length >= opener[1].length ? end + Number(text[end] === '\n') : offset;
   }
 
   function protectedRanges(text, marked, rawHtmlFence) {
@@ -324,23 +354,9 @@
       } else parts.push(text[i]);
     }
     offsets.push(text.length);
-    const parser = nativeParser(marked), discovery = [];
-    if (rawHtmlFence) {
-      const pattern = new RegExp(rawHtmlFence.source, rawHtmlFence.flags.replace(/[gy]/g, ''));
-      discovery.push({
-        name: 'markalooRawHtmlDiscovery',
-        level: 'block',
-        start: value => pattern.exec(value)?.index,
-        tokenizer(value) {
-          const match = pattern.exec(value);
-          if (match?.index === 0) return { type: 'markalooRawHtmlDiscovery', raw: match[0] };
-        },
-        renderer: () => '',
-      });
-    }
     // Register the raw recognizer last so it sees the initial root input even
     // when an opaque app block is the first token.
-    parser.use({ extensions: [...discovery, extension({ marked })] });
+    const parser = create(marked, { rawHtmlFence });
     const ranges = [];
     for (const token of parser.lexer(parts.join(''))) {
       if (token.type !== 'markalooRawTable') continue;
@@ -353,5 +369,5 @@
     return ranges;
   }
 
-  return { extension, create, createTableReader, lexWithSpans, protectedRanges, messages };
+  return { extension, create, createTableReader, lexWithSpans, closedBacktickFenceEnd, protectedRanges, messages };
 });

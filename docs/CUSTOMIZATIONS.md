@@ -570,6 +570,9 @@ flowchart LR
     E --> F["Normal preview render"]
 ```
 
+- In Raw Markdown, a small right-click movement still uses the clicked line if
+  the press and release stay on that line. A click inside a closed top-level
+  backtick fence moves past it; a blank line between fences stays put.
 - The separate **Move** toolbar group moves the selected body row up/down or
   the selected column left/right. The header stays first; selected-row editing
   keeps movement inside its selected rows and cannot move whole columns.

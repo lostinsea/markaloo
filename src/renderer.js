@@ -12902,6 +12902,9 @@ document.addEventListener('pointerdown', event => {
     mode: editorModeRevision, sequence: fileOpenSequence,
     origin: target === markdownEditor ? 'markdown' : 'preview',
     x: event.clientX, y: event.clientY,
+    scrollTop: markdownEditor.scrollTop, scrollLeft: markdownEditor.scrollLeft,
+    // The textarea counts this same pointerdown after document capture.
+    interaction: target === markdownEditor ? editorInteractionRevision + 1 : editorInteractionRevision,
     start: markdownEditor.selectionStart, end: markdownEditor.selectionEnd,
     direction: markdownEditor.selectionDirection,
     range: selection?.rangeCount === 1 ? selection.getRangeAt(0).cloneRange() : null,
@@ -14956,11 +14959,15 @@ function captureTableMenuSelection(x, y, event) {
   const contextCurrent = window.CustomTabs.captureDialogContext(tab);
   const selection = window.getSelection();
   const origin = rightClickTarget === markdownEditor ? 'markdown' : 'preview';
-  // The native right-button default can move the caret before contextmenu arrives.
-  const before = event?.isTrusted && event.button === 2 && pointer?.tab === tab &&
-    pointer.source === source && pointer.mode === mode && pointer.sequence === sequence &&
-    pointer.origin === origin && pointer.x === x && pointer.y === y ? pointer : null;
   const sourceLine = origin === 'markdown' ? editorScroll.sourceLineAt(x, y) : null;
+  // The native right-button default can move the caret before contextmenu arrives.
+  const matches = event?.isTrusted && event.button === 2 && pointer?.tab === tab &&
+    pointer.source === source && pointer.mode === mode && pointer.sequence === sequence &&
+    pointer.origin === origin;
+  let before = matches && pointer.x === x && pointer.y === y ? pointer : null;
+  if (matches && !before && origin === 'markdown' && sameTableMenuSourceLine(pointer, x, y, interaction)) {
+    before = pointer;
+  }
   // Keep the clicked insertion point separate from the selection restored for other actions.
   let insertionPoint;
   if (event?.isTrusted && event.button === 2 && origin === 'markdown') {
@@ -14990,6 +14997,15 @@ function captureTableMenuSelection(x, y, event) {
       markdownEditor.value === source,
   };
   if (before) restoreTableMenuSelection(tableMenuSelection, false);
+}
+
+function sameTableMenuSourceLine(pointer, x, y, interaction) {
+  // Small hand movement is still a click, but must not cross a source line or viewport boundary.
+  if (Math.hypot(pointer.x - x, pointer.y - y) > 3 || pointer.interaction !== interaction ||
+      pointer.scrollTop !== markdownEditor.scrollTop || pointer.scrollLeft !== markdownEditor.scrollLeft) return false;
+  const start = editorScroll.sourceLineAt(pointer.x, pointer.y, { live: true });
+  const end = editorScroll.sourceLineAt(x, y, { live: true });
+  return !!start && !!end && start.start === end.start && start.end === end.end;
 }
 
 function restoreTableMenuSelection(selection, refocus) {
@@ -15578,7 +15594,9 @@ function openTableCellEditor(mode, menu) {
     switch (mode) {
       case TableCellMode.INSERT:
         if (selection.insertionPoint === null) throw new Error('tableCells.insertPositionOpen');
-        insertionOffset = skipPastCodeBlock(selection.source, selection.insertionPoint);
+        insertionOffset = selection.origin === 'markdown'
+          ? window.MarkalooTableMarked.closedBacktickFenceEnd(marked, selection.source, selection.insertionPoint, RAW_HTML_FENCE)
+          : skipPastCodeBlock(selection.source, selection.insertionPoint);
         // Check a plain table before setup; the actual edited rows are still validated on Insert.
         try {
           MarkalooTableCells.insertTable(model, insertionOffset, [['Header']], marked, protectTableSource, mode);
