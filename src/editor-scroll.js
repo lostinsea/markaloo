@@ -374,13 +374,15 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
-          if (topLevel && readingHtmlStarts?.get(token) === at) {
-            // A literal paragraph can supply a reading anchor without making raw HTML editable.
-            const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(tokenView.text);
-            if (literal && tokenView.exact(0) && tokenView.exact(end) &&
-                this.source.slice(tokenView.at(0), tokenView.at(end)) === tokenView.text.slice(0, end)) {
+          const readingHtmlAt = topLevel ? readingHtmlStarts?.get(token) : undefined;
+          if (readingHtmlAt !== undefined) {
+            // A skipped reference title can contain the same HTML. Use the parser's span only for reading.
+            const readingView = sliceView(view, readingHtmlAt, readingHtmlAt + token.raw.length);
+            const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(readingView.text);
+            if (literal && readingView.exact(0) && readingView.exact(end) &&
+                this.source.slice(readingView.at(0), readingView.at(end)) === readingView.text.slice(0, end)) {
               const start = literal[1].length + 3;
-              spans.get(token).readingHtmlParagraph = sliceView(tokenView, start, start + literal[2].length);
+              spans.get(token).readingHtmlParagraph = sliceView(readingView, start, start + literal[2].length);
             }
           }
           if (token.type === 'markalooRawTable') {

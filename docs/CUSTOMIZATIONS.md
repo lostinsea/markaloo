@@ -179,9 +179,10 @@ println!("{answer}");
   mode/tab switches and Notes-panel jumps do not append history.
 - A top-level literal HTML paragraph such as `<p>Runbook overview</p>` can be a
   reading-history stop. The source mapper checks the parser's exact source
-  offset against the sanitized paragraph, even after a reference definition the
-  parser consumes without emitting a token. It does not grant edit authority
-  or guess a stop when it cannot verify the text or its layout.
+  offset against the sanitized paragraph. An identical copy hidden in a
+  Markdown reference title cannot supply the visible paragraph's location.
+  This does not grant edit authority or guess a stop when it cannot verify
+  the text or its layout.
 - After manual scrolling away from a saved destination, Back first restores that
   destination. This return leaves the entire timeline and Forward branch unchanged.
   The next Back visits the older entry. The oldest saved destination can also

@@ -152,19 +152,24 @@ const originCases = htmlOrigin ? [
   ...["Markdown", "HTML"].flatMap(kind => ["link", "TOC"].map(route => [kind, route])),
   ["HTML with first reference", "link"],
   ["HTML with reference", "link"],
+  ["HTML with adjacent duplicate", "link"],
 ].map(([kind, route]) => {
   const file = path.join(evidence, `${kind}-${route}.md`);
   const origin = kind === "Markdown" ? "Runbook overview" : "<p>Runbook overview</p>";
+  const adjacent = kind === "HTML with adjacent duplicate";
   const duplicate = kind === "HTML with reference";
-  const reference = duplicate || kind === "HTML with first reference";
+  const reference = adjacent || duplicate || kind === "HTML with first reference";
+  const definition = "[guide]: #native-history-gamma";
+  // No blank line: a separate space token would advance the legacy mapper past the hidden copy.
+  const originBlock = adjacent ? `${definition}\n[guide]: /guide "title\n${origin}\nend"\n${origin}` : origin;
   const source = ["# Native history Alpha",
-    ...(reference ? ["[guide]: #native-history-gamma"] : []), paragraph("Before", 8),
-    ...(duplicate ? ["[guide]: /guide"] : []), origin,
+    ...(reference && !adjacent ? [definition] : []), paragraph("Before", 8),
+    ...(duplicate ? ["[guide]: /guide"] : []), originBlock,
     reference ? "[Jump to Gamma][guide]" : "[Jump to Gamma](#native-history-gamma)", paragraph("Between", 8),
     "## Native history Beta", paragraph("Beta", 8),
     "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n";
   fs.writeFileSync(file, source);
-  return { kind, route, file, source };
+  return { kind, route, file, source, adjacent };
 }) : [];
 const chooserSequence = htmlOrigin ? originCases.map(({ file }) => file) :
   releaseHistoryBatch ? [fixture, secondFixture, fixture] :
@@ -1322,7 +1327,7 @@ async function runHtmlOrigin() {
     return { top: top(), scrollTop: scroller.scrollTop, result: { status: result.status, reason: result.reason,
       text: result.location?.text } };
   }.toString() + ")";
-  for (const [index, { kind, route, file, source }] of originCases.entries()) {
+  for (const [index, { kind, route, file, source, adjacent }] of originCases.entries()) {
     const label = `${kind} ${route}`;
     const allowance = { window: observedMain, fixture: file, consumed: false };
     chooserAllowance = allowance;
@@ -1352,12 +1357,18 @@ async function runHtmlOrigin() {
         const rect = anchor.getBoundingClientRect();
         const x = Math.round((rect.left + rect.right) / 2), y = Math.round((rect.top + rect.bottom) / 2);
         if (document.elementFromPoint(x, y) !== anchor) throw new Error("Fragment link is not hit-testable");
+        if (${adjacent}) {
+          anchor.addEventListener("click", event => { window.__htmlOriginTrustedClick = event.isTrusted; }, { once: true });
+        }
         return { x, y };
       })()`);
       observedContents.sendInputEvent({ ...point, type: "mouseDown", button: "left", clickCount: 1 });
       observedContents.sendInputEvent({ ...point, type: "mouseUp", button: "left", clickCount: 1 });
       await waitReady(label + " actual fragment dispatch", "window.__readingHistoryNative.releaseCounts().jumps===1");
       record = await api("fragmentJump(0)");
+      if (adjacent) {
+        demand(label + " first fragment link click is trusted", await exec("window.__htmlOriginTrustedClick === true"));
+      }
     } else {
       ({ record } = await api("jump('Native history Beta')"));
     }
@@ -1368,7 +1379,7 @@ async function runHtmlOrigin() {
       arrival.text.start === source.indexOf(`Native history ${target === "beta" ? "Beta" : "Gamma"}`) &&
       reached.scrollTop > origin.scrollTop + 100, { record, reached });
     const states = await api("originStates()");
-    const originStart = source.indexOf("Runbook overview");
+    const originStart = source.lastIndexOf("Runbook overview");
     const canReturn = isDeepStrictEqual(states, backOnly);
     check(label + " first jump enables Back only", canReturn, { states, origin });
     if (canReturn) {
@@ -1393,6 +1404,7 @@ async function runHtmlOrigin() {
     const literal = `<p>${textOf}</p>`;
     const cases = [
       ["repeated exact occurrences", `# ${textOf}\r\n\r\n${literal}\r\n\r\n${literal}`, [0, 1]],
+      ["hidden duplicate title", `# Example\n\n[guide]: /one\n[guide]: /two "title\n${literal}\nend"\n${literal}\n`, [1]],
       ["transformed entity", "<p>&#82;unbook overview</p>", []],
       ["sanitized child", "<p>Runbook<script>removed</script> overview</p>", []],
       ["multi-root HTML", `${literal}<p>Another paragraph</p>`, []],
