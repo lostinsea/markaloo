@@ -356,6 +356,11 @@ const rootProvenanceCases = [
     // copy contiguous. The legacy binding stays, but cannot authorize reading.
     text: '# Start\n\n[guide]: /one\n[guide]: /two "title\n\n# Middle\n\nend"\n# Middle\n[guide]: /three\n# Dest',
     stops: [["H1", "Start"], ["H1", "Middle", null, 47], ["H1", "Dest"]] },
+  { name: "repeated Start after skipped definition",
+    text: '\n[guide]: /one\n# Start\n[guide]: /two "title\n<p>Origin</p>\n\n# Middle\nend"\n<p>Origin</p>\n\n# Middle\n\n# Start\n\n# Dest',
+    missingLegacy: [1, 2, 3, 4],
+    stops: [["H1", "Start", null, 100], ["P", "Origin", 76], ["H1", "Middle", 90],
+      ["H1", "Start", 100], ["H1", "Dest", 109]] },
   { name: "single definition", text: '# Start\n\n[guide]: /one\n<p>Origin</p>\n\n[Middle][guide]\n\n# Dest',
     stops: [["H1", "Start"], ["P", "Origin"], ["P", "Middle"], ["H1", "Dest"]] },
   { name: "two visible identical blocks", text: '# Start\n\n<p>Origin</p>\n\n# Middle\n\n<p>Origin</p>\n\n# Middle\n\n# Dest',
@@ -364,7 +369,7 @@ const rootProvenanceCases = [
   { name: "non-exact HTML character", text: "# Start\n\n<p>&#82;unbook overview</p>\n\n# Dest",
     stops: [["H1", "Start"], ["P", "Runbook overview", null], ["H1", "Dest"]] },
 ];
-for (const { name, text, stops, fence } of rootProvenanceCases) {
+for (const { name, text, stops, fence, missingLegacy = [] } of rootProvenanceCases) {
   const setup = () => {
     const f = fixture({ verifyDetached: true }), rendered = f.render(text);
     assert.deepEqual(rendered.blocks.map(node => [node.tagName, node.textContent.trim()]),
@@ -378,6 +383,11 @@ for (const { name, text, stops, fence } of rootProvenanceCases) {
     const { rendered } = setup();
     for (const [i, [tag, display, , editStart]] of stops.entries()) {
       const node = rendered.blocks[i], edit = rendered.mapped.textSpecs.get(node);
+      if (missingLegacy.includes(i)) {
+        assert.equal(edit, undefined);
+        assert.equal(rendered.bindings.has(node), false, "no invented legacy binding");
+        assert.equal(rendered.mapped.textGroups.some(group => group.element === node), false);
+      }
       if (tag === "P" && node.firstChild instanceof Text &&
           (display === "Origin" || display === "Runbook overview")) assert.equal(edit, undefined);
       if (editStart !== undefined) {

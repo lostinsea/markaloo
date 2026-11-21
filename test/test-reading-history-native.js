@@ -159,9 +159,11 @@ const originCases = htmlOrigin ? [
   ["HTML before adjacent heading twins", "link", "adjacent-headings"],
   ["HTML before a hidden fence twin", "TOC", "fenced-code"],
   ["Markdown across a hidden fence twin", "TOC", "fenced-code"],
+  ["HTML after repeated Start", "link", "repeated-start"],
 ].map(([kind, route, regression]) => {
   const file = path.join(evidence, `${kind}-${route}.md`);
-  const origin = kind === "Markdown" ? "Runbook overview" : "<p>Runbook overview</p>";
+  const originText = regression === "repeated-start" ? "Origin" : "Runbook overview";
+  const origin = kind === "Markdown" ? originText : `<p>${originText}</p>`;
   const adjacent = kind === "HTML with adjacent duplicate";
   const ordered = kind.endsWith("hidden heading twin") || !!regression;
   const start = kind.startsWith("Markdown across");
@@ -172,7 +174,13 @@ const originCases = htmlOrigin ? [
   const originBlock = adjacent ? `${definition}\n[guide]: /guide "title\n${origin}\nend"\n${origin}` : origin;
   const hidden = regression ? "# Middle" + (regression === "fenced-code" ? "\n\n```\nx\n```" : "") : "## Middle\n";
   const visible = hidden.trimEnd() + (regression === "adjacent-headings" ? "\n# Neighbor" : "");
-  const source = ordered ? ["# Start", paragraph("Before", 8),
+  // Keep the duplicate adjacent to the first Start and a blank line before
+  // the later Start: Marked appends newlines to the first heading across the omission.
+  const source = regression === "repeated-start" ? [paragraph("Before", 8),
+    `${definition}\n# Start\n[guide]: /two "title\n${origin}\n\n# Middle\nend"\n${origin}`,
+    "# Middle", "# Start", "# Dest", "[Jump to Gamma][guide]", paragraph("Between", 8),
+    "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n" :
+    ordered ? ["# Start", paragraph("Before", 8),
     `${definition}\n[guide]: /guide "title\n${origin}\n\n${hidden}\nend"\n${origin}`,
     visible, "[Jump to Gamma][guide]", paragraph("Between", 8),
     "## Native history Gamma", paragraph("Gamma", 8), "## Destination", paragraph("After", 8)].join("\n\n") + "\n" :
@@ -183,7 +191,7 @@ const originCases = htmlOrigin ? [
     "## Native history Beta", paragraph("Beta", 8),
     "## Native history Gamma", paragraph("Gamma", 8)].join("\n\n") + "\n";
   fs.writeFileSync(file, source);
-  return { kind, route, file, source, adjacent, ordered, start, regression };
+  return { kind, route, file, source, adjacent, ordered, start, regression, originText };
 }) : [];
 const chooserSequence = htmlOrigin ? originCases.map(({ file }) => file) :
   releaseHistoryBatch ? [fixture, secondFixture, fixture] :
@@ -1329,8 +1337,8 @@ app.whenReady().then(async () => {
 
 async function runHtmlOrigin() {
   const api = method => exec("window.__readingHistoryNative." + method);
-  const atOrigin = "(" + function inspectOrigin(place, start) {
-    const text = start ? "Start" : "Runbook overview";
+  const atOrigin = "(" + function inspectOrigin(place, start, originText) {
+    const text = start ? "Start" : originText;
     const matches = [...viewer.querySelectorAll(start ? "h1" : "p")].filter(element => element.textContent === text);
     if (matches.length !== 1) throw new Error("Expected one rendered " + text);
     const range = document.createRange(), node = matches[0].firstChild;
@@ -1342,7 +1350,7 @@ async function runHtmlOrigin() {
     return { top: top(), scrollTop: scroller.scrollTop, result: { status: result.status, reason: result.reason,
       text: result.location?.text } };
   }.toString() + ")";
-  for (const [index, { kind, route, file, source, adjacent, ordered, start, regression }] of originCases.entries()) {
+  for (const [index, { kind, route, file, source, adjacent, ordered, start, regression, originText }] of originCases.entries()) {
     const label = `${kind} ${route}`;
     const allowance = { window: observedMain, fixture: file, consumed: false };
     chooserAllowance = allowance;
@@ -1359,8 +1367,9 @@ async function runHtmlOrigin() {
       !indexPanel.getAnimations().some(animation => animation.playState === 'running') &&
       !window.CustomTabs.__scrollRestorePending() &&
       ${ordered ? "readingDisplay.finalized" : "window.readingLocationAdapter.available()"}`);
-    if (!start) await exec(atOrigin + "(true,false)");
-    const origin = await exec(atOrigin + `(false,${start})`);
+    const captureOrigin = place => exec(atOrigin + `(${place},${start},${JSON.stringify(originText)})`);
+    if (!start) await captureOrigin(true);
+    const origin = await captureOrigin(false);
     await exec("(" + installHistoryProbe.toString() + `)(false,${ordered})`);
     const empty = [false, false, false, false], backOnly = [true, false, true, false];
     demand(label + (start ? " starts on the rendered Start heading with empty history" :
@@ -1407,12 +1416,16 @@ async function runHtmlOrigin() {
         arrival.text.start === headingStart && reached.scrollTop > origin.scrollTop + 100), { record, reached, destination });
     if (ordered) check(label + " captures the exact destination", arrival?.text.start === headingStart, destination);
     const states = await api("originStates()");
-    const originStart = start ? source.indexOf("Start") : source.lastIndexOf("Runbook overview");
+    const originStart = start ? source.indexOf("Start") : source.lastIndexOf(originText);
+    if (regression === "repeated-start") {
+      check(label + " captures the exact visible origin", origin.result.status === "captured" &&
+        origin.result.text.start === originStart, origin);
+    }
     const canReturn = isDeepStrictEqual(states, backOnly);
     check(label + " first jump enables Back only", canReturn, { states, origin });
     if (canReturn && reached) {
       await api("history(-1)");
-      const restored = await exec(atOrigin + `(false,${start})`);
+      const restored = await captureOrigin(false);
       check(label + ` Back returns to the exact ${start ? "Start heading" : "paragraph"} and enables Forward only`,
         restored.result.status === "captured" && restored.result.text.start === originStart &&
         Math.abs(restored.top - origin.top) <= 1 && Math.abs(restored.scrollTop - origin.scrollTop) <= 1 &&
