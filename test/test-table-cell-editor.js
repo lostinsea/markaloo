@@ -1217,6 +1217,27 @@ async function sourceTests(core = false) {
         actual === before.length && inserted?.source === before + pad + table + (after ? "\n" : "") + after,
       { actual, caret, error, inserted });
   }
+  for (const [label, marker, indent, boundary] of [
+    ["tab marker with space continuation", "-\t", "  ", 24],
+    ["tab marker with tab continuation", "-\t", "\t", 21],
+    ["space marker with space continuation", "- ", "  ", 24],
+    ["space marker with tab continuation", "- ", "\t", 21],
+    ["bare marker with space continuation", "-", "  ", 23],
+    ["bare marker with tab continuation", "-", "\t", 20],
+  ]) for (const [endingLabel, ending] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
+    const before = [marker, indent + "```js", indent + "Body", indent + "```", ""].join(ending);
+    const after = ending + "Tail" + ending, exact = before + after;
+    const text = lf(exact), caret = text.indexOf("Body"), actual = relocate(text, caret);
+    let inserted, error;
+    try {
+      inserted = cells.insertTable(cells.index(exact, marked, protect), actual,
+        [["Header"]], marked, protect, cells.Mode.INSERT);
+    } catch (failure) { error = failure.message; }
+    check(`Raw Insert preserves exact source after a fence below a blank ${label} (${endingLabel})`,
+      actual === boundary && inserted?.source === before + ending + "| Header |" +
+        ending + "| --- |" + ending + after,
+      { caret, actual, boundary, error, inserted });
+  }
   // Count complete-suffix searches instead of depending on a machine's elapsed time.
   const observeHtmlSearches = vm.runInContext(`(pattern, action) => {
     const exec = RegExp.prototype.exec;
@@ -8776,6 +8797,13 @@ require("./test-userdata-isolation");
         expected: table => before + "\n" + table + "\n" + listTail,
       });
     }
+    const blankMarker = "# Blank list marker\r\n\r\n-\t\r\n\t```js\r\n\tconst value = 1;\r\n\t```\r\n";
+    await placeTable("redirect after a closed fence below a blank tab marker",
+      await fresh("insert-after-blank-tab-marker", blankMarker + quoteTail), {
+        text: "const value = 1;", insertionAt: lf(blankMarker).length, caretOnTarget: true,
+        save: true, undoAfterSave: true, evidence: "insert-after-blank-tab-marker",
+        expected: table => blankMarker + "\r\n" + table + "\r\n" + quoteTail,
+      });
     const gaps = await fresh("insert-typed-gaps", [
       "# Placement", "", "```text", "First", "```", "", "Gap before heading.", "",
       "## Next", "", "```js", "const second = 2;", "```", "", "Gap before tail.", "", "## Tail", "", "End.",

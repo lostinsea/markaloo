@@ -2294,13 +2294,13 @@ const REVERTS = [
     from: "      if (child.type === 'list') {",
     to: "      if (child.type === 'list') { return null;",
     suite: "test:table-cells-click",
-    expect: [/^Insert table opens dimensions at the target caret: redirect after a closed (fence in the last list item|tab-indented list fence|quoted list fence with trailing spaces)$/],
+    expect: [/^Insert table opens dimensions at the target caret: redirect after a closed (fence in the last list item|tab-indented list fence|quoted list fence with trailing spaces|fence below a blank tab marker)$/],
     mustPass: [
       /^trusted Insert menu keeps the prior selection and uses the intended input route: redirect after a closed fence in the last list item$/,
       /^Insert table applies at the clicked boundary: (redirect after a closed quoted CRLF fence|fresh blank between two closed fences)$/,
       /^Insert table warns before dimensions: paragraph continuation$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
   },
   {
     id: "TABLE-INSERT-LIST-TABS",
@@ -2309,11 +2309,28 @@ const REVERTS = [
     from: "        const line = spelling.split('\\n', 1)[0];",
     to: "        if (spelling.includes('\\t')) return null;\n        const line = spelling.split('\\n', 1)[0];",
     suite: "test:table-cells-source",
-    expect: [/^Raw Insert preserves terminal container ownership and exact source: (tab marker and continuation|tab marker with plain continuation|plain marker with tab continuation)$/],
+    expect: [
+      /^Raw Insert preserves terminal container ownership and exact source: (tab marker and continuation|tab marker with plain continuation|plain marker with tab continuation)$/,
+      /^Raw Insert preserves exact source after a fence below a blank (tab marker with (space|tab)|(?:space|bare) marker with tab) continuation \((LF|CRLF)\)$/,
+    ],
     mustPass: [
       /^Raw Insert preserves terminal container ownership and exact source: (last list item|quoted list closer with same-line spaces|bare quote spacer after list)$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 11,
+  },
+  {
+    id: "TABLE-INSERT-BLANK-TAB-MARKER",
+    what: "derive continuation indentation from tab stops on a list marker line that has no content",
+    file: path.join(SRC, "table-marked.js"),
+    from: "        const leading = first.trim() ? /^ */.exec(first)[0].length : 1;",
+    to: "        const leading = first ? /^ */.exec(first)[0].length : 1;",
+    suite: "test:table-cells-source",
+    expect: [/^Raw Insert preserves exact source after a fence below a blank tab marker with (space|tab) continuation \((LF|CRLF)\)$/],
+    mustPass: [
+      /^Raw Insert preserves exact source after a fence below a blank (space|bare) marker with (space|tab) continuation \((LF|CRLF)\)$/,
+      /^Raw Insert preserves terminal container ownership and exact source: (tab marker and continuation|bare quote spacer after list)$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
   },
   {
     id: "TABLE-INSERT-CLOSER-SPACES",
