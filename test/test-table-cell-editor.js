@@ -1170,18 +1170,56 @@ async function sourceTests(core = false) {
     return;
   }
   const { closedBacktickFenceEnd } = context.window.MarkalooTableMarked;
+  const rawHtmlFence = /@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g;
   for (const [label, exact, after] of [
     ["longer closing fence beside literal backticks, with BOM and CRLF",
       "\uFEFF````text\r\n```\r\nBody\r\n`````\r\n\r\nNext", "\nNext"],
     ["unclosed fence", "```text\nBody\n\nNext", null],
     ["fence-shaped text inside raw HTML", "@@@html\n```text\nBody\n```\n@@@\n\nNext", null],
+    ["quoted fence interrupted by an unquoted line", "> ```text\n> Body\nOutside\n> ```\n\nNext", null],
+    ["quoted fence followed by quoted prose", "> ```text\n> Body\n> ```\n> Later\n\nNext", null],
+    ["nested quoted fence", "> Earlier prose\n>\n> > ```text\n> > Body\n> > ```\n\nNext", "\nNext"],
   ]) {
     const text = lf(exact), offset = text.indexOf("Body");
-    const actual = closedBacktickFenceEnd(marked, text, offset,
-      /@@@html(?:\([^)\r\n]*\))?[ \t]*[\r\n]+([\s\S]*?)[\r\n][ \t]*@@@[ \t]*/g);
+    const actual = closedBacktickFenceEnd(marked, text, offset, rawHtmlFence);
     check("Raw Insert redirects only a real closed fence: " + label,
       actual === (after ? text.indexOf(after) : offset), { actual, offset });
   }
+  // Count complete-suffix searches instead of depending on a machine's elapsed time.
+  const observeHtmlSearches = vm.runInContext(`(pattern, action) => {
+    const exec = RegExp.prototype.exec;
+    let searches = 0;
+    RegExp.prototype.exec = function (text) {
+      if (this.source === pattern && !this.sticky) searches++;
+      return exec.call(this, text);
+    };
+    try { return { offset: action(), searches }; }
+    finally { RegExp.prototype.exec = exec; }
+  }`, context);
+  const fencedProse = "Synthetic prose.\n\n```js\nlet body = 1;\n```\n\n".repeat(250);
+  const rawBlock = "@@@html\n```text\nNot a fence\n```\n@@@\n";
+  const hiddenOpener = "```\n@@@html\n```\n\n";
+  for (const [label, tail, targetText, redirected] of [
+    ["without raw HTML", "", "let body", fencedProse.length - 1],
+    ["with one late opaque block", "Before HTML\n" + rawBlock, "Not a fence", null],
+    ["with a skipped opener overlapping a late opaque block", hiddenOpener + "Before HTML\n" + rawBlock,
+      "Not a fence", null],
+  ]) {
+    const text = fencedProse + tail, target = text.lastIndexOf(targetText);
+    const observed = observeHtmlSearches(rawHtmlFence.source,
+      () => closedBacktickFenceEnd(marked, text, target, rawHtmlFence));
+    check("Raw Insert keeps the correct fence ownership " + label, observed.offset === (redirected ?? target), observed);
+    check("Raw Insert does not repeatedly search the document suffix " + label, observed.searches <= 2, observed);
+  }
+  const rawTable = "| Header | Other |\r\n| --- | --- |\r\n| ```json\r\n{}\r\n``` | value |\r\n";
+  const protectedPrefix = hiddenOpener.replace(/\n/g, "\r\n") +
+    "Before HTML\r\n@@@html\r\n" + rawTable + "@@@\r\n\r\n";
+  const protectedSource = protectedPrefix + rawTable;
+  const { protectedRanges } = context.window.MarkalooTableMarked;
+  const ranges = protectedRanges(protectedSource, marked, rawHtmlFence);
+  check("Raw HTML protection preserves exact CRLF bounds after a matching opener inside code",
+    ranges.length === 1 && ranges[0].start === protectedPrefix.length &&
+      ranges[0].end === protectedSource.length, ranges);
   const shared = context.window.MarkalooInlineFormatting;
   const caretSource = shared.attachInlineEditor.toString();
   const nativeInputHandlers = caretSource.slice(caretSource.indexOf("listen(element, 'beforeinput'"),
@@ -8303,7 +8341,7 @@ require("./test-userdata-isolation");
     async function placeTable(label, fixture, { text, linesBelow = 1, expected, columns = 1, dataRows = 0,
       populated = true, caretOnTarget = false, save = false, keyboard = false, insertionAt, scrolled = false,
       pendingPreview = false, padding = false, stale = false, below = false, selected = false, bottomPadding,
-      moveX = 0, cancelOnly = false, evidence }) {
+      moveX = 0, cancelOnly = false, evidence, undoAfterSave = false }) {
       const previous = await state(), previousSaves = saves.length;
       let diskExpected = fixture.body;
       if (bottomPadding) {
@@ -8467,7 +8505,8 @@ require("./test-userdata-isolation");
           } else if (save && expected) {
             const displayed = await exec(`Array.from(viewer.querySelector('table')?.rows ?? [],
               row=>Array.from(row.cells,cell=>cell.textContent.trim()))`);
-            check("Preview renders all eight columns and three rows with untouched cells empty",
+            check("Preview renders all eight columns and three rows with untouched cells empty" +
+              (undoAfterSave ? ": " + label : ""),
               JSON.stringify(displayed) === JSON.stringify(draft), displayed);
             diskExpected = expected(markdown);
             const witness = await documentWitness({ ...fixture, body: diskExpected });
@@ -8477,11 +8516,15 @@ require("./test-userdata-isolation");
               await exec("saveButton.click();true");
               await waitMain("authored table Save completed", () => delivery.records.some(record => record.args[1]?.success));
               await wait("authored table Save settled", "!window.getPendingSaveStatus().pending");
-              check("Explicit Save preserves exact Markdown including untouched empty table cells",
+              check("Explicit Save preserves exact Markdown including untouched empty table cells" +
+                (undoAfterSave ? ": " + label : ""),
                 saves.length === previousSaves + 1 && fs.readFileSync(fixture.file, "utf8") === diskExpected);
-              if (proof === "click" && process.env.MARKALOO_CELL_EVIDENCE) await screenshot("insert-empty-cells-preview");
+              if (!undoAfterSave && proof === "click" && process.env.MARKALOO_CELL_EVIDENCE) {
+                await screenshot("insert-empty-cells-preview");
+              }
             } finally { delivery.restore(); }
-          } else if (expected) {
+          }
+          if (expected && !completion.open && (!save || undoAfterSave)) {
             if (evidence && proof === "click" && process.env.MARKALOO_CELL_EVIDENCE) {
               await wait("inserted table preview reflects the new source", "editorScroll.isCurrentSource(markdownEditor.value)");
               await screenshot(evidence);
@@ -8492,7 +8535,8 @@ require("./test-userdata-isolation");
         }
         const final = await state(), saved = diskExpected !== fixture.body;
         check("Insert placement preserves document ownership and exact bytes: " + label,
-          final.exact === (saved ? diskExpected : previous.exact) && final.owner === previous.owner &&
+          final.exact === (saved && !undoAfterSave ? diskExpected : previous.exact) && final.owner === previous.owner &&
+            (!undoAfterSave || !saved || final.undo === previous.undo) &&
             saves.length === previousSaves + Number(saved) && fs.readFileSync(fixture.file, "utf8") === diskExpected, final);
       } finally {
         await page(ticket => window.__cellDialogGuard.finishCellInput(ticket), menu.ticket);
@@ -8604,6 +8648,17 @@ require("./test-userdata-isolation");
         expected: table => fenced + "\n" + table + "\n" + suffix,
       });
     }
+    const quoted = "# Quoted fence\r\n\r\n> ```js\r\n> let x = 1;\r\n> ```\r\n", quoteTail = "\r\nTail\r\n";
+    const quoteFixture = await fresh("insert-quoted-crlf", quoted + quoteTail);
+    check("Insert opens an exact CRLF file in the LF textarea offset domain",
+      (await state()).exact === quoteFixture.body &&
+        await exec(`markdownEditor.value===${JSON.stringify(lf(quoteFixture.body))}`));
+    await placeTable("redirect after a closed quoted CRLF fence", quoteFixture, {
+      text: "> ```js", insertionAt: lf(quoted).length, caretOnTarget: true,
+      columns: 8, dataRows: 3, populated: true, save: true, undoAfterSave: true,
+      evidence: "insert-after-quoted-crlf-fence",
+      expected: table => quoted + "\r\n" + table + "\r\n" + quoteTail,
+    });
     const gaps = await fresh("insert-typed-gaps", [
       "# Placement", "", "```text", "First", "```", "", "Gap before heading.", "",
       "## Next", "", "```js", "const second = 2;", "```", "", "Gap before tail.", "", "## Tail", "", "End.",
