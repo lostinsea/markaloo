@@ -1275,12 +1275,14 @@ async function finish(error) {
       "Search text is trusted native insertion; synchronous input listener clicks the actual toolbar before debounce",
       "Captures are retained but must be viewed separately before acceptance"],
   }, null, 2) + "\n");
-  const footer = htmlOrigin ? "reading-history-html-origin" : publicationProducers ? "reading-history-publication-producers" :
+  const footer = publicationProducers ? "reading-history-publication-producers" :
     releaseHistoryBatch ? "reading-history-release-batch" :
     readerBranchReplacement ? "reading-history-branch-replacement" :
     readingHistoryNoop ? "reading-history-noop" :
     windowsHistoryKeys ? "reading-history-windows-keys" : "reading-history-native";
-  console.log(`=== ${footer}: ${results.filter(result => result.ok).length}/${results.length} passed ===`);
+  const score = `${results.filter(result => result.ok).length}/${results.length} passed`;
+  // The registered HTML-origin proof uses the revert harness's unprefixed terminal footer.
+  console.log(htmlOrigin ? `=== ${score} ===` : `=== ${footer}: ${score} ===`);
   ordinaryExiting = true;
   clearTimeout(watchdog);
   app.exit(cleanExit ? 0 : 1);

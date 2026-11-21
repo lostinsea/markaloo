@@ -1599,8 +1599,12 @@ function releaseProbeFixture() {
 }
 
 const installedProbeSource = between(nativeHistorySource, "function installHistoryProbe(", "\nasync function run(");
-const probeInstallationSites = nativeHistorySource.split("\n").filter(line =>
+const installationSites = source => source.split("\n").filter(line =>
   line.includes('await exec("(" + installHistoryProbe.toString()'));
+const allProbeInstallationSites = installationSites(nativeHistorySource);
+const htmlOriginProbeSites = installationSites(between(nativeHistorySource,
+  "async function runHtmlOrigin(", "\nasync function runReaderBranchReplacement("));
+const probeInstallationSites = allProbeInstallationSites.filter(site => !htmlOriginProbeSites.includes(site));
 
 function injectedReleaseFixture() {
   const events = [], listeners = new Map(), tab = { id: 42 };
@@ -1819,11 +1823,31 @@ test("a genuinely unavailable surviving adapter still exhausts readiness and fai
 
 test("the source includes all seven real history-probe installations", () => {
   const companion = nativeHistorySource.slice(nativeHistorySource.indexOf("async function runPublicationProducers("));
-  const companionSites = companion.split("\n").filter(line =>
-    line.includes('await exec("(" + installHistoryProbe.toString()'));
+  const companionSites = installationSites(companion);
   assert.equal(companionSites.length, 1, "the separate two-case producer companion reinstalls once");
   assert.equal(probeInstallationSites.length - companionSites.length, 7);
   assert.equal(probeInstallationSites.length, 8);
+  assert.equal(allProbeInstallationSites.length, probeInstallationSites.length + 1);
+});
+
+function assertNonreleaseProbe(f, api) {
+  assert.throws(() => api.remember("point", f.sourcePoint), /Only the release route may import/);
+  assert.throws(() => api.armIssuedBack(), /Only one release request-issued Back may be armed/);
+  assert.throws(() => api.armCanceledRequest(), /release cancel listener must not overlap/);
+  assert.equal(f.events.length, 0);
+  assert.equal(f.inputListener(), null);
+  assert.equal(f.closes(), 0);
+  assert.equal(api.dispose(), true);
+}
+
+test("the separate HTML-origin probe always omits the release selector", async () => {
+  assert.deepEqual(htmlOriginProbeSites.map(site => site.trim()), [
+    'await exec("(" + installHistoryProbe.toString() + ")()");',
+  ]);
+  const f = injectedReleaseFixture();
+  // A true sender-side selector must not enable release-only methods at this site.
+  const api = await injectActualProbe(f, htmlOriginProbeSites[0], true);
+  assertNonreleaseProbe(f, api);
 });
 
 for (const [index, site] of probeInstallationSites.entries()) {
@@ -1864,13 +1888,7 @@ for (const [index, site] of probeInstallationSites.entries()) {
       " at installation " + index, async () => {
       const f = injectedReleaseFixture();
       const api = await injectActualProbe(f, site, dropArgument, { dropArgument });
-      assert.throws(() => api.remember("point", f.sourcePoint), /Only the release route may import/);
-      assert.throws(() => api.armIssuedBack(), /Only one release request-issued Back may be armed/);
-      assert.throws(() => api.armCanceledRequest(), /release cancel listener must not overlap/);
-      assert.equal(f.events.length, 0);
-      assert.equal(f.inputListener(), null);
-      assert.equal(f.closes(), 0);
-      assert.equal(api.dispose(), true);
+      assertNonreleaseProbe(f, api);
     });
   }
 }

@@ -52,6 +52,7 @@
     "test:edit-position": "node --check test/test-edit-mode-position.js && electron test/test-edit-mode-position.js",
     "test:reading-panels": "node --check test/test-reading.js && node test/test-reading.js --panels",
     "test:reading-history": "node test/test-reading-history.js",
+    "test:reading-history-html-origin": "node test/run-reading-history-html-origin.js",
     "test:reading-consumers": "node test/test-reading-history-consumers.js",
     "test:reading-controls": "node test/test-reading-navigation-controls.js",
     "test:reading-landmarks": "node test/test-reading-landmarks.js",
