@@ -1981,8 +1981,13 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const paddingTop = parseFloat(style.paddingTop), lineHeight = parseFloat(style.lineHeight);
     if (x < (live ? 0 : parseFloat(style.paddingLeft)) ||
         x >= editor.clientWidth - (live ? 0 : parseFloat(style.paddingRight)) ||
-        y < paddingTop || y >= editor.clientHeight - parseFloat(style.paddingBottom) ||
+        y < paddingTop || y >= editor.clientHeight ||
         !Number.isFinite(lineHeight) || lineHeight <= 0) return null;
+    if (y >= editor.clientHeight - parseFloat(style.paddingBottom)) {
+      // Only Insert can use bottom padding at EOF. Rounded heights can differ from scrollTop by one CSS pixel.
+      const atEnd = editor.scrollHeight - editor.clientHeight - editor.scrollTop <= 1;
+      return live && atEnd ? { start: source.length, end: source.length } : null;
+    }
     // Click placement needs the textarea layout, not a committed preview parse.
     const sourceY = mapped ? sourceGeometry() : sourceGeometry(source, []), starts = [0];
     for (let i = 0; i < source.length; i++) {

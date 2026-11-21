@@ -2225,14 +2225,14 @@ const REVERTS = [
     to: "  const insertionPoint = clicked === null ? null : markdownEditor.selectionStart;",
     suite: "test:table-cells-click",
     expect: [
-      /^Insert table opens dimensions at the target caret: (blank EOF|blank before heading|retry below new prose|retry below new heading|between a table and prose|scrolled blank between prose blocks after wrapped text|redirect after a closed js fence|redirect after a closed mermaid fence)$/,
+      /^Insert table opens dimensions at the target caret: (blank EOF|blank before heading|retry below new prose|retry below new heading|between a table and prose|scrolled blank between prose blocks after wrapped text|bottom padding with the final wrapped line visible|redirect after a closed js fence|redirect after a closed mermaid fence)$/,
     ],
     mustPass: [
       /^trusted Insert menu keeps the prior selection and uses the intended input route: blank EOF$/,
       /^Insert table applies at the clicked boundary: keyboard context menu at the caret$/,
       /^Explicit Save preserves exact Markdown including untouched empty table cells$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 8,
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 9,
   },
   {
     id: "TABLE-INSERT-LIVE-LINE",
@@ -2245,12 +2245,30 @@ const REVERTS = [
       /^Insert table opens dimensions at the target caret: retry below new prose$/,
       /^Insert table opens dimensions at the target caret: fresh document with caret already at the boundary$/,
       /^Insert table opens dimensions at the target caret: empty document$/,
+      /^Insert table opens dimensions at the target caret: bottom padding with the final wrapped line visible$/,
     ],
     mustPass: [
       /^trusted Insert menu keeps the prior selection and uses the intended input route: retry below new prose$/,
       /^Insert table applies at the clicked boundary: retry below new heading$/,
     ],
-    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 3,
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 4,
+  },
+  {
+    id: "TABLE-INSERT-BOTTOM-PADDING",
+    what: "reject bottom padding even when Insert can reach the end of the document",
+    file: EDITOR_SCROLL,
+    from: "      return live && atEnd ? { start: source.length, end: source.length } : null;",
+    to: "      return null;",
+    suite: "test:table-cells-click",
+    expect: [
+      /^Insert table opens dimensions at the target caret: bottom padding with the final wrapped line visible$/,
+    ],
+    mustPass: [
+      /^trusted Insert menu keeps the prior selection and uses the intended input route: bottom padding with the final wrapped line visible$/,
+      /^Insert table warns before dimensions: bottom padding with the final wrapped line clipped$/,
+      /^Insert table applies at the clicked boundary: scrolled blank between prose blocks after wrapped text$/,
+    ],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "TABLE-INSERT-LATE-WARNING",

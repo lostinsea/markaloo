@@ -8286,10 +8286,15 @@ require("./test-userdata-isolation");
     });
     async function placeTable(label, fixture, { text, linesBelow = 1, expected, columns = 1, dataRows = 0,
       populated = true, caretOnTarget = false, save = false, keyboard = false, insertionAt, scrolled = false,
-      pendingPreview = false, padding = false, stale = false, below = false, selected = false }) {
+      pendingPreview = false, padding = false, stale = false, below = false, selected = false, bottomPadding }) {
       const previous = await state(), previousSaves = saves.length;
       let diskExpected = fixture.body;
-      const { x, y, original, target, hit, bounds } = await page(async (text, linesBelow, caretOnTarget, padding, below, selected) => {
+      if (bottomPadding) {
+        await wait("previous table placement notice expires normally",
+          "getComputedStyle(document.getElementById('notificationToast')).opacity==='0'", 8300);
+      }
+      const { x, y, original, target, hit, bounds, bottom } = await page(async (
+        text, linesBelow, caretOnTarget, padding, below, selected, bottomPadding) => {
         const source = markdownEditor.value, anchor = source.lastIndexOf(text);
         if (anchor < 0) throw new Error("Missing editor text above the expected insertion point");
         let target = anchor;
@@ -8303,7 +8308,26 @@ require("./test-userdata-isolation");
         const point = __cells.sourcePoint(selected ? target + 5 : target);
         const rect = markdownEditor.getBoundingClientRect();
         const x = padding ? Math.ceil(rect.left + markdownEditor.clientLeft + 1) : point.x;
-        const y = below ? Math.round(point.y + 3 * parseFloat(getComputedStyle(markdownEditor).lineHeight)) : point.y;
+        const style = getComputedStyle(markdownEditor), height = parseFloat(style.lineHeight);
+        let y = below ? Math.round(point.y + 3 * height) : point.y, bottom;
+        if (bottomPadding) {
+          const { clientHeight, clientWidth, clientLeft, clientTop, scrollHeight, offsetHeight, offsetWidth } = markdownEditor;
+          const scaleY = rect.height / offsetHeight, scaleX = rect.width / offsetWidth;
+          const paddingBottom = parseFloat(style.paddingBottom);
+          const firstLineCenter = (point.y - rect.top) / scaleY - clientTop + markdownEditor.scrollTop;
+          const maxScroll = scrollHeight - clientHeight;
+          markdownEditor.scrollTop = bottomPadding === "clipped" ? maxScroll - Math.ceil(2 * height) : scrollHeight;
+          y = Math.round(rect.top + (clientTop + clientHeight - paddingBottom / 2) * scaleY);
+          const localY = (y - rect.top) / scaleY - clientTop;
+          bottom = {
+            inPadding: localY >= clientHeight - paddingBottom && localY < clientHeight,
+            wrapped: scrollHeight - paddingBottom - firstLineCenter > height,
+            remaining: maxScroll - markdownEditor.scrollTop,
+            scrollTop: markdownEditor.scrollTop,
+            outside: editorScroll.sourceLineAt(rect.left + (clientLeft + clientWidth + 0.5) * scaleX, y, { live: true }),
+          };
+          if (bottomPadding === "end") target = source.length;
+        }
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         window.__insertWitness = null;
         markdownEditor.addEventListener("contextmenu", event => {
@@ -8311,9 +8335,15 @@ require("./test-userdata-isolation");
             end: markdownEditor.selectionEnd, previewCurrent: editorScroll.isCurrentSource(markdownEditor.value) };
         }, { capture: true, once: true });
         const element = document.elementFromPoint(x, y);
-        return { x, y, original, target, hit: element === markdownEditor,
+        return { x, y, original, target, bottom, hit: element === markdownEditor,
           bounds: [element?.id, markdownEditor.scrollTop, markdownEditor.getBoundingClientRect().toJSON()] };
-      }, text, linesBelow, caretOnTarget, padding, below, selected);
+      }, text, linesBelow, caretOnTarget, padding, below, selected, bottomPadding ?? null);
+      if (bottomPadding) {
+        check("Insert probes bottom padding after a wrapped line at the intended scroll position: " + label,
+          bottom.inPadding && bottom.wrapped && bottom.outside === null &&
+            (bottomPadding === "end" ? Math.abs(bottom.remaining) <= 1 : bottom.remaining > 1),
+          { ...bottom, bounds, x, y });
+      }
       if (keyboard) {
         await exec("markdownEditor.focus();true");
         win.webContents.sendInputEvent({ type: "keyDown", keyCode: "F10", modifiers: ["shift"] });
@@ -8325,12 +8355,15 @@ require("./test-userdata-isolation");
       }
       await wait("Insert table context menu", "contextMenu.classList.contains('visible')");
       const witness = await exec(`({...__insertWitness,restored:markdownEditor.selectionStart,
-        line:tableMenuSelection.sourceLine,scroll:markdownEditor.scrollTop})`);
+        line:tableMenuSelection.sourceLine,scroll:markdownEditor.scrollTop,sourceEnd:markdownEditor.value.length})`);
       check("trusted Insert menu keeps the prior selection and uses the intended input route: " + label,
         witness.trusted && (keyboard ? witness.button !== 2 : pendingPreview ? !witness.previewCurrent :
-          padding || below ? witness.previewCurrent && !witness.line : witness.line?.start === target) &&
+          padding || below || bottomPadding ? witness.previewCurrent && !witness.line : witness.line?.start === target) &&
           (!selected || witness.end > witness.caret) &&
-          witness.caret === target && witness.restored === original && (!scrolled || witness.scroll > 0),
+          (bottomPadding ? Math.abs(witness.scroll - bottom.scrollTop) < 1 && witness.caret > original &&
+            (bottomPadding === "clipped" ? witness.caret < witness.sourceEnd : witness.caret <= witness.sourceEnd) :
+            witness.caret === target) &&
+          witness.restored === original && (!scrolled || witness.scroll > 0),
         { ...witness, original, target });
       const menu = await armInsertMenu();
       try {
@@ -8343,12 +8376,15 @@ require("./test-userdata-isolation");
         const offset = insertionAt ?? target;
         if (expected) {
           check("Insert table opens dimensions at the target caret: " + label,
-            opening.open && opening.setup && opening.trustedModal && opening.offset === offset, opening);
+            opening.open && opening.setup && opening.trustedModal && opening.offset === offset,
+            bottomPadding ? { ...opening, bottom, witness, x, y } : opening);
         } else {
           check("Insert table warns before dimensions: " + label,
             !opening.open && opening.noticeVisible &&
               opening.notification.includes(stale ? "Choose Insert Table again" : "Move the cursor"), opening);
         }
+        const captureBottom = bottomPadding && proof === "click" && process.env.MARKALOO_CELL_EVIDENCE;
+        if (captureBottom && !opening.open) await screenshot("insert-bottom-padding-" + bottomPadding);
         if (opening.open) {
           await page((columns, dataRows) => {
             tableCellColumns.value = columns;
@@ -8369,6 +8405,7 @@ require("./test-userdata-isolation");
           const serialized = await readDraft();
           check("Insert grid serializes edited values and empty untouched body cells: " + label,
             JSON.stringify(serialized) === JSON.stringify(draft), serialized);
+          if (captureBottom) await screenshot("insert-bottom-padding-" + bottomPadding);
           const rows = [...serialized];
           rows.splice(1, 0, Array(columns).fill("---"));
           const markdown = rows.map(row => "| " + row.join(" | ") + " |").join(previous.exact.includes("\r\n") ? "\r\n" : "\n");
@@ -8463,6 +8500,15 @@ require("./test-userdata-isolation");
     await placeTable("scrolled blank between prose blocks after wrapped text", scrolledFixture, {
       text: "Wrapped prose", linesBelow: 1, scrolled: true,
       expected: table => scrolledPrefix + table + "\n\n" + scrolledSuffix,
+    });
+    const wrappedEnd = scrolledPrefix + "Final wrap " + "remaining words ".repeat(120).trimEnd();
+    const bottomFixture = await fresh("insert-bottom-padding", wrappedEnd);
+    await placeTable("bottom padding with the final wrapped line visible", bottomFixture, {
+      text: "Final wrap", linesBelow: 0, bottomPadding: "end", scrolled: true,
+      expected: table => wrappedEnd + "\n\n" + table,
+    });
+    await placeTable("bottom padding with the final wrapped line clipped", bottomFixture, {
+      text: "Final wrap", linesBelow: 0, bottomPadding: "clipped", scrolled: true,
     });
     const keyPrefix = "# Keyboard\n\nAlpha\n\n";
     await placeTable("keyboard context menu at the caret", await fresh("insert-keyboard", keyPrefix + "Beta"), {
