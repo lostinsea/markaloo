@@ -1674,10 +1674,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   }
   function captureVisibleText(scroller, onModeCharacter = null, modePseudoBefore = null) {
     lastReadingCaptureFailure = null;
-    return scanVisibleText(scroller, currentReadingPublication(), onModeCharacter, modePseudoBefore);
-  }
-  function scanVisibleText(scroller, publication, onModeCharacter, modePseudoBefore) {
     const entered = readingEpoch, enteredBinding = bindingEpoch;
+    return scanVisibleText(scroller, currentReadingPublication(), onModeCharacter, modePseudoBefore, entered, enteredBinding);
+  }
+  function scanVisibleText(scroller, publication, onModeCharacter, modePseudoBefore, entered, enteredBinding) {
     let sourceRefusal = publication ? null : readingFailure('unavailable', 'presentation-unbound-or-stale');
     if (sourceRefusal && !onModeCharacter) return sourceRefusal;
     const groups = new Map(publication?.groups.map(group => [group.element, group])), contents = new Map(), layouts = new Map();
@@ -1689,7 +1689,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         // A partial publication may not own an earlier heading's decoration.
         // Recheck from the top for mode alignment only; it cannot grant a reading receipt.
         if (publication && onModeCharacter && entered === readingEpoch && enteredBinding === bindingEpoch) {
-          scanVisibleText(scroller, null, onModeCharacter, modePseudoBefore);
+          scanVisibleText(scroller, null, onModeCharacter, modePseudoBefore, entered, enteredBinding);
         }
         return sourceRefusal || readingFailure('unsupported', 'unverifiable-clipping-chain');
       }
