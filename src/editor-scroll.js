@@ -42,6 +42,62 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         view.exact(from + offset) };
   }
 
+  function observeReadingRoots(parser, input) {
+    const spans = new WeakMap(), skipped = [];
+    let before, valid = true;
+    const close = (end, tokens) => {
+      if (!valid || !before || end <= before.start || tokens !== before.tokens ||
+          tokens[before.count - 1] !== before.last) return valid = false;
+      const { start, last, rawLength, count, definition } = before;
+      const consumed = input.slice(start, end);
+      if (tokens.length === count + 1) {
+        const token = tokens.at(-1);
+        if (token.raw === consumed) {
+          if (token.type === 'def' && definition === consumed) skipped.push({ start, end });
+          else spans.set(token, { start, end });
+        }
+      } else if (tokens.length !== count) {
+        valid = false;
+      } else if (last?.raw.length !== rawLength) {
+        const span = spans.get(last);
+        // Marked can append more source to the same token, but a skipped
+        // definition or an inserted separator must not become part of its span.
+        if (span?.end === start && last.raw.slice(rawLength) === consumed) span.end = end;
+        else spans.delete(last);
+      } else if (definition === consumed) {
+        skipped.push({ start, end });
+      }
+    };
+    parser.use({ extensions: [{
+      name: 'markalooReadingRootConsumption',
+      level: 'block',
+      tokenizer(remaining, tokens) {
+        if (tokens !== this.lexer.tokens) return;
+        const start = input.length - remaining.length;
+        if (before) close(start, tokens);
+        else {
+          valid = remaining === input && tokens.length === 0;
+          const tokenizer = this.lexer.tokenizer, def = tokenizer.def;
+          tokenizer.def = function (suffix) {
+            const token = def.call(this, suffix);
+            // Marked may merge a definition into prose instead of skipping it.
+            // Only close() can tell how this lexer step actually used the match.
+            if (token && before.remaining === suffix) before.definition = token.raw;
+            return token;
+          };
+        }
+        const last = tokens.at(-1);
+        before = { start, remaining, tokens, count: tokens.length, last, rawLength: last?.raw.length };
+      },
+    }] });
+    return tokens => {
+      if (input.length) close(input.length, tokens);
+      return valid ? { spans, skipped } : null;
+    };
+  }
+
+  const readingBounds = descriptor => descriptor.readingSpan === undefined ? descriptor : descriptor.readingSpan;
+
   function replaceView(view, regex, replacement) {
     const pieces = [];
     let cursor = 0, output = 0;
@@ -329,7 +385,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const containsHtml = token => token.type === 'html' ||
         [...(token.tokens || []), ...(token.items || [])].some(containsHtml);
-      let readingRootSpans, finishReadingRoot;
+      let finishReadingRoot, readingRoots, skippedReading;
+      const intersectsSkipped = (start, end) =>
+        (skippedReading?.[upperBound(skippedReading, start, 'end')]?.start ?? Infinity) < end;
       const locate = (items, view, topLevel = false, inline = false, opaque = false, owner = null, readingOnly = false) => {
         let cursor = 0;
         for (const token of items || []) {
@@ -374,25 +432,38 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
             ...(token.type === 'code' && readingEnabled ? { readingCode: fencedReadingCode(token, tokenView) } : {}),
             lines: token.type === 'paragraph' ? [...token.raw.trimEnd().matchAll(/\n/g)]
               .map(match => tokenView.at(match.index + 1)) : [] });
-          const proved = topLevel && readingRootSpans?.get(token);
-          if (proved && view.text.slice(proved.start, proved.end) === token.raw &&
+          const descriptor = spans.get(token);
+          const proof = topLevel && readingRoots?.spans.get(token);
+          const proved = proof && view.text.slice(proof.start, proof.end) === token.raw ? proof : null;
+          const hiddenCopy = intersectsSkipped(descriptor.start, descriptor.end);
+          if (hiddenCopy || (proved && proved.start !== at)) {
+            descriptor.readingSpan = null;
+            if (topLevel) descriptor.readingDisplacement = null;
+            if (token.type === 'code') descriptor.readingCode = null;
+          }
+          if (proved && ['html', 'heading', 'paragraph', 'code'].includes(token.type) &&
               (token.type === 'html' || proved.start !== at)) {
             const readingView = sliceView(view, proved.start, proved.end);
             const exactBlock = candidate => candidate.exact(0) && candidate.exact(end) &&
               this.source.slice(candidate.at(0), candidate.at(end)) === token.raw.slice(0, end);
-            const descriptor = spans.get(token);
+            const exact = exactBlock(readingView);
             if (token.type === 'html') {
               const literal = /^( {0,3})<p>([^<\n\0]+)<\/p>[ \t\n]*$/i.exec(readingView.text);
-              if (literal && exactBlock(readingView)) {
+              if (literal && exact) {
                 const start = literal[1].length + 3;
                 descriptor.readingHtmlParagraph = sliceView(readingView, start, start + literal[2].length);
               }
+            } else if (token.type === 'code') {
+              descriptor.readingCode = exact ? fencedReadingCode(token, readingView) : null;
             } else {
               // Keep the inline projection, but place it in the occurrence the parser consumed.
               // Null refuses reading if either copy cannot be tied to the exact normalized block.
-              descriptor.readingDisplacement = exactBlock(tokenView) && exactBlock(readingView) ? {
+              descriptor.readingDisplacement = exactBlock(tokenView) && exact ? {
                 start: tokenView.at(0), end: tokenView.at(end), shift: readingView.at(0) - tokenView.at(0),
               } : null;
+            }
+            if (token.type !== 'html' || descriptor.readingHtmlParagraph) {
+              descriptor.readingSpan = exact ? { view: readingView, start: readingView.at(0), end: readingView.at(end) } : null;
             }
           }
           if (token.type === 'markalooRawTable') {
@@ -492,7 +563,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       };
       const hooks = new marked.Hooks();
       hooks.processAllTokens = tokens => {
-        finishReadingRoot?.(rootView.text.length, tokens);
+        readingRoots = finishReadingRoot?.(tokens);
+        skippedReading = readingRoots?.skipped.map(({ start, end }) => ({ start: rootView.at(start), end: rootView.at(end) }));
         this.captureGaps = [];
         locate(tokens, rootView, true);
         return tokens;
@@ -554,33 +626,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         this.coarseHtml = coarseHtml;
         this.descriptors = [];
         const parser = window.MarkalooTableMarked.create(marked, { annotate });
-        readingRootSpans = finishReadingRoot = null;
-        if (readingEnabled && /<p>/i.test(rootView.text)) {
-          // Use Marked's root consumption, including definitions it omits from the token list.
-          readingRootSpans = new WeakMap();
-          let previous, exactInput = false;
-          finishReadingRoot = (end, tokens) => {
-            if (!exactInput || !previous || previous.tokens !== tokens || tokens.length !== previous.count + 1 ||
-                tokens[previous.count - 1] !== previous.last) return;
-            const token = tokens.at(-1), { start } = previous;
-            if (['html', 'heading', 'paragraph'].includes(token.type) &&
-                end - start === token.raw.length && rootView.text.startsWith(token.raw, start)) {
-              readingRootSpans.set(token, { start, end });
-            }
-          };
-          parser.use({ extensions: [{
-            name: 'markalooReadingRootConsumption',
-            level: 'block',
-            tokenizer(remaining, tokens) {
-              if (tokens !== this.lexer.tokens) return;
-              if (!previous) exactInput = remaining === rootView.text && tokens.length === 0;
-              const start = rootView.text.length - remaining.length;
-              finishReadingRoot(start, tokens);
-              previous = { start, tokens, count: tokens.length, last: tokens.at(-1) };
-            },
-          }] });
-        }
-        return parser.parse(this.text, { renderer, hooks });
+        // Only literal HTML and reference definitions need the extra provenance.
+        finishReadingRoot = readingEnabled && (rootView.text.includes(']:') || /<p>/i.test(rootView.text)) ?
+          observeReadingRoots(parser, rootView.text) : null;
+        return parser.parse(this.text, { renderer, hooks, ...(finishReadingRoot ? { silent: false } : {}) });
       };
       const html = window.MarkalooTableMarked.create(marked).parse(this.text);
       try {
@@ -762,7 +811,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           if (!run.descriptor.readingOnly) this.textSpecs.get(run.block).runs.push({ from, display: run.display, view });
           if (readingEnabled) {
             const displacement = bindings.get(run.block)?.readingDisplacement;
-            if (displacement === undefined) {
+            if (displacement === undefined && run.descriptor.readingSpan !== null) {
               this.readingTextSpecs.get(run.block).runs.push({
                 from, display: run.display, view, ...(run.descriptor.readingOnly ? { kind: 'table' } : {}),
               });
@@ -788,11 +837,12 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           while (block.parentNode !== root) block = block.parentNode;
           const content = textNodes(block), codeContent = textNodes(code);
           const from = content.nodes.find(entry => entry.node === codeContent.nodes[0]?.node)?.start;
-          if (from === undefined) continue;
+          if (from === undefined || (node !== block && bindings.get(block)?.readingDisplacement === null)) continue;
           const specs = this.readingTextSpecs.get(block) || { text: content.text, runs: [] };
           specs.runs.push(...descriptor.readingCode.runs.map(run => ({ ...run, from: from + run.from })));
           specs.runs.sort((a, b) => a.from - b.from);
           this.readingTextSpecs.set(block, specs);
+          if (descriptor.readingSpan) certifiedReading.add(block);
         }
       }
       if (certifiedReading.size) {
@@ -855,15 +905,17 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           if (readingEnabled) {
             delete editingDescriptor.readingCode;
             delete editingDescriptor.readingTable;
+            delete editingDescriptor.readingSpan;
           }
           if (descriptor.captureBody) this.captureOwners.push(editingDescriptor);
           else this.bindings.push(editingDescriptor);
         }
-        if (readingEnabled && descriptor.view &&
+        const bounds = readingBounds(descriptor);
+        if (readingEnabled && bounds?.view &&
             (fresh === adopted || (node === fresh && fresh.isEqualNode(adopted))) &&
-            descriptor.view.exact(0) && descriptor.view.exact(descriptor.view.text.trimEnd().length)) {
+            bounds.view.exact(0) && bounds.view.exact(bounds.view.text.trimEnd().length)) {
           const owners = readingOwners.get(this) || [];
-          owners.push({ element: fresh === adopted ? node : adopted, start: descriptor.start, end: descriptor.end,
+          owners.push({ element: fresh === adopted ? node : adopted, start: bounds.start, end: bounds.end,
             kind: descriptor.kind, tag: (fresh === adopted ? node : adopted).tagName, role: 'body' });
           readingOwners.set(this, owners);
         }
@@ -1084,7 +1136,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           }
           usedWrappers.add(wrapper);
           wrappers.set(wrapper, target);
-          owners.push({ element: wrapper, start: descriptor.start, end: descriptor.end,
+          const bounds = readingBounds(descriptor);
+          if (bounds) owners.push({ element: wrapper, start: bounds.start, end: bounds.end,
             kind: descriptor.kind, tag: wrapper.tagName, role: 'scroller' });
         }
         if (pair.breakout !== undefined && pair.breakout !== null) {
@@ -1201,10 +1254,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         return readingFailure('unsupported', 'final-body-does-not-match-source');
       }
       for (const { node, descriptor } of proof.bindings) {
-        const target = targets.get(node);
-        if (target && descriptor.view && descriptor.end > descriptor.start && descriptor.view.exact(0) &&
-            descriptor.view.exact(descriptor.view.text.trimEnd().length)) {
-          owners.push({ element: target, start: descriptor.start, end: descriptor.end,
+        const target = targets.get(node), bounds = readingBounds(descriptor);
+        if (target && bounds?.view && bounds.end > bounds.start && bounds.view.exact(0) &&
+            bounds.view.exact(bounds.view.text.trimEnd().length)) {
+          owners.push({ element: target, start: bounds.start, end: bounds.end,
             kind: descriptor.kind, tag: target.tagName, role: 'body' });
         }
       }

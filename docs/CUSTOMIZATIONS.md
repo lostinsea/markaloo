@@ -180,10 +180,11 @@ println!("{answer}");
 - A top-level literal HTML paragraph such as `<p>Runbook overview</p>` can be a
   reading-history stop. The source mapper checks the parser's exact source
   offset against the sanitized paragraph. If a Markdown reference title hides
-  an identical paragraph or heading, the reading map uses the source the parser
-  consumed for the visible block. This does not change edit or search bindings.
-  If a new anchor conflicts with an older source mapping, omit the uncertain
-  anchor rather than disabling unrelated reading history.
+  an identical paragraph, heading, or fenced code block, the reading map uses
+  the exact source the parser consumed for the visible block. It does not join
+  source spans across hidden text or change edit or search bindings. When a
+  hidden copy cannot be remapped exactly, it does not become a reading stop
+  or prevent other blocks from becoming stops.
 - After manual scrolling away from a saved destination, Back first restores that
   destination. This return leaves the entire timeline and Forward branch unchanged.
   The next Back visits the older entry. The oldest saved destination can also
