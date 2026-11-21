@@ -1192,8 +1192,14 @@ async function sourceTests(core = false) {
     ["quote inside list", "- Intro\n  > ```js\n  > Body\n  > ```\n", "\nTail\n"],
     ["nested list", "- Intro\n  - ```js\n    Body\n    ```\n", "\nTail\n"],
     ["list closer with trailing spaces", "- ```js\n  Body\n  ```  \n", "\nTail\n"],
+    ["quoted list closer with same-line spaces", "> - ```js\n>   Body\n>   ```  \n", "\nTail\n"],
+    ["tab marker and continuation", "-\t```js\n\tBody\n\t```\n", "\nTail\n"],
+    ["tab marker with plain continuation", "-\t```js\n    Body\n    ```\n", "\nTail\n"],
+    ["plain marker with tab continuation", "-  ```js\n\tBody\n\t```\n", "\nTail\n"],
     ["quoted EOF with LF", "> ```js\n> Body\n> ```\n"],
     ["quoted EOF without LF", "> ```js\n> Body\n> ```"],
+    ["bare quote spacer", "> ```js\n> Body\n> ```\n>\n", "Tail\n", null],
+    ["bare quote spacer after list", "> - ```js\n>   Body\n>   ```\n>\n", "Tail\n", null],
     ["nonterminal list item", "- ```js\n  Body\n  ```\n- Following item\n", "\nTail\n", null],
     ["unclosed fence in final item", "- ```js\n  Body\n", "", null],
     ["gap after list", "- ```js\n  Body\n  ```\n", "\nTail\n", ""],
@@ -1214,12 +1220,20 @@ async function sourceTests(core = false) {
   // Count complete-suffix searches instead of depending on a machine's elapsed time.
   const observeHtmlSearches = vm.runInContext(`(pattern, action) => {
     const exec = RegExp.prototype.exec;
-    let searches = 0;
+    let searches = 0, extent = 0;
+    const opaque = [];
     RegExp.prototype.exec = function (text) {
-      if (this.source === pattern && !this.sticky) searches++;
-      return exec.call(this, text);
+      const result = exec.call(this, text);
+      if (this.source === pattern) {
+        if (!this.sticky) searches++;
+        if (result) {
+          extent += result[0].length;
+          if (this.sticky) opaque.push(result[0]);
+        }
+      }
+      return result;
     };
-    try { return { offset: action(), searches }; }
+    try { return { offset: action(), searches, extent, opaque }; }
     finally { RegExp.prototype.exec = exec; }
   }`, context);
   const fencedProse = "Synthetic prose.\n\n```js\nlet body = 1;\n```\n\n".repeat(250);
@@ -1253,6 +1267,47 @@ async function sourceTests(core = false) {
       observed);
     check("Raw Insert reuses opaque lookahead within each nested lexer call: " + label, observed.searches <= 6,
       observed);
+  }
+  const quotedCode = "```js\nTarget body\n```\n";
+  const genericFence = new RegExp("(?:" + rawHtmlFence.source + ")", "g");
+  for (const [label, prefix, body, suffix, shielded] of [
+    ["trailing text after a closer", "", "@@@html(card)\n" + quotedCode + "@@@", "trailing\n", true],
+    ["mid-line opener", "Synthetic prose ", "@@@html\n" + quotedCode + "@@@", "\n", true],
+    ["Unicode separators in arguments and body", "", "@@@html(a\u2028b\u2029)\nA\u2028B\u2029\n" + quotedCode + "@@@", "\n", true],
+    ["Unicode separators are not line breaks", "", "", "@@@html\u2028@@@\u2029\n\n" + quotedCode + "@@@\n", false],
+    ["malformed optional arguments", "", "", "@@@html(missing\n\n" + quotedCode + "@@@\n", false],
+    ["one LF cannot serve as opener and closer", "", "", "@@@html(card)\n@@@\n\n" + quotedCode, false],
+    ["adjacent LFs allow an empty block", "", "@@@html(card)\n\n@@@", "\n\n" + quotedCode, false],
+    ["native fenced hit before a real block", "Prelude\n\n```js\nx @@@html\n```\n\n",
+      "@@@html(card)\n" + quotedCode + "@@@", "\n", true],
+    ["nonempty body chooses first complete closer", "", "@@@html(card)\nBody\n@@@", "\n\n" + quotedCode + "@@@\n", false],
+    ["greedy header can choose a later closer", "", "@@@html(card)\n\n@@@\n\n" + quotedCode + "@@@", "\n", true],
+  ]) {
+    const text = prefix + body + suffix + "\nTail\n", caret = text.indexOf("Target body");
+    const expected = shielded ? caret : text.indexOf("```\n", caret) + 4;
+    const result = observeHtmlSearches(rawHtmlFence.source, () => relocate(text, caret));
+    const generic = closedBacktickFenceEnd(marked, text, caret, genericFence);
+    check("Raw Insert preserves Raw HTML start and sticky consumption parity: " + label,
+      result.offset === expected && generic === expected &&
+        JSON.stringify(result.opaque) === JSON.stringify(body ? [body] : []),
+      { result, generic, expected });
+  }
+  for (const [label, marker, raw] of [
+    ["ordinary examples", "ordinary text", ""],
+    ["skipped openers share a late closer", "@@@html(card)", ""],
+    ["skipped openers precede an actual opaque block", "@@@html(card)", "@@@html(card)\n" + quotedCode + "@@@"],
+  ]) for (const copies of [400, 800]) {
+    const examples = ("Example paragraph.\n\n```js\nx " + marker + "\n```\n\n").repeat(copies);
+    const text = quote(examples + (raw || "@@@")) + "\n\nTail\n", boundary = text.indexOf("\n\nTail") + 1;
+    const caret = raw ? text.lastIndexOf("Target body") : boundary;
+    const observed = observeHtmlSearches(rawHtmlFence.source, () => relocate(text, caret));
+    check(`Raw Insert keeps skipped hits inert and actual Raw HTML opaque: ${label} (${copies})`,
+      observed.offset === caret && JSON.stringify(observed.opaque) === JSON.stringify(raw ? [raw] : []),
+      observed);
+    // Count full-regex match extent, not calls alone: the old scanner matched
+    // the same long body once for each native example, growing ~4x on doubling.
+    check(`Raw Insert bounds full Raw HTML match work: ${label} (${copies})`,
+      observed.extent <= 4 * text.length, { bytes: text.length, matches: observed.extent });
   }
   const rawTable = "| Header | Other |\r\n| --- | --- |\r\n| ```json\r\n{}\r\n``` | value |\r\n";
   const protectedPrefix = hiddenOpener.replace(/\n/g, "\r\n") +
@@ -8710,6 +8765,17 @@ require("./test-userdata-isolation");
         evidence: "insert-after-terminal-list-fence",
         expected: table => list + "\n" + table + "\n" + listTail,
       });
+    for (const [label, name, block, opener] of [
+      ["tab-indented list fence", "tabs", "-\t```js\n\tconst value = 1;\n\t```\n", "-\t```js"],
+      ["quoted list fence with trailing spaces", "spaces", "> - ```js\n>   const value = 1;\n>   ```  \n", "> - ```js"],
+    ]) {
+      const before = "# Terminal fence whitespace\n\n" + block;
+      await placeTable("redirect after a closed " + label, await fresh("insert-fence-" + name, before + listTail), {
+        text: opener, insertionAt: before.length, caretOnTarget: true,
+        evidence: name === "spaces" ? "insert-after-quoted-list-spaces" : undefined,
+        expected: table => before + "\n" + table + "\n" + listTail,
+      });
+    }
     const gaps = await fresh("insert-typed-gaps", [
       "# Placement", "", "```text", "First", "```", "", "Gap before heading.", "",
       "## Next", "", "```js", "const second = 2;", "```", "", "Gap before tail.", "", "## Tail", "", "End.",
