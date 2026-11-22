@@ -370,11 +370,11 @@ test("actual enter/leave modes restore a text landmark across Reader/Split rewra
   assert.equal(f.body.scrollTop, 0);
   assert.equal(f.body.scrollLeft, 2); assert.equal(f.preview.scrollLeft, 3);
 });
-function installMermaidLayout(a, container) {
+function installMermaidLayout(a, container, tables = []) {
   const { f, s } = a, queryAll = f.preview.querySelectorAll.bind(f.preview);
   f.preview.querySelectorAll = selector => {
     if (selector === ".mermaid-container") return container ? [container] : [];
-    if (selector === ".table-container") return [];
+    if (selector === ".table-container") return tables;
     return queryAll(selector);
   };
   s.document.querySelector = selector => selector === ".content-wrapper" ? f.body : null;
@@ -445,6 +445,103 @@ test("Mermaid layout: plain Edit entry restores without republishing", async () 
   await a.s.changeCurrentDocumentEditor(true);
   assert.equal(a.f.preview.scrollTop, 60);
   assert.equal(availabilityEvents(a), before);
+});
+function breakoutBox(node) {
+  const classes = node.classList;
+  Object.defineProperty(node, "classList", { value: { ...classes,
+    toggle(name, enabled) {
+      const names = new Set((node.getAttribute("class") || "").split(" ").filter(Boolean));
+      if (enabled) names.add(name); else names.delete(name);
+      node.setAttribute("class", [...names].join(" "));
+    },
+    add(name) { this.toggle(name, true); },
+    remove(name) { this.toggle(name, false); },
+  } });
+  const values = new Map();
+  const serialize = () => node.setAttribute("style",
+    [...values].map(([name, value]) => `${name}: ${value};`).join(" "));
+  Object.assign(node.style, {
+    getPropertyValue: name => values.get(name) || "",
+    setProperty(name, value) { values.set(name, value); serialize(); },
+    removeProperty(name) { if (values.delete(name)) serialize(); },
+  });
+  return node;
+}
+function mermaidResize({ visibleTable = false } = {}) {
+  const markdown = "```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```\n\nBeta passage";
+  const budgetName = "--mv-breakout-budget";
+  let diagram;
+  const a = integration(markdown, {
+    beforeParse: mapped => mapped.replaceSpecial("mermaid", /```mermaid\n[\s\S]*?```/, () => ""),
+    beforePublish(f, s) {
+      const svg = new Box("svg"), pre = new Box("PRE", [svg]);
+      svg.localName = "svg";
+      svg.namespaceURI = "http://www.w3.org/2000/svg";
+      svg.viewBox = { baseVal: { width: 180 } };
+      svg.setAttribute("aria-roledescription", "flowchart-v2");
+      Object.defineProperty(pre, "firstElementChild", { value: svg });
+      diagram = breakoutBox(new Box("DIV", [pre]));
+      diagram.setAttribute("class", "mermaid-container");
+      diagram.querySelector = selector => selector === ":scope > .mermaid" ? pre : null;
+      f.preview.append(diagram, f.preview.firstChild);
+      s.rememberReadingMermaidSvg(pre);
+      assert.equal(s.ownsReadingMermaidSvg(svg), true);
+      // This table drives only the layout branch; the reading fixture maps prose.
+      const tables = visibleTable ? [breakoutBox(new Box("DIV", [breakoutBox(new Box("TABLE"))]))] : [];
+      installMermaidLayout({ f, s }, diagram, tables);
+      breakoutBox(f.preview);
+      s.document.getElementById = () => null;
+      s.tableColumnSizing = { isDragging: () => false, wanted: () => 100 };
+      const cache = renderer.slice(renderer.indexOf("let lastBreakoutAvailable = null;"),
+        renderer.indexOf("// The zoom path's budget publish."));
+      vm.runInContext(renderer.match(/^const TABLE_BREAKOUT_GUTTER = .*;$/m)[0] + "\n" + cache, s);
+      f.body.clientWidth = 1216;
+      diagram.box = f.rect(558, 0, 100, 100);
+      s.applyTableBreakout(false);
+    },
+  });
+  const budget = () => a.f.preview.style.getPropertyValue(budgetName);
+  assert.equal(budget(), "1168px");
+  assert.ok(diagram.classList.contains("mermaid-breakout"));
+  const attributes = () => [diagram.getAttribute("class"), diagram.getAttribute("style")];
+  const beforeResize = attributes();
+  const initial = a.capture();
+  assert.equal(initial.status, "captured", initial.reason);
+  assert.equal(initial.location.text.start, markdown.indexOf("Beta passage"));
+  return { a, initial, resize(publishReading) {
+    a.f.body.clientWidth += 80;
+    diagram.box = a.f.rect(diagram.box.left + 40, 0, 100, 100);
+    a.s.applyTableBreakout(publishReading);
+    assert.equal(budget(), "1248px", "resize really changed the inline viewer budget");
+    assert.deepEqual(attributes(), beforeResize, "the diagram wrapper did not change");
+  } };
+}
+test("Mermaid layout: budget-only resize keeps the first Reader departure recordable", () => {
+  const { a, initial, resize } = mermaidResize();
+  const before = availabilityEvents(a);
+  resize();
+  const after = a.capture();
+  assert.equal(after.status, "captured", after.reason);
+  assert.deepEqual(after.location, initial.location);
+  assert.equal(availabilityEvents(a), before + 1, "resize publishes exactly once");
+  a.s.applyTableBreakout();
+  assert.equal(availabilityEvents(a), before + 1, "unchanged budget and wrapper do not republish");
+});
+test("Mermaid layout: a budget change with caller-owned publication does not publish", () => {
+  const { a, initial, resize } = mermaidResize();
+  const before = availabilityEvents(a);
+  resize(false);
+  assert.equal(availabilityEvents(a), before);
+  assert.equal(a.capture().reason, "presentation-unbound-or-stale", "the old fingerprint is still rejected");
+  a.s.refreshReadingPresentation();
+  assert.deepEqual(a.capture().location, initial.location, "the explicit caller can refresh the current presentation");
+});
+test("Mermaid layout: a budget change with a visible table publishes once", () => {
+  const { a, initial, resize } = mermaidResize({ visibleTable: true });
+  const before = availabilityEvents(a);
+  resize();
+  assert.equal(availabilityEvents(a), before + 1, "the table pass owns the only publication");
+  assert.deepEqual(a.capture().location, initial.location);
 });
 test("mode exit captures after both the save wait and discard confirmation", async () => {
   const a = integration(); installMode(a); const { s } = a;

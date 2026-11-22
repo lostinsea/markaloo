@@ -209,6 +209,9 @@ println!("{answer}");
   position. Diagram layout and rendering are unchanged.
 - Clearing an owned Mermaid breakout for Split refreshes the reading binding
   even when there are no tables, so Edit can restore the saved text position.
+- A resize that changes the viewer's breakout budget refreshes the reading
+  binding even if the diagram's own layout styles are unchanged. The first
+  TOC jump can then record where Back should return.
 - Typing coalesces one owned destination and captures its origin before debounce.
   Before the first preview, Back cancels that pending query and recovers its
   origin rather than consuming an older entry. Availability is published after exact request

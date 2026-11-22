@@ -10336,12 +10336,13 @@ function publishBreakoutBudget(zoomFactorOverride) {
   // expanded - or the instant the zoom changes - without waiting for JS.
   // Removed in split view so the stylesheet's 100% fallback (the container's own
   // containing block) takes over.
-  if (splitView) {
-    viewer.style.removeProperty('--mv-breakout-budget');
-  } else {
-    viewer.style.setProperty('--mv-breakout-budget', available / zoomFactor + 'px');
+  const nextBudget = splitView ? '' : available / zoomFactor + 'px';
+  const budgetChanged = viewer.style.getPropertyValue('--mv-breakout-budget') !== nextBudget;
+  if (budgetChanged) {
+    if (splitView) viewer.style.removeProperty('--mv-breakout-budget');
+    else viewer.style.setProperty('--mv-breakout-budget', nextBudget);
   }
-  return { splitView, available, zoomFactor };
+  return { splitView, available, zoomFactor, budgetChanged };
 }
 
 // The zoom path's budget publish. Deliberately reads NO layout: `available` is
@@ -10449,7 +10450,7 @@ function applyWideContentLayout(onlyContainer = null, publishReading = true) {
   if (!containers.length && !viewer.querySelector('.mermaid-container')) return;
 
   const budget = publishBreakoutBudget();
-  const { splitView, available, zoomFactor } = budget;
+  const { splitView, available, zoomFactor, budgetChanged } = budget;
   const mermaidChanged = !onlyContainer && applyMermaidBreakout(budget, publishReading);
 
   // Read pass. A container inside a collapsed section (display: none) has zero
@@ -10463,8 +10464,9 @@ function applyWideContentLayout(onlyContainer = null, publishReading = true) {
     if (c.clientWidth > 0) visible.push(c);
   });
   if (!visible.length) {
-    // A Mermaid-only layout change also invalidates the exact reading binding.
-    if (publishReading && mermaidChanged) refreshReadingPresentation();
+    // The viewer's inline budget can invalidate the binding even when the
+    // Mermaid wrapper is unchanged.
+    if (publishReading && (budgetChanged || mermaidChanged)) refreshReadingPresentation();
     return;
   }
 
