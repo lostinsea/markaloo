@@ -1587,6 +1587,11 @@ function viewBookmarkEntries(display, value) {
       run.view.at(0) <= value.start && run.view.at(run.display.length) >= value.end));
 }
 
+function viewBookmarkFixedTableY({ scroller, kind, role }) {
+  return kind === 'table' && role === 'scroller' && scroller.clientHeight > 0 &&
+    scroller.scrollHeight === scroller.clientHeight && scroller.scrollTop === 0;
+}
+
 function captureViewBookmark() {
   const unavailable = reason => ({ status: 'unavailable', reason });
   const display = currentViewBookmarkDisplay();
@@ -1607,8 +1612,11 @@ function captureViewBookmark() {
     if (currentViewBookmarkDisplay() !== display || viewBookmarkEntries(display, value).length !== 1) {
       return unavailable('stale-or-ambiguous-bookmark');
     }
-    const nested = geometry.nested.map(({ scroller: owner, start, end, kind, tag, role, top }) =>
-      ({ start, end, kind, tag, role, top, left: owner.scrollLeft }));
+    const nested = geometry.nested.map(owner => {
+      const { start, end, kind, tag, role, top } = owner;
+      return { start, end, kind, tag, role, top, left: owner.scroller.scrollLeft,
+        fixedTableY: viewBookmarkFixedTableY(owner) };
+    });
     if (![geometry.top, scroller.scrollLeft, ...nested.flatMap(owner => [owner.top, owner.left])].every(Number.isFinite)) {
       return unavailable('invalid-bookmark-position');
     }
@@ -1642,7 +1650,9 @@ async function restoreViewBookmark(saved, intent) {
     if (!geometry || !current() || geometry.nested.length !== saved.nested.length ||
         geometry.nested.some((owner, index) => ['start', 'end', 'kind', 'tag', 'role'].some(field =>
           owner[field] !== saved.nested[index][field]))) return null;
-    return geometry;
+    // Read the range with this sample, not from the live node after awaiting.
+    return { ...geometry, nested: geometry.nested.map(owner =>
+      ({ ...owner, fixedTableY: viewBookmarkFixedTableY(owner) })) };
   };
   window.dispatchEvent(new Event('preview-navigation-intent'));
   if (!current()) return refuse('superseded');
@@ -1650,10 +1660,15 @@ async function restoreViewBookmark(saved, intent) {
   let geometry = resolve(), traveled = false;
   if (!geometry) return refuse('unverified-view-bookmark');
   const owners = [...geometry.nested.map(owner => owner.scroller), scroller];
+  // A horizontal-only table wrapper can't restore its old row offset after
+  // rewrap. If Y is fixed at both ends, the outer viewport owns Y alignment.
+  const fixedTableY = geometry.nested.map((owner, index) =>
+    saved.nested[index].fixedTableY === true && owner.fixedTableY);
   const offsets = () => owners.flatMap(owner => [owner.scrollTop, owner.scrollLeft]);
   const axes = ['left', 'top', 'right', 'bottom'];
   const sameTarget = (a, b) => b && a.node === b.node && a.first === b.first && a.last === b.last &&
-    a.nested.every((owner, index) => owner.scroller === b.nested[index].scroller);
+    a.nested.every((owner, index) => owner.scroller === b.nested[index].scroller &&
+      (!fixedTableY[index] || b.nested[index].fixedTableY));
   const naturalEdge = (geometry, axis) => geometry.fragment[axis] -
     (axis === 'top' || axis === 'bottom' ? geometry.shift || 0 : 0);
   for (let index = 0; index < owners.length; index++) {
@@ -1661,7 +1676,8 @@ async function restoreViewBookmark(saved, intent) {
     const measured = local || geometry;
     // Read from the table header's natural position, but verify the actual
     // painted header after the request. A pinned copy cannot count as arrival.
-    const destination = target.scrollTop + (measured.naturalTop ?? measured.top) - alignment.top;
+    const destination = fixedTableY[index] ? target.scrollTop :
+      target.scrollTop + (measured.naturalTop ?? measured.top) - alignment.top;
     if (![destination, alignment.left].every(Number.isFinite) || !current()) return refuse('invalid-bookmark-offset');
     const before = offsets();
     let after, post, completion;
@@ -1687,7 +1703,7 @@ async function restoreViewBookmark(saved, intent) {
   // otherwise count a clamped or ignored write as successful arrival.
   if (!visibleClip || Math.abs(scroller.scrollLeft - saved.left) > 1 ||
       Math.abs(geometry.top - saved.top) > 1 || geometry.nested.some((owner, index) =>
-        Math.abs(owner.top - saved.nested[index].top) > 1 ||
+        (!fixedTableY[index] && Math.abs(owner.top - saved.nested[index].top) > 1) ||
         Math.abs(owner.scroller.scrollLeft - saved.nested[index].left) > 1) ||
       fragment.right <= visibleClip.left || fragment.left >= visibleClip.right ||
       (point === undefined ? fragment.bottom <= visibleClip.top || fragment.top >= visibleClip.bottom :

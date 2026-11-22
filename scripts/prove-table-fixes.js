@@ -1724,6 +1724,21 @@ const READING_CONSUMER_REVERTS = [
       /^blocked first-debounce Back keeps its query and cancels only after modal or freeze guards clear$/,
       /^no-travel first preview does not leave a fake provisional Back action$/],
   },
+  {
+    id: "VIEW-TABLE-FIXED-Y", what: "reject an exact View arrival using an old row offset in a vertically fixed wrapper",
+    from: "        (!fixedTableY[index] && Math.abs(owner.top - saved.nested[index].top) > 1) ||",
+    to: "        Math.abs(owner.top - saved.nested[index].top) > 1 ||",
+    expect: [/^View Back to a reflowed table row commits and enables Forward after a resize at the TOC target$/],
+    mustPass: [/^assembled history restores a source-backed nested origin on both axes with one permit$/,
+      /^no-motion checkpoint with refused fresh departure cannot traverse or mutate history$/],
+  },
+  {
+    id: "VIEW-TABLE-FIXED-Y-SETTLEMENT", what: "let a cleared vertical range hide post-write overflow",
+    from: "      (!fixedTableY[index] || b.nested[index].fixedTableY));",
+    to: "      (!fixedTableY[index] || viewBookmarkFixedTableY(b.nested[index])));",
+    expect: [/^View Back does not commit if the table gains vertical range during the native request$/],
+    mustPass: [/^View Back to a reflowed table row commits and enables Forward after a resize at the TOC target$/],
+  },
 ].map(revert => ({
   file: RENDERER, suite: "test:reading-consumers", requireExactFailures: true,
   requireMustPassAssertions: true, expectedFailureCount: revert.expect.length,

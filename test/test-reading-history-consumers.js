@@ -525,6 +525,140 @@ async function clippedProbeFixture({ source = actualProbe, small = false, move =
     assert.equal(f.f.body.scrollLeft, 0, "Forward returns to the departure actually refreshed before Back");
     assert.equal(f.errors.length, 0);
   });
+  async function resizedTableAtTarget() {
+    const rows = Array.from({ length: 26 }, (_, i) => `| T${i + 1} | text that can wrap |`);
+    const text = ["| Stop | Content |", "| --- | --- |", ...rows, "", "# T-TARGET-01"].join("\n");
+    const f = assembledFixture(text), outer = f.f.body, table = f.viewer.querySelector("table");
+    const wrapper = new table.constructor("DIV"), header = table.querySelector("thead");
+    table.tHead = header;
+    table.replaceWith(wrapper); wrapper.append(table);
+    wrapper.setAttribute("class", "table-container");
+    f.c.fixtureTable = table; f.c.fixtureWrapper = wrapper;
+    f.run("readingGeneratedContainers.set(fixtureTable, { wrapper: fixtureWrapper, controls: [], decorations: [] })");
+    const ui = installControls(f), [targetButton] = installTOC(f), heading = f.viewer.querySelector("h1");
+    const rect = f.f.rect, rowHeight = () => f.window.innerWidth === 1200 ? 36 : 28;
+    const tableTop = 80, headerHeight = 20;
+    const targetY = () => tableTop + headerHeight + rows.length * rowHeight() + 104;
+    function setWidth(width) {
+      const html = f.document.documentElement;
+      f.window.innerWidth = f.window.visualViewport.width = html.clientWidth = outer.offsetWidth = outer.clientWidth = width;
+      f.window.innerHeight = f.window.visualViewport.height = html.clientHeight = outer.offsetHeight = outer.clientHeight = 800;
+      Object.assign(f.document.defaultView, { innerWidth: width, innerHeight: 800 });
+      wrapper.clientWidth = width - 200;
+      wrapper.scrollWidth = 1500;
+      wrapper.clientHeight = wrapper.scrollHeight = headerHeight + rows.length * rowHeight();
+    }
+    setWidth(1200);
+    outer.scrollWidth = 1520; outer.scrollHeight = 2200;
+    outer.getBoundingClientRect = () => rect(0, 0, f.window.innerWidth, 800);
+    wrapper.style.overflowX = wrapper.style.overflowY = "auto";
+    wrapper.getBoundingClientRect = table.getBoundingClientRect = () =>
+      rect(20, tableTop - outer.scrollTop, wrapper.clientWidth, wrapper.clientHeight);
+    const pin = () => Math.min(rows.length * rowHeight(), Math.max(0, outer.scrollTop - tableTop));
+    Object.defineProperty(header.style, "transform", { get: () => `matrix(1, 0, 0, 1, 0, ${pin()})` });
+    header.getBoundingClientRect = () => rect(20, tableTop + pin() - outer.scrollTop, wrapper.clientWidth, headerHeight);
+    const lineY = index => tableTop + headerHeight + index * rowHeight() + 5;
+    table.querySelectorAll("tr").forEach((tr, index) => {
+      const reader = f.document.createTreeWalker(tr, 4);
+      for (let node = reader.nextNode(); node; node = reader.nextNode()) {
+        if (!node.data.trim()) { node.geometry = () => []; continue; }
+        const x = node.data.startsWith("T") ? 50 : 150;
+        node.geometry = from => [rect(x + from * 8 - wrapper.scrollLeft,
+          (index ? lineY(index - 1) : tableTop + pin() + 5) - outer.scrollTop - wrapper.scrollTop)];
+      }
+    });
+    const marker = f.document.createTreeWalker(table.querySelectorAll("tr")[18].querySelector("td"), 4).nextNode();
+    assert.equal(marker.data, "T18");
+    heading.getBoundingClientRect = () => rect(20, targetY() - outer.scrollTop, 120, 20);
+    f.document.createTreeWalker(heading, 4).nextNode().geometry = from =>
+      [rect(20 + from * 8, targetY() - outer.scrollTop)];
+    heading.scrollIntoView = () => {
+      outer.scrollTop = targetY() - 20;
+      return Promise.resolve({ interrupted: false });
+    };
+    outer.scrollTo = ({ top, left }) => {
+      outer.scrollTop = top; outer.scrollLeft = left;
+      return Promise.resolve({ interrupted: false });
+    };
+    wrapper.scrollTo = ({ top, left }) => {
+      wrapper.scrollTop = Math.max(0, Math.min(wrapper.scrollHeight - wrapper.clientHeight, top));
+      wrapper.scrollLeft = Math.max(0, Math.min(wrapper.scrollWidth - wrapper.clientWidth, left));
+      return Promise.resolve({ interrupted: false });
+    };
+    wrapper.scrollLeft = 12;
+    outer.scrollTop = lineY(17) - 25;
+    const origin = f.captureBookmark();
+    assert.equal(origin.status, "captured", origin.reason);
+    assert.equal(origin.location.value.start, text.indexOf("T18"));
+    assert.equal(origin.location.top, 25);
+    assert.equal(origin.location.nested.length, 1);
+    assert.equal(origin.location.nested[0].left, 12);
+    targetButton.click(); await tick();
+    const jumped = f.snapshot();
+    assert.equal(heading.getBoundingClientRect().top, 20, "the first TOC jump physically reached its target");
+    assert.equal(jumped.index, 1, "the first TOC jump committed");
+    setWidth(1520);
+    // Model the settled resize with the same heading still visible, but not at
+    // its old distance. Forward must use the newly captured departure.
+    outer.scrollTop = targetY() - 32;
+    wrapper.scrollLeft = 0;
+    f.window.dispatchEvent(new f.c.Event("resize"));
+    f.c.refreshReadingPresentation();
+    const departure = f.captureBookmark();
+    assert.equal(departure.status, "captured", departure.reason);
+    assert.equal(departure.location.value.start, text.indexOf("T-TARGET-01"));
+    assert.equal(departure.location.top, 32);
+    assert.deepEqual(f.snapshot(), jumped, "resize at the target does not itself change history");
+    assert.equal(wrapper.clientHeight, wrapper.scrollHeight, "only the outer scroller can move vertically");
+    assert.notEqual(lineY(17) - tableTop, origin.location.nested[0].top,
+      "the exact row now has a different block-local vertical offset");
+    return { f, ui, wrapper, marker, heading, jumped };
+  }
+  await test("View Back to a reflowed table row commits and enables Forward after a resize at the TOC target", async () => {
+    const { f, ui, wrapper, marker, heading } = await resizedTableAtTarget();
+    const committed = await f.controls.navigate(-1);
+    assert.equal(marker.geometry(0)[0].top, 25, "Back physically reaches T18 at its saved viewport distance");
+    assert.equal(wrapper.scrollLeft, 12, "Back restores the measured horizontal position");
+    assert.equal(wrapper.scrollTop, 0);
+    assert.equal(committed, true, "the visually correct return must also commit");
+    assert.equal(f.snapshot().index, 0);
+    assert.equal(ui.forward.disabled, false);
+    ui.forward.click(); await tick();
+    assert.equal(f.snapshot().index, 1);
+    assert.equal(heading.getBoundingClientRect().top, 32);
+    ui.back.click(); await tick();
+    assert.equal(f.snapshot().index, 0);
+    assert.equal(marker.geometry(0)[0].top, 25);
+    for (const type of ["mousedown", "mouseup"]) {
+      ui.callbacks.get(type)({ type, button: 4, isTrusted: true, target: f.f.body, preventDefault() {} });
+    }
+    await tick();
+    assert.equal(f.snapshot().index, 1, "the Windows Forward button also commits");
+    assert.equal(heading.getBoundingClientRect().top, 32);
+    assert.equal(f.errors.length, 0);
+  });
+  await test("View Back does not commit if the table gains vertical range during the native request", async () => {
+    const { f, ui, wrapper, heading, jumped } = await resizedTableAtTarget();
+    const scrollTo = wrapper.scrollTo;
+    let sawRange = false;
+    wrapper.scrollTo = function(options) {
+      const completion = scrollTo.call(this, options);
+      this.scrollHeight += 8;
+      return completion.then(result => {
+        sawRange = this.scrollHeight - this.clientHeight === 8;
+        this.scrollHeight -= 8;
+        return result;
+      });
+    };
+    const committed = await f.controls.navigate(-1);
+    assert.equal(sawRange, true, "the admitted inner request encountered vertical overflow");
+    assert.equal(wrapper.scrollHeight, wrapper.clientHeight, "the overflow disappeared before settlement");
+    assert.equal(committed, false, "an unstable wrapper cannot waive the nested arrival check");
+    assert.equal(heading.getBoundingClientRect().top, 32, "refusal happens before the outer write");
+    assert.equal(f.snapshot().index, jumped.index);
+    assert.equal(ui.forward.disabled, true);
+    assert.equal(f.errors.length, 0);
+  });
   await test("actual fragment handler records its resolved document target then toolbar Back and Forward restore it", async () => {
     const f = assembledFixture(), ui = installControls(f);
     installTOC(f);
