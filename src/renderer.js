@@ -1654,9 +1654,14 @@ async function restoreViewBookmark(saved, intent) {
   const axes = ['left', 'top', 'right', 'bottom'];
   const sameTarget = (a, b) => b && a.node === b.node && a.first === b.first && a.last === b.last &&
     a.nested.every((owner, index) => owner.scroller === b.nested[index].scroller);
+  const naturalEdge = (geometry, axis) => geometry.fragment[axis] -
+    (axis === 'top' || axis === 'bottom' ? geometry.shift || 0 : 0);
   for (let index = 0; index < owners.length; index++) {
     const target = owners[index], local = geometry.nested[index], alignment = saved.nested[index] || saved;
-    const destination = target.scrollTop + (local ? local.top : geometry.top) - alignment.top;
+    const measured = local || geometry;
+    // Read from the table header's natural position, but verify the actual
+    // painted header after the request. A pinned copy cannot count as arrival.
+    const destination = target.scrollTop + (measured.naturalTop ?? measured.top) - alignment.top;
     if (![destination, alignment.left].every(Number.isFinite) || !current()) return refuse('invalid-bookmark-offset');
     const before = offsets();
     let after, post, completion;
@@ -1671,7 +1676,7 @@ async function restoreViewBookmark(saved, intent) {
     const settled = resolve();
     if (completion?.interrupted !== false || !sameTarget(geometry, post) || !sameTarget(post, settled) ||
         offsets().some((value, i) => value !== after[i] || (Math.floor(i / 2) !== index && value !== before[i])) ||
-        axes.some(axis => post.fragment[axis] !== settled.fragment[axis] || post.clip[axis] !== settled.clip[axis])) {
+        axes.some(axis => naturalEdge(post, axis) !== naturalEdge(settled, axis) || post.clip[axis] !== settled.clip[axis])) {
       return refuse('bookmark-settlement-changed');
     }
     traveled ||= before.some((value, i) => value !== after[i]);
@@ -2139,7 +2144,8 @@ function rememberReadingMermaidSvg(pre) {
   // Only the exact root just installed by Mermaid or restored from its cache.
   const svg = pre.firstElementChild;
   if (diagramFenceBodies.has(pre) && pre.children.length === 1 &&
-      svg?.localName === 'svg' && svg.namespaceURI === 'http://www.w3.org/2000/svg') {
+      svg?.localName === 'svg' && svg.namespaceURI === 'http://www.w3.org/2000/svg' &&
+      svg.getAttribute('aria-roledescription') !== 'error') {
     renderedBookmarkSvgs.set(pre, svg);
   } else {
     renderedBookmarkSvgs.delete(pre);
@@ -2845,8 +2851,8 @@ function createReadingHistoryConsumer(ports) {
     // The first input owns an origin before its debounce has issued a preview.
     // Retiring Search ends that segment, so retain its recovery classification first.
     const origin = direction === -1 ? pendingOrigin(state) : null;
-    const recovery = state.excursion?.kind === 'origin' ? state.excursion :
-      origin ? { kind: 'origin', departure: origin, segment: state.segment } : null;
+    const recovery = direction === -1 ? (state.excursion?.kind === 'origin' ? state.excursion :
+      origin ? { kind: 'origin', departure: origin, segment: state.segment } : null) : null;
     const checkpoint = direction === -1 && !recovery ? manualCheckpoint(state) : null;
     const checkpointRevision = checkpoint ? state.model.snapshot().revision : null;
     const manualReturn = checkpoint ? state.manualReturn : null;
@@ -8468,7 +8474,11 @@ function patchViewerDOM(newHtml, scrollSource = null, viewportPermit = null, adm
       const src = isNew
         ? m.dataset.mermaidSrc || m.textContent.trim()
         : m.dataset.mermaidSrc || '';
-      return 'm:' + src;
+      const descriptor = isNew && scrollBindings?.get(el);
+      const fence = isNew ? m === el && el.tagName === 'PRE' && descriptor?.kind === 'mermaid' && descriptor.root
+        : diagramFenceBodies.has(m);
+      // Equal diagram source is not interchangeable fence ownership.
+      return (fence ? 'f:' : 'm:') + src;
     }
     const h = isNew ? el.dataset.blockHash : _getBlockHash(el);
     return h ? 'h:' + h : null;

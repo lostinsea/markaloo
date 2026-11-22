@@ -1692,24 +1692,23 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const entered = readingEpoch, enteredBinding = bindingEpoch;
     return scanVisibleText(scroller, currentReadingPublication(), onModeCharacter, modePseudoBefore, entered, enteredBinding);
   }
-  function viewTableTextClip(parent, clip, publication) {
+  function viewTableTextLayout(parent, clip, publication) {
     const table = parent.closest('table');
-    if (!table) return clip;
-    for (const header of publication.translatedHeaders) {
-      if (header.parentElement !== table) continue;
-      const transform = getComputedStyle(header).transform;
-      if (transform === 'none') return clip;
-      const translation = /^matrix\(1,\s*0,\s*0,\s*1,\s*0,\s*(\d+(?:\.\d+)?|\.\d+)\)$/.exec(transform);
-      if (!translation || !Number.isFinite(Number(translation[1]))) return null;
-      if (Number(translation[1]) === 0) return clip;
-      // A pinned header is not a reading stop. Its painted copy also hides
-      // body text behind it, even though Range still reports those rectangles.
-      const box = header.getBoundingClientRect();
-      if (![box.left, box.right, box.top, box.bottom].every(Number.isFinite)) return null;
-      if (!readingIntersects(box, clip)) return clip;
-      return { ...clip, top: header.contains(parent) ? clip.bottom : Math.max(clip.top, box.bottom) };
+    const header = table && [...publication.translatedHeaders].find(node => node.parentElement === table);
+    if (!header) return { clip, shift: 0 };
+    const transform = getComputedStyle(header).transform;
+    const translation = /^matrix\(1,\s*0,\s*0,\s*1,\s*0,\s*(\d+(?:\.\d+)?|\.\d+)\)$/.exec(transform);
+    if (transform !== 'none' && !translation) return null;
+    const offset = transform === 'none' ? 0 : Number(translation[1]);
+    if (!offset) return { clip, shift: 0 };
+    const box = header.getBoundingClientRect(), inside = header.contains(parent);
+    const shift = inside ? offset * scale(header) : 0;
+    if (![shift, box.left, box.right, box.top, box.bottom].every(Number.isFinite)) return null;
+    // The pinned header covers body text and is itself not a reading stop.
+    if (inside || readingIntersects(box, clip)) {
+      clip = { ...clip, top: inside ? clip.bottom : Math.max(clip.top, box.bottom) };
     }
-    return clip;
+    return { clip, shift };
   }
   // Prove this body locally, without borrowing the Edit/Search publication.
   function viewBookmarkText(source, association, scroller, saved = null) {
@@ -1732,10 +1731,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         const layout = readingLayout(node.parentElement, scroller, publication, layouts);
         if (!layout) return null;
         if (layout.hidden) continue;
-        const clip = viewTableTextClip(node.parentElement, layout.clip, publication);
-        if (!clip) return null;
-        if (clip.top >= clip.bottom) continue;
-        const visible = firstVisibleReadingOffset(node, clip);
+        const table = viewTableTextLayout(node.parentElement, layout.clip, publication);
+        if (!table) return null;
+        if (table.clip.top >= table.clip.bottom) continue;
+        const visible = firstVisibleReadingOffset(node, table.clip);
         if (!visible) continue;
         if (visible.unsupported) return null;
         const position = start + visible.index;
@@ -1745,12 +1744,11 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         break;
       }
       if (!candidate) {
-        // A visible image is not whitespace merely because its paragraph has
-        // no visible mapped character.
-        for (const image of group.element.querySelectorAll('img')) {
-          const layout = readingLayout(image, scroller, publication, layouts);
-          if (!layout || (!layout.hidden && readingIntersects(image.getBoundingClientRect(), layout.clip))) return null;
-        }
+        // Only text containers/decorations can prove empty padding. A body
+        // containing other content (e.g. a rule or SVG) may still be painted.
+        if ([group.element, ...group.element.querySelectorAll('*')].some(node =>
+          !registry.usedControls.has(node) &&
+          !/^(?:P|H[1-6]|BLOCKQUOTE|UL|OL|LI|PRE|CODE|TABLE|THEAD|TBODY|TFOOT|TR|TH|TD|SPAN|A|EM|STRONG|DEL|BR)$/.test(node.tagName))) return null;
         return { empty: true };
       }
     }
@@ -1760,12 +1758,16 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     if (!geometry || geometry.hidden) return null;
     const { start, end, atom, display, blockKind, runKind } = candidate;
     const { fragment, clip, top, nested } = geometry;
-    const visibleClip = viewTableTextClip(range.startContainer.parentElement, clip, publication);
+    const table = viewTableTextLayout(range.startContainer.parentElement, clip, publication);
+    if (!table) return null;
+    const naturalTop = (element, measured) => measured - table.shift / geometry.chain.find(row => row[0] === element)[7];
     const current = readingState(source);
     if (!current || current.frozen || current.key !== state.key ||
         current.selection !== state.selection || !sameReadingContext(current.context, state.context)) return null;
     return { value: { start, end, atom, display, blockKind, runKind }, node: group.element,
-      first: range.startContainer, last: range.endContainer, fragment, clip, visibleClip, top, nested };
+      first: range.startContainer, last: range.endContainer, fragment, clip, visibleClip: table.clip,
+      shift: table.shift, top, naturalTop: naturalTop(scroller, top),
+      nested: nested.map(owner => ({ ...owner, naturalTop: naturalTop(owner.scroller, owner.top) })) };
   }
   function viewBookmarkDiagram(element, scroller, saved = null) {
     // The renderer-owned breakout wrapper can translate horizontally, never vertically.

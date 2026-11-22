@@ -229,7 +229,8 @@ test("View restores the exact table row and cell, at the saved distance", async 
   f.body.style.overflowX = "auto";
   const header = table.querySelector("thead");
   table.tHead = header;
-  const offset = () => Math.max(0, f.body.scrollTop - 100);
+  let pinAt = null;
+  const offset = () => Math.max(0, (pinAt ?? f.body.scrollTop) - 100);
   Object.defineProperty(header.style, "transform", { get: () => `matrix(1, 0, 0, 1, 0, ${offset()})` });
   header.getBoundingClientRect = () => f.rect(0, 100 + offset() - f.body.scrollTop, 160, 20);
   const rows = table.querySelectorAll("tr"), marker = walk(rows[2].querySelectorAll("td")[1])[0];
@@ -239,6 +240,11 @@ test("View restores the exact table row and cell, at the saved distance", async 
       [f.rect((col ? 20 : 110) + i * 8 - f.body.scrollLeft,
         [100 + offset(), 129, 151, 184][row] - f.body.scrollTop)];
   }
+  f.body.scrollTop = 90;
+  const unpinned = a.captureBookmark();
+  assert.equal(unpinned.status, "captured", unpinned.reason);
+  assert.equal(unpinned.location.value.start, text.indexOf("Other"));
+  assert.equal(unpinned.location.top, 10);
   f.body.scrollTop = 126;
   const stop = a.captureBookmark();
   assert.equal(stop.status, "captured");
@@ -248,6 +254,18 @@ test("View restores the exact table row and cell, at the saved distance", async 
   f.body.scrollTop = 40;
   assert.equal((await a.restoreBookmark(stop.location)).travel, "observed-travel");
   assert.equal(marker.geometry(0)[0].top, 25);
+  // The outer offset can move before the pin animation has caught up.
+  pinAt = f.body.scrollTop;
+  assert.equal(offset(), 26);
+  a.nativeCompletion = () => Promise.resolve().then(() => {
+    assert.equal(f.body.scrollTop, 90);
+    assert.equal(header.getBoundingClientRect().top, 36);
+    pinAt = null;
+    return { interrupted: false };
+  });
+  assert.equal((await a.restoreBookmark(unpinned.location)).travel, "observed-travel");
+  assert.equal(f.body.scrollTop, 90, "restores the natural header, not its pinned position");
+  assert.equal(walk(rows[0].querySelectorAll("th")[1])[0].geometry(0)[0].top, 10);
   a.tab.content += "\nNew revision.";
   assert.equal((await a.restoreBookmark(stop.location)).reason, "stale-view-bookmark");
 });
@@ -294,11 +312,47 @@ test("View restores a deep highlighted code line and refuses a clamped horizonta
   assert.equal(padding.status, "captured", padding.reason);
   assert.equal(padding.location.value.start, text.indexOf("After"));
 });
+test("View does not mistake a visible thematic rule inside a mapped block for padding", () => {
+  const a = integration("> Mapped text above.\n>\n> ---\n\nProse below.");
+  const { f } = a, quote = f.preview.querySelector("blockquote"), rule = quote.querySelector("hr");
+  assert.ok(rule);
+  quote.getBoundingClientRect = () => f.rect(0, 80 - f.body.scrollTop, 100, 50);
+  rule.getBoundingClientRect = () => f.rect(0, 115 - f.body.scrollTop, 100, 2);
+  for (const node of walk(quote)) node.geometry = () => [f.rect(10, 80 - f.body.scrollTop)];
+  const below = f.preview.querySelectorAll("p").at(-1);
+  below.getBoundingClientRect = () => f.rect(0, 145 - f.body.scrollTop, 100, 20);
+  for (const node of walk(below)) node.geometry = () => [f.rect(10, 145 - f.body.scrollTop)];
+  f.body.scrollTop = 110;
+  assert.equal(rule.getBoundingClientRect().top, 5);
+  assert.equal(a.captureBookmark().reason, "visible-block-unverified");
+  f.body.scrollTop = 135;
+  assert.equal(a.captureBookmark().location.value.start, a.tab.content.indexOf("Prose"));
+});
 test("View binds short and tall generated diagrams to distinct fence occurrences across patching", async () => {
   const flow = "```mermaid\nflowchart TD\nA --> B\n```";
   const sequence = "```mermaid\nsequenceDiagram\nA->>B: step\n```";
   const text = `${flow}\n\n${sequence}\n\n${flow}\n\nProse after the mixture.`;
   let blocks;
+  function layoutDiagrams(f, s) {
+    const diagrams = f.preview.querySelectorAll("pre");
+    for (const [index, pre] of diagrams.entries()) {
+      if (!pre.querySelector("svg")) continue;
+      if (!pre.parentElement.classList.contains("mermaid-container")) {
+        const wrapper = new Box("DIV");
+        wrapper.setAttribute("class", "mermaid-container mermaid-breakout");
+        pre.replaceWith(wrapper); wrapper.append(pre);
+        s.diagramFixturePre = pre; s.diagramFixtureWrapper = wrapper;
+        vm.runInContext("readingDiagramWrappers.set(diagramFixturePre, diagramFixtureWrapper)", s);
+      }
+      const wrapper = pre.parentElement;
+      wrapper.style.transform = "matrix(1, 0, 0, 1, -80, 0)";
+      wrapper.getBoundingClientRect = () => f.rect(0, [15, 75, 255][index] - f.body.scrollTop, 100, [35, 160, 145][index]);
+    }
+    for (const p of f.preview.querySelectorAll("p")) {
+      p.getBoundingClientRect = () => p.textContent ? f.rect(0, 420 - f.body.scrollTop, 100, 20) : f.rect(0, 0, 0, 0);
+      for (const node of walk(p)) node.geometry = i => [f.rect(10 + i * 8, 420 - f.body.scrollTop)];
+    }
+  }
   const a = integration(text, {
     patchReal: true,
     beforeParse(source, s) {
@@ -309,30 +363,44 @@ test("View binds short and tall generated diagrams to distinct fence occurrences
     afterParse(source, html, s) {
       return source.restore(blocks, "mermaid", html, s.mermaidPreMarkup, false);
     },
-    beforePublish(f, s) {
-      const diagrams = f.preview.querySelectorAll("pre");
-      for (const [index, pre] of diagrams.entries()) {
-        if (!pre.parentElement.classList.contains("mermaid-container")) {
-          const svg = new Box("SVG"), wrapper = new Box("DIV");
-          svg.localName = "svg"; svg.namespaceURI = "http://www.w3.org/2000/svg";
-          pre.replaceChildren(svg);
-          s.rememberReadingMermaidSvg(pre);
-          wrapper.setAttribute("class", "mermaid-container mermaid-breakout");
-          pre.replaceWith(wrapper); wrapper.append(pre);
-          s.diagramFixturePre = pre; s.diagramFixtureWrapper = wrapper;
-          vm.runInContext("readingDiagramWrappers.set(diagramFixturePre, diagramFixtureWrapper)", s);
-        }
-        const wrapper = pre.parentElement;
-        wrapper.style.transform = "matrix(1, 0, 0, 1, -80, 0)";
-        wrapper.getBoundingClientRect = () => f.rect(0, [15, 75, 255][index] - f.body.scrollTop, 100, [35, 160, 145][index]);
-      }
-      for (const p of f.preview.querySelectorAll("p")) {
-        p.getBoundingClientRect = () => p.textContent ? f.rect(0, 420 - f.body.scrollTop, 100, 20) : f.rect(0, 0, 0, 0);
-        for (const node of walk(p)) node.geometry = i => [f.rect(10 + i * 8, 420 - f.body.scrollTop)];
-      }
-    },
+    beforePublish: layoutDiagrams,
   });
   const { f, s } = a;
+  const nodes = f.preview.querySelectorAll("pre");
+  assert.equal(nodes.length, 3);
+  for (const [index, pre] of nodes.entries()) {
+    pre.id = `fresh-${index}`;
+    assert.equal(pre.children.length, 0, "no cached SVG is installed");
+    pre.cloneNode = () => {
+      const clone = new Box("PRE");
+      Object.defineProperty(clone, "textContent", { set: source => clone.append(new Text(source)) });
+      clone.style.setProperty = () => {};
+      return clone;
+    };
+  }
+  const appendChild = function (node) { this.append(node); };
+  const stage = new Box("DIV");
+  stage.appendChild = appendChild;
+  const create = f.doc.createElement;
+  f.doc.createElement = tag => tag === "div" ? stage : create(tag);
+  f.doc.body = f.body;
+  f.body.appendChild = appendChild;
+  Object.assign(s, { mermaidDesiredDark: false, mermaidNodeIdSeq: 0, mermaid: { async run({ nodes: clones }) {
+    assert.equal(clones.length, 3);
+    for (const clone of clones) {
+      const svg = new Box("SVG");
+      svg.localName = "svg"; svg.namespaceURI = "http://www.w3.org/2000/svg";
+      svg.setAttribute("aria-roledescription", clone.childNodes[0].data.startsWith("flowchart") ? "flowchart-v2" : "sequence");
+      clone.replaceChildren(svg);
+    }
+  } } });
+  vm.runInContext(declaration("runMermaidAtDocumentScale"), s);
+  const adopted = await s.runMermaidAtDocumentScale({ nodes });
+  f.doc.createElement = create;
+  assert.equal(adopted.length, 3, "the actual cold Mermaid adoption accepted every fixture fence");
+  assert.equal(stage.parentElement, null);
+  layoutDiagrams(f, s);
+  s.publishReadingPresentation(a.rendered.mapped);
   const capture = (scrollTop, start, top) => {
     f.body.scrollTop = scrollTop;
     const result = a.captureBookmark();
@@ -350,6 +418,21 @@ test("View binds short and tall generated diagrams to distinct fence occurrences
     assert.equal((await a.restoreBookmark(stop)).travel, "observed-travel");
     assert.equal(f.body.scrollTop, top, "restore moved to the original occurrence and its visible distance");
   }
+  const beforeRaw = f.preview.querySelector("pre");
+  a.tab.content = text.replace(flow, `<pre class="mermaid" data-mermaid-src="flowchart TD
+A --&gt; B">flowchart TD
+A --&gt; B</pre>`);
+  s.renderGeneration++; a.publish();
+  const raw = f.preview.querySelector("pre");
+  assert.notEqual(raw, beforeRaw, "an authored lookalike cannot inherit renderer fence ownership");
+  f.body.scrollTop = 0;
+  assert.equal(a.captureBookmark().reason, "visible-block-unverified");
+  a.tab.content = text;
+  s.renderGeneration++; a.publish();
+  const back = f.preview.querySelector("pre");
+  assert.notEqual(back, raw, "the returning fence gets a new admission, not the old authored node");
+  s.diagramFixturePre = back;
+  assert.equal(vm.runInContext("diagramFenceBodies.has(diagramFixturePre)", s), true);
 });
 test("real producer and Source capture displayed X while pending cache/editor Y differs", () => {
   const a = integration(), initial = a.capture();

@@ -1232,6 +1232,19 @@ async function clippedProbeFixture({ source = actualProbe, small = false, move =
     releasePreview({ interrupted: false }); assert.equal(await preview, false);
     assert.equal(await f.controls.navigate(1), true); assert.equal(f.nested.scrollTop, 160);
   });
+  await test("Forward during a pending Search preview keeps the committed departure", async () => {
+    const f = fixture(); await seed(f); await f.controls.navigate(-1);
+    const segment = f.beginTyping(); f.state.hold = true;
+    const preview = f.jump(250, 19, segment), releasePreview = f.state.release;
+    assert.equal(f.controls.availability().forward, true);
+    assert.equal(f.nested.scrollTop, 250);
+    f.state.hold = false;
+    assert.equal(await f.controls.navigate(1), true);
+    assert.equal(f.nested.scrollTop, 160);
+    releasePreview({ interrupted: false }); assert.equal(await preview, false);
+    assert.equal(await f.controls.navigate(-1), true);
+    assert.equal(f.nested.scrollTop, 80, "Back returns to the departure, not the provisional Search position");
+  });
   await test("repeated recovery Back cannot accidentally traverse older committed history", async () => {
     const f = fixture(); await seed(f); const segment = f.beginTyping();
     f.state.hold = true; const preview = f.jump(250, 19, segment); const releasePreview = f.state.release;

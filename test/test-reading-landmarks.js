@@ -273,11 +273,11 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
       assert.ok(opening, "fixture only accepts explicit quoted Marked markup: " + piece);
       const tag = opening[1].toUpperCase();
       assert.ok(["P", "H1", "H2", "H3", "H4", "H5", "H6", "PRE", "CODE", "BLOCKQUOTE", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD",
-        "SPAN", "EM", "STRONG", "DEL", "A", "BR", "IMG", "UL", "OL", "LI"].includes(tag), tag);
+        "SPAN", "EM", "STRONG", "DEL", "A", "BR", "HR", "IMG", "UL", "OL", "LI"].includes(tag), tag);
       const node = new Box(tag);
       for (const attr of opening[2].matchAll(/ ([\w-]+)="([^"]*)"/g)) node.setAttribute(attr[1], decode(attr[2]));
       stack.at(-1).append(node);
-      if (tag !== "BR" && tag !== "IMG") stack.push(node);
+      if (!["BR", "HR", "IMG"].includes(tag)) stack.push(node);
     }
     assert.equal(stack.length, 1, "fixture markup closes every container");
     return detached;
