@@ -178,6 +178,10 @@ const VIRTUAL_SUITES = Object.freeze({
     npmScript: "test:reading-landmarks",
     environment: Object.freeze({ MARKALOO_MERMAID_READING_ONLY: "1" }),
   }),
+  "test:reading-mode-mermaid": Object.freeze({
+    npmScript: "test:reading-mode",
+    environment: Object.freeze({ MARKALOO_MERMAID_MODE_ONLY: "1" }),
+  }),
   "test:table-cells-movement": Object.freeze({
     npmScript: "test:table-cells-source",
     environment: Object.freeze({ MARKALOO_CELL_MOVEMENT_ONLY: "1" }),
@@ -2625,6 +2629,15 @@ const READING_LOCATION_REVERTS = [
       /^Mermaid: refuses unbounded$/, /^Mermaid: refuses unowned lookalike$/,
       /^Mermaid: refuses adopted by a different PRE$/],
     requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
+  },
+  {
+    id: "R1526", what: "leave the reading presentation stale after Mermaid-only layout changes",
+    file: RENDERER, suite: "test:reading-mode-mermaid",
+    from: "    if (publishReading && mermaidChanged) refreshReadingPresentation();",
+    to: "",
+    expect: [/^Mermaid layout: actual Edit entry restores the same Source point after clearing breakout$/],
+    mustPass: [/^Mermaid layout: plain Edit entry restores without republishing$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 1,
   },
   {
     id: "R1499", what: "discard the existing atom geometry gate's bounded failure detail",

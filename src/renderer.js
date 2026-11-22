@@ -10382,15 +10382,26 @@ function republishBreakoutBudgetForZoom(zoomFactor) {
   );
 }
 
-function applyMermaidBreakout({ splitView, available, zoomFactor }) {
+function applyMermaidBreakout({ splitView, available, zoomFactor }, trackReadingChanges = false) {
   const diagrams = [...viewer.querySelectorAll('.mermaid-container')].filter(container => container.clientWidth > 0);
+  const before = [];
+  if (trackReadingChanges) for (const container of diagrams) {
+    const pre = container.querySelector(':scope > .mermaid');
+    const svg = pre?.firstElementChild;
+    if (svg && pre.children.length === 1 && ownsReadingMermaidSvg(svg)) {
+      before.push([container, container.getAttribute('class'), container.getAttribute('style')]);
+    }
+  }
+  // Compare the final attributes: Reader may clear and reapply the same layout.
+  const changed = () => before.some(([container, classes, style]) =>
+    container.getAttribute('class') !== classes || container.getAttribute('style') !== style);
   diagrams.forEach(container => {
     container.classList.remove('mermaid-breakout');
     container.style.removeProperty('--table-breakout-width');
     container.style.removeProperty('--mv-breakout-applied');
   });
   const wrapper = document.querySelector('.content-wrapper');
-  if (splitView || !wrapper || available <= 0) return;
+  if (splitView || !wrapper || available <= 0) return changed();
   const wrapperBounds = wrapper.getBoundingClientRect();
   const safeCenter = wrapperBounds.left + wrapper.clientLeft + wrapper.clientWidth / 2;
   const measured = diagrams.map(container => {
@@ -10419,6 +10430,7 @@ function applyMermaidBreakout({ splitView, available, zoomFactor }) {
       `min(max(100%, ${naturalWidth}px), max(0px, calc(var(--mv-breakout-budget, 100%) - ${penalty}px)))`);
     container.classList.add('mermaid-breakout');
   });
+  return changed();
 }
 
 function applyTableBreakout(publishReading = true) {
@@ -10438,7 +10450,7 @@ function applyWideContentLayout(onlyContainer = null, publishReading = true) {
 
   const budget = publishBreakoutBudget();
   const { splitView, available, zoomFactor } = budget;
-  if (!onlyContainer) applyMermaidBreakout(budget);
+  const mermaidChanged = !onlyContainer && applyMermaidBreakout(budget, publishReading);
 
   // Read pass. A container inside a collapsed section (display: none) has zero
   // width and cannot be measured; clearing it would drop a breakout that could
@@ -10450,7 +10462,11 @@ function applyWideContentLayout(onlyContainer = null, publishReading = true) {
     if (tableColumnSizing.isDragging(c)) return;
     if (c.clientWidth > 0) visible.push(c);
   });
-  if (!visible.length) return;
+  if (!visible.length) {
+    // A Mermaid-only layout change also invalidates the exact reading binding.
+    if (publishReading && mermaidChanged) refreshReadingPresentation();
+    return;
+  }
 
   // Write pass: reset. A container that is already widened measures as "fits" -
   // precisely because it was widened - so without this an established breakout

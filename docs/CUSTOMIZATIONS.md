@@ -207,6 +207,8 @@ println!("{answer}");
   the renderer owns the SVG and its live clip proves it is above the viewport.
   Visible, touching, or unverified diagrams still cannot supply a reading
   position. Diagram layout and rendering are unchanged.
+- Clearing an owned Mermaid breakout for Split refreshes the reading binding
+  even when there are no tables, so Edit can restore the saved text position.
 - Typing coalesces one owned destination and captures its origin before debounce.
   Before the first preview, Back cancels that pending query and recovers its
   origin rather than consuming an older entry. Availability is published after exact request

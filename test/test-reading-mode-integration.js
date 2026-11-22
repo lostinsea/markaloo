@@ -8,7 +8,8 @@ const editorFixture = fs.readFileSync(path.join(__dirname, "test-document-editor
 const landmarks = fs.readFileSync(path.join(__dirname, "test-reading-landmarks.js"), "utf8");
 const helpers = { exports: {} };
 vm.runInNewContext(landmarks.slice(0, landmarks.indexOf("let passed = 0")) +
-  "\nmodule.exports = { fixture, walk, Box, Text };", { require, __dirname, module: helpers, console });
+  "\nmodule.exports = { fixture, walk, Box, Text };",
+  { require, __dirname, module: helpers, console, process: { argv: [], env: {} } });
 const { fixture, walk, Box, Text } = helpers.exports;
 function declaration(name, source = renderer) {
   const start = source.indexOf("function " + name + "(");
@@ -16,7 +17,8 @@ function declaration(name, source = renderer) {
   assert.ok(start >= 0 && end > start, name);
   return (source.slice(start - 6, start) === "async " ? "async " : "") + source.slice(start, end + 2);
 }
-function integration(text = "A sufficiently long ordinary reading paragraph.", { modeTransform = source => source } = {}) {
+function integration(text = "A sufficiently long ordinary reading paragraph.",
+  { modeTransform = source => source, beforeParse, beforePublish } = {}) {
   const f = fixture({ rendererCallbacks: true }), s = f.sandbox;
   const tab = { id: 1, content: text, originalContent: text }, events = [], writes = [];
   let admittedText = text, admittedKey = 1;
@@ -70,12 +72,13 @@ function integration(text = "A sufficiently long ordinary reading paragraph.", {
   }
   function publish(value = tab.content, { modeReading = null, permit = viewport.capturePermit(), finalize = true } = {}) {
     let admission;
-    const rendered = geometry(f.render(value, { beforeReplace(source) {
+    const rendered = geometry(f.render(value, { beforeParse, beforeReplace(source) {
       admission = s.captureReadingAdmission(source, s.renderGeneration);
       s.patchViewerDOM(null, source, permit, admission, modeReading);
     } }));
     const associations = rendered.associations.map(pair =>
       s.readingBodyAssociation(pair.fresh, pair.body, rendered.bindings));
+    beforePublish?.(f, s);
     s.admitReadingPresentation(rendered.mapped, associations, admission);
     if (finalize) assert.equal(s.publishReadingPresentation(rendered.mapped), true, "actual final producer binding publishes");
     api.decorate?.(rendered);
@@ -366,6 +369,82 @@ test("actual enter/leave modes restore a text landmark across Reader/Split rewra
   assert.equal(s.isEditMode, false);
   assert.equal(f.body.scrollTop, 0);
   assert.equal(f.body.scrollLeft, 2); assert.equal(f.preview.scrollLeft, 3);
+});
+function installMermaidLayout(a, container) {
+  const { f, s } = a, queryAll = f.preview.querySelectorAll.bind(f.preview);
+  f.preview.querySelectorAll = selector => {
+    if (selector === ".mermaid-container") return container ? [container] : [];
+    if (selector === ".table-container") return [];
+    return queryAll(selector);
+  };
+  s.document.querySelector = selector => selector === ".content-wrapper" ? f.body : null;
+  Object.assign(s, { tableBreakoutCoalesceTimer: null,
+    publishBreakoutBudget: () => ({ splitView: s.isEditMode, available: 200, zoomFactor: 1 }) });
+  vm.runInContext(["applyMermaidBreakout", "applyTableBreakout", "applyWideContentLayout"]
+    .map(name => declaration(name)).join("\n"), s);
+}
+const availabilityEvents = a => a.events.filter(event => event === "reading-location-availability-changed").length;
+test("Mermaid layout: actual Edit entry restores the same Source point after clearing breakout", async () => {
+  const markdown = "```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```\n\nBeta passage";
+  let container;
+  const warnings = [];
+  const a = integration(markdown, {
+    beforeParse: mapped => mapped.replaceSpecial("mermaid", /```mermaid\n[\s\S]*?```/, () => ""),
+    beforePublish(f, s) {
+      // This test isolates publication after exact capture; the landmark
+      // suite exercises the SVG clip and transformed label separately.
+      const svg = new Box("svg"), pre = new Box("PRE", [svg]);
+      svg.localName = "svg";
+      svg.namespaceURI = "http://www.w3.org/2000/svg";
+      svg.setAttribute("aria-roledescription", "flowchart-v2");
+      Object.defineProperty(pre, "firstElementChild", { value: svg });
+      container = new Box("DIV", [pre]);
+      container.setAttribute("class", "mermaid-container mermaid-breakout");
+      container.setAttribute("style", "--table-breakout-width: 180px; --mv-breakout-applied: 180px;");
+      const classes = container.classList;
+      Object.defineProperty(container, "classList", { value: { ...classes, remove(name) {
+        container.setAttribute("class", container.getAttribute("class").split(" ").filter(value => value !== name).join(" "));
+      } } });
+      const styles = new Map([["--table-breakout-width", "180px"], ["--mv-breakout-applied", "180px"]]);
+      container.style.removeProperty = name => {
+        styles.delete(name);
+        container.setAttribute("style", [...styles].map(([key, value]) => `${key}: ${value};`).join(" "));
+      };
+      container.querySelector = selector => selector === ":scope > .mermaid" ? pre : null;
+      f.preview.append(container, f.preview.firstChild);
+      s.rememberReadingMermaidSvg(pre);
+      assert.equal(s.ownsReadingMermaidSvg(svg), true);
+    },
+  });
+  installMode(a);
+  installMermaidLayout(a, container);
+  a.s.console = { ...console, warn: (...args) => warnings.push(args) };
+  a.shift(80);
+  a.f.body.scrollTop = 80;
+  const saved = a.capture();
+  assert.equal(saved.status, "captured", saved.reason);
+  assert.equal(saved.location.text.start, markdown.indexOf("Beta passage"));
+  assert.ok(container.classList.contains("mermaid-breakout"));
+  const before = availabilityEvents(a);
+  await a.s.changeCurrentDocumentEditor(true);
+  assert.equal(a.s.isEditMode, true);
+  assert.equal(a.s.renderGeneration, 1, "the same live DOM must be restored without a render");
+  assert.equal(container.getAttribute("class"), "mermaid-container");
+  assert.equal(container.getAttribute("style"), "");
+  assert.equal(a.f.preview.scrollTop, 60, JSON.stringify(warnings));
+  assert.deepEqual(warnings, []);
+  assert.equal(availabilityEvents(a), before + 1, "one new publication, not one per mutation");
+  assert.equal(a.capture().location.text.start, saved.location.text.start);
+  a.s.applyTableBreakout();
+  assert.equal(availabilityEvents(a), before + 1, "an unchanged Split layout does not republish");
+});
+test("Mermaid layout: plain Edit entry restores without republishing", async () => {
+  const a = integration(); installMode(a);
+  installMermaidLayout(a);
+  const before = availabilityEvents(a);
+  await a.s.changeCurrentDocumentEditor(true);
+  assert.equal(a.f.preview.scrollTop, 60);
+  assert.equal(availabilityEvents(a), before);
 });
 test("mode exit captures after both the save wait and discard confirmation", async () => {
   const a = integration(); installMode(a); const { s } = a;
@@ -1235,11 +1314,13 @@ for (const phase of ["setup", "light", "producer"]) test("synchronous " + phase 
   assert.equal(control.global(), null);
 });
 (async () => {
+  const selected = process.env.MARKALOO_MERMAID_MODE_ONLY === "1"
+    ? cases.filter(([name]) => name.startsWith("Mermaid layout:")) : cases;
   let passed = 0;
-  for (const [name, run] of cases) {
+  for (const [name, run] of selected) {
     try { await run(); passed++; console.log("PASS " + name); }
     catch (error) { console.log("FAIL " + name + "  -> " + error.stack); }
   }
-  console.log(`=== ${passed}/${cases.length} passed ===`);
-  process.exitCode = passed === cases.length ? 0 : 1;
+  console.log(`=== ${passed}/${selected.length} passed ===`);
+  process.exitCode = passed === selected.length ? 0 : 1;
 })().catch(error => { console.error(error); process.exitCode = 1; });
