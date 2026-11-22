@@ -203,6 +203,10 @@ println!("{answer}");
 - Changing the split-view scroll driver cancels its old queued follower update.
   A real scroll or explicit preview navigation schedules a fresh update; a
   no-motion editor click cannot retarget the previous driver's queued work.
+- Earlier Mermaid flowcharts do not block Back/Forward or Edit position when
+  the renderer owns the SVG and its live clip proves it is above the viewport.
+  Visible, touching, or unverified diagrams still cannot supply a reading
+  position. Diagram layout and rendering are unchanged.
 - Typing coalesces one owned destination and captures its origin before debounce.
   Before the first preview, Back cancels that pending query and recovers its
   origin rather than consuming an older entry. Availability is published after exact request

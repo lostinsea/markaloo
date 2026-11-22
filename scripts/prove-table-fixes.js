@@ -174,6 +174,10 @@ const TOOLBAR_PROOF_ONLY_SHUTDOWN_TAIL = Object.freeze([
   "Shutdown approval renderer unusable: webContents destroyed",
 ]);
 const VIRTUAL_SUITES = Object.freeze({
+  "test:reading-landmarks-mermaid": Object.freeze({
+    npmScript: "test:reading-landmarks",
+    environment: Object.freeze({ MARKALOO_MERMAID_READING_ONLY: "1" }),
+  }),
   "test:table-cells-movement": Object.freeze({
     npmScript: "test:table-cells-source",
     environment: Object.freeze({ MARKALOO_CELL_MOVEMENT_ONLY: "1" }),
@@ -2609,6 +2613,18 @@ const READING_LOCATION_REVERTS = [
       /^only the exact fixture chooser sequence was consumed and none remains armed$/,
     ],
     expectedFailureCount: 14,
+  },
+  {
+    id: "R1525", what: "let a clipped offscreen Mermaid flowchart veto the later reading position",
+    file: EDITOR_SCROLL, suite: "test:reading-landmarks-mermaid",
+    from: "        if (ownsMermaidSvg && offscreenMermaidText(node.parentElement, scroller, mermaidClips ??= new Map())) continue;",
+    to: "",
+    expect: [/^Mermaid: offscreen flowchart preserves exact Reader capture$/,
+      /^Mermaid: offscreen flowchart preserves exact Edit capture$/],
+    mustPass: [/^Mermaid: plain prose continues to capture exactly$/, /^Mermaid: refuses touching$/,
+      /^Mermaid: refuses unbounded$/, /^Mermaid: refuses unowned lookalike$/,
+      /^Mermaid: refuses adopted by a different PRE$/],
+    requireMustPassAssertions: true, requireExactFailures: true, expectedFailureCount: 2,
   },
   {
     id: "R1499", what: "discard the existing atom geometry gate's bounded failure detail",

@@ -1988,12 +1988,30 @@ return async function changeCurrentDocumentEditor(open) {
   }
 }
 })();
+const readingMermaidSvgs = new WeakMap();
+
+function ownsReadingMermaidSvg(svg) {
+  return readingMermaidSvgs.get(svg.parentElement) === svg;
+}
+
+function rememberReadingMermaidSvg(pre) {
+  // Only the exact root just installed by Mermaid or restored from its cache.
+  const svg = pre.firstElementChild;
+  if (pre.tagName === 'PRE' && pre.children.length === 1 && svg?.localName === 'svg' &&
+      svg.namespaceURI === 'http://www.w3.org/2000/svg' && svg.getAttribute('aria-roledescription') === 'flowchart-v2') {
+    readingMermaidSvgs.set(pre, svg);
+  } else {
+    readingMermaidSvgs.delete(pre);
+  }
+}
+
 const editorScroll = window.createEditorScroll({
   editor: markdownEditor, preview: viewer,
   active: () => isEditMode, frozen: frozenForShutdown,
   // Watcher ownership also advances on Save; only document admission fences this map.
   identity: () => fileOpenSequence, scale: scrollerScale,
   presentation: readingPresentationContext, readingSourceIdentity,
+  ownsMermaidSvg: ownsReadingMermaidSvg,
 });
 window.getEditorScrollDiagnostics = () => ({ ...editorScroll.diagnostics(), lastReadingRestoreFailure });
 
@@ -4699,6 +4717,7 @@ async function runMermaidAtDocumentScale(options, isCurrent = () => true) {
           node.id !== id || !clone.querySelector('svg')) continue;
       noteViewerMutation();
       node.replaceChildren(...clone.childNodes);
+      rememberReadingMermaidSvg(node);
       node.setAttribute('data-processed', 'true');
       adopted.push(node);
     }
@@ -8994,6 +9013,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
         if (mermaidSvgCache.has(src)) {
           // Restore cached SVG — no mermaid.run() needed for this element
           el.innerHTML = mermaidSvgCache.get(src);
+          rememberReadingMermaidSvg(el);
           el.setAttribute('data-processed', 'true');
         } else {
           el.removeAttribute('data-processed');

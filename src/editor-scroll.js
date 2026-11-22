@@ -2,7 +2,8 @@
 
 // Mapping markup lives only in a detached metadata copy. The displayed HTML is
 // unchanged, and bindings cross over only after complete DOM verification.
-window.createEditorScroll = function ({ editor, preview, active, frozen, identity, scale, presentation, readingSourceIdentity }) {
+window.createEditorScroll = function ({ editor, preview, active, frozen, identity, scale, presentation, readingSourceIdentity,
+  ownsMermaidSvg }) {
   const readingEnabled = typeof presentation === 'function' && typeof readingSourceIdentity === 'function';
   const attribute = 'data-markaloo-scroll';
   let committed = null, owner = null, anchors = [], frame = 0, dirty = false;
@@ -1677,15 +1678,59 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const entered = readingEpoch, enteredBinding = bindingEpoch;
     return scanVisibleText(scroller, currentReadingPublication(), onModeCharacter, modePseudoBefore, entered, enteredBinding);
   }
+  function offscreenMermaidText(parent, scroller, clips) {
+    const svg = parent.closest('svg');
+    if (!svg || !ownsMermaidSvg(svg)) return false;
+    if (!clips.has(svg)) clips.set(svg, mermaidClipAboveViewport(svg, scroller));
+    if (!clips.get(svg)) return false;
+    // A top-layer element can paint outside its DOM ancestors' clips.
+    for (let node = parent; node !== svg; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.overlay !== 'none' ||
+          (node.namespaceURI === 'http://www.w3.org/1999/xhtml' &&
+            !/^(static|relative)$/.test(style.position))) return false;
+    }
+    return true;
+  }
+  function mermaidClipAboveViewport(svg, scroller) {
+    const view = preview.ownerDocument.defaultView;
+    if (preview.ownerDocument !== document || !view || view.frameElement || view.visualViewport?.scale !== 1 ||
+        !scroller?.isConnected || !scroller.contains(svg) || !preview.contains(svg) ||
+        !scroller.contains(preview) || !/^(auto|scroll)$/.test(getComputedStyle(scroller).overflowY)) return false;
+    const clip = getComputedStyle(svg);
+    // The PRE and breakout wrapper can overflow. Only the SVG viewport clips the labels.
+    if (clip.overflowX !== 'hidden' || clip.overflowY !== 'hidden' ||
+        !['0px', 'content-box'].includes(clip.overflowClipMargin)) return false;
+    let reachedScroller = false;
+    for (let node = svg; node; node = node.parentElement) {
+      const style = node === svg ? clip : getComputedStyle(node);
+      if (node === scroller) reachedScroller = true;
+      if ((!reachedScroller && !/^(static|relative)$/.test(style.position)) ||
+          style.overlay !== 'none' || style.filter !== 'none' || style.backdropFilter !== 'none' ||
+          style.webkitBoxReflect !== 'none' || style.offsetPath !== 'none' || style.perspective !== 'none' ||
+          style.transformStyle !== 'flat' || style.translate !== 'none' || style.rotate !== 'none' ||
+          style.scale !== 'none' ||
+          (style.transform !== 'none' && (node === svg ||
+            !/^matrix\(1,\s*0,\s*0,\s*1,\s*-?(?:\d+(?:\.\d+)?|\.\d+),\s*0\)$/.test(style.transform)))) return false;
+    }
+    // Both border boxes are in viewport pixels, including live zoom and breakout.
+    const { bottom, width, height } = svg.getBoundingClientRect();
+    const port = scroller.getBoundingClientRect();
+    return reachedScroller && scroller.clientHeight > 0 && port.height > 0 &&
+      [bottom, width, height, port.top, port.height].every(Number.isFinite) &&
+      width > 0 && height > 0 && bottom < Math.max(0, port.top);
+  }
   function scanVisibleText(scroller, publication, onModeCharacter, modePseudoBefore, entered, enteredBinding) {
     let sourceRefusal = publication ? null : readingFailure('unavailable', 'presentation-unbound-or-stale');
     if (sourceRefusal && !onModeCharacter) return sourceRefusal;
     const groups = new Map(publication?.groups.map(group => [group.element, group])), contents = new Map(), layouts = new Map();
+    let mermaidClips;
     for (const { node } of textNodes(preview).nodes) {
       // The unbound mode scan can recognize heading decoration without a Source publication.
       const layout = readingLayout(node.parentElement, scroller, publication, layouts,
         publication ? null : modePseudoBefore, !!onModeCharacter);
       if (!layout) {
+        if (ownsMermaidSvg && offscreenMermaidText(node.parentElement, scroller, mermaidClips ??= new Map())) continue;
         // A partial publication may not own an earlier heading's decoration.
         // Recheck from the top for mode alignment only; it cannot grant a reading receipt.
         if (publication && onModeCharacter && entered === readingEpoch && enteredBinding === bindingEpoch) {

@@ -11,6 +11,7 @@ const tableParserSources = ["table-source.js", "table-marked.js"].map(file =>
   fs.readFileSync(path.join(__dirname, "..", "src", file), "utf8"));
 const firstTextOnly = process.argv.includes("--first-text");
 const rootProvenanceOnly = process.argv.includes("--root-provenance");
+const mermaidOnly = process.env.MARKALOO_MERMAID_READING_ONLY === "1";
 if (process.argv.includes("--original-first-text")) {
   assert.ok(firstTextOnly, "the lookup revert is limited to the focused controls");
   const lookup = [
@@ -110,7 +111,7 @@ class Box {
 const walk = root => root.childNodes.flatMap(node => node instanceof Text ? [node] : walk(node));
 
 function fixture({ bound = true, sourceIdentity = true, active = false, implementation = source, rendererCallbacks = false,
-  onWalker = null, verifyDetached = false } = {}) {
+  onWalker = null, verifyDetached = false, ownsMermaidSvg } = {}) {
   const effects = { frames: 0, observers: 0, selections: 0, scrolls: 0, focuses: 0 };
   const metrics = { ranges: 0, rects: 0, boxes: 0, styles: 0 };
   const reads = {};
@@ -212,6 +213,7 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
     active: () => active, frozen: () => { reads.frozen?.(); return frozen; },
     identity: () => { reads.identity?.(); return selection; },
     scale: () => { reads.scale?.(); return 1; },
+    ownsMermaidSvg,
     ...(bound ? { presentation: () => { admissionWork.presentations++; reads.presentation?.(); return context; } } : {}),
     ...(sourceIdentity === false ? {} : { readingSourceIdentity: sourceIdentity === true || typeof sourceIdentity === "function" ?
       exactSource => {
@@ -252,9 +254,10 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
     return detached;
   }
   function render(text, { emoji = value => value, duplicate = false, retained = null, beforeReplace = null,
-    beforeDetach = null } = {}) {
+    beforeDetach = null, beforeParse = null } = {}) {
     const mapped = controller.source(text);
     mapped.prepare(emoji);
+    beforeParse?.(mapped);
     const html = mapped.parse(marked);
     const textDescriptors = mapped.descriptors.filter(descriptor => descriptor.kind === "text");
     for (const descriptor of textDescriptors) assert.ok(mapped.mappingHtml.includes(
@@ -323,6 +326,7 @@ let passed = 0, total = 0;
 function test(name, run) {
   if (firstTextOnly && !name.startsWith("first-text:")) return;
   if (rootProvenanceOnly && !name.startsWith("root provenance:")) return;
+  if (mermaidOnly && !name.startsWith("Mermaid:")) return;
   total++;
   try { run(); passed++; console.log("PASS " + name); }
   catch (error) { console.log("FAIL " + name + "  -> " + error.stack); }
@@ -1385,6 +1389,99 @@ test("review: visible unsupported geometry still refuses before a supported surv
   f.publish(rendered);
   assert.equal(f.capture().status, "unsupported");
 });
+
+function mermaidReadingFixture() {
+  const owners = new WeakMap();
+  const f = fixture({ ownsMermaidSvg: svg => owners.get(svg) === svg.parentElement });
+  const markdown = "```mermaid\nflowchart LR\nA[Alpha] --> B[Beta]\n```\n\nBeta passage";
+  const rendered = f.render(markdown, { beforeParse: mapped =>
+    mapped.replaceSpecial("mermaid", /```mermaid\n[\s\S]*?```/, () => "") });
+  const [prose] = rendered.blocks;
+  const svgNS = "http://www.w3.org/2000/svg";
+  const htmlNS = "http://www.w3.org/1999/xhtml";
+  const label = new Box("SPAN", [new Text("Alpha")]);
+  const foreign = new Box("foreignObject", [label]);
+  const group = new Box("g", [foreign]);
+  const svg = new Box("svg", [group]);
+  const fence = new Box("PRE", [svg]), wrapper = new Box("DIV", [fence]);
+  f.preview.append(wrapper, prose);
+  fence.setAttribute("class", "mermaid");
+  wrapper.setAttribute("class", "mermaid-container mermaid-breakout");
+  svg.setAttribute("aria-roledescription", "flowchart-v2");
+  for (const element of [svg, group, foreign, label, fence, wrapper, f.preview, f.body]) {
+    element.namespaceURI = [svg, group, foreign].includes(element) ? svgNS : htmlNS;
+    element.localName = element.tagName.toLowerCase();
+    Object.assign(element.style, { filter: "none", backdropFilter: "none", webkitBoxReflect: "none",
+      translate: "none", scale: "none", rotate: "none", overflowClipMargin: "0px", transformStyle: "flat",
+      overlay: "none", offsetPath: "none" });
+  }
+  // Match the stock Reader failure: the PRE does not clip; both the breakout
+  // and the label transform are unsupported by normal reading geometry.
+  wrapper.style.transform = "matrix(1, 0, 0, 1, -410, 0)";
+  group.style.transform = "matrix(1, 0, 0, 1, -21.5, -10.5)";
+  Object.assign(svg.style, { overflowX: "hidden", overflowY: "hidden", overflowClipMargin: "content-box" });
+  svg.box = f.rect(341, -1845.609, 179.547, 49);
+  label.textGeometry = () => { throw new Error("a Mermaid label is not a reading character"); };
+  assert.equal(fence.style.overflowY, "visible");
+  assert.equal(label.closest("svg"), svg);
+  assert.equal(svg.parentElement, fence);
+  assert.ok(svg.box.bottom < 0);
+  assert.equal(prose.textContent, "Beta passage");
+  return { ...f, markdown, svg, foreign, group, label, wrapper, fence, owners,
+    publish: () => assert.equal(f.publish(rendered).status, "published") };
+}
+
+for (const edit of [false, true]) test(`Mermaid: offscreen flowchart preserves exact ${edit ? "Edit" : "Reader"} capture`, () => {
+  const f = mermaidReadingFixture();
+  f.owners.set(f.svg, f.fence);
+  // Removing the breakout transform is not enough: the live label transforms
+  // also used to refuse capture.
+  if (edit) f.wrapper.style.transform = "none";
+  f.publish();
+  const result = edit
+    ? f.controller.captureVisibleText(f.preview, () => assert.fail("Edit fell back to a private character"))
+    : f.capture();
+  assert.equal(result.status, "captured", result.reason);
+  assert.equal(result.value.start, f.markdown.indexOf("Beta passage"));
+  assert.equal(result.value.atom, "B");
+  assert.equal(result.receipt.range.startContainer.parentElement.textContent, "Beta passage");
+  assert.equal(f.controller.isTextLocationCurrent(result.receipt), true);
+});
+
+test("Mermaid: plain prose continues to capture exactly", () => {
+  const f = fixture(), rendered = f.render("Earlier prose\n\nBeta passage");
+  rendered.fresh.textGeometry = () => [f.rect(10, -60)];
+  f.publish(rendered);
+  assert.equal(captured(f).value.start, 15);
+});
+
+for (const [name, change] of [
+  ["touching", f => { f.svg.box = f.rect(10, -49, 100, 49); }],
+  ["touching an inset scrollport", f => {
+    f.preview.box = f.rect(0, 48, 100, 100);
+    f.svg.box = f.rect(10, -1, 100, 49);
+  }],
+  ["visible", f => { f.svg.box = f.rect(10, -12, 100, 49); }],
+  ["unbounded", f => { f.svg.style.overflowY = "visible"; }],
+  ["unverified clip margin", f => { f.svg.style.overflowClipMargin = "content-box 2000px"; }],
+  ["unowned lookalike", f => f.owners.delete(f.svg)],
+  ["adopted by a different PRE", f => {
+    const other = new Box("PRE");
+    f.fence.replaceWith(other);
+    other.append(f.svg);
+  }],
+  ["escaping HTML label", f => { f.label.style.position = "fixed"; }],
+  ["top-layer label", f => { f.label.style.overlay = "auto"; }],
+  ["reflected ancestor", f => { f.wrapper.style.webkitBoxReflect = "below 2000px"; }],
+]) test("Mermaid: refuses " + name, () => {
+  const f = mermaidReadingFixture();
+  f.owners.set(f.svg, f.fence);
+  change(f);
+  f.publish();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.capture())),
+    { status: "unsupported", reason: "unverifiable-clipping-chain" });
+});
+
 test("review: long deep offscreen text uses interval exclusion rather than scalar probing", () => {
   const f = fixture(), length = 100001, rendered = f.render("a".repeat(length));
   let parent = f.body;
