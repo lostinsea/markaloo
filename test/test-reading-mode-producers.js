@@ -178,7 +178,7 @@ test("final publication uses exact patcher associations, never an undefined targ
     }, publishTextSource: () => ({ status: "published" }) },
   };
   vm.createContext(s);
-  for (const name of ["readingPresentationContext", "readingSourceIdentity", "publishReadingPresentation"])
+  for (const name of ["readingPresentationContext", "readingSourceIdentity", "readingFinalAssociation", "publishReadingPresentation"])
     vm.runInContext(declaration(renderer, name), s);
   body.querySelector = () => ({});
   assert.equal(s.publishReadingPresentation(source), true);

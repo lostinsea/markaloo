@@ -481,7 +481,7 @@ async function clippedProbeFixture({ source = actualProbe, small = false, move =
   await test("actual TOC jump and toolbar Back/Forward share live history, availability and instant requests", async () => {
     const f = assembledFixture(), ui = installControls(f), buttons = installTOC(f);
     assert.equal(buttons.length, 2); assert.equal(buttons[1].dataset.headerId, "beta");
-    const before = f.capture();
+    const before = f.captureBookmark();
     assert.equal(before.status, "captured", "real displayed Source supplies the departure");
     const editor = [f.f.editor.value, f.f.editor.scrollLeft, f.c.originalMarkdown, f.c.hasUnsavedChanges];
     buttons[1].click(); await tick();
@@ -489,12 +489,19 @@ async function clippedProbeFixture({ source = actualProbe, small = false, move =
     assert.equal(f.f.body.scrollTop, 180);
     assert.equal(f.subscribers.at(-1).back, true);
     ui.back.click(); await tick(); assert.equal(f.f.body.scrollTop, 0);
-    assert.equal(JSON.stringify(f.capture().location), JSON.stringify(before.location));
+    assert.equal(JSON.stringify(f.captureBookmark().location), JSON.stringify(before.location));
     assert.equal(f.subscribers.at(-1).forward, true);
+    const returned = f.snapshot();
+    buttons[0].click(); await tick();
+    assert.deepEqual(f.snapshot(), returned, "an already aligned View jump preserves Forward");
     ui.forward.click(); await tick(); assert.equal(f.f.body.scrollTop, 180);
-    assert.equal(f.nativeCalls.length, 1, "only TOC uses the element jump; traversal uses the actual location adapter");
+    assert.equal(f.nativeCalls.length, 2, "only TOC uses the element jump; traversal uses the actual location adapter");
     assert.equal(f.writes.length, 2); assert(f.writes.every(write => write.request.behavior === "instant"));
     assert.deepEqual([f.f.editor.value, f.f.editor.scrollLeft, f.c.originalMarkdown, f.c.hasUnsavedChanges], editor);
+    f.tab.content += "\nDifferent revision.";
+    assert.equal(f.controls.availability().back, false);
+    assert.equal(await f.controls.navigate(-1), false);
+    assert.equal(f.writes.length, 2, "stale history does not write to the viewport");
     assert.equal(f.f.effects.selections, 0); assert.equal(f.errors.length, 0);
   });
   await test("assembled history restores a source-backed nested origin on both axes with one permit", async () => {
@@ -503,15 +510,15 @@ async function clippedProbeFixture({ source = actualProbe, small = false, move =
     assert(pre.scrollHeight > pre.clientHeight && pre.scrollWidth > pre.clientWidth);
     assert(f.f.body.scrollWidth > f.f.body.clientWidth);
     pre.scrollTop = 30; pre.scrollLeft = 8; f.f.body.scrollLeft = 9;
-    const origin = f.capture();
-    assert.equal(origin.status, "captured"); assert.equal(origin.location.text.alignment.nested.length, 1);
+    const origin = f.captureBookmark();
+    assert.equal(origin.status, "captured"); assert.equal(origin.location.nested.length, 1);
     buttons[0].click(); await tick();
     assert.equal(f.snapshot().entries.length, 2); assert.equal(f.snapshot().index, 1);
     pre.scrollTop = pre.scrollLeft = f.f.body.scrollLeft = 0;
     ui.back.click(); await tick();
     assert.equal(f.snapshot().index, 0);
     assert.deepEqual([pre.scrollTop, pre.scrollLeft, f.f.body.scrollTop, f.f.body.scrollLeft], [30, 8, 0, 9]);
-    assert.equal(JSON.stringify(f.capture().location), JSON.stringify(origin.location));
+    assert.equal(JSON.stringify(f.captureBookmark().location), JSON.stringify(origin.location));
     assert.equal(f.writes.length, 2, "one actual inner request and one actual outer request settle before commit");
     ui.forward.click(); await tick();
     assert.equal(f.snapshot().index, 1); assert.equal(f.f.body.scrollTop, 180);
@@ -519,20 +526,21 @@ async function clippedProbeFixture({ source = actualProbe, small = false, move =
     assert.equal(f.errors.length, 0);
   });
   await test("actual fragment handler records its resolved document target then toolbar Back and Forward restore it", async () => {
-    const f = fixture(), ui = installControls(f), lookup = f.document.getElementById;
-    f.target.id = "target-source";
-    f.document.getElementById = id => id === f.target.id ? f.target : lookup(id);
+    const f = assembledFixture(), ui = installControls(f);
+    installTOC(f);
     let click;
     f.viewer.addEventListener = (type, callback) => { assert.equal(type, "click"); click = callback; };
     vm.runInContext(body("const URL_BLANK =", "\n// The page owns the drag overlay"), f.c);
-    const link = { href: "#target-source", getAttribute: () => "#target-source" };
+    const link = { href: "#beta", getAttribute: () => "#beta" };
     let prevented = false;
-    f.state.desired = { top: 170, left: 29 };
     click({ target: { closest: () => link }, preventDefault() { prevented = true; } });
-    await tick(); assert(prevented); assert.deepEqual(positions(f), [0, 170]);
-    ui.back.click(); await tick(); assert.equal(f.nested.scrollTop, 0);
-    ui.forward.click(); await tick(); assert.equal(f.nested.scrollTop, 170);
-    assert.equal(f.nested.scrollLeft, 29); assert.equal(f.errors.length, 0);
+    await tick(); assert(prevented); assert.equal(f.f.body.scrollTop, 180);
+    const destination = f.captureBookmark().location;
+    assert.equal(destination.value.start, f.tab.content.indexOf("Beta"));
+    ui.back.click(); await tick(); assert.equal(f.f.body.scrollTop, 0);
+    ui.forward.click(); await tick(); assert.equal(f.f.body.scrollTop, 180);
+    assert.equal(JSON.stringify(f.captureBookmark().location), JSON.stringify(destination));
+    assert.equal(f.errors.length, 0);
   });
   await test("manual departure after 1 2 4 3 and Back 4 restores checkpoint 4 before consuming older history", async () => {
     const f = fixture();

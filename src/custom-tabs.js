@@ -447,6 +447,12 @@
     return state.readingKey;
   }
 
+  function hasReadingSource(tab, source, key) {
+    const state = documentState.get(tab);
+    return !!state && getActiveTab() === tab && state.readingKey === key &&
+      source.source === normaliseNewlines(state.content);
+  }
+
   function defineDocumentAccessors(tab, content, reservedGeneration = null) {
     const state = {
       content: content,
@@ -6519,6 +6525,7 @@
 
   window.CustomTabs = {
     admitReadingSource,
+    hasReadingSource,
     // A scroll can look correct even while a restore is still armed to undo it.
     __scrollRestorePending: () => !!cancelActiveRestore,
     createTab,

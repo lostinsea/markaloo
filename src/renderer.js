@@ -1403,10 +1403,10 @@ function captureReadingAdmission(source, generation) {
   const key = tab && window.CustomTabs.admitReadingSource(tab, source);
   return key ? { tab, source, key, selection: fileOpenSequence, generation } : null;
 }
-function admitReadingPresentation(source, associations, admission) {
+function admitReadingPresentation(source, associations, admission, bookmarks = associations) {
   if (!admission || admission.source !== source || admission.generation !== renderGeneration ||
       admission.selection !== fileOpenSequence || window.CustomTabs?.getActiveTab() !== admission.tab) return;
-  readingDisplay = { ...admission, associations, finalized: false, published: false };
+  readingDisplay = { ...admission, associations, bookmarks, finalized: false, published: false };
   const observation = typeof readingPublicationObservation === 'undefined' ? null : readingPublicationObservation;
   if (observation) {
     if (observation.sequence < Number.MAX_SAFE_INTEGER) observation.sequence++;
@@ -1446,37 +1446,7 @@ function publishReadingPresentation(source) {
   }
   const display = readingDisplay;
   display.finalized = true;
-  const associations = display.associations.map(({ fresh, body, bindings, targets }) => ({
-    fresh, body,
-    attributes: [body, ...body.querySelectorAll('*')].flatMap(element =>
-      [...(readingAttributeRecords.get(element) || [])].map(([name, value]) => ({ body: element, name, value }))),
-    pseudos: [body, ...body.querySelectorAll('*')].flatMap(element =>
-      readingPseudoRecords.has(element) ? [{ body: element, name: '::before',
-        content: readingPseudoRecords.get(element) }] : []),
-    sections: [fresh, ...fresh.querySelectorAll('*')].flatMap(node => {
-      const header = targets.get(node);
-      const produced = header && readingCollapsibleSections.get(header);
-      return produced ? [{ fresh: node, header, ...produced }] : [];
-    }),
-    images: [fresh, ...fresh.querySelectorAll('*')].filter(node => node.tagName === 'IMG').flatMap(node => {
-      const target = targets.get(node);
-      const produced = target && readingGeneratedContainers.get(target);
-      return produced ? [{ fresh: node, body: target, ...produced }] : [];
-    }),
-    owners: [fresh, ...fresh.querySelectorAll('*')].filter(node =>
-      bindings.get(node)?.readingCode || bindings.get(node)?.readingTable).map(node => {
-      // The exact canonical/body association is retained by the patcher, not
-      // rediscovered from a class, text, table number or current selection.
-      const target = targets.get(node);
-      const produced = target && readingGeneratedContainers.get(target);
-      return { fresh: node, body: target, wrapper: produced?.wrapper || null,
-        controls: produced?.controls || [], decorations: produced?.decorations || [],
-        code: produced?.code || (bindings.get(node)?.readingCode ? target?.querySelector('code') : null),
-        overlay: produced?.overlay || null, header: bindings.get(node)?.readingTable ? target?.tHead : null,
-        breakout: bindings.get(node)?.readingTable && produced?.wrapper?.classList.contains('table-breakout')
-          ? produced.wrapper : null };
-    }),
-  }));
+  const associations = display.associations.map(readingFinalAssociation);
   const context = readingPresentationContext();
   if (observation && observation.admission === observedAdmission && observation.attempt === operation) {
     observation.contextMatch = !!context;
@@ -1537,6 +1507,37 @@ function publishReadingPresentation(source) {
   window.dispatchEvent(new Event('reading-location-availability-changed'));
   return display.published;
 }
+function readingFinalAssociation({ fresh, body, bindings, targets }) {
+  const live = [body, ...body.querySelectorAll('*')], canonical = [fresh, ...fresh.querySelectorAll('*')];
+  return {
+    fresh, body,
+    attributes: live.flatMap(element =>
+      [...(readingAttributeRecords.get(element) || [])].map(([name, value]) => ({ body: element, name, value }))),
+    pseudos: live.flatMap(element => readingPseudoRecords.has(element) ? [{ body: element, name: '::before',
+      content: readingPseudoRecords.get(element) }] : []),
+    sections: canonical.flatMap(node => {
+      const header = targets.get(node);
+      const produced = header && readingCollapsibleSections.get(header);
+      return produced ? [{ fresh: node, header, ...produced }] : [];
+    }),
+    images: canonical.filter(node => node.tagName === 'IMG').flatMap(node => {
+      const target = targets.get(node);
+      const produced = target && readingGeneratedContainers.get(target);
+      return produced ? [{ fresh: node, body: target, ...produced }] : [];
+    }),
+    owners: canonical.filter(node => bindings.get(node)?.readingCode || bindings.get(node)?.readingTable).map(node => {
+      // The patcher retains the exact canonical/body association.
+      const target = targets.get(node);
+      const produced = target && readingGeneratedContainers.get(target);
+      return { fresh: node, body: target, wrapper: produced?.wrapper || null,
+        controls: produced?.controls || [], decorations: produced?.decorations || [],
+        code: produced?.code || (bindings.get(node)?.readingCode ? target?.querySelector('code') : null),
+        overlay: produced?.overlay || null, header: bindings.get(node)?.readingTable ? target?.tHead : null,
+        breakout: bindings.get(node)?.readingTable && produced?.wrapper?.classList.contains('table-breakout')
+          ? produced.wrapper : null };
+    }),
+  };
+}
 window.displayedReadingKeyForContent = (tab, content) =>
   readingDisplay?.tab === tab && readingDisplay.source.source === content ? readingDisplay.key : null;
 
@@ -1558,6 +1559,145 @@ function readingBodyAssociation(fresh, adopted, bindings) {
 function refreshReadingPresentation() {
   if (readingDisplay?.finalized) publishReadingPresentation(readingDisplay.source);
 }
+
+function currentViewBookmarkDisplay() {
+  const display = readingDisplay;
+  return !isEditMode && !frozenForShutdown() && display?.finalized &&
+    display.generation === renderGeneration && display.selection === fileOpenSequence &&
+    window.CustomTabs?.hasReadingSource(display.tab, display.source, display.key) ? display : null;
+}
+
+function viewBookmarkGeometry(display, entry, scroller, saved = null) {
+  if (entry.kind !== 'diagram') {
+    return editorScroll.viewBookmarkText(display.source, readingFinalAssociation(entry), scroller, saved);
+  }
+  const { pre, canonical } = entry;
+  const svg = renderedBookmarkSvgs.get(pre), wrapper = readingDiagramWrappers.get(pre);
+  if (diagramFenceBodies.get(pre) !== canonical || !wrapper || pre.parentElement !== wrapper ||
+      !viewer.contains(wrapper) || !svg || pre.firstElementChild !== svg || pre.children.length !== 1) return null;
+  return editorScroll.viewBookmarkDiagram(wrapper, scroller, saved);
+}
+
+function viewBookmarkEntries(display, value) {
+  if (value.kind === 'diagram') {
+    return display.bookmarks.filter(entry => entry.kind === 'diagram' && entry.start === value.start && entry.end === value.end);
+  }
+  return display.bookmarks.filter(entry => entry.kind !== 'diagram' &&
+    display.source.readingTextSpecs.get(entry.fresh)?.runs.some(run =>
+      run.view.at(0) <= value.start && run.view.at(run.display.length) >= value.end));
+}
+
+function captureViewBookmark() {
+  const unavailable = reason => ({ status: 'unavailable', reason });
+  const display = currentViewBookmarkDisplay();
+  if (!display) return unavailable('view-bookmarks-unbound');
+  const scroller = getViewerScroller(), port = scroller.getBoundingClientRect(), zoom = scrollerScale(scroller);
+  const top = port.top + scroller.clientTop * zoom, bottom = top + scroller.clientHeight * zoom;
+  for (const entry of display.bookmarks) {
+    const body = entry.kind === 'diagram' ? readingDiagramWrappers.get(entry.pre) || entry.pre : entry.body;
+    if (!body || !viewer.contains(body)) continue;
+    const rect = body.getBoundingClientRect();
+    if (!(rect.height > 0 && rect.bottom > top && rect.top < bottom)) continue;
+    const geometry = entry.kind !== 'unmapped' && viewBookmarkGeometry(display, entry, scroller);
+    if (geometry?.empty) continue;
+    if (!geometry) return unavailable('visible-block-unverified');
+    const value = entry.kind === 'diagram'
+      ? { kind: 'diagram', start: entry.start, end: entry.end, fraction: geometry.fraction }
+      : { kind: 'text', ...geometry.value };
+    if (currentViewBookmarkDisplay() !== display || viewBookmarkEntries(display, value).length !== 1) {
+      return unavailable('stale-or-ambiguous-bookmark');
+    }
+    const nested = geometry.nested.map(({ scroller: owner, start, end, kind, tag, role, top }) =>
+      ({ start, end, kind, tag, role, top, left: owner.scrollLeft }));
+    if (![geometry.top, scroller.scrollLeft, ...nested.flatMap(owner => [owner.top, owner.left])].every(Number.isFinite)) {
+      return unavailable('invalid-bookmark-position');
+    }
+    return { status: 'captured', location: { version: 2, tab: display.tab.id, key: display.key,
+      value, top: geometry.top, left: scroller.scrollLeft, nested } };
+  }
+  return unavailable('no-visible-mapped-block');
+}
+
+async function restoreViewBookmark(saved, intent) {
+  const refuse = reason => Object.freeze({ status: 'unrecordable', reason });
+  const display = currentViewBookmarkDisplay(), scroller = getViewerScroller();
+  if (!display || saved?.version !== 2 || saved.tab !== display.tab.id || saved.key !== display.key ||
+      !readingViewport.isIntentCurrent(intent)) return refuse('stale-view-bookmark');
+  const value = saved.value;
+  if (!value || !['text', 'diagram'].includes(value.kind) ||
+      !Number.isSafeInteger(value.start) || !Number.isSafeInteger(value.end) || value.start < 0 || value.end <= value.start ||
+      (value.kind === 'diagram' && !(Number.isFinite(value.fraction) && value.fraction > 0 && value.fraction < 1)) ||
+      !Array.isArray(saved.nested) || ![saved.top, saved.left].every(Number.isFinite) ||
+      saved.nested.some(owner => !owner || ![owner.top, owner.left].every(Number.isFinite))) {
+    return refuse('invalid-view-bookmark');
+  }
+  const [entry, duplicate] = viewBookmarkEntries(display, saved.value);
+  if (!entry || duplicate) return refuse('missing-or-ambiguous-view-bookmark');
+  const permit = readingViewport.beginRequest();
+  const current = () => currentViewBookmarkDisplay() === display && getViewerScroller() === scroller &&
+    readingViewport.isIntentCurrent(intent) && readingViewport.isPermitCurrent(permit);
+  const resolve = () => {
+    if (!current()) return null;
+    const geometry = viewBookmarkGeometry(display, entry, scroller, saved.value);
+    if (!geometry || !current() || geometry.nested.length !== saved.nested.length ||
+        geometry.nested.some((owner, index) => ['start', 'end', 'kind', 'tag', 'role'].some(field =>
+          owner[field] !== saved.nested[index][field]))) return null;
+    return geometry;
+  };
+  window.dispatchEvent(new Event('preview-navigation-intent'));
+  if (!current()) return refuse('superseded');
+  editorScroll.previewNavigation();
+  let geometry = resolve(), traveled = false;
+  if (!geometry) return refuse('unverified-view-bookmark');
+  const owners = [...geometry.nested.map(owner => owner.scroller), scroller];
+  const offsets = () => owners.flatMap(owner => [owner.scrollTop, owner.scrollLeft]);
+  const axes = ['left', 'top', 'right', 'bottom'];
+  const sameTarget = (a, b) => b && a.node === b.node && a.first === b.first && a.last === b.last &&
+    a.nested.every((owner, index) => owner.scroller === b.nested[index].scroller);
+  for (let index = 0; index < owners.length; index++) {
+    const target = owners[index], local = geometry.nested[index], alignment = saved.nested[index] || saved;
+    const destination = target.scrollTop + (local ? local.top : geometry.top) - alignment.top;
+    if (![destination, alignment.left].every(Number.isFinite) || !current()) return refuse('invalid-bookmark-offset');
+    const before = offsets();
+    let after, post, completion;
+    try {
+      const request = target.scrollTo({ top: destination, left: alignment.left, behavior: 'instant' });
+      after = offsets();
+      post = resolve();
+      completion = await Promise.prototype.then.call(request, result => result);
+    } catch {
+      return refuse('bookmark-native-request-failed');
+    }
+    const settled = resolve();
+    if (completion?.interrupted !== false || !sameTarget(geometry, post) || !sameTarget(post, settled) ||
+        offsets().some((value, i) => value !== after[i] || (Math.floor(i / 2) !== index && value !== before[i])) ||
+        axes.some(axis => post.fragment[axis] !== settled.fragment[axis] || post.clip[axis] !== settled.clip[axis])) {
+      return refuse('bookmark-settlement-changed');
+    }
+    traveled ||= before.some((value, i) => value !== after[i]);
+    geometry = settled;
+  }
+  const { fragment, clip, point, visibleClip = clip } = geometry;
+  // Scroll offsets can be quantized to a CSS pixel. Visibility alone could
+  // otherwise count a clamped or ignored write as successful arrival.
+  if (!visibleClip || Math.abs(scroller.scrollLeft - saved.left) > 1 ||
+      Math.abs(geometry.top - saved.top) > 1 || geometry.nested.some((owner, index) =>
+        Math.abs(owner.top - saved.nested[index].top) > 1 ||
+        Math.abs(owner.scroller.scrollLeft - saved.nested[index].left) > 1) ||
+      fragment.right <= visibleClip.left || fragment.left >= visibleClip.right ||
+      (point === undefined ? fragment.bottom <= visibleClip.top || fragment.top >= visibleClip.bottom :
+        point <= visibleClip.top || point >= visibleClip.bottom) ||
+      !current()) return refuse('bookmark-did-not-arrive');
+  return { status: 'completed', scope: 'request-offsets', witness: 'view-bookmark',
+    travel: traveled ? 'observed-travel' : 'no-observed-travel' };
+}
+
+const viewBookmarkAdapter = Object.freeze({ capture: captureViewBookmark, restore: restoreViewBookmark,
+  available: () => !!currentViewBookmarkDisplay()?.bookmarks.length,
+  accepts(location) {
+    const display = currentViewBookmarkDisplay();
+    return !!display && location?.version === 2 && location.tab === display.tab.id && location.key === display.key;
+  } });
 
 function captureReadingLocation() {
   return readingLocationResult(editorScroll.captureVisibleText(getViewerScroller()));
@@ -1989,6 +2129,7 @@ return async function changeCurrentDocumentEditor(open) {
 }
 })();
 const readingMermaidSvgs = new WeakMap();
+const renderedBookmarkSvgs = new WeakMap(), readingDiagramWrappers = new WeakMap(), diagramFenceBodies = new WeakMap();
 
 function ownsReadingMermaidSvg(svg) {
   return readingMermaidSvgs.get(svg.parentElement) === svg;
@@ -1997,6 +2138,12 @@ function ownsReadingMermaidSvg(svg) {
 function rememberReadingMermaidSvg(pre) {
   // Only the exact root just installed by Mermaid or restored from its cache.
   const svg = pre.firstElementChild;
+  if (diagramFenceBodies.has(pre) && pre.children.length === 1 &&
+      svg?.localName === 'svg' && svg.namespaceURI === 'http://www.w3.org/2000/svg') {
+    renderedBookmarkSvgs.set(pre, svg);
+  } else {
+    renderedBookmarkSvgs.delete(pre);
+  }
   if (pre.tagName === 'PRE' && pre.children.length === 1 && svg?.localName === 'svg' &&
       svg.namespaceURI === 'http://www.w3.org/2000/svg' && svg.getAttribute('aria-roledescription') === 'flowchart-v2') {
     readingMermaidSvgs.set(pre, svg);
@@ -2534,9 +2681,22 @@ function createReadingHistoryConsumer(ports) {
     }
     return stateFor(tab);
   }
-  function eligible(state) {
+  function adapter(bookmark) {
+    return bookmark ? ports.bookmarks?.() : ports.adapter();
+  }
+  function eligible(state, bookmark = false) {
     return !!state && live && state.live && ports.tab() === state.tab && ports.allowed() &&
-      ports.adapter()?.available() === true;
+      adapter(bookmark)?.available() === true;
+  }
+  function targetAt(state, direction) {
+    if (direction === -1) {
+      const recovery = state.excursion?.kind === 'origin' ? state.excursion.departure : pendingOrigin(state);
+      if (recovery) return recovery;
+      const checkpoint = manualCheckpoint(state);
+      if (checkpoint) return checkpoint.location;
+    }
+    const snapshot = state.model.snapshot();
+    return snapshot.entries[snapshot.index + direction]?.location;
   }
   function pendingOrigin(state) {
     const segment = state.segment;
@@ -2550,13 +2710,15 @@ function createReadingHistoryConsumer(ports) {
   }
   function availability() {
     const state = current();
-    if (!eligible(state) || ['traverse', 'checkpoint'].includes(state.operation?.kind)) {
+    if (!state || ['traverse', 'checkpoint'].includes(state.operation?.kind)) {
       return Object.freeze({ back: false, forward: false });
     }
-    const snapshot = state.model.snapshot();
-    return Object.freeze({ back: !!pendingOrigin(state) || state.excursion?.kind === 'origin' ||
-      !!manualCheckpoint(state) || snapshot.canBack,
-      forward: snapshot.canForward });
+    const available = direction => {
+      const target = targetAt(state, direction);
+      return !!target && eligible(state, target.version === 2) &&
+        (target.version !== 2 || adapter(true).accepts(target));
+    };
+    return Object.freeze({ back: available(-1), forward: available(1) });
   }
   function notify() {
     current();
@@ -2570,9 +2732,9 @@ function createReadingHistoryConsumer(ports) {
     if (live) listeners.add(callback);
     return () => listeners.delete(callback);
   }
-  function capture() {
+  function capture(bookmark = false) {
     try {
-      const result = ports.adapter()?.capture();
+      const result = adapter(bookmark)?.capture();
       return result?.status === 'captured' ? result.location : null;
     } catch (error) {
       ports.report(error);
@@ -2580,7 +2742,7 @@ function createReadingHistoryConsumer(ports) {
     }
   }
   function isCurrent(state, operation) {
-    return state.operation === operation && eligible(state) && ports.isIntentCurrent(operation.intent) &&
+    return state.operation === operation && eligible(state, operation.bookmark) && ports.isIntentCurrent(operation.intent) &&
       (!operation.permit || ports.isPermitCurrent(operation.permit));
   }
   function finish(state, operation) {
@@ -2594,10 +2756,10 @@ function createReadingHistoryConsumer(ports) {
   function moved(record) {
     return successful(record) && record.travel === 'observed-travel';
   }
-  function departure(state) {
+  function departure(state, bookmark = false) {
     // An uncommitted preview is an excursion, not the last reached entry.
     // Sampling it here would corrupt Forward after an interrupted preview.
-    return state.excursion?.departure || pendingOrigin(state) || capture();
+    return state.excursion?.departure || pendingOrigin(state) || capture(bookmark);
   }
   function beginTyping(intent) {
     const state = current();
@@ -2607,7 +2769,7 @@ function createReadingHistoryConsumer(ports) {
     state.segment = segment;
     return segment;
   }
-  async function jump(target, block, intent, { segment = null, before = null } = {}) {
+  async function jump(target, block, intent, { segment = null, before = null, view = false } = {}) {
     const state = current();
     if (!ports.allowed() || !ports.isIntentCurrent(intent)) return false;
     if (!state) {
@@ -2619,16 +2781,17 @@ function createReadingHistoryConsumer(ports) {
       return false;
     }
     if (segment && (state.segment !== segment || !segment.active)) return false;
-    const origin = segment ? segment.origin || (!segment.previewed ? capture() : null) : departure(state);
+    const bookmark = view && !!ports.bookmarks?.();
+    const origin = segment ? segment.origin || (!segment.previewed ? capture() : null) : departure(state, bookmark);
     if (segment && !segment.origin) segment.origin = origin;
     if (!segment) endSegment(state);
     cancel(state);
     let receipt = null;
-    if (origin && eligible(state)) {
+    if (origin && eligible(state, bookmark) && (!bookmark || adapter(true).accepts(origin))) {
       receipt = segment?.entryId ? state.model.stageReplace(segment.entryId) : state.model.stageJump(origin);
       if (receipt.kind === 'unavailable') receipt = null;
     }
-    const operation = { intent, receipt, kind: segment ? 'preview' : 'jump' };
+    const operation = { intent, receipt, bookmark, kind: segment ? 'preview' : 'jump' };
     state.operation = operation;
     const previousExcursion = state.excursion;
     if (segment && origin) {
@@ -2658,8 +2821,9 @@ function createReadingHistoryConsumer(ports) {
         state.excursion = previousExcursion;
       }
       if (!receipt || !moved(record) || !isCurrent(state, operation)) return false;
-      const destination = capture();
-      if (!destination || !isCurrent(state, operation)) return false;
+      const destination = capture(bookmark);
+      if (!destination || !isCurrent(state, operation) ||
+          (bookmark && (origin.key !== destination.key || origin.tab !== destination.tab))) return false;
       const result = state.model.commit(receipt, destination, true);
       if (!result.committed) return false;
       if (segment && state.segment === segment) segment.entryId = result.entryId;
@@ -2686,25 +2850,29 @@ function createReadingHistoryConsumer(ports) {
     const checkpoint = direction === -1 && !recovery ? manualCheckpoint(state) : null;
     const checkpointRevision = checkpoint ? state.model.snapshot().revision : null;
     const manualReturn = checkpoint ? state.manualReturn : null;
+    const bookmark = targetAt(state, direction)?.version === 2;
+    const snapshot = state.model.snapshot();
+    const departureBookmark = snapshot.entries[snapshot.index]?.location.version === 2;
     // A saved checkpoint can restore from a tall image with no visible text to capture.
-    const from = checkpoint ? null : departure(state);
-    if (!checkpoint && !from) return false;
+    const from = checkpoint || recovery ? null : departure(state, departureBookmark);
+    if (!checkpoint && !recovery && !from) return false;
     ports.retireSearch();
     const intent = ports.beginIntent();
-    if (!intent || !eligible(state) || !ports.isIntentCurrent(intent)) return false;
+    if (!intent || !eligible(state, bookmark) || !ports.isIntentCurrent(intent)) return false;
     cancel(state);
     endSegment(state);
     if (direction === -1 && recovery) state.excursion = recovery;
     let receipt = direction === -1 && (recovery || checkpoint) ? null : state.model.stageTraverse(direction, from);
     if (receipt?.kind === 'unavailable') return false;
-    const operation = { intent, receipt,
+    const operation = { intent, receipt, bookmark,
       kind: direction === -1 && recovery ? 'recover' : checkpoint ? 'checkpoint' : 'traverse' };
     state.operation = operation;
     notify();
     try {
       const restore = async target => {
+        operation.bookmark = target.version === 2;
         if (!isCurrent(state, operation)) return null;
-        const restoration = ports.adapter().restore(target, intent);
+        const restoration = adapter(operation.bookmark).restore(target, intent);
         operation.permit = ports.capturePermit();
         const record = await restoration;
         return isCurrent(state, operation) && successful(record) ? record : null;
@@ -2731,7 +2899,7 @@ function createReadingHistoryConsumer(ports) {
         }
         // A confirmed departure may already have returned to its checkpoint.
         // Confirming that no-travel return must not consume ordinary Back.
-        const physicalDeparture = departure(state);
+        const physicalDeparture = departure(state, departureBookmark);
         if (!physicalDeparture || !checkpointCurrent()) return false;
         state.manualReturn = null;
         receipt = state.model.stageTraverse(direction, physicalDeparture);
@@ -2742,7 +2910,7 @@ function createReadingHistoryConsumer(ports) {
         if (!record) return false;
       }
       if (!moved(record)) return false;
-      const destination = capture();
+      const destination = operation.bookmark ? receipt.target : capture();
       if (!destination || !isCurrent(state, operation)) return false;
       const result = state.model.commit(receipt, destination, true);
       if (result.committed) {
@@ -2763,16 +2931,16 @@ function createReadingHistoryConsumer(ports) {
   }
   function armCurrent(state, arm) {
     const snapshot = state.model.snapshot();
-    return eligible(state) && !state.excursion && state.manualArm === arm &&
+    return eligible(state, arm.entry.location.version === 2) && !state.excursion && state.manualArm === arm &&
       snapshot.revision === arm.revision && snapshot.entries[snapshot.index] === arm.entry &&
       ports.isIntentCurrent(arm.intent) && ports.isPermitCurrent(arm.permit);
   }
   function admitInput(event) {
     const state = current();
-    if (event.kind !== 'input' || !eligible(state) || state.excursion ||
+    if (!state || event.kind !== 'input' || state.excursion ||
         !ports.isIntentCurrent(event.intent) || !ports.isPermitCurrent(event.permit)) return;
     const snapshot = state.model.snapshot(), entry = snapshot.entries[snapshot.index];
-    if (!entry) return;
+    if (!entry || !eligible(state, entry.location.version === 2)) return;
     const arm = { entry, revision: snapshot.revision, intent: event.intent, permit: event.permit };
     state.manualArm = arm;
     try {
@@ -2847,6 +3015,7 @@ const readingHistory = createReadingHistoryConsumer({
   createModel: () => window.MarkalooReadingHistory.createReadingHistory(),
   tab: () => window.CustomTabs?.getActiveTab() || null,
   adapter: () => window.readingLocationAdapter,
+  bookmarks: () => isEditMode ? null : viewBookmarkAdapter,
   allowed: () => mayMutateRendererDocument('reading-history') &&
     !document.querySelector('dialog[open], .note-dialog-overlay.visible, [aria-modal="true"].visible'),
   beginIntent: () => readingViewport.beginIntent(),
@@ -5131,7 +5300,7 @@ viewer.addEventListener('click', (e) => {
       }
 
       if (targetElement) {
-        void readingHistory.jump(targetElement, 'start', readingViewport.beginIntent()).catch(reportReadingHistoryError);
+        void readingHistory.jump(targetElement, 'start', readingViewport.beginIntent(), { view: true }).catch(reportReadingHistoryError);
       } else {
         showNotification(i18n('notif.sectionNotFound') + targetId, 3000);
       }
@@ -7142,7 +7311,7 @@ function buildTableOfContents(headers = viewer.querySelectorAll('h1, h2, h3, h4,
     item.addEventListener('click', () => {
       if (header.isConnected && viewer.contains(header)) {
         const intent = readingViewport.beginIntent();
-        void readingHistory.jump(header, 'start', intent, { before: () => expandToHeader(header.id) })
+        void readingHistory.jump(header, 'start', intent, { view: true, before: () => expandToHeader(header.id) })
           .catch(reportReadingHistoryError);
       }
     });
@@ -8399,11 +8568,29 @@ function patchViewerDOM(newHtml, scrollSource = null, viewportPermit = null, adm
   // Then walk the target sequence, inserting only the genuinely new blocks.
   let ref = viewer.firstChild;
   const readingAssociations = [];
+  const bookmarks = [];
   for (let i = 0; i < newEls.length; i++) {
-    const node = matchFor[i] || newEls[i];
-    scrollSource?.adopt(newEls[i], node, scrollBindings);
-    if (scrollSource?.readingTextSpecs.has(newEls[i])) {
-      readingAssociations.push(readingBodyAssociation(newEls[i], node, scrollBindings));
+    const fresh = newEls[i], node = matchFor[i] || fresh;
+    const bookmarkCount = bookmarks.length;
+    scrollSource?.adopt(fresh, node, scrollBindings);
+    const fence = scrollBindings?.get(fresh), pre = fence?.kind === 'mermaid' && _mermaidNode(node);
+    if (scrollSource?.readingTextSpecs.has(fresh)) {
+      const association = readingBodyAssociation(fresh, node, scrollBindings);
+      readingAssociations.push(association);
+      if (fence?.kind !== 'mermaid') bookmarks.push(association);
+    }
+    if (pre && fence.root && fresh.tagName === 'PRE') {
+      const canonical = fresh.innerHTML;
+      if (node === fresh || diagramFenceBodies.get(pre) === canonical) {
+        diagramFenceBodies.set(pre, canonical);
+        bookmarks.push({ kind: 'diagram', pre, canonical, start: fence.start, end: fence.end });
+      }
+    } else {
+      const reusedDiagram = _mermaidNode(node);
+      if (reusedDiagram) diagramFenceBodies.delete(reusedDiagram);
+    }
+    if (scrollSource && bookmarks.length === bookmarkCount) {
+      bookmarks.push({ kind: 'unmapped', body: node });
     }
     if (node === ref) {
       ref = ref.nextSibling;
@@ -8411,7 +8598,7 @@ function patchViewerDOM(newHtml, scrollSource = null, viewportPermit = null, adm
     }
     viewer.insertBefore(node, ref);
   }
-  if (scrollSource) admitReadingPresentation(scrollSource, readingAssociations, admission);
+  if (scrollSource) admitReadingPresentation(scrollSource, readingAssociations, admission, bookmarks);
 
   resyncSearchAfterRender(viewportPermit);
 }
@@ -9068,6 +9255,7 @@ async function renderMarkdownFull(content, generation, viewportPermit, preserveP
           noteViewerMutation();
           el.parentNode.insertBefore(container, el);
           container.appendChild(el);
+          readingDiagramWrappers.set(el, container);
 
           // Add maximize button
           const maxBtn = document.createElement('button');

@@ -962,8 +962,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       }
       const reading = this.readingTextSpecs.get(fresh);
       if (readingEnabled && reading) {
-        const bodies = readingBodies.get(this) || [];
-        bodies.push({ fresh, adopted, specs: reading, tree: readingTree(fresh),
+        const bodies = readingBodies.get(this) || new Map();
+        bodies.set(fresh, { fresh, adopted, specs: reading, tree: readingTree(fresh),
           bindings: nodes.map(node => ({ node, descriptor: bindings.get(node) })).filter(entry => entry.descriptor) });
         readingBodies.set(this, bodies);
       }
@@ -1071,12 +1071,39 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     }
     const ticket = ++bindingEpoch, proofs = readingBodies.get(source);
     readingFinal.delete(source);
-    if (!proofs?.length || associations.length !== proofs.length) return readingFailure('unsupported', 'incomplete-body-associations');
-    const groups = [], owners = [], usedBodies = new Set(), usedFresh = new Set(), usedWrappers = new Set(), usedControls = new Set();
-    const usedSections = new Set(), imageControls = new Map();
-    const pseudos = new Map(), translatedHeaders = new Set(), translatedTables = new Set();
+    if (!proofs?.size || associations.length !== proofs.size) return readingFailure('unsupported', 'incomplete-body-associations');
+    const registry = readingGroupRegistry();
+    const { groups, owners, usedControls, imageControls, pseudos, translatedHeaders, translatedTables } = registry;
     for (const association of associations) {
-      const proof = proofs.find(proof => proof.fresh === association?.fresh), body = association?.body;
+      const failure = bindReadingGroup(proofs.get(association?.fresh), association, registry,
+        observation, observedAttempt, observedAdmission);
+      if (failure) return failure;
+    }
+    if (!orderedReadingGroups(groups)) return readingFailure('unsupported', 'final-text-order');
+    // A callback can replace the binding without publishing. Check both generations after the last callback.
+    const finalState = readingState(source);
+    if (ticket !== bindingEpoch || entered !== readingEpoch || !finalState || finalState.frozen ||
+        !sameReadingContext(state.context, finalState.context) || source.selection !== finalState.selection ||
+        state.key !== finalState.key) {
+      return readingFailure('unavailable', 'presentation-changed');
+    }
+    readingFinal.set(source, { groups, owners, context: state.context, key: state.key,
+      controls: usedControls, controlParents: new Map([...usedControls].map(node => [node, node.parentElement])),
+      imageControls,
+      pseudos, translatedHeaders, translatedTables,
+      shape: readingShape(preview, usedControls), elements: readingElements(preview, usedControls) });
+    return Object.freeze({ status: 'bound' });
+  }
+  function readingGroupRegistry() {
+    return { groups: [], owners: [], usedBodies: new Set(), usedFresh: new Set(), usedWrappers: new Set(),
+      usedControls: new Set(), usedSections: new Set(), imageControls: new Map(), pseudos: new Map(),
+      translatedHeaders: new Set(), translatedTables: new Set() };
+  }
+  function bindReadingGroup(proof, association, registry, observation = null, observedAttempt = 0, observedAdmission = null) {
+    const { groups, owners, usedBodies, usedFresh, usedWrappers, usedControls, usedSections,
+      imageControls, pseudos, translatedHeaders, translatedTables } = registry;
+    const body = association?.body;
+    {
       if (!proof || usedFresh.has(proof.fresh) || !(body instanceof Element) || !body.isConnected ||
           !preview.contains(body) || usedBodies.has(body) || !Array.isArray(association.owners) ||
           (association.sections !== undefined && !Array.isArray(association.sections)) ||
@@ -1294,20 +1321,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       groups.push({ element: body, ...proof.specs,
         shape: readingShape(body, usedControls), elements: readingElements(body, usedControls) });
     }
-    if (!orderedReadingGroups(groups)) return readingFailure('unsupported', 'final-text-order');
-    // A callback can replace the binding without publishing. Check both generations after the last callback.
-    const finalState = readingState(source);
-    if (ticket !== bindingEpoch || entered !== readingEpoch || !finalState || finalState.frozen ||
-        !sameReadingContext(state.context, finalState.context) || source.selection !== finalState.selection ||
-        state.key !== finalState.key) {
-      return readingFailure('unavailable', 'presentation-changed');
-    }
-    readingFinal.set(source, { groups, owners, context: state.context, key: state.key,
-      controls: usedControls, controlParents: new Map([...usedControls].map(node => [node, node.parentElement])),
-      imageControls,
-      pseudos, translatedHeaders, translatedTables,
-      shape: readingShape(preview, usedControls), elements: readingElements(preview, usedControls) });
-    return Object.freeze({ status: 'bound' });
+    return null;
   }
   function findReadingTree(tree, node) {
     if (typeof tree === 'string') return null;
@@ -1359,7 +1373,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         [...final.imageControls].some(([node, markup]) => node.outerHTML !== markup))) {
       return readingFailure('unsupported', 'final-presentation-changed');
     }
-    if (!final && readingBodies.get(source)?.some(proof => proof.bindings.some(({ descriptor }) =>
+    if (!final && Array.from(readingBodies.get(source)?.values() || []).some(proof => proof.bindings.some(({ descriptor }) =>
       descriptor.readingCode || descriptor.readingTable))) return readingFailure('unsupported', 'final-binding-required');
     const groups = (final?.groups || readingAdoptions.get(source))?.map(group => ({ ...group,
       runs: group.runs.map(run => ({ ...run, view: { text: run.view.text, at: run.view.at, exact: run.view.exact } })) }));
@@ -1448,7 +1462,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     return range.toString() === candidate.display ? range : null;
   }
   function readingLayout(parent, scroller, publication, cache = new Map(), modePseudoBefore = null,
-    allowOffscreenUnowned = false) {
+    allowOffscreenUnowned = false, translatedDiagram = null) {
     if (cache.has(parent)) return cache.get(parent);
     if (!(scroller instanceof Element) || !scroller.isConnected ||
         (scroller !== preview && !scroller.contains(preview)) ||
@@ -1481,7 +1495,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           style.display === 'contents' || !['visible', 'hidden'].includes(style.visibility) || Number(style.opacity) !== 1 ||
           (style.transform !== 'none' && !((publication?.translatedHeaders.has(node) &&
             /^matrix\(1,\s*0,\s*0,\s*1,\s*0,\s*-?(?:\d+(?:\.\d+)?|\.\d+)\)$/.test(style.transform)) ||
-            (publication?.translatedTables.has(node) &&
+            ((node === translatedDiagram || publication?.translatedTables.has(node)) &&
             /^matrix\(1,\s*0,\s*0,\s*1,\s*-(?:\d+(?:\.\d+)?|\.\d+),\s*0\)$/.test(style.transform)))) ||
           style.perspective !== 'none' || style.clipPath !== 'none' ||
           style.clip !== 'auto' || style.maskImage !== 'none' || /paint|strict|content/.test(style.contain) ||
@@ -1677,6 +1691,99 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     lastReadingCaptureFailure = null;
     const entered = readingEpoch, enteredBinding = bindingEpoch;
     return scanVisibleText(scroller, currentReadingPublication(), onModeCharacter, modePseudoBefore, entered, enteredBinding);
+  }
+  function viewTableTextClip(parent, clip, publication) {
+    const table = parent.closest('table');
+    if (!table) return clip;
+    for (const header of publication.translatedHeaders) {
+      if (header.parentElement !== table) continue;
+      const transform = getComputedStyle(header).transform;
+      if (transform === 'none') return clip;
+      const translation = /^matrix\(1,\s*0,\s*0,\s*1,\s*0,\s*(\d+(?:\.\d+)?|\.\d+)\)$/.exec(transform);
+      if (!translation || !Number.isFinite(Number(translation[1]))) return null;
+      if (Number(translation[1]) === 0) return clip;
+      // A pinned header is not a reading stop. Its painted copy also hides
+      // body text behind it, even though Range still reports those rectangles.
+      const box = header.getBoundingClientRect();
+      if (![box.left, box.right, box.top, box.bottom].every(Number.isFinite)) return null;
+      if (!readingIntersects(box, clip)) return clip;
+      return { ...clip, top: header.contains(parent) ? clip.bottom : Math.max(clip.top, box.bottom) };
+    }
+    return clip;
+  }
+  // Prove this body locally, without borrowing the Edit/Search publication.
+  function viewBookmarkText(source, association, scroller, saved = null) {
+    const state = readingState(source);
+    if (!state || state.frozen || source.selection !== state.selection) return null;
+    const proof = readingBodies.get(source)?.get(association.fresh);
+    const registry = readingGroupRegistry();
+    if (bindReadingGroup(proof, association, registry)) return null;
+    const [group] = registry.groups;
+    const publication = { ...registry, source, key: state.key };
+    let candidate;
+    if (saved) {
+      // Exact offsets only. Never use the Edit path's context matching.
+      const matches = readingCandidates(publication, { ...saved, sourceKey: state.key });
+      if (matches.length !== 1) return null;
+      [candidate] = matches;
+    } else {
+      const layouts = new Map();
+      for (const { node, start } of textNodes(group.element).nodes) {
+        const layout = readingLayout(node.parentElement, scroller, publication, layouts);
+        if (!layout) return null;
+        if (layout.hidden) continue;
+        const clip = viewTableTextClip(node.parentElement, layout.clip, publication);
+        if (!clip) return null;
+        if (clip.top >= clip.bottom) continue;
+        const visible = firstVisibleReadingOffset(node, clip);
+        if (!visible) continue;
+        if (visible.unsupported) return null;
+        const position = start + visible.index;
+        const run = group.runs.find(run => position >= run.from && position < run.from + run.display.length);
+        candidate = run && readingAtom(publication, group, run, position - run.from);
+        if (!candidate) return null;
+        break;
+      }
+      if (!candidate) {
+        // A visible image is not whitespace merely because its paragraph has
+        // no visible mapped character.
+        for (const image of group.element.querySelectorAll('img')) {
+          const layout = readingLayout(image, scroller, publication, layouts);
+          if (!layout || (!layout.hidden && readingIntersects(image.getBoundingClientRect(), layout.clip))) return null;
+        }
+        return { empty: true };
+      }
+    }
+    if (!candidate) return null;
+    const range = readingRange(candidate);
+    const geometry = range && readingGeometry(range, scroller, !saved, publication, candidate);
+    if (!geometry || geometry.hidden) return null;
+    const { start, end, atom, display, blockKind, runKind } = candidate;
+    const { fragment, clip, top, nested } = geometry;
+    const visibleClip = viewTableTextClip(range.startContainer.parentElement, clip, publication);
+    const current = readingState(source);
+    if (!current || current.frozen || current.key !== state.key ||
+        current.selection !== state.selection || !sameReadingContext(current.context, state.context)) return null;
+    return { value: { start, end, atom, display, blockKind, runKind }, node: group.element,
+      first: range.startContainer, last: range.endContainer, fragment, clip, visibleClip, top, nested };
+  }
+  function viewBookmarkDiagram(element, scroller, saved = null) {
+    // The renderer-owned breakout wrapper can translate horizontally, never vertically.
+    const layout = readingLayout(element, scroller, null, new Map(), null, false, element);
+    if (!layout || layout.hidden) return null;
+    const { clip, nested } = layout;
+    const fragment = element.getBoundingClientRect();
+    if (!(fragment.width > 0) || !(fragment.height > 0) ||
+        ![fragment.left, fragment.right, fragment.top, fragment.bottom].every(Number.isFinite)) return null;
+    if (!saved && !readingIntersects(fragment, clip)) return null;
+    // Center the witness within the first two viewport pixels of the visible
+    // slice. The saved fraction is of the outer block, not of its SVG pixels.
+    const begin = Math.max(fragment.top, clip.top), end = Math.min(fragment.bottom, clip.bottom);
+    const fraction = saved ? saved.fraction : (begin + Math.min(1, (end - begin) / 2) - fragment.top) / fragment.height;
+    const [, , , , portTop, , , zoom] = layout.chain.find(row => row[0] === scroller);
+    const point = fragment.top + fragment.height * fraction;
+    return { fraction, node: element, fragment, clip, point, nested,
+      top: (point - portTop) / zoom - scroller.clientTop };
   }
   function offscreenMermaidText(parent, scroller, clips) {
     const svg = parent.closest('svg');
@@ -2489,7 +2596,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     source: text => new Source(text),
     bindReadingPresentation,
     publishTextSource,
-    captureVisibleText,
+    captureVisibleText, viewBookmarkText, viewBookmarkDiagram,
     prepareModeTextCorrespondence,
     resolveVisibleText,
     isTextLocationCurrent,

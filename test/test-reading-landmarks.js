@@ -61,6 +61,17 @@ class Box {
     }
   }
   get firstChild() { return this.childNodes[0] || null; }
+  get firstElementChild() { return this.children[0] || null; }
+  get nextSibling() { return this.parentNode?.childNodes[this.parentNode.childNodes.indexOf(this) + 1] || null; }
+  get dataset() {
+    return new Proxy({}, {
+      get: (_target, key) => this.getAttribute("data-" + key.replace(/[A-Z]/g, m => "-" + m.toLowerCase())) ?? undefined,
+      set: (_target, key, value) => {
+        this.setAttribute("data-" + key.replace(/[A-Z]/g, m => "-" + m.toLowerCase()), value);
+        return true;
+      },
+    });
+  }
   get children() { return this.childNodes.filter(node => node instanceof Box); }
   get parentElement() { return this.parentNode; }
   get ownerDocument() { return this.doc || this.parentNode?.ownerDocument; }
@@ -80,6 +91,7 @@ class Box {
     return null;
   }
   querySelectorAll(selector) {
+    if (selector === ":scope > .mermaid") return this.children.filter(node => node.classList.contains("mermaid"));
     const result = [], attr = /^\[([^\]]+)\]$/.exec(selector);
     const visit = parent => { for (const child of parent.childNodes) if (child instanceof Box) {
       if (selector === "*" || (attr ? child.attrs.has(attr[1]) : child.tagName.toLowerCase() === selector.toLowerCase())) result.push(child);
@@ -105,6 +117,19 @@ class Box {
     parent.childNodes.splice(at, 1, ...children);
     for (const child of children) child.parentNode = parent;
     this.parentNode = null;
+  }
+  remove() { if (this.parentNode) this.replaceWith(); }
+  replaceChildren(...children) {
+    for (const child of this.childNodes) child.parentNode = null;
+    this.childNodes = [];
+    this.append(...children);
+  }
+  insertBefore(node, reference) {
+    this.append(node);
+    if (reference) {
+      this.childNodes.pop();
+      this.childNodes.splice(this.childNodes.indexOf(reference), 0, node);
+    }
   }
   addEventListener(type, listener) { this.listeners.set(type, [...(this.listeners.get(type) || []), listener]); }
 }
@@ -231,6 +256,10 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
   function parseFixtureHtml(detached, html) {
     // Read only the explicit Marked fixture subset. Unknown or repaired markup
     // is a test error, not a pretend browser parse.
+    // Production Mermaid restoration puts a PRE inside its placeholder P;
+    // HTML parsing closes that paragraph and creates an empty trailing P.
+    html = html.replace(/(<p(?: [\w-]+="[^"]*")*>)\s*(<pre(?: [\w-]+="[^"]*")* class="mermaid"[^>]*>[^<]*<\/pre>)\s*<\/p>/g,
+      "$1</p>$2<p></p>");
     const stack = [detached];
     for (const piece of html.match(/<[^>]*>|[^<]+/g) || []) {
       if (!piece.startsWith("<")) {
@@ -254,11 +283,17 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
     return detached;
   }
   function render(text, { emoji = value => value, duplicate = false, retained = null, beforeReplace = null,
-    beforeDetach = null, beforeParse = null } = {}) {
+    beforeDetach = null, beforeParse = null, afterParse = null, replace = null } = {}) {
     const mapped = controller.source(text);
     mapped.prepare(emoji);
     beforeParse?.(mapped);
-    const html = mapped.parse(marked);
+    const parsed = mapped.parse(marked);
+    const html = afterParse ? afterParse(mapped, parsed) : parsed;
+    if (replace) {
+      replace(mapped, html);
+      admit(mapped);
+      return { mapped, blocks: preview.children };
+    }
     const textDescriptors = mapped.descriptors.filter(descriptor => descriptor.kind === "text");
     for (const descriptor of textDescriptors) assert.ok(mapped.mappingHtml.includes(
       `${mapped.nonce}:${mapped.descriptors.indexOf(descriptor)}`), "real mapping HTML carries this text annotation");
@@ -2447,7 +2482,7 @@ function producerFixture({ tables = false, markdown = null, beforeImages = null,
   const tab = { id: "tab-A" };
   s.window.CustomTabs = { getActiveTab: () => tab };
   for (const name of ["readingPresentationContext", "readingSourceIdentity", "noteReadingAttribute", "readingAttributeSignature",
-    "readingBodyAssociation", "publishReadingPresentation", "refreshReadingPresentation",
+    "readingBodyAssociation", "readingFinalAssociation", "publishReadingPresentation", "refreshReadingPresentation",
     "_collapseKey", "setHeadersCollapsed", "flattenCollapsibleSections", "makeHeadersCollapsible", "expandToHeader",
     "addTableMaximizeButtons", "applyTableBreakout", "applyWideContentLayout", "applyMermaidBreakout", "initImageZoom"])
     vm.runInContext(producerDeclaration(renderer, name), s);

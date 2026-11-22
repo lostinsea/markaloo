@@ -18,8 +18,8 @@ function declaration(name, source = renderer) {
   return (source.slice(start - 6, start) === "async " ? "async " : "") + source.slice(start, end + 2);
 }
 function integration(text = "A sufficiently long ordinary reading paragraph.",
-  { modeTransform = source => source, beforeParse, beforePublish } = {}) {
-  const f = fixture({ rendererCallbacks: true }), s = f.sandbox;
+  { modeTransform = source => source, beforeParse, afterParse, beforePublish, patchReal = false } = {}) {
+  const f = fixture({ rendererCallbacks: true, verifyDetached: patchReal }), s = f.sandbox;
   const tab = { id: 1, content: text, originalContent: text }, events = [], writes = [];
   let admittedText = text, admittedKey = 1;
   let intent = {}, permit = {}, currentTab = tab, layoutShift = 0;
@@ -36,6 +36,9 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
       if (owner !== tab || source.source !== tab.content) return null;
       if (source.source !== admittedText) { admittedText = source.source; admittedKey++; }
       return "controlled-cache-" + admittedKey;
+    },
+    hasReadingSource(owner, source, key) {
+      return owner === currentTab && owner.content === source.source && key === "controlled-cache-" + admittedKey;
     },
     snapshotExactEditorContent: () => tab.content,
     updateTabContent(value) { tab.content = value; } };
@@ -54,7 +57,14 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
   vm.runInContext(renderer.slice(diagnosticsStart, diagnosticsEnd + 1), s);
   const patch = declaration("patchViewerDOM"), patchEnd = patch.indexOf("  noteViewerMutation();");
   assert.ok(patchEnd > 0);
-  vm.runInContext(patch.slice(0, patchEnd) + "\n}", s);
+  vm.runInContext(patchReal ? patch : patch.slice(0, patchEnd) + "\n}", s);
+  if (patchReal) {
+    Object.assign(s, { noteViewerMutation() {}, flattenCollapsibleSections() {}, resyncSearchAfterRender() {},
+      sanitizeHtml: html => html, _BLOCK_WRAPPER_CLASSES: ["mermaid-container"],
+      escapeHtml: text => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") });
+    vm.runInContext(["_mermaidNode", "_blockHash", "_getBlockHash", "_lcsPairs", "mintPlaceholderNonce",
+      "createBlockPlaceholders", "mermaidPreMarkup"].map(name => declaration(name)).join("\n"), s);
+  }
   f.body.style.overflowY = "auto";
   f.preview.style.overflowY = "visible";
   const outer = () => s.getViewerScroller();
@@ -72,15 +82,25 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
   }
   function publish(value = tab.content, { modeReading = null, permit = viewport.capturePermit(), finalize = true } = {}) {
     let admission;
-    const rendered = geometry(f.render(value, { beforeParse, beforeReplace(source) {
+    const rendered = geometry(f.render(value, { beforeParse: source => beforeParse?.(source, s),
+      afterParse: afterParse && ((source, html) => afterParse(source, html, s)),
+      replace: patchReal ? (source, html) => {
+        admission = s.captureReadingAdmission(source, s.renderGeneration);
+        s.patchViewerDOM(html, source, permit, admission, modeReading);
+      } : null, beforeReplace(source) {
       admission = s.captureReadingAdmission(source, s.renderGeneration);
       s.patchViewerDOM(null, source, permit, admission, modeReading);
     } }));
-    const associations = rendered.associations.map(pair =>
-      s.readingBodyAssociation(pair.fresh, pair.body, rendered.bindings));
     beforePublish?.(f, s);
-    s.admitReadingPresentation(rendered.mapped, associations, admission);
-    if (finalize) assert.equal(s.publishReadingPresentation(rendered.mapped), true, "actual final producer binding publishes");
+    if (!patchReal) {
+      const associations = rendered.associations.map(pair =>
+        s.readingBodyAssociation(pair.fresh, pair.body, rendered.bindings));
+      s.admitReadingPresentation(rendered.mapped, associations, admission);
+    }
+    if (finalize) {
+      const published = s.publishReadingPresentation(rendered.mapped);
+      if (!patchReal) assert.equal(published, true, "actual final producer binding publishes");
+    }
     api.decorate?.(rendered);
     for (const target of [f.body, f.preview, ...f.preview.querySelectorAll("pre"), ...f.preview.querySelectorAll("table")]) {
       target.scrollTo = request => {
@@ -97,6 +117,8 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
     replaceTab() { currentTab = { ...tab }; viewport.invalidate(); },
     capture() { return s.window.readingLocationAdapter.capture(); },
     restore(location, ticket = viewport.beginIntent()) { return s.window.readingLocationAdapter.restore(location, ticket); },
+    captureBookmark() { return vm.runInContext("captureViewBookmark()", s); },
+    restoreBookmark(location, ticket = viewport.beginIntent()) { return s.restoreViewBookmark(location, ticket); },
   };
   api.rendered = publish();
   return api;
@@ -169,6 +191,166 @@ function installModeDispatcher(a, { light = false, hold = false } = {}) {
 }
 const cases = [];
 function test(name, run) { cases.push([name, run]); }
+test("View rebinds the exact wrapped character after same-source rerender, not an offscreen fingerprint", async () => {
+  const text = "Earlier prose.\n\nabcdefghijklmnopqrstuvwx";
+  const a = integration(text), { f, s } = a;
+  const layout = (width, leading) => {
+    const prose = f.preview.querySelectorAll("p"), node = walk(prose[1])[0];
+    prose[0].getBoundingClientRect = () => f.rect(0, 0 - f.body.scrollTop, 100, 20);
+    prose[1].getBoundingClientRect = () => f.rect(0, leading - f.body.scrollTop, 100, 100);
+    node.geometry = i => [f.rect(10 + (i % width) * 8, leading + Math.floor(i / width) * 20 - f.body.scrollTop)];
+    return { node, offscreen: prose[0] };
+  };
+  let live = layout(8, 120);
+  f.body.scrollTop = 139;
+  const before = a.captureBookmark();
+  assert.equal(before.status, "captured");
+  assert.equal(before.location.value.start, text.indexOf("ijkl"));
+  assert.equal(before.location.top, 1);
+  const previous = live.node;
+  s.renderGeneration++; a.publish();
+  live = layout(4, 100);
+  assert.notEqual(live.node, previous, "same bytes were rendered into new DOM");
+  live.offscreen.append(new Text("Unrelated offscreen decoration"));
+  f.body.scrollTop = 195;
+  assert.equal(a.capture().status, "unavailable", "legacy publication cannot supply a fallback");
+  const record = await a.restoreBookmark(before.location);
+  assert.equal(record.travel, "observed-travel");
+  assert.equal(live.node.geometry(8)[0].top, 1, "the very same source character is aligned");
+  assert.equal((await a.restoreBookmark(before.location)).travel, "no-observed-travel");
+  const writes = a.writes.length;
+  a.replaceTab();
+  assert.equal((await a.restoreBookmark(before.location)).reason, "stale-view-bookmark");
+  assert.equal(a.writes.length, writes);
+});
+test("View restores the exact table row and cell, at the saved distance", async () => {
+  const text = "| Head | Other |\n| --- | --- |\n| Alpha | Beta |\n| Gamma | Delta |\n| Epsilon | Zeta |\n";
+  const a = integration(text), { f } = a, table = f.preview.querySelector("table");
+  f.body.style.overflowX = "auto";
+  const header = table.querySelector("thead");
+  table.tHead = header;
+  const offset = () => Math.max(0, f.body.scrollTop - 100);
+  Object.defineProperty(header.style, "transform", { get: () => `matrix(1, 0, 0, 1, 0, ${offset()})` });
+  header.getBoundingClientRect = () => f.rect(0, 100 + offset() - f.body.scrollTop, 160, 20);
+  const rows = table.querySelectorAll("tr"), marker = walk(rows[2].querySelectorAll("td")[1])[0];
+  table.getBoundingClientRect = () => f.rect(0, 100 - f.body.scrollTop, 160, 180);
+  for (const [row, tr] of rows.entries()) for (const [col, cell] of tr.children.entries()) {
+    for (const node of walk(cell)) node.geometry = i =>
+      [f.rect((col ? 20 : 110) + i * 8 - f.body.scrollLeft,
+        [100 + offset(), 129, 151, 184][row] - f.body.scrollTop)];
+  }
+  f.body.scrollTop = 126;
+  const stop = a.captureBookmark();
+  assert.equal(stop.status, "captured");
+  assert.equal(stop.location.value.start, text.indexOf("Delta"));
+  assert.equal(stop.location.top, 25);
+  assert.equal(header.getBoundingClientRect().bottom, 20, "header covers the prior row");
+  f.body.scrollTop = 40;
+  assert.equal((await a.restoreBookmark(stop.location)).travel, "observed-travel");
+  assert.equal(marker.geometry(0)[0].top, 25);
+  a.tab.content += "\nNew revision.";
+  assert.equal((await a.restoreBookmark(stop.location)).reason, "stale-view-bookmark");
+});
+test("View restores a deep highlighted code line and refuses a clamped horizontal return", async () => {
+  const lines = Array.from({ length: 32 }, (_, index) => `const C${String(index + 1).padStart(2, "0")} = ${index + 1};`);
+  const text = "```js\n" + lines.join("\n") + "\n```\n\nAfter the code.";
+  const a = integration(text), { f, s } = a;
+  const pre = f.preview.querySelector("pre"), code = pre.querySelector("code");
+  const tokens = lines.map((line, index) => {
+    const node = new Text(line + "\n"), span = new Box("SPAN", [node]);
+    span.setAttribute("class", "token keyword");
+    node.geometry = i => [f.rect(24 + 8 * i - pre.scrollLeft, 20 + index * 12 - f.body.scrollTop, 8, 7)];
+    return span;
+  });
+  code.replaceChildren(...tokens);
+  Object.assign(s, { fixturePre: pre, fixtureCode: code, fixtureTokens: tokens });
+  vm.runInContext(`readingGeneratedContainers.set(fixturePre, {
+    code: fixtureCode, decorations: fixtureTokens, controls: []
+  })`, s);
+  pre.clientHeight = pre.scrollHeight = 406;
+  pre.getBoundingClientRect = () => f.rect(0, 2 - f.body.scrollTop, 100, 406);
+  f.body.scrollTop = 339; pre.scrollLeft = 12;
+  const stop = a.captureBookmark(), marker = walk(tokens[27])[0];
+  assert.equal(stop.status, "captured", stop.reason);
+  assert.equal(stop.location.value.start, text.indexOf(lines[27]));
+  assert.equal(stop.location.top, 5);
+  f.body.scrollTop = 10; pre.scrollLeft = 0;
+  assert.equal((await a.restoreBookmark(stop.location)).travel, "observed-travel");
+  assert.equal(marker.geometry(0)[0].top, 5);
+  assert.equal(pre.scrollLeft, 12);
+
+  const write = pre.scrollTo;
+  pre.scrollTo = request => write({ ...request, left: 0 });
+  f.body.scrollTop = 10; pre.scrollLeft = 0;
+  assert.equal((await a.restoreBookmark(stop.location)).reason, "bookmark-did-not-arrive");
+  assert.equal(marker.geometry(0)[0].top, 5, "vertical arrival alone is not success");
+  assert.equal(pre.scrollLeft, 0);
+
+  const after = f.preview.querySelector("p");
+  after.getBoundingClientRect = () => f.rect(0, 414 - f.body.scrollTop, 100, 24);
+  walk(after)[0].geometry = i => [f.rect(8 + i * 8, 414 - f.body.scrollTop)];
+  f.body.scrollTop = 401;
+  const padding = a.captureBookmark();
+  assert.equal(padding.status, "captured", padding.reason);
+  assert.equal(padding.location.value.start, text.indexOf("After"));
+});
+test("View binds short and tall generated diagrams to distinct fence occurrences across patching", async () => {
+  const flow = "```mermaid\nflowchart TD\nA --> B\n```";
+  const sequence = "```mermaid\nsequenceDiagram\nA->>B: step\n```";
+  const text = `${flow}\n\n${sequence}\n\n${flow}\n\nProse after the mixture.`;
+  let blocks;
+  const a = integration(text, {
+    patchReal: true,
+    beforeParse(source, s) {
+      blocks = s.createBlockPlaceholders("MERMAID_BLOCK_");
+      source.replaceSpecial("mermaid", /```mermaid[\r\n]+([\s\S]*?)```/g,
+        (_match, code) => blocks.take(code.trim()));
+    },
+    afterParse(source, html, s) {
+      return source.restore(blocks, "mermaid", html, s.mermaidPreMarkup, false);
+    },
+    beforePublish(f, s) {
+      const diagrams = f.preview.querySelectorAll("pre");
+      for (const [index, pre] of diagrams.entries()) {
+        if (!pre.parentElement.classList.contains("mermaid-container")) {
+          const svg = new Box("SVG"), wrapper = new Box("DIV");
+          svg.localName = "svg"; svg.namespaceURI = "http://www.w3.org/2000/svg";
+          pre.replaceChildren(svg);
+          s.rememberReadingMermaidSvg(pre);
+          wrapper.setAttribute("class", "mermaid-container mermaid-breakout");
+          pre.replaceWith(wrapper); wrapper.append(pre);
+          s.diagramFixturePre = pre; s.diagramFixtureWrapper = wrapper;
+          vm.runInContext("readingDiagramWrappers.set(diagramFixturePre, diagramFixtureWrapper)", s);
+        }
+        const wrapper = pre.parentElement;
+        wrapper.style.transform = "matrix(1, 0, 0, 1, -80, 0)";
+        wrapper.getBoundingClientRect = () => f.rect(0, [15, 75, 255][index] - f.body.scrollTop, 100, [35, 160, 145][index]);
+      }
+      for (const p of f.preview.querySelectorAll("p")) {
+        p.getBoundingClientRect = () => p.textContent ? f.rect(0, 420 - f.body.scrollTop, 100, 20) : f.rect(0, 0, 0, 0);
+        for (const node of walk(p)) node.geometry = i => [f.rect(10 + i * 8, 420 - f.body.scrollTop)];
+      }
+    },
+  });
+  const { f, s } = a;
+  const capture = (scrollTop, start, top) => {
+    f.body.scrollTop = scrollTop;
+    const result = a.captureBookmark();
+    assert.equal(result.status, "captured", result.reason);
+    assert.equal(result.location.value.start, start);
+    assert.equal(result.location.top, top);
+    return result.location;
+  };
+  const first = capture(0, 0, 16);
+  const middle = capture(140, text.indexOf(sequence), 1);
+  const duplicate = capture(340, text.lastIndexOf(flow), 1);
+  const prose = capture(400, text.indexOf("Prose"), 20);
+  s.renderGeneration++; a.publish();
+  for (const [stop, top] of [[duplicate, 340], [middle, 140], [first, 0], [prose, 400]]) {
+    assert.equal((await a.restoreBookmark(stop)).travel, "observed-travel");
+    assert.equal(f.body.scrollTop, top, "restore moved to the original occurrence and its visible distance");
+  }
+});
 test("real producer and Source capture displayed X while pending cache/editor Y differs", () => {
   const a = integration(), initial = a.capture();
   assert.equal(initial.status, "captured");
