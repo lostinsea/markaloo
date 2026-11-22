@@ -136,7 +136,7 @@ class Box {
 const walk = root => root.childNodes.flatMap(node => node instanceof Text ? [node] : walk(node));
 
 function fixture({ bound = true, sourceIdentity = true, active = false, implementation = source, rendererCallbacks = false,
-  onWalker = null, verifyDetached = false, ownsMermaidSvg } = {}) {
+  onWalker = null, verifyDetached = false, ownsMermaidSvg, requestFrame, scrollerScale = () => 1 } = {}) {
   const effects = { frames: 0, observers: 0, selections: 0, scrolls: 0, focuses: 0 };
   const metrics = { ranges: 0, rects: 0, boxes: 0, styles: 0 };
   const reads = {};
@@ -227,7 +227,7 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
     Element: Box, Event: class {}, ResizeObserver: Observer, MutationObserver: Observer,
     crypto: require("node:crypto"), performance: { now: () => 0 },
     getComputedStyle: (node, pseudo) => { metrics.styles++; return pseudo ? { content: "none" } : node.style; },
-    requestAnimationFrame: () => ++effects.frames, cancelAnimationFrame() {},
+    requestAnimationFrame: callback => { requestFrame?.(callback); return ++effects.frames; }, cancelAnimationFrame() {},
   });
   sandbox.window = sandbox;
   vm.runInContext(inlineSource, sandbox);
@@ -235,9 +235,10 @@ function fixture({ bound = true, sourceIdentity = true, active = false, implemen
   for (const parserSource of tableParserSources) vm.runInContext(parserSource, sandbox);
   vm.runInContext(implementation, sandbox);
   const controller = sandbox.window.createEditorScroll({ editor, preview,
-    active: () => active, frozen: () => { reads.frozen?.(); return frozen; },
+    active: () => typeof active === "function" ? active(sandbox) : active,
+    frozen: () => { reads.frozen?.(); return frozen; },
     identity: () => { reads.identity?.(); return selection; },
-    scale: () => { reads.scale?.(); return 1; },
+    scale: node => { reads.scale?.(); return scrollerScale(node); },
     ownsMermaidSvg,
     ...(bound ? { presentation: () => { admissionWork.presentations++; reads.presentation?.(); return context; } } : {}),
     ...(sourceIdentity === false ? {} : { readingSourceIdentity: sourceIdentity === true || typeof sourceIdentity === "function" ?

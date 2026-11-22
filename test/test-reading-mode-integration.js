@@ -18,13 +18,18 @@ function declaration(name, source = renderer) {
   return (source.slice(start - 6, start) === "async " ? "async " : "") + source.slice(start, end + 2);
 }
 function integration(text = "A sufficiently long ordinary reading paragraph.",
-  { modeTransform = source => source, beforeParse, afterParse, beforePublish, patchReal = false } = {}) {
-  const f = fixture({ rendererCallbacks: true, verifyDetached: patchReal }), s = f.sandbox;
+  { modeTransform = source => source, beforeParse, afterParse, beforePublish, patchReal = false, splitScroll = false } = {}) {
+  const frames = [];
+  const f = fixture({ rendererCallbacks: true, verifyDetached: patchReal,
+    ...(splitScroll ? { active: s => s.isEditMode, requestFrame: callback => frames.push(callback),
+      scrollerScale: node => f.sandbox.scrollerScale(node),
+      ownsMermaidSvg: svg => f.sandbox.ownsReadingMermaidSvg(svg) } : {}) }), s = f.sandbox;
   const tab = { id: 1, content: text, originalContent: text }, events = [], writes = [];
   let admittedText = text, admittedKey = 1;
   let intent = {}, permit = {}, currentTab = tab, layoutShift = 0;
   const viewport = {
     beginIntent() { intent = {}; permit = {}; return intent; },
+    beginChange() { return { intent: this.beginIntent(), permit }; },
     isIntentCurrent: value => value === intent,
     invalidate() { permit = {}; },
     capturePermit: () => permit,
@@ -43,7 +48,7 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
     snapshotExactEditorContent: () => tab.content,
     updateTabContent(value) { tab.content = value; } };
   s.window.dispatchEvent = event => events.push(event.type);
-  Object.assign(s, { editorScroll: { ...f.controller, enter: () => true, leave() {} },
+  Object.assign(s, { editorScroll: splitScroll ? f.controller : { ...f.controller, enter: () => true, leave() {} },
     viewer: f.preview,
     fileOpenSequence: 7, renderGeneration: 1, readingViewport: viewport,
     getViewerScroller: () => s.isEditMode ? f.preview : f.body,
@@ -97,6 +102,7 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
         s.readingBodyAssociation(pair.fresh, pair.body, rendered.bindings));
       s.admitReadingPresentation(rendered.mapped, associations, admission);
     }
+    if (splitScroll) s.editorScroll.commit(rendered.mapped, { textPending: true });
     if (finalize) {
       const published = s.publishReadingPresentation(rendered.mapped);
       if (!patchReal) assert.equal(published, true, "actual final producer binding publishes");
@@ -112,7 +118,7 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
     }
     return rendered;
   }
-  const api = { f, s, tab, events, writes, viewport, publish, nativeCompletion: null,
+  const api = { f, s, tab, events, writes, viewport, publish, frames, nativeCompletion: null,
     shift(value) { layoutShift = value; },
     replaceTab() { currentTab = { ...tab }; viewport.invalidate(); },
     capture() { return s.window.readingLocationAdapter.capture(); },
@@ -711,6 +717,229 @@ test("Mermaid layout: plain Edit entry restores without republishing", async () 
   assert.equal(a.f.preview.scrollTop, 60);
   assert.equal(availabilityEvents(a), before);
 });
+
+function directMermaidEditFixture({ afterPadding = false, splitScale = 1 } = {}) {
+  const flow = "```mermaid\nflowchart TD\nA --> B\n```";
+  const sequence = "```mermaid\nsequenceDiagram\nA->>B: Step eleven\n```";
+  const pie = "```mermaid\npie\n\"Sample\": 2\n```";
+  const prose = "M19 High landing inventory, elm ruler.";
+  const text = `${flow}\n\n${pie}\n\n${sequence}\n\n${flow}\n\n${prose}\n\nEnd.`;
+  let blocks;
+  const a = integration(text, {
+    patchReal: true, splitScroll: true,
+    beforeParse(source, s) {
+      blocks = s.createBlockPlaceholders("MERMAID_BLOCK_");
+      source.replaceSpecial("mermaid", /```mermaid[\r\n]+([\s\S]*?)```/g, (_match, code) => blocks.take(code.trim()));
+    },
+    afterParse(source, html, s) { return source.restore(blocks, "mermaid", html, s.mermaidPreMarkup, false); },
+    beforePublish(f, s) {
+      const scroller = () => s.getViewerScroller();
+      const diagramTop = i => (s.isEditMode ? [10, 60, 135, 250] :
+        [10, 85, 160, splitScale === 1 ? 340 : 540])[i] - scroller().scrollTop;
+      const diagramHeight = i => (s.isEditMode ? [30, 55, 90, 85] : [45, 55, 150, 145])[i];
+      const drawingRect = (x, y, w, h) => {
+        const scale = s.isEditMode ? splitScale : 1;
+        return f.rect(x * scale, y * scale, w * scale, h * scale);
+      };
+      for (const [i, pre] of f.preview.querySelectorAll("pre").entries()) {
+        if (!pre.querySelector("svg")) {
+          const svg = new Box("SVG", [new Text("Diagram label")]), wrapper = new Box("DIV");
+          svg.localName = "svg"; svg.namespaceURI = "http://www.w3.org/2000/svg";
+          svg.setAttribute("aria-roledescription", ["flowchart-v2", "pie", "sequence", "flowchart-v2"][i]);
+          pre.replaceChildren(svg);
+          wrapper.setAttribute("class", "mermaid-container");
+          pre.replaceWith(wrapper); wrapper.append(pre);
+          Object.assign(s, { editTestPre: pre, editTestWrapper: wrapper });
+          vm.runInContext("readingDiagramWrappers.set(editTestPre, editTestWrapper); rememberReadingMermaidSvg(editTestPre)", s);
+        }
+        const svg = pre.querySelector("svg"), wrapper = pre.parentElement;
+        pre.style.overflowX = pre.style.overflowY = "visible";
+        pre.getBoundingClientRect = wrapper.getBoundingClientRect =
+          () => drawingRect(0, diagramTop(i), 100, diagramHeight(i) + 20);
+        svg.getBoundingClientRect = () => drawingRect(10, diagramTop(i) + 10, 80, diagramHeight(i));
+        svg.firstChild.geometry = from => [drawingRect(10 + from * 6, diagramTop(i) + diagramHeight(i) / 2, 8, 16)];
+      }
+      for (const p of f.preview.querySelectorAll("p")) {
+        const top = () => (s.isEditMode ? 390 : afterPadding ? 505 : 500) +
+          (p.textContent === prose ? 0 : 60) - scroller().scrollTop;
+        p.getBoundingClientRect = () => p.textContent ? f.rect(0, top(), 100, 35) : f.rect(0, 0, 0, 0);
+        for (const node of walk(p)) node.geometry = i => {
+          const width = s.isEditMode ? 12 : 20;
+          return [f.rect(4 + (i % width) * 7, top() + Math.floor(i / width) * 16, 7, 16)];
+        };
+      }
+    },
+  });
+  installMode(a);
+  const { f, s } = a;
+  f.body.append(f.editor);
+  f.body.scrollHeight = 700; f.preview.scrollHeight = 580;
+  if (splitScale !== 1) {
+    f.doc.defaultView.innerHeight = f.body.clientHeight = f.body.offsetHeight = 400;
+    f.body.box = f.rect(0, 0, 100, 400);
+    f.preview.getBoundingClientRect = () => f.rect(0, 0, 100, s.isEditMode ? 100 * splitScale : 400);
+    Object.defineProperty(f.preview, "offsetHeight", { get: () => s.isEditMode ? 100 : 400 });
+    vm.runInContext(`${declaration("snapScrollerScale")}\n${declaration("scrollerScale")}`, s);
+  }
+  f.editor.style.lineHeight = "18px";
+  const rawY = offset => {
+    const lines = text.slice(0, offset).split("\n"), last = lines.pop();
+    return 6 + 18 * (lines.reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 18)), 0) +
+      Math.floor(last.length / 18));
+  };
+  const create = f.doc.createElement, range = f.doc.createRange;
+  let mirror;
+  const append = Box.prototype.append;
+  f.doc.body = f.body;
+  f.doc.querySelector = selector => f.body.querySelector(selector);
+  f.doc.createDocumentFragment = () => new Box();
+  f.doc.createElement = tag => {
+    if (tag === "div") {
+      const div = create(tag), set = div.setAttribute;
+      div.setAttribute = function (name, value) {
+        set.call(div, name, value);
+        if (name === "aria-hidden" && value === "true") {
+          mirror = div;
+          mirror.replaceChildren = fragment => Box.prototype.replaceChildren.call(div, ...fragment.children);
+        }
+      };
+      return div;
+    }
+    if (tag !== "span") return create(tag);
+    const span = new Box("SPAN");
+    Object.defineProperty(span, "textContent", { set: value => append.call(span, new Text(value)) });
+    return span;
+  };
+  f.doc.createRange = () => {
+    const r = range();
+    r.getBoundingClientRect = () => {
+      let at = r.startOffset;
+      for (const node of walk(mirror)) {
+        if (node === r.startContainer) return f.rect(0, rawY(at));
+        at += node.length;
+      }
+      return r.getClientRects()[0];
+    };
+    return r;
+  };
+  // The normal interpolator also measures block and text geometry from the DOM.
+  for (const node of [f.preview, f.editor, ...f.preview.querySelectorAll("*")]) {
+    node.getClientRects = () => [node.getBoundingClientRect()];
+  }
+  vm.runInContext(declaration("publishReadingViewportInput"), s);
+  const paneEvent = (pane, type, fields) => {
+    const event = { type, target: pane, ...fields };
+    if (type === "wheel") s.publishReadingViewportInput(event);
+    for (const listener of pane.listeners.get(type) || []) listener(event);
+  };
+  const flushFrames = () => { while (a.frames.length) a.frames.shift()(); };
+  return { ...a, prose, flow, sequence, rawY, paneEvent, flushFrames };
+}
+
+test("Mermaid layout: first Edit restores the same prose atom after mixed diagrams", async () => {
+  const a = directMermaidEditFixture(), { f, s, prose, rawY } = a;
+  f.body.scrollTop = 518;
+  const offset = a.tab.content.indexOf(prose) + 20;
+  assert.equal(a.capture().status, "unavailable", "whole-document capture refuses before reaching the prose");
+  assert.equal(a.captureBookmark().location.value.start, offset, "the local proof reaches the wrapped source atom");
+  await s.changeCurrentDocumentEditor(true);
+  assert.equal(s.renderGeneration, 1, "the source and diagram nodes were retained");
+  assert.equal(f.preview.scrollTop, 408, "preview uses the same atom after reflow, not the old pixel offset");
+  assert.equal(f.editor.scrollTop, rawY(offset), "Raw uses the exact wrapped source line");
+  assert.ok(!a.events.includes("preview-navigation-intent"), "mode entry does not make a history navigation");
+});
+
+test("Mermaid layout: first Edit keeps prose below visible wrapper padding", async () => {
+  const a = directMermaidEditFixture({ afterPadding: true }), { f, s, prose, rawY } = a;
+  f.body.scrollTop = 501;
+  const svg = f.preview.querySelectorAll("svg").at(-1), wrapper = svg.parentElement.parentElement;
+  assert.ok(svg.getBoundingClientRect().bottom < 0 && wrapper.getBoundingClientRect().bottom > 0);
+  assert.equal(a.capture().status, "unavailable");
+  await s.changeCurrentDocumentEditor(true);
+  assert.equal(f.preview.scrollTop, 386, "diagram padding is not visible artwork");
+  assert.equal(f.editor.scrollTop, rawY(a.tab.content.indexOf(prose)));
+});
+
+for (const marker of ["sequence", "flow"]) {
+  test(`Mermaid layout: first Edit inside ${marker === "flow" ? "the second identical fence" : "the tall sequence"}`, async () => {
+    const a = directMermaidEditFixture(), { f, s, rawY } = a;
+    const index = marker === "flow" ? 3 : 2;
+    const svg = f.preview.querySelectorAll("svg")[index];
+    f.body.scrollTop = index === 3 ? 423 : 245;
+    const offset = a.tab.content.lastIndexOf(a[marker]);
+    assert.ok(offset > 0 && (index !== 3 || a.tab.content.indexOf(a[marker]) === 0));
+    assert.equal(a.captureBookmark().location.value.start, offset, "the fixture starts inside the requested occurrence");
+    const view = svg.getBoundingClientRect(), fraction = (1 - view.top) / view.height;
+    await s.changeCurrentDocumentEditor(true);
+    const split = svg.getBoundingClientRect();
+    assert.ok(Math.abs(split.top + fraction * split.height - 1) <= 1, "preview kept the same fraction of this SVG");
+    assert.equal(f.editor.scrollTop, rawY(offset), "Raw shows this opener, not a similar fence or interpolated line");
+    const before = f.editor.scrollTop;
+    for (const listener of f.preview.listeners.get("scroll") || []) listener({ target: f.preview });
+    while (a.frames.length) a.frames.shift()();
+    assert.equal(f.editor.scrollTop, before, "scheduled split sync must not overwrite the exact Raw position");
+  });
+}
+
+test("Mermaid layout: first Edit preserves the visible diagram point across zoomed Split", async () => {
+  const a = directMermaidEditFixture({ splitScale: 4 }), { f, s, flow, rawY } = a;
+  f.body.scrollTop = 434;
+  const svg = f.preview.querySelectorAll("svg").at(-1);
+  const before = svg.getBoundingClientRect(), fraction = 1 / before.height;
+  const inset = before.top + 1;
+  assert.equal(s.scrollerScale(f.body), 1);
+  assert.ok(inset < f.body.clientHeight && inset > f.preview.clientHeight, "unconverted Split units would put the point offscreen");
+  await s.changeCurrentDocumentEditor(true);
+  assert.equal(s.scrollerScale(f.preview), 4);
+  const after = svg.getBoundingClientRect();
+  assert.ok(Math.abs(after.top + fraction * after.height - inset) <= 1, "the exact point stays at the same visible inset");
+  assert.equal(f.editor.scrollTop, rawY(a.tab.content.lastIndexOf(flow)), "Raw shows the second fence at high zoom");
+});
+
+test("Mermaid layout: a Split clamp cannot claim sync before real pane input", async () => {
+  const a = directMermaidEditFixture(), { f, s, flow, rawY, paneEvent, flushFrames } = a;
+  f.body.scrollTop = 423;
+  await s.changeCurrentDocumentEditor(true);
+  const exact = rawY(a.tab.content.lastIndexOf(flow));
+  assert.equal(f.editor.scrollTop, exact);
+  f.preview.clientHeight = 280;
+  const clamped = f.preview.scrollHeight - f.preview.clientHeight;
+  assert.ok(clamped < f.preview.scrollTop, "the resize really clamps Preview");
+  f.preview.scrollTop = clamped;
+  paneEvent(f.preview, "scroll");
+  flushFrames();
+  assert.equal(f.editor.scrollTop, exact, "passive layout travel does not overwrite Raw");
+  paneEvent(f.preview, "wheel", { isTrusted: true, deltaY: -30, deltaX: 0 });
+  f.preview.scrollTop = 5;
+  paneEvent(f.preview, "scroll");
+  flushFrames();
+  assert.notEqual(f.editor.scrollTop, exact, "the next wheel re-enables normal Split sync");
+});
+
+for (const supersede of [false, true]) {
+  test(`Mermaid layout: first Edit ${supersede ? "yields to newer input" : "rebinds after its own final render"}`, async () => {
+    const a = directMermaidEditFixture(), { f, s, rawY, sequence } = a;
+    f.body.scrollTop = 245;
+    s.editorScroll.start(); // Exact View source still owns the displayed diagram, but Split must render.
+    installModeDispatcher(a, { hold: true });
+    const entering = s.changeCurrentDocumentEditor(true);
+    await a.targetStarted;
+    const early = await Promise.race([entering.then(() => true), new Promise(resolve => setImmediate(() => resolve(false)))]);
+    assert.equal(early, false, "initial readiness does not settle Edit while the owned render is incomplete");
+    assert.equal(f.editor.scrollTop, 0, "initial render is not authority to write Raw");
+    assert.equal(f.preview.scrollTop, 0, "initial render is not authority to write Preview");
+    if (supersede) {
+      a.paneEvent(f.preview, "wheel", { isTrusted: true, deltaY: 24, deltaX: 0 });
+      assert.ok(a.events.includes("reading-history-input-admitted"), "the real reader wheel handler admitted the input");
+      f.editor.scrollTop = 51;
+      f.preview.scrollTop = 64;
+    }
+    a.releaseTarget();
+    await entering;
+    assert.equal(f.preview.scrollTop, supersede ? 64 : 189.6, "Preview uses the owned final diagram unless superseded");
+    assert.equal(f.editor.scrollTop, supersede ? 51 : rawY(a.tab.content.indexOf(sequence)), "Raw uses the exact fence unless superseded");
+  });
+}
 function breakoutBox(node) {
   const classes = node.classList;
   Object.defineProperty(node, "classList", { value: { ...classes,

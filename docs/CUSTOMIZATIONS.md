@@ -225,6 +225,10 @@ println!("{answer}");
   Linux Ctrl+Alt+- / Ctrl+Shift+-, and macOS Control+- / Control+Shift+-.
   Command-minus remains zoom. Recognized blocked/exhausted history chords cannot
   fall through to minus-zoom; plain Left/Right retain file-history behavior.
+- The first Edit click can keep an unchanged passage below Mermaid diagrams,
+  or keep Preview inside the same drawing as the pane narrows. Raw goes to the
+  matching source line or that drawing's fence opener, including when two
+  diagrams have identical code. This does not add a Back/Forward stop.
 - In the main document on Windows, trusted mouse buttons 3/4 request Back/Forward
   on press, not release. Both phases cancel the browser default there, including
   when app navigation is blocked or exhausted. Editable targets or focused

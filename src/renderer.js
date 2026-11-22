@@ -1567,7 +1567,7 @@ function currentViewBookmarkDisplay() {
     window.CustomTabs?.hasReadingSource(display.tab, display.source, display.key) ? display : null;
 }
 
-function viewBookmarkGeometry(display, entry, scroller, saved = null) {
+function viewBookmarkGeometry(display, entry, scroller, saved = null, editEntry = false) {
   if (entry.kind !== 'diagram') {
     return editorScroll.viewBookmarkText(display.source, readingFinalAssociation(entry), scroller, saved);
   }
@@ -1575,7 +1575,7 @@ function viewBookmarkGeometry(display, entry, scroller, saved = null) {
   const svg = renderedBookmarkSvgs.get(pre), wrapper = readingDiagramWrappers.get(pre);
   if (diagramFenceBodies.get(pre) !== canonical || !wrapper || pre.parentElement !== wrapper ||
       !viewer.contains(wrapper) || !svg || pre.firstElementChild !== svg || pre.children.length !== 1) return null;
-  return editorScroll.viewBookmarkDiagram(wrapper, scroller, saved);
+  return editorScroll.viewBookmarkDiagram(wrapper, scroller, saved, editEntry ? svg : null);
 }
 
 function viewBookmarkEntries(display, value) {
@@ -1592,7 +1592,7 @@ function viewBookmarkFixedTableY({ scroller, kind, role }) {
     scroller.scrollHeight === scroller.clientHeight && scroller.scrollTop === 0;
 }
 
-function captureViewBookmark() {
+function captureViewBookmark(editEntry = false) {
   const unavailable = reason => ({ status: 'unavailable', reason });
   const display = currentViewBookmarkDisplay();
   if (!display) return unavailable('view-bookmarks-unbound');
@@ -1603,7 +1603,7 @@ function captureViewBookmark() {
     if (!body || !viewer.contains(body)) continue;
     const rect = body.getBoundingClientRect();
     if (!(rect.height > 0 && rect.bottom > top && rect.top < bottom)) continue;
-    const geometry = entry.kind !== 'unmapped' && viewBookmarkGeometry(display, entry, scroller);
+    const geometry = entry.kind !== 'unmapped' && viewBookmarkGeometry(display, entry, scroller, null, editEntry);
     if (geometry?.empty) continue;
     if (!geometry) return unavailable('visible-block-unverified');
     const value = entry.kind === 'diagram'
@@ -1621,7 +1621,8 @@ function captureViewBookmark() {
       return unavailable('invalid-bookmark-position');
     }
     return { status: 'captured', location: { version: 2, tab: display.tab.id, key: display.key,
-      value, top: geometry.top, left: scroller.scrollLeft, nested } };
+      value, top: geometry.top, left: scroller.scrollLeft, nested,
+      ...(editEntry ? { insetPixels: geometry.top * zoom } : {}) } };
   }
   return unavailable('no-visible-mapped-block');
 }
@@ -1713,7 +1714,7 @@ async function restoreViewBookmark(saved, intent) {
     travel: traveled ? 'observed-travel' : 'no-observed-travel' };
 }
 
-const viewBookmarkAdapter = Object.freeze({ capture: captureViewBookmark, restore: restoreViewBookmark,
+const viewBookmarkAdapter = Object.freeze({ capture: () => captureViewBookmark(), restore: restoreViewBookmark,
   available: () => !!currentViewBookmarkDisplay()?.bookmarks.length,
   accepts(location) {
     const display = currentViewBookmarkDisplay();
@@ -1755,6 +1756,52 @@ function readingLocationResult(result) {
 // Classic-script declarations are Window properties. Keep private mode authority
 // in this closure; only the real mode consumer and two-argument restore escape.
 window.changeCurrentDocumentEditor = (() => {
+function captureEditEntryBookmark(captured, tab) {
+  const display = currentViewBookmarkDisplay();
+  if (!display || display.tab !== tab || display.source.source !== originalMarkdown.replace(/\r\n?/g, '\n') ||
+      !display.bookmarks.some(entry => entry.kind === 'diagram')) return null;
+  const { location } = captureViewBookmark(true);
+  if (!location || location.nested.length || currentViewBookmarkDisplay() !== display) return null;
+  if (location.value.kind === 'text') {
+    // Keep the existing mode path for other blocks and for text it can already prove.
+    if (captured.status === 'captured' || location.value.blockKind !== 'P' ||
+        !display.bookmarks.some(entry => entry.kind === 'diagram' && entry.end <= location.value.start)) return null;
+  }
+  return { display, location };
+}
+
+function restoreEditEntryBookmark(bookmark, targetGeneration, modeCurrent) {
+  const { display: captured, location } = bookmark;
+  const display = readingDisplay, scroller = getViewerScroller();
+  const admitted = () => isEditMode && !frozenForShutdown() && modeCurrent() &&
+    getViewerScroller() === scroller && readingDisplay === display && display?.finalized &&
+    display.tab === captured.tab && display.key === captured.key && display.selection === fileOpenSequence &&
+    display.generation === targetGeneration && renderGeneration === targetGeneration &&
+    display.source.source === captured.source.source && markdownEditor.value === captured.source.source &&
+    window.CustomTabs.hasReadingSource(display.tab, display.source, display.key);
+  if (!admitted()) return false;
+  const permit = readingViewport.beginRequest(), revision = readingPresentationRevision;
+  const current = () => admitted() && readingPresentationRevision === revision && readingViewport.isPermitCurrent(permit);
+  const [entry, duplicate] = viewBookmarkEntries(display, location.value);
+  if (!entry || duplicate || !current()) return false;
+  const measure = () => viewBookmarkGeometry(display, entry, scroller, location.value, true);
+  const target = measure();
+  if (!target || target.nested.length || !current()) return false;
+  // View scrolls outside the zoomed content; Split scrolls the zoomed Preview.
+  const top = scroller.scrollTop + target.top - location.insetPixels / scrollerScale(scroller);
+  if (!Number.isFinite(top)) return false;
+  return editorScroll.positionEditEntry(display.source, location.value.start, current, () => {
+    scroller.scrollTop = top;
+    if (!current()) return false;
+    const arrived = measure();
+    if (!arrived || arrived.node !== target.node || arrived.first !== target.first || arrived.last !== target.last) return false;
+    const { fragment, visibleClip = arrived.clip, point } = arrived;
+    return fragment.right > visibleClip.left && fragment.left < visibleClip.right &&
+      (point === undefined ? fragment.bottom > visibleClip.top && fragment.top < visibleClip.bottom :
+        point >= visibleClip.top && point < visibleClip.bottom);
+  });
+}
+
 function createModeReadingHandoff(captured, intent, isCurrent, restoreNestedHorizontal = false) {
   let attempted = false, consumed = false, closed = false, correspondence = null;
   let targetKey = null, targetGeneration = null, targetRevision = null, renderPermit = null;
@@ -1972,6 +2019,7 @@ return async function changeCurrentDocumentEditor(open) {
   }
 
   const pendingPresentation = readingRenderCompletion;
+  const beforePendingEdit = open && pendingPresentation ? readingViewport.capturePermit() : null;
   if (pendingPresentation) await pendingPresentation;
   if (!isCurrent() || readingRenderCompletion ||
       (!open && hasPendingSaveFor(currentFilePath)) ||
@@ -1983,6 +2031,8 @@ return async function changeCurrentDocumentEditor(open) {
   const capturedPosition = readingLocationResult(editorScroll.captureVisibleText(getViewerScroller(), measure => {
     measureModeCharacter = measure;
   }, node => readingPseudoRecords.get(node)));
+  const editBookmark = open && (!pendingPresentation || readingViewport.isPermitCurrent(beforePendingEdit))
+    ? captureEditEntryBookmark(capturedPosition, tab) : null;
   const modeIntent = readingViewport.beginIntent();
   if (!isCurrent() || !readingViewport.isIntentCurrent(modeIntent)) return;
   hideDocumentContextMenus();
@@ -2034,11 +2084,16 @@ return async function changeCurrentDocumentEditor(open) {
     captureEditSessionBaseline(true);
     if (markdownEditor.value !== originalMarkdown.replace(/\r\n?/g, '\n')) markdownEditor.value = originalMarkdown;
     exactTypingSource = window.CustomTabs.snapshotExactEditorContent();
-    const previewReady = editorScroll.enter();
-    restoreModeCharacter();
+    const previewReady = editorScroll.enter(!!editBookmark);
+    const entryCurrent = () => modeCurrent() && readingViewport.isIntentCurrent(modeIntent);
+    let targetGeneration = captureGeneration;
+    let targetPermit = editBookmark && readingViewport.capturePermit();
+    if (!editBookmark) restoreModeCharacter();
     if (!previewReady) {
       const viewport = { preservePosition: true };
+      targetGeneration++;
       const initial = renderMarkdown(markdownEditor.value, 'full', viewport);
+      targetPermit = targetPermit && viewport.permit;
       await Promise.all([initial, viewport.completion]);
     }
     if (!modeCurrent() || !mayMutateRendererDocument('editor-enter-completion')) return;
@@ -2062,7 +2117,14 @@ return async function changeCurrentDocumentEditor(open) {
           hasPendingSaveFor(currentFilePath) ||
           reloadConflictFor(currentFilePath))
     );
-    await restoreModePosition();
+    if (editBookmark) {
+      if (entryCurrent() && readingViewport.isPermitCurrent(targetPermit) &&
+          !restoreEditEntryBookmark(editBookmark, targetGeneration, entryCurrent) && entryCurrent()) {
+        console.warn('Reading position could not be preserved after entering edit mode: unverified edit bookmark');
+      }
+    } else {
+      await restoreModePosition();
+    }
   } else {
     try {
     // Exit edit mode

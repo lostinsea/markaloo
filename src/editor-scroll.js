@@ -7,6 +7,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   const readingEnabled = typeof presentation === 'function' && typeof readingSourceIdentity === 'function';
   const attribute = 'data-markaloo-scroll';
   let committed = null, owner = null, anchors = [], frame = 0, dirty = false;
+  let deferPassiveSync = false;
   let mirror = null, mirrorText = null, mirrorKey = null, mirrorOffsets = null, observing = false;
   let sourceMarkers = [];
   const scrollPoints = { editor: [], preview: [] };
@@ -1769,14 +1770,31 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       shift: table.shift, top, naturalTop: naturalTop(scroller, top),
       nested: nested.map(owner => ({ ...owner, naturalTop: naturalTop(owner.scroller, owner.top) })) };
   }
-  function viewBookmarkDiagram(element, scroller, saved = null) {
+  function viewBookmarkDiagram(element, scroller, saved = null, artwork = null) {
     // The renderer-owned breakout wrapper can translate horizontally, never vertically.
     const layout = readingLayout(element, scroller, null, new Map(), null, false, element);
     if (!layout || layout.hidden) return null;
     const { clip, nested } = layout;
-    const fragment = element.getBoundingClientRect();
+    const fragment = (artwork || element).getBoundingClientRect();
     if (!(fragment.width > 0) || !(fragment.height > 0) ||
         ![fragment.left, fragment.right, fragment.top, fragment.bottom].every(Number.isFinite)) return null;
+    // The wrapper's padding can still be visible above the next source block.
+    if (artwork && !saved && (fragment.bottom <= clip.top || fragment.top >= clip.bottom)) return { empty: true };
+    if (artwork) {
+      const pre = artwork.parentElement, style = getComputedStyle(pre);
+      const bounds = pre.getBoundingClientRect(), zoom = scale(pre);
+      // The PRE can clip the drawing even when its outer wrapper is visible.
+      for (const [axis, from, to, border, size] of [
+        ['overflowX', 'left', 'right', 'clientLeft', 'clientWidth'],
+        ['overflowY', 'top', 'bottom', 'clientTop', 'clientHeight'],
+      ]) {
+        if (style[axis] === 'visible') continue;
+        const start = bounds[from] + pre[border] * zoom, end = start + pre[size] * zoom;
+        if (!Number.isFinite(start) || !(end > start)) return null;
+        clip[from] = Math.max(clip[from], start);
+        clip[to] = Math.min(clip[to], end);
+      }
+    }
     if (!saved && !readingIntersects(fragment, clip)) return null;
     // Center the witness within the first two viewport pixels of the visible
     // slice. The saved fraction is of the outer block, not of its SVG pixels.
@@ -1784,7 +1802,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const fraction = saved ? saved.fraction : (begin + Math.min(1, (end - begin) / 2) - fragment.top) / fragment.height;
     const [, , , , portTop, , , zoom] = layout.chain.find(row => row[0] === scroller);
     const point = fragment.top + fragment.height * fraction;
-    return { fraction, node: element, fragment, clip, point, nested,
+    return { fraction, node: artwork || element, fragment, clip, point, nested,
       top: (point - portTop) / zoom - scroller.clientTop };
   }
   function offscreenMermaidText(parent, scroller, clips) {
@@ -2346,6 +2364,20 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     return { start, end };
   }
 
+  function positionEditEntry(source, offset, current, movePreview) {
+    const ready = () => usable() && committed === source && editor.isConnected &&
+      editor.value === source.source && current();
+    if (!ready() || !Number.isSafeInteger(offset) || offset < 0 || offset >= source.source.length ||
+        !(editor.clientWidth > 0 && editor.clientHeight > 0)) return false;
+    const top = sourceGeometry()(offset), lineHeight = parseFloat(getComputedStyle(editor).lineHeight);
+    if (!Number.isFinite(top) || !(lineHeight > 0) || !ready() || !movePreview() || !ready()) return false;
+    editor.scrollTop = top;
+    // Do not feed this paired placement back into the interpolated scroll map.
+    lastEditor = editor.scrollTop;
+    lastPreview = preview.scrollTop;
+    return top + lineHeight > lastEditor && top < lastEditor + editor.clientHeight;
+  }
+
   function rebuild() {
     const started = performance.now();
     dirty = false;
@@ -2536,6 +2568,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       cancelAnimationFrame(frame);
       frame = 0;
     }
+    deferPassiveSync = false;
     owner = side;
     if (side === 'editor') {
       window.dispatchEvent(new Event('editor-scroll-intent'));
@@ -2587,6 +2620,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       if (intent && performance.now() > intent.until) pendingNestedWheel = null;
       else if (intent?.side === side && intent.source === committed && intent.selection === identity() &&
           (pane.scrollTop - intent.top) * intent.direction > .5) claim(side);
+      if (deferPassiveSync) return;
       if (!owner) owner = side;
       if (side !== owner) return; // A follower never takes ownership from a scroll event.
       stats.scrolls++;
@@ -2605,7 +2639,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     start() { pendingSource = true; clearGeometry(); },
     commit(source, { textPending = false } = {}) {
       pendingNestedWheel = null;
-      if (committed?.selection !== source.selection) owner = 'preview';
+      if (committed?.selection !== source.selection) {
+        deferPassiveSync = false;
+        owner = 'preview';
+      }
       committed = source;
       for (const [table, receipt] of source.editableTables) {
         tableReceipts.set(table, { ...receipt, presented: tablePresentation(table) });
@@ -2621,19 +2658,24 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       pendingSource = true;
       committed = null;
       clearGeometry();
+      deferPassiveSync = false;
       owner = null;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
     },
-    enter() {
+    enter(deferSync = false) {
       pendingNestedWheel = null;
-      owner = 'preview';
+      // Layout can move either pane after entry without any input to drive sync.
+      deferPassiveSync = deferSync;
+      owner = deferSync ? null : 'preview';
       lastEditor = lastPreview = 0;
       observe();
       invalidate();
       return !!committed && committed.source === editor.value && committed.selection === identity() && !pendingSource;
     },
+    positionEditEntry,
     leave() {
+      deferPassiveSync = false;
       owner = null;
       clearGeometry();
       resize.disconnect();
