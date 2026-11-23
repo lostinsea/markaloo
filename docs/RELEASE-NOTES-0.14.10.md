@@ -2,8 +2,8 @@
 
 ## Fixes
 
-- Back and Forward return you to your reading stops in View, even after you
-  resize the window.
-- Switching from View to Edit keeps your place near a Mermaid diagram, and
-  opening Raw takes you to the matching Mermaid code block. This works even
-  the first time you switch to Edit at high zoom.
+- Fixed cases where Back and Forward lost your place in View, including a
+  resize bug that left Forward disabled after Back returned to a table row.
+- Fixed lost reading positions when switching from View to Edit near Mermaid
+  diagrams. If Edit restores your place inside a diagram, Raw opens at its
+  matching code block, even on the first switch at high zoom.
