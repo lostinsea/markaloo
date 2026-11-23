@@ -103,9 +103,14 @@ async function run() {
     const markdownFixture = originalMarkdown;
     const currentFilePath = 'C:\\\\synthetic\\\\position.md';
     const tab = { id: 1, filePath: currentFilePath, content: originalMarkdown };
+    let readingSourceRevision = 1;
+    const readingKey = () => 'synthetic-source-' + readingSourceRevision;
     window.CustomTabs = {
       getActiveTab: () => tab,
-      admitReadingSource: (_tab, source) => source.source === tab.content ? 'synthetic-source' : null,
+      admitReadingSource: (candidate, source) =>
+        candidate === tab && source?.source === tab.content ? readingKey() : null,
+      hasReadingSource: (candidate, source, key) =>
+        candidate === tab && key === readingKey() && source?.source === tab.content,
       snapshotExactEditorContent: () => markdownEditor.value,
     };
     const mayMutateRendererDocument = () => true, frozenForShutdown = () => false;
@@ -187,6 +192,7 @@ async function run() {
           originalMarkdown = originalMarkdown.replace(heading, heading + '\\n\\n' +
             '<pre style="height:120px;overflow:auto">' + 'Earlier clipped line.\\n'.repeat(60) + '</pre>');
         }
+        if (tab.content !== originalMarkdown) readingSourceRevision++;
         tab.content = originalMarkdown;
         readingViewport.beginIntent();
         await this.initialize();
