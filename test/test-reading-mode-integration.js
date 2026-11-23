@@ -718,7 +718,7 @@ test("Mermaid layout: plain Edit entry restores without republishing", async () 
   assert.equal(availabilityEvents(a), before);
 });
 
-function directMermaidEditFixture({ afterPadding = false, splitScale = 1 } = {}) {
+function directMermaidEditFixture({ afterPadding = false, splitScale = 1, splitLayoutHeight = 100 } = {}) {
   const flow = "```mermaid\nflowchart TD\nA --> B\n```";
   const sequence = "```mermaid\nsequenceDiagram\nA->>B: Step eleven\n```";
   const pie = "```mermaid\npie\n\"Sample\": 2\n```";
@@ -774,11 +774,16 @@ function directMermaidEditFixture({ afterPadding = false, splitScale = 1 } = {})
   const { f, s } = a;
   f.body.append(f.editor);
   f.body.scrollHeight = 700; f.preview.scrollHeight = 580;
+  const style = s.getComputedStyle;
+  s.getComputedStyle = (node, pseudo) => ({
+    rotate: "none", scale: "none", translate: "none", offsetPath: "none", ...style(node, pseudo),
+  });
+  Object.defineProperty(f.preview, "currentCSSZoom", { configurable: true, get: () => s.isEditMode ? splitScale : 1 });
   if (splitScale !== 1) {
     f.doc.defaultView.innerHeight = f.body.clientHeight = f.body.offsetHeight = 400;
     f.body.box = f.rect(0, 0, 100, 400);
     f.preview.getBoundingClientRect = () => f.rect(0, 0, 100, s.isEditMode ? 100 * splitScale : 400);
-    Object.defineProperty(f.preview, "offsetHeight", { get: () => s.isEditMode ? 100 : 400 });
+    Object.defineProperty(f.preview, "offsetHeight", { get: () => s.isEditMode ? splitLayoutHeight : 400 });
     vm.runInContext(`${declaration("snapScrollerScale")}\n${declaration("scrollerScale")}`, s);
   }
   f.editor.style.lineHeight = "18px";
@@ -895,6 +900,72 @@ test("Mermaid layout: first Edit preserves the visible diagram point across zoom
   assert.ok(Math.abs(after.top + fraction * after.height - inset) <= 1, "the exact point stays at the same visible inset");
   assert.equal(f.editor.scrollTop, rawY(a.tab.content.lastIndexOf(flow)), "Raw shows the second fence at high zoom");
 });
+
+for (const [caseName, gate] of [
+  ["uses the actual scroll scale for the second diagram", null],
+  ["refuses a clipped diagram point", "clip"],
+  ["refuses an unverified scroll scale", "zoom"],
+  ["refuses a scaled scroll chain", "transform"],
+]) {
+  test(`Mermaid layout: cold 200% Edit ${caseName}`, async () => {
+    const a = directMermaidEditFixture({ splitScale: 2, splitLayoutHeight: 357 }), { f, s, flow, rawY } = a;
+    const clipTop = 48, height = 713;
+    f.doc.defaultView.innerHeight = clipTop + height;
+    f.body.clientHeight = f.body.offsetHeight = height;
+    f.body.getBoundingClientRect = f.preview.getBoundingClientRect = () => f.rect(0, clipTop, 100, height);
+    f.preview.clientHeight = 357;
+    f.preview.scrollHeight = 10000;
+    f.body.scrollTop = 623;
+    const [first, , , second] = f.preview.querySelectorAll("svg"), pre = second.parentElement;
+    const view = second.getBoundingClientRect, viewPre = pre.getBoundingClientRect;
+    const fraction = (clipTop + 1 - view().top) / view().height;
+    const pointBeforeEditScroll = 5529.765625, splitDrawingHeight = 1600;
+    second.getBoundingClientRect = () => s.isEditMode
+      ? f.rect(20, pointBeforeEditScroll - fraction * splitDrawingHeight - 2 * f.preview.scrollTop, 160, splitDrawingHeight)
+      : view();
+    // The PRE moves with the SVG. In the matched trace its top crossed the
+    // stationary clip; in the negative control it still cuts off the witness.
+    pre.style.overflowY = "hidden";
+    pre.clientHeight = 2000;
+    pre.getBoundingClientRect = () => s.isEditMode
+      ? f.rect(0, (gate === "clip" ? pointBeforeEditScroll + 1 : 4341) - 2 * f.preview.scrollTop, 200, 4000)
+      : viewPre();
+    if (gate === "zoom") delete f.preview.currentCSSZoom;
+    if (gate === "transform") f.body.style.scale = "1.1";
+    let offset = 0;
+    const writes = [];
+    Object.defineProperty(f.preview, "scrollTop", { get: () => offset, set: value => {
+      writes.push(value); offset = Math.round(value * 2) / 2;
+    } });
+    const fence = a.tab.content.lastIndexOf(flow);
+    assert.ok(fence > a.tab.content.indexOf(flow) && fraction > 0 && fraction < 1);
+    assert.equal(a.captureBookmark().location.value.start, fence);
+    assert.equal(offset, 0);
+    assert.equal(f.editor.scrollTop, 0);
+    await s.changeCurrentDocumentEditor(true);
+    assert.equal(s.scrollerScale(f.preview), 713 / 357, "the border-box estimate does not snap to the actual 2× motion");
+    if (gate === "transform" || gate === "zoom") {
+      assert.deepEqual(writes, [], "a CSS zoom factor alone cannot authenticate this scroll translation");
+      assert.equal(f.editor.scrollTop, 0);
+      return;
+    }
+    assert.equal(writes.length, 1, "the first Edit may place Preview only once");
+    const diagram = second.getBoundingClientRect(), point = diagram.top + fraction * diagram.height;
+    assert.ok(first.getBoundingClientRect().bottom <= clipTop, "the first identical drawing is offscreen");
+    if (gate === "clip") {
+      assert.ok(point < pre.getBoundingClientRect().top, "the PRE still clips this point");
+      assert.equal(f.editor.scrollTop, 0, "a clipped point does not release Raw");
+    } else {
+      assert.ok(Math.abs(point - (clipTop + 1)) <= 0.5,
+        `the same point must retain its viewport inset within half a pixel of rounding, got ${point}`);
+      assert.equal(f.editor.scrollTop, rawY(fence), "Raw shows the second fence");
+      // Both inset divisors round to the same scrollTop here; check the request too.
+      const requested = (pointBeforeEditScroll - (clipTop + 1)) / 2;
+      assert.ok(Math.abs(writes[0] - requested) < 1e-8,
+        `the requested scroll must use 2× for both the point and the inset, got ${writes[0]}`);
+    }
+  });
+}
 
 test("Mermaid layout: a Split clamp cannot claim sync before real pane input", async () => {
   const a = directMermaidEditFixture(), { f, s, flow, rawY, paneEvent, flushFrames } = a;

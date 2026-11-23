@@ -1788,7 +1788,7 @@ function restoreEditEntryBookmark(bookmark, targetGeneration, modeCurrent) {
   const target = measure();
   if (!target || target.nested.length || !current()) return false;
   // View scrolls outside the zoomed content; Split scrolls the zoomed Preview.
-  const top = scroller.scrollTop + target.top - location.insetPixels / scrollerScale(scroller);
+  const top = scroller.scrollTop + target.top - location.insetPixels / (target.scrollScale ?? scrollerScale(scroller));
   if (!Number.isFinite(top)) return false;
   return editorScroll.positionEditEntry(display.source, location.value.start, current, () => {
     scroller.scrollTop = top;

@@ -1463,7 +1463,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     return range.toString() === candidate.display ? range : null;
   }
   function readingLayout(parent, scroller, publication, cache = new Map(), modePseudoBefore = null,
-    allowOffscreenUnowned = false, translatedDiagram = null) {
+    allowOffscreenUnowned = false, translatedDiagram = null, exactScrollZoom = false) {
     if (cache.has(parent)) return cache.get(parent);
     if (!(scroller instanceof Element) || !scroller.isConnected ||
         (scroller !== preview && !scroller.contains(preview)) ||
@@ -1502,6 +1502,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
           style.clip !== 'auto' || style.maskImage !== 'none' || /paint|strict|content/.test(style.contain) ||
           style.contentVisibility !== 'visible' || style.writingMode !== 'horizontal-tb' ||
           style.position === 'fixed' || style.position === 'sticky' ||
+          (exactScrollZoom && [style.rotate, style.scale, style.translate, style.offsetPath].some(value => value !== 'none')) ||
           ['::before', '::after'].some(pseudo => {
             const content = getComputedStyle(node, pseudo).content;
             return !['none', 'normal', '""'].includes(content) &&
@@ -1772,7 +1773,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
   }
   function viewBookmarkDiagram(element, scroller, saved = null, artwork = null) {
     // The renderer-owned breakout wrapper can translate horizontally, never vertically.
-    const layout = readingLayout(element, scroller, null, new Map(), null, false, element);
+    const exactScrollZoom = !!(saved && artwork);
+    if (exactScrollZoom && scroller !== preview) return null;
+    const layout = readingLayout(element, scroller, null, new Map(), null, false, element, exactScrollZoom);
     if (!layout || layout.hidden) return null;
     const { clip, nested } = layout;
     const fragment = (artwork || element).getBoundingClientRect();
@@ -1800,10 +1803,15 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     // slice. The saved fraction is of the outer block, not of its SVG pixels.
     const begin = Math.max(fragment.top, clip.top), end = Math.min(fragment.bottom, clip.bottom);
     const fraction = saved ? saved.fraction : (begin + Math.min(1, (end - begin) / 2) - fragment.top) / fragment.height;
-    const [, , , , portTop, , , zoom] = layout.chain.find(row => row[0] === scroller);
+    const [, , , , portTop, , , layoutZoom] = layout.chain.find(row => row[0] === scroller);
+    // Rounded box heights can drift over a long scroll. Use the pane's
+    // effective CSS zoom for the saved point's translation, not its clip.
+    const zoom = exactScrollZoom ? scroller.currentCSSZoom : layoutZoom;
+    if (!Number.isFinite(zoom) || zoom <= 0) return null;
     const point = fragment.top + fragment.height * fraction;
     return { fraction, node: artwork || element, fragment, clip, point, nested,
-      top: (point - portTop) / zoom - scroller.clientTop };
+      top: (point - portTop) / zoom - scroller.clientTop,
+      ...(exactScrollZoom ? { scrollScale: zoom } : {}) };
   }
   function offscreenMermaidText(parent, scroller, clips) {
     const svg = parent.closest('svg');
