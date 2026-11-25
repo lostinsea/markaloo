@@ -18,9 +18,10 @@ function declaration(name, source = renderer) {
   return (source.slice(start - 6, start) === "async " ? "async " : "") + source.slice(start, end + 2);
 }
 function integration(text = "A sufficiently long ordinary reading paragraph.",
-  { modeTransform = source => source, beforeParse, afterParse, beforePublish, patchReal = false, splitScroll = false } = {}) {
+  { modeTransform = source => source, beforeParse, afterParse, beforePublish, patchReal = false, splitScroll = false,
+    implementation } = {}) {
   const frames = [];
-  const f = fixture({ rendererCallbacks: true, verifyDetached: patchReal,
+  const f = fixture({ rendererCallbacks: true, verifyDetached: patchReal, implementation,
     ...(splitScroll ? { active: s => s.isEditMode, requestFrame: callback => frames.push(callback),
       scrollerScale: node => f.sandbox.scrollerScale(node),
       ownsMermaidSvg: svg => f.sandbox.ownsReadingMermaidSvg(svg) } : {}) }), s = f.sandbox;
@@ -640,6 +641,37 @@ test("actual enter/leave modes restore a text landmark across Reader/Split rewra
   assert.equal(s.isEditMode, false);
   assert.equal(f.body.scrollTop, 0);
   assert.equal(f.body.scrollLeft, 2); assert.equal(f.preview.scrollLeft, 3);
+});
+test("unchanged Edit entry resolves and rechecks only runs spanning its exact text interval", async () => {
+  const signature = "function readingAtom(publication, group, run, index) {";
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "editor-scroll.js"), "utf8");
+  assert.ok(source.includes(signature));
+  const passage = "Z is the exact passage.";
+  const a = integration(passage + "\n\n" + "Unrelated source. ".repeat(120), {
+    implementation: source.replace(signature, signature + "\n    globalThis.countEntryAtom?.();"),
+  });
+  installMode(a);
+  const { s, f } = a;
+  assert.equal(a.capture().location.text.start, 0);
+  const checks = [], warnings = [];
+  s.console = { ...console, warn: (...args) => warnings.push(args) };
+  let atoms = 0, counting = false;
+  s.countEntryAtom = () => { if (counting) atoms++; };
+  for (const name of ["resolveVisibleText", "isTextLocationCurrent"]) {
+    const original = s.editorScroll[name];
+    s.editorScroll[name] = (...args) => {
+      checks.push(name);
+      counting = true;
+      try { return original(...args); } finally { counting = false; }
+    };
+  }
+  await s.changeCurrentDocumentEditor(true);
+  assert.equal(f.preview.scrollTop, 60, "the exact passage arrives after Split reflow");
+  assert.deepEqual(checks, Array.from({ length: 3 }, () =>
+    ["resolveVisibleText", "isTextLocationCurrent"]).flat(), "before-write, after-write and final checks all run");
+  assert.deepEqual(warnings, [], "the mode restore reported successful arrival");
+  assert.ok(atoms > 0 && atoms <= checks.length * passage.length,
+    `looked outside the saved interval's run: ${atoms} atoms in ${checks.length} checks`);
 });
 function installMermaidLayout(a, container, tables = []) {
   const { f, s } = a, queryAll = f.preview.querySelectorAll.bind(f.preview);

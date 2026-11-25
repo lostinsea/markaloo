@@ -1679,14 +1679,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       return (rects[0].top - top - target.clientTop * targetScale - offset) / targetScale;
     };
   }
-  function readingReceipt(publication, candidate, range, scroller, geometry, alignment) {
+  function readingReceipt(publication, candidate, range, scroller, geometry, alignment, exactEntry = false) {
     const nested = Object.freeze(geometry.nested.map((entry, index) =>
       Object.freeze({ scroller: entry.scroller, top: alignment.nested[index].top })));
     const receipt = Object.freeze({ range, scroller, alignment, nested });
     readingReceipts.set(receipt, { epoch: publication.epoch, candidate: {
       start: candidate.start, end: candidate.end, atom: candidate.atom, display: candidate.display,
       blockKind: candidate.blockKind, runKind: candidate.runKind,
-    }, geometry });
+    }, geometry, exactEntry });
     return receipt;
   }
   function captureVisibleText(scroller, onModeCharacter = null, modePseudoBefore = null) {
@@ -1935,15 +1935,20 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         typeof entry.kind === 'string' && /^[a-z_]{1,16}$/.test(entry.kind) &&
         typeof entry.tag === 'string' && /^[A-Z0-9]{1,16}$/.test(entry.tag) && ['body', 'scroller'].includes(entry.role) && Number.isFinite(entry.top));
   }
-  function readingCandidates(publication, saved, contextOnly = false) {
+  function readingCandidates(publication, saved, contextOnly = false, exactEntry = false) {
     const matches = [];
+    const sameSource = !contextOnly && publication.key === saved.sourceKey;
     for (const group of publication.groups) {
       if (group.element.tagName !== saved.blockKind) continue;
-      for (const run of group.runs) for (let index = 0; index < run.display.length;) {
+      // An exact source interval cannot come from outside a run's monotone view.
+      // Keep the full atom and uniqueness checks in every eligible run.
+      const runs = exactEntry && sameSource ? group.runs.filter(run =>
+        !(run.view.at(0) > saved.start || run.view.at(run.display.length) < saved.end)) : group.runs;
+      for (const run of runs) for (let index = 0; index < run.display.length;) {
         const candidate = readingAtom(publication, group, run, index);
         index = candidate ? candidate.to : index + (run.display.codePointAt(index) > 0xFFFF ? 2 : 1);
         if (!candidate || candidate.atom !== saved.atom || candidate.display !== saved.display || candidate.runKind !== saved.runKind) continue;
-        if (!contextOnly && publication.key === saved.sourceKey) {
+        if (sameSource) {
           if (candidate.start !== saved.start || candidate.end !== saved.end) continue;
         } else {
           const context = readingContextText(publication.source.source, candidate.start, candidate.end);
@@ -2012,7 +2017,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       saved.alignment.nested.every(owner => [owner.start, owner.end].every(boundary =>
         mappedReadingBoundary(mapping, boundary) !== null));
   }
-  function resolveVisibleText(saved, scroller, context, correspondence = null) {
+  function resolveVisibleText(saved, scroller, context, correspondence = null, exactEntry = false) {
     if (!validReadingValue(saved)) return readingFailure('unsupported', 'invalid-bounded-value');
     const entered = readingEpoch, enteredBinding = bindingEpoch;
     const publication = currentReadingPublication(context);
@@ -2020,7 +2025,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     if (correspondence && !validModeCorrespondence(correspondence, saved, publication)) {
       return readingFailure('unsupported', 'invalid-mode-correspondence');
     }
-    const candidates = readingCandidates(publication, saved);
+    exactEntry = exactEntry && publication.key === saved.sourceKey;
+    const candidates = readingCandidates(publication, saved, false, exactEntry);
     if (candidates.length !== 1) return readingFailure(candidates.length ? 'ambiguous' : 'missing', 'verified-text-match');
     const candidate = candidates[0], range = readingRange(candidate);
     if (correspondence && (candidate.start !== mappedReadingBoundary(correspondence, saved.start) ||
@@ -2045,14 +2051,14 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const alignment = Object.freeze({ top: saved.alignment.top,
       nested: Object.freeze(saved.alignment.nested.map(entry => Object.freeze({ start: entry.start, end: entry.end,
         kind: entry.kind, tag: entry.tag, role: entry.role, top: entry.top }))) });
-    return Object.freeze({ status: 'resolved', receipt: readingReceipt(publication, candidate, range, scroller, geometry, alignment) });
+    return Object.freeze({ status: 'resolved', receipt: readingReceipt(publication, candidate, range, scroller, geometry, alignment, exactEntry) });
   }
   function isTextLocationCurrent(receipt) {
     const entered = readingEpoch, enteredBinding = bindingEpoch;
     const sealed = readingReceipts.get(receipt), publication = currentReadingPublication();
     if (!sealed || !publication || sealed.epoch !== publication.epoch) return false;
     const saved = { ...sealed.candidate, sourceKey: publication.key };
-    const candidates = readingCandidates(publication, saved);
+    const candidates = readingCandidates(publication, saved, false, sealed.exactEntry);
     if (candidates.length !== 1) return false;
     const range = readingRange(candidates[0]), original = receipt.range;
     if (!range || range.startContainer !== original.startContainer || range.startOffset !== original.startOffset ||

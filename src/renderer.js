@@ -1847,7 +1847,7 @@ function createModeReadingHandoff(captured, intent, isCurrent, restoreNestedHori
   });
 }
 
-async function restoreReadingLocation(location, intent, preserveHorizontal = false, modeReading = null) {
+async function restoreReadingLocation(location, intent, preserveHorizontal = false, modeReading = null, exactEntry = false) {
   lastReadingRestoreFailure = null;
   const refused = reason => Object.freeze({ status: 'unrecordable', reason });
   if (!location || location.version !== 1 || !location.text || !location.horizontal ||
@@ -1869,10 +1869,12 @@ async function restoreReadingLocation(location, intent, preserveHorizontal = fal
   if (!current()) return refused('superseded');
   editorScroll.previewNavigation();
   const scroller = getViewerScroller();
+  const resolveTarget = () => editorScroll.resolveVisibleText(
+    location.text, scroller, readingPresentationContext(), correspondence, exactEntry);
   let traveled = false;
   for (let index = 0; index <= location.horizontal.nested.length; index++) {
     if (!current() || getViewerScroller() !== scroller) return refused('superseded');
-    const resolved = editorScroll.resolveVisibleText(location.text, scroller, readingPresentationContext(), correspondence);
+    const resolved = resolveTarget();
     if (resolved.status !== 'resolved') return refused(resolved.reason);
     const receipt = resolved.receipt, inner = receipt.nested[index];
     const target = inner?.scroller || scroller;
@@ -1899,8 +1901,7 @@ async function restoreReadingLocation(location, intent, preserveHorizontal = fal
       return refused('native-request-failed');
     }
     // Keep the post-write geometry before the exact native completion can be delayed.
-    const postWrite = current()
-      ? editorScroll.resolveVisibleText(location.text, scroller, readingPresentationContext(), correspondence) : null;
+    const postWrite = current() ? resolveTarget() : null;
     let completion;
     try {
       completion = await Promise.prototype.then.call(request, result => result);
@@ -1916,7 +1917,7 @@ async function restoreReadingLocation(location, intent, preserveHorizontal = fal
     }
     traveled ||= before[0] !== after[0] || before[1] !== after[1];
   }
-  const final = editorScroll.resolveVisibleText(location.text, scroller, readingPresentationContext(), correspondence);
+  const final = resolveTarget();
   if (final.status !== 'resolved' || !current() || !editorScroll.isTextLocationCurrent(final.receipt)) {
     lastReadingRestoreFailure = Object.freeze({ phase: 'final', index: null, resolutionStatus: final.status });
     return refused('target-geometry-changed');
@@ -2066,7 +2067,7 @@ return async function changeCurrentDocumentEditor(open) {
   const restoreModePosition = async () => {
     if (!modeCurrent() || capturedPosition.status !== 'captured' ||
         !readingViewport.isIntentCurrent(modeIntent)) return;
-    const restored = await restoreReadingLocation(capturedPosition.location, modeIntent, true, modeReading);
+    const restored = await restoreReadingLocation(capturedPosition.location, modeIntent, true, modeReading, open);
     if (modeCurrent() && readingViewport.isIntentCurrent(modeIntent) && restored.status !== 'completed') {
       console.warn('Reading position could not be preserved after the mode change:', restored.reason);
     }

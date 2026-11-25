@@ -1,5 +1,50 @@
 # Performance Audit
 
+## Windows View → Edit: unchanged source interval
+
+The reported 991-line workload and its exact input were unavailable. The
+fallback is the checked-in [`mixed.md` generator](../test/test-editor-scroll.js)
+with its `short.svg` sibling: 435 lines, 74,768 bytes, SHA-256
+`94bc848af0cc41b941f98f94c06dcbb3ac81367d8395fe7f8ea94f76160e2e6a`.
+The 0.14.9 → 0.14.10 median regression did not reproduce on this fallback.
+
+Offline Windows Sandbox, source snapshots, locked Electron 43.4.1, fresh
+process/profile per sample, 1440 × 920 outer window (1424 × 881 viewport),
+DPR 1, 100% zoom, TOC closed. The trusted Edit click started the renderer
+clock. The endpoint was the first ready Split frame confirmed by two more
+with unchanged pane geometry and scroll offsets. A separate Range and
+textarea mirror admitted only runs with the same near-top occurrence
+(`Before diagram paragraph 2.`, Raw line 7) in both panes. These are not
+physical paint measurements. p90 is nearest rank; profiling runs are separate.
+
+| Comparison | Build | Median (ms) | p90 (ms) | Accepted / rejected |
+|---|---|---:|---:|---:|
+| Release sources | 0.14.9 (`5330784`) | 424.90 | 431.80 | 12 / 0 |
+| Release sources | 0.14.10 (`594deac`) | 421.35 | 450.10 | 12 / 0 |
+| Fix A/B | 0.14.10 (`594deac`) | 428.90 | 435.40 | 12 / 0 |
+| Fix A/B | Candidate | 190.30 | 203.00 | 12 / 0 |
+
+Each comparison used six `A B B A` blocks. Four earlier attempts (one 0.14.9,
+three 0.14.10) failed setup before the click because the initial position
+returned to the top. That earlier batch is separate, not silently pooled.
+Both builds in the final A/B reached exactly the same measured pane offsets.
+
+The baseline CPU profiles attributed 204–211 ms inclusive to repeated
+`readingCandidates` scans. The paired follow-up sampled 210.5 ms in baseline
+and no samples in candidate (below sampling resolution, not zero work).
+Unchanged View → Edit now skips runs that cannot contain the saved source
+interval. Atom, uniqueness, publication, owner and geometry checks remain
+in place; changed-source, Mermaid and Reader history paths keep their old
+rules. The largest remaining measured candidate cost was full publication
+verification (`currentReadingPublication`, about 114 ms inclusive).
+
+Separate native checks on both builds restored the same table row after Back,
+window resize and Forward/Back, and put Preview on the second identical
+Mermaid diagram on the first Edit after closing and reopening the document
+at 200%. Raw started at line 124 (source offset 16,301); the first diagram
+was offscreen. Original captures were viewed. An earlier extended Back
+attempt timed out; the successful comparison uses the separate native cases.
+
 ## Search readable viewport - bounded scroll-work check
 
 - Search now occupies its own naturally sized row. Reader and Split use the

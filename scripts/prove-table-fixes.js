@@ -1984,18 +1984,39 @@ const READING_LOCATION_REVERTS = [
     from: "!editorScroll.isTextLocationCurrent(postWrite.receipt)",
     to: "editorScroll.resolveVisibleText(location.text, scroller, readingPresentationContext()).status !== 'resolved'",
     expect: [/^native completion cannot replace a moved target with a newly valid receipt$/,
-      /^outer completion checks previously restored inner offsets too$/],
+      /^restore diagnostics retain the existing failed guard without reevaluation: post-write-completion$/,
+      /^restore diagnostics retain the existing failed guard without reevaluation: final$/,
+      /^outer completion checks previously restored inner offsets too$/,
+      /^unchanged Edit entry resolves and rechecks only runs spanning its exact text interval$/,
+      /^later Discard maps displayed code Source, pending textarea=false$/,
+      /^later Discard maps displayed code Source, pending textarea=true$/,
+      /^later Discard maps displayed table Source, pending textarea=false$/,
+      /^later Discard maps displayed table Source, pending textarea=true$/,
+      /^saved clean exit flushes a pending light preview with a private insertion correspondence$/],
     mustPass: [/^actual adapter restores inner-only travel and both horizontal axes$/,
       /^actual adapter refuses native completion\/currentness failure: interrupted$/],
   },
   {
     id: "R1488", what: "enter Split without restoring the actual Source text landmark after rewrap",
     file: RENDERER, suite: "test:reading-mode",
-    from: "    await restoreModePosition();\n  } else {\n    try {\n    // Exit edit mode",
-    to: "  } else {\n    try {\n    // Exit edit mode",
-    expect: [/^actual enter\/leave modes restore a text landmark across Reader\/Split rewrap$/],
+    from: "    } else {\n      await restoreModePosition();\n    }\n  } else {\n    try {\n    // Exit edit mode",
+    to: "    }\n  } else {\n    try {\n    // Exit edit mode",
+    expect: [/^actual enter\/leave modes restore a text landmark across Reader\/Split rewrap$/,
+      /^unchanged Edit entry resolves and rechecks only runs spanning its exact text interval$/,
+      /^Mermaid layout: actual Edit entry restores the same Source point after clearing breakout$/,
+      /^Mermaid layout: plain Edit entry restores without republishing$/],
     mustPass: [/^actual adapter restores inner-only travel and both horizontal axes$/,
       /^mode exit captures after both the save wait and discard confirmation$/],
+  },
+  {
+    id: "R1537", what: "walk every text atom when unchanged Edit entry already knows its source interval",
+    file: EDITOR_SCROLL, suite: "test:reading-mode",
+    from: "const runs = exactEntry && sameSource ? group.runs.filter(run =>\n" +
+      "        !(run.view.at(0) > saved.start || run.view.at(run.display.length) < saved.end)) : group.runs;",
+    to: "const runs = group.runs;",
+    expect: [/^unchanged Edit entry resolves and rechecks only runs spanning its exact text interval$/],
+    mustPass: [/^actual enter\/leave modes restore a text landmark across Reader\/Split rewrap$/,
+      /^Mermaid layout: cold 200% Edit uses the actual scroll scale for the second diagram$/],
   },
   {
     id: "R1489", what: "hide new dirty input behind an initially clean mode exit's held render",
@@ -32631,7 +32652,7 @@ function proveCompanionTranscriptRoles() {
         "0140-RENDER-HIGHLIGHT,0140-RENDER-SEARCH-RUNS,0140-RENDER-TABLE-RECEIPT,0140-RENDER-SEAL,0140-RENDER-STALE-SEAL,0140-RENDER-PRE-WHITESPACE,0140-RENDER-AUTHORED-MARKER," +
         "0140-EDITOR-ROW-SEPARATORS,0140-EDITOR-COLUMN-SOURCE,0140-EDITOR-ROW-UPDATE,0140-EDITOR-EDGE-RESIZE,0140-EDITOR-EDGE-RELEASE,0140-EDITOR-INITIAL-WIDTH," +
         "0140-SEARCH-READABLE-VIEWPORT,0140-SEARCH-COMPACT-PADDING,0140-SEARCH-INITIAL-INERT,0140-SEARCH-TOGGLE-FOCUS," +
-        "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
+        "R1461,R1462,R1463,R1464,R1465,R1466,R1467,R1468,R1469,R1470,R1471,R1472,R1496,R1502,R1503,R1504,R1505,R1506,R1507,R1508,R1509,R1510,R1511,R1512,R1513,R1497,R1473,R1474,R1475,R1476,R1514,R1515,R1516,R1517,R1518,R1519,R1520,R1481,R1482,R1483,R1484,R1485,R1486,R1522,R1523,R1487,R1488,R1537,R1489,R1498,R1499,R1500,R1501,R1490,R1491,R1492,R1493,R1494,R1495,R1477,R1478,R1479,R1480," +
         "R1329," +
         "R1223,R1224,R1225,R1226,R1227,R1228,R1229,R1230,R1231,R1232,R1233,R1234,R1235,R1236,R1237,R1238,R1239,R1240,R1241,R1242,R1243,R1244,R1245,R1246,R1247,R1248,R1249,R1250,R1251,R1252,R1253,R1254,R1255,R1256,R1257,R1258,R1259,R1260,R1261,R1262,R1263,R1264,R1265,R1266,R1267,R1268,R1269,R1270,R1271,R1272,R1273,R1274,R1275,R1276,R1277,R1278,R1279,R1280,R1281,R1282,R1283,R1284,R1285,R1286,R1287,R1288,R1289,R1290,R1291,R1292,R1293,R1294,R1295,R1296,R1297,R1298,R1222,R1216,R1217,R1218,R1219,R1220,R1221,R1215,R1212,R1213,R1214,R1199,R1198,R1197,R1196,R1195,R1524,R1194,R1193,R1190,R1191,R1192,R1189,R1185,R1186,R1187,R1188,R1169,R1170,R1171,R1172,R1173,R1174,R1175,R1176,R1177,R1178,R1179,R1181,R1182,R1183,R1184,R1164,R1165,R1166,R1167,R1168,R1160,R1161,R1162,R1163," +
         "R1136,R1137,R1138,R1139,R1140,R1141,R1116,R1117,R1118,R1119,R1120,R1121,R1122,R1123,R1124,R1125,R1115,R1111,R1112,R1113," +
