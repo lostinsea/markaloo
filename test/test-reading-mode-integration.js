@@ -26,7 +26,8 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
       scrollerScale: node => f.sandbox.scrollerScale(node),
       ownsMermaidSvg: svg => f.sandbox.ownsReadingMermaidSvg(svg) } : {}) }), s = f.sandbox;
   const tab = { id: 1, content: text, originalContent: text }, events = [], writes = [];
-  let admittedText = text, admittedKey = 1;
+  const normalize = value => value.replace(/\r\n?/g, "\n");
+  let admittedText = normalize(text), admittedKey = 1;
   let intent = {}, permit = {}, currentTab = tab, layoutShift = 0;
   const viewport = {
     beginIntent() { intent = {}; permit = {}; return intent; },
@@ -39,12 +40,12 @@ function integration(text = "A sufficiently long ordinary reading paragraph.",
   };
   s.window.CustomTabs = { getActiveTab: () => currentTab,
     admitReadingSource(owner, source) {
-      if (owner !== tab || source.source !== tab.content) return null;
+      if (owner !== tab || source.source !== normalize(tab.content)) return null;
       if (source.source !== admittedText) { admittedText = source.source; admittedKey++; }
       return "controlled-cache-" + admittedKey;
     },
     hasReadingSource(owner, source, key) {
-      return owner === currentTab && owner.content === source.source && key === "controlled-cache-" + admittedKey;
+      return owner === currentTab && normalize(owner.content) === source.source && key === "controlled-cache-" + admittedKey;
     },
     snapshotExactEditorContent: () => tab.content,
     updateTabContent(value) { tab.content = value; } };
@@ -649,6 +650,126 @@ test("unchanged Edit entry resolves and rechecks only runs spanning its exact te
   const passage = "Z is the exact passage.";
   const a = integration(passage + "\n\n" + "Unrelated source. ".repeat(120), {
     implementation: source.replace(signature, signature + "\n    globalThis.countEntryAtom?.();"),
+  });
+  function observeEditPublicationProof(a) {
+    const { f, s } = a;
+    let active = 0, rootReads = 0, opened = 0;
+    f.preview.namespaceURI = "http://www.w3.org/1999/xhtml";
+    f.preview.getRootNode = () => f.doc;
+    const query = f.preview.querySelectorAll.bind(f.preview);
+    f.preview.querySelectorAll = selector => {
+      if (active && selector === "*") rootReads++;
+      return query(selector);
+    };
+    s.MutationObserver = class {
+      live = false;
+      observe(target) {
+        if (target === f.preview && !this.live) { active++; opened++; this.live = true; }
+      }
+      disconnect() { if (this.live) { active--; this.live = false; } }
+      takeRecords() { return []; }
+    };
+    return () => ({ active, rootReads, opened });
+  }
+  test("unchanged CRLF Edit entry reuses root checks without changing source bytes", async () => {
+    const original = "A sufficiently long exact paragraph.\r\n\r\nAnother paragraph.";
+    const a = integration(original); installMode(a);
+    a.f.editor.value = original.replace(/\r\n/g, "\n");
+    const observed = observeEditPublicationProof(a), warnings = [];
+    a.s.console = { ...console, warn: (...args) => warnings.push(args) };
+    assert.equal(a.capture().status, "captured");
+    await a.s.changeCurrentDocumentEditor(true);
+    const { active, rootReads, opened } = observed();
+    assert.equal(a.f.preview.scrollTop, 60);
+    assert.deepEqual(warnings, []);
+    assert.equal(a.s.originalMarkdown, original);
+    assert.equal(a.tab.content, original);
+    assert.ok(opened > 0 && rootReads === opened, "each synchronous proof verifies the root once");
+    assert.equal(active, 0);
+  });
+  test("Edit entry leaves no publication proof observing while native completion is pending", async () => {
+    const a = integration(); installMode(a);
+    const observed = observeEditPublicationProof(a);
+    let release, reachWait;
+    const wait = new Promise(resolve => { reachWait = resolve; });
+    a.nativeCompletion = () => new Promise(resolve => { release = resolve; reachWait(); });
+    const entering = a.s.changeCurrentDocumentEditor(true);
+    await Promise.race([wait, entering.then(() => { throw new Error("Edit never issued a native request"); })]);
+    const pending = observed(), writes = a.writes.length;
+    try { a.viewport.beginIntent(); } finally { release({ interrupted: false }); }
+    await entering;
+    assert.ok(pending.opened > 0 && pending.rootReads > 0, "a real pre-write proof was used");
+    assert.equal(pending.active, 0, "the native wait already owns no observer");
+    assert.equal(observed().opened, pending.opened, "a superseded request cannot open another proof");
+    assert.equal(a.writes.length, writes);
+  });
+  for (const authority of ["renderer source", "tab cache"]) {
+    test("Edit entry drops root reuse when only the " + authority + " changes", async () => {
+      const a = integration(); installMode(a);
+      const observed = observeEditPublicationProof(a), original = a.s.originalMarkdown;
+      const resolve = a.s.editorScroll.resolveVisibleText;
+      let injected = false;
+      a.s.editorScroll.resolveVisibleText = (...args) => {
+        const result = resolve(...args);
+        if (!injected) {
+          assert.equal(result.status, "resolved");
+          assert.equal(observed().rootReads, 1, "the admitted proof is sealed before the authority changes");
+          injected = true;
+          if (authority === "renderer source") a.s.originalMarkdown += " changed";
+          else a.tab.content += " changed";
+        }
+        return result;
+      };
+      await a.s.changeCurrentDocumentEditor(true);
+      assert.ok(injected);
+      assert.equal(a.f.editor.value, original, "the textarea is unchanged");
+      assert.equal(a.f.preview.scrollTop, 60, "the full verifier still permits the original endpoint");
+      assert.ok(observed().rootReads > observed().opened, "later checks used the full verifier");
+      assert.equal(observed().active, 0);
+    });
+  }
+  test("a caller-supplied Edit proof cannot bypass the full root check", () => {
+    const a = integration(), captured = a.capture();
+    assert.equal(captured.status, "captured");
+    const context = a.s.readingPresentationContext(), saved = captured.location.text;
+    assert.equal(a.f.controller.resolveVisibleText(saved, a.f.body, context).status, "resolved");
+    a.f.preview.setAttribute("data-proof-changed", "yes");
+    let forgedCalls = 0;
+    const forged = { matches() { forgedCalls++; return true; } };
+    assert.notEqual(a.f.controller.resolveVisibleText(saved, a.f.body, context, null, true, forged).status, "resolved");
+    assert.equal(forgedCalls, 0);
+  });
+  test("Edit entry rechecks the full root after an unobserved foreign attribute change", async () => {
+    const marker = "function matchesReadingRoot(publication, foreignAttributes) {";
+    const source = fs.readFileSync(path.join(__dirname, "..", "src", "editor-scroll.js"), "utf8");
+    assert.ok(source.includes(marker));
+    const a = integration(undefined, {
+      implementation: source.replace(marker, marker + "\n    globalThis.countRootVerification?.();"),
+    });
+    installMode(a);
+    const observed = observeEditPublicationProof(a), warnings = [];
+    a.s.console = { ...console, warn: (...args) => warnings.push(args) };
+    const foreign = a.f.preview.firstElementChild;
+    assert.ok(foreign, "owned root has a foreign-attribute witness");
+    foreign.namespaceURI = "http://www.w3.org/2000/svg";
+    let verifications = 0, beforeMutation;
+    a.s.countRootVerification = () => { verifications++; };
+    const resolve = a.s.editorScroll.resolveVisibleText;
+    a.s.editorScroll.resolveVisibleText = (...args) => {
+      const result = resolve(...args);
+      if (beforeMutation === undefined) {
+        assert.equal(result.status, "resolved");
+        assert.equal(observed().rootReads, 1, "the initial root proof is sealed");
+        beforeMutation = verifications;
+        foreign.setAttribute("viewBox", "0 0 42 17");
+      }
+      return result;
+    };
+    await a.s.changeCurrentDocumentEditor(true);
+    assert.ok(beforeMutation > 0 && verifications > beforeMutation,
+      "the pre-write receipt recheck went through full root verification");
+    assert.equal(a.writes.length, 0, "the changed publication never authorized a native write");
+    assert.equal(warnings[0]?.[1], "target-geometry-changed");
   });
   installMode(a);
   const { s, f } = a;

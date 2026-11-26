@@ -45,6 +45,68 @@ at 200%. Raw started at line 124 (source offset 16,301); the first diagram
 was offscreen. Original captures were viewed. An earlier extended Back
 attempt timed out; the successful comparison uses the separate native cases.
 
+### Follow-up: reuse root verification within an Edit restore
+
+The control already includes the interval-pruning change (`96666f4`). The
+candidate reuses only the root shape and ordered-element check. A controller
+owns the proof, and a mutation, source-authority change, or foreign-attribute
+mismatch sends the next check through the full verifier. No proof survives a
+native scroll wait; the resumed phase verifies the root again before any reuse.
+Group, owner, geometry, native completion, and exact receipt checks remain live.
+LF and CRLF use the same normalized textarea comparison; the CRLF file and
+exact tab snapshot keep their original bytes.
+
+Offline Windows Sandbox, Electron 43.4.1, the same native click and stable
+Split endpoint as above. Each workload used ten `A B B A` blocks, fresh
+processes and profiles, identical starting geometry and verified Preview/Raw
+endpoints, with 20 accepted samples per build and no rejects in the final
+batches. Median, p90, p95, and max are in milliseconds; the percentiles use
+nearest rank. The 435-line substitute still stands in for the unavailable
+991-line original. The large files were the pinned Operations Atlas and
+Field Manual stress fixtures (1,561,544 and 1,550,246 bytes respectively).
+
+| Workload | Median, control → candidate | p90 | p95 | Max |
+|---|---:|---:|---:|---:|
+| Mixed LF | 194.00 → 170.15 | 205.10 → 177.90 | 206.70 → 179.00 | 220.40 → 183.60 |
+| Mixed CRLF | 193.75 → 173.45 | 200.60 → 177.50 | 200.60 → 177.80 | 201.10 → 181.90 |
+| Operations Atlas | 5,123.85 → 4,936.45 | 5,449.90 → 5,299.60 | 5,675.70 → 5,386.00 | 5,759.30 → 7,021.90 |
+| Field Manual | 5,013.95 → 4,826.55 | 5,140.50 → 4,973.40 | 5,451.20 → 5,253.60 | 6,231.50 → 5,438.60 |
+
+Both canonical medians clear the predeclared 16 ms floor, and neither large
+workload regressed at median or p90. The valid Atlas outlier is retained: the
+first observed Split layout was already late (5,374.40 ms), while the interval
+from there to the stable endpoint was in line with slow control runs. This
+does not identify the cause of the outlier or establish a worst-case bound.
+Separate canonical CPU profiles sampled `currentReadingPublication` at
+112.06 → 97.43 ms inclusive, with `readingElements` at 16.70 → 9.66 ms.
+The regression suite separately counts full root checks on the restore path.
+
+On both builds the bounded native resize and 200% reopen checks preserved
+the table destination and the second Mermaid fence (Raw line 124). The three
+stress documents also restored a saved text position after a tab switch and
+reflow, jumped through their TOCs, and preserved the Edit destination in
+both panes. All three reproduced the same two control failures: resizing
+while at the deep wrapped-table Back stop and returning to that row after
+resize. Those cases are not qualified. The original images were viewed;
+the assertions, not the captured TOC highlight, establish exact position.
+
+Separate instrumented native runs exercised queued and delivered mutations,
+foreign attributes before and after the proof was sealed, ancestor detach,
+publication replacement, resize and supersession. The scoped reverts for
+CRLF admission, observer retirement and foreign attributes each added only
+their expected failure and kept independent controls passing. The official
+revert harness still stops at the same formatter self-check on both builds;
+the scoped runs do not constitute an official proof. The maintainer waived
+the confirmed baseline failures for integration only, with suite repair
+tracked separately. This is not a full-suite or release qualification.
+
+Evidence: `D:\Devs\Marakaloo\poc-evidence\20261125\view-edit-production`.
+Replay with `run-generation.ps1 -Phase timed -Blocks 10` (use separate run
+IDs for repeats), `-Crlf` for CRLF, and `-Fixture operations-atlas` or
+`-Fixture field-manual` for the large files. `-Phase profile` is deliberately
+outside the timing batches. The earlier unseeded timing attempt rejected
+both builds before the click and is kept separately from the valid batches.
+
 ## Search readable viewport - bounded scroll-work check
 
 - Search now occupies its own naturally sized row. Reader and Split use the

@@ -1017,7 +1017,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     const current = readingElements(root, controls);
     return current.length === elements.length && current.every((node, index) => node === elements[index]);
   }
-  function readingShape(root, controls = new Set()) {
+  const readingHtmlNamespace = 'http://www.w3.org/1999/xhtml';
+  const readingAttributes = node => [...node.attributes].map(attr => [attr.name, attr.value]).sort();
+  function readingShape(root, controls = new Set(), foreignAttributes) {
     const parts = [];
     let text = '';
     const flush = () => { if (text) { parts.push(text); text = ''; } };
@@ -1025,7 +1027,8 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       if (node.nodeType === Node.TEXT_NODE) { text += node.data; return; }
       if (node.nodeType !== Node.ELEMENT_NODE) { flush(); parts.push(['other', node.nodeType]); return; }
       if (controls.has(node)) { flush(); parts.push(['control', node.tagName]); return; }
-      const attributes = [...node.attributes].map(attr => [attr.name, attr.value]).sort();
+      const attributes = readingAttributes(node);
+      if (foreignAttributes && node.namespaceURI !== readingHtmlNamespace) foreignAttributes.push([node, attributes]);
       const transparent = readingHighlight(node);
       if (!transparent) { flush(); parts.push(['open', node.tagName, attributes]); }
       for (const child of node.childNodes) visit(child);
@@ -1399,16 +1402,76 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       shape: readingShape(preview, final?.controls), elements: readingElements(preview, final?.controls), key: state.key };
     return Object.freeze({ status: 'published', sourceKey: publishedText.key });
   }
-  function currentReadingPublication(expected) {
+  const editPublicationProofs = new WeakMap();
+  function beginEditPublicationProof(sourceKey, admitted) {
+    const publication = publishedText;
+    const epoch = readingEpoch, binding = bindingEpoch, document = preview.ownerDocument;
+    if (!publication || publication.key !== sourceKey || publication.source.source !== editor.value ||
+        preview.namespaceURI !== readingHtmlNamespace || preview.getRootNode() !== document ||
+        typeof MutationObserver.prototype.takeRecords !== 'function') return null;
+    let foreign = null, dirty = false;
+    const parents = new Map(), handle = Object.freeze({});
+    for (let node = preview; node.parentNode; node = node.parentNode) parents.set(node.parentNode, node);
+    const observer = new MutationObserver(invalidate);
+    function invalidate(records) {
+      dirty ||= records.some(record => {
+        const child = parents.get(record.target);
+        return !child || [...record.addedNodes, ...record.removedNodes].includes(child);
+      });
+    }
+    function current() {
+      invalidate(observer.takeRecords());
+      return !dirty && admitted() && publishedText === publication && readingEpoch === epoch &&
+        bindingEpoch === binding && editor.value === publication.source.source && preview.ownerDocument === document &&
+        preview.isConnected && [...parents].every(([parent, node]) => node.parentNode === parent);
+    }
+    observer.observe(preview, { subtree: true, childList: true, characterData: true, attributes: true });
+    for (const parent of parents.keys()) observer.observe(parent, { childList: true });
+    editPublicationProofs.set(handle, {
+      matches(value) {
+        if (value !== publication || !current()) {
+          dirty = true;
+          return matchesReadingRoot(value);
+        }
+        if (foreign !== null) {
+          // Blink can serialize changes to animated SVG attributes without a mutation record.
+          const unchanged = foreign.every(([node, attributes]) => {
+            const live = readingAttributes(node);
+            return live.length === attributes.length && live.every(([name, value], i) =>
+              name === attributes[i][0] && value === attributes[i][1]);
+          });
+          if (unchanged && current()) return true;
+          dirty = true;
+          return matchesReadingRoot(value);
+        }
+        // Seal the foreign attributes from the verification itself, not a second walk.
+        const snapshot = [];
+        if (!matchesReadingRoot(value, snapshot)) return false;
+        if (current()) foreign = snapshot;
+        return true;
+      },
+      close() { observer.disconnect(); },
+    });
+    return handle;
+  }
+  function endEditPublicationProof(handle) {
+    editPublicationProofs.get(handle)?.close();
+    editPublicationProofs.delete(handle);
+  }
+  function matchesReadingRoot(publication, foreignAttributes) {
+    return readingShape(preview, publication.controls, foreignAttributes) === publication.shape &&
+      sameReadingElements(publication.elements, preview, publication.controls);
+  }
+  function currentReadingPublication(expected, handle) {
     const publication = publishedText, entered = readingEpoch, enteredBinding = bindingEpoch;
     if (!publication) return null;
     const state = readingState(publication.source);
+    const proof = editPublicationProofs.get(handle);
     if (publication !== publishedText || entered !== readingEpoch || enteredBinding !== bindingEpoch) return null;
     if (!state || state.frozen || state.key !== publication.key ||
         publication.source.selection !== state.selection || !preview.isConnected ||
         !sameReadingContext(publication.context, state.context) ||
-        readingShape(preview, publication.controls) !== publication.shape ||
-        !sameReadingElements(publication.elements, preview, publication.controls) ||
+        !(proof ? proof.matches(publication) : matchesReadingRoot(publication)) ||
         [...publication.controlParents].some(([node, parent]) => !node.isConnected || node.parentElement !== parent) ||
         [...publication.imageControls].some(([node, markup]) => node.outerHTML !== markup) ||
         publication.owners.some(owner => !owner.element.isConnected || !preview.contains(owner.element) || owner.element.tagName !== owner.tag) ||
@@ -2017,10 +2080,10 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
       saved.alignment.nested.every(owner => [owner.start, owner.end].every(boundary =>
         mappedReadingBoundary(mapping, boundary) !== null));
   }
-  function resolveVisibleText(saved, scroller, context, correspondence = null, exactEntry = false) {
+  function resolveVisibleText(saved, scroller, context, correspondence = null, exactEntry = false, proof) {
     if (!validReadingValue(saved)) return readingFailure('unsupported', 'invalid-bounded-value');
     const entered = readingEpoch, enteredBinding = bindingEpoch;
-    const publication = currentReadingPublication(context);
+    const publication = currentReadingPublication(context, proof);
     if (!publication) return readingFailure('unavailable', 'presentation-unbound-or-stale');
     if (correspondence && !validModeCorrespondence(correspondence, saved, publication)) {
       return readingFailure('unsupported', 'invalid-mode-correspondence');
@@ -2045,7 +2108,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     })) {
       return readingFailure('unsupported', 'nested-owner-chain-changed');
     }
-    if (currentReadingPublication(context) !== publication || entered !== readingEpoch || enteredBinding !== bindingEpoch) {
+    if (currentReadingPublication(context, proof) !== publication || entered !== readingEpoch || enteredBinding !== bindingEpoch) {
       return readingFailure('unavailable', 'presentation-changed');
     }
     const alignment = Object.freeze({ top: saved.alignment.top,
@@ -2053,9 +2116,9 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         kind: entry.kind, tag: entry.tag, role: entry.role, top: entry.top }))) });
     return Object.freeze({ status: 'resolved', receipt: readingReceipt(publication, candidate, range, scroller, geometry, alignment, exactEntry) });
   }
-  function isTextLocationCurrent(receipt) {
+  function isTextLocationCurrent(receipt, proof) {
     const entered = readingEpoch, enteredBinding = bindingEpoch;
-    const sealed = readingReceipts.get(receipt), publication = currentReadingPublication();
+    const sealed = readingReceipts.get(receipt), publication = currentReadingPublication(undefined, proof);
     if (!sealed || !publication || sealed.epoch !== publication.epoch) return false;
     const saved = { ...sealed.candidate, sourceKey: publication.key };
     const candidates = readingCandidates(publication, saved, false, sealed.exactEntry);
@@ -2069,7 +2132,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
         ['scroller', 'start', 'end', 'kind', 'tag', 'role'].every(key => entry[key] === previous.nested[index][key])) &&
       ['left', 'right', 'top', 'bottom'].every(key => geometry.fragment[key] === previous.fragment[key] && geometry.clip[key] === previous.clip[key]) &&
       geometry.chain.length === previous.chain.length && geometry.chain.every((row, i) =>
-        row.every((part, j) => part === previous.chain[i][j])) && currentReadingPublication() === publication &&
+        row.every((part, j) => part === previous.chain[i][j])) && currentReadingPublication(undefined, proof) === publication &&
       entered === readingEpoch && enteredBinding === bindingEpoch;
   }
   function sealTextSource(source) {
@@ -2648,6 +2711,7 @@ window.createEditorScroll = function ({ editor, preview, active, frozen, identit
     publishTextSource,
     captureVisibleText, viewBookmarkText, viewBookmarkDiagram,
     prepareModeTextCorrespondence,
+    beginEditPublicationProof, endEditPublicationProof,
     resolveVisibleText,
     isTextLocationCurrent,
     start() { pendingSource = true; clearGeometry(); },

@@ -1869,70 +1869,93 @@ async function restoreReadingLocation(location, intent, preserveHorizontal = fal
   if (!current()) return refused('superseded');
   editorScroll.previewNavigation();
   const scroller = getViewerScroller();
+  const display = exactEntry && !correspondence && isEditMode ? readingDisplay : null;
+  const original = display && originalMarkdown, tabContent = display?.tab.content;
+  const unchanged = display && markdownEditor.value === original.replace(/\r\n?/g, '\n');
+  const proofAdmitted = () => unchanged && current() && isEditMode &&
+    readingDisplay === display && display.key === location.text.sourceKey &&
+    originalMarkdown === original && display.tab.content === tabContent &&
+    window.CustomTabs.hasReadingSource(display.tab, display.source, display.key);
+  let proof;
+  const openProof = () => {
+    if (proofAdmitted()) proof = editorScroll.beginEditPublicationProof(location.text.sourceKey, proofAdmitted);
+  };
+  const closeProof = () => {
+    if (!proof) return;
+    editorScroll.endEditPublicationProof(proof);
+    proof = null;
+  };
   const resolveTarget = () => editorScroll.resolveVisibleText(
-    location.text, scroller, readingPresentationContext(), correspondence, exactEntry);
-  let traveled = false;
-  for (let index = 0; index <= location.horizontal.nested.length; index++) {
-    if (!current() || getViewerScroller() !== scroller) return refused('superseded');
-    const resolved = resolveTarget();
-    if (resolved.status !== 'resolved') return refused(resolved.reason);
-    const receipt = resolved.receipt, inner = receipt.nested[index];
-    const target = inner?.scroller || scroller;
-    const top = inner ? inner.top : location.text.alignment.top;
-    // Discard can replace a verified nested owner; its initial offset is not the saved position.
-    const left = inner && modeTarget?.restoreNestedHorizontal ? location.horizontal.nested[index] :
-      preserveHorizontal ? target.scrollLeft : inner
-      ? location.horizontal.nested[index] : location.horizontal.outer;
-    const rects = [...receipt.range.getClientRects()];
-    if (rects.length !== 1 || !current() || !editorScroll.isTextLocationCurrent(receipt)) {
-      lastReadingRestoreFailure = Object.freeze({ phase: 'pre-write', index, rectCount: rects.length });
+    location.text, scroller, readingPresentationContext(), correspondence, exactEntry, proof);
+  try {
+    openProof();
+    let traveled = false;
+    for (let index = 0; index <= location.horizontal.nested.length; index++) {
+      if (!current() || getViewerScroller() !== scroller) return refused('superseded');
+      const resolved = resolveTarget();
+      if (resolved.status !== 'resolved') return refused(resolved.reason);
+      const receipt = resolved.receipt, inner = receipt.nested[index];
+      const target = inner?.scroller || scroller;
+      const top = inner ? inner.top : location.text.alignment.top;
+      // Discard can replace a verified nested owner; its initial offset is not the saved position.
+      const left = inner && modeTarget?.restoreNestedHorizontal ? location.horizontal.nested[index] :
+        preserveHorizontal ? target.scrollLeft : inner
+        ? location.horizontal.nested[index] : location.horizontal.outer;
+      const rects = [...receipt.range.getClientRects()];
+      if (rects.length !== 1 || !current() || !editorScroll.isTextLocationCurrent(receipt, proof)) {
+        lastReadingRestoreFailure = Object.freeze({ phase: 'pre-write', index, rectCount: rects.length });
+        return refused('target-geometry-changed');
+      }
+      const bounds = target.getBoundingClientRect(), scale = scrollerScale(target);
+      const destination = target.scrollTop + (rects[0].top - bounds.top) / scale - target.clientTop - top;
+      if (![destination, left].every(Number.isFinite) || !(scale > 0) || !current()) return refused('invalid-target-geometry');
+      const before = [target.scrollTop, target.scrollLeft];
+      let request, after;
+      try {
+        request = target.scrollTo({ top: destination, left, behavior: 'instant' });
+        after = [target.scrollTop, target.scrollLeft];
+      } catch (error) {
+        console.error('Reading position could not be restored:', error);
+        return refused('native-request-failed');
+      }
+      // Keep post-write geometry, not an observer or a root proof, across the native wait.
+      const postWrite = current() ? resolveTarget() : null;
+      closeProof();
+      let completion;
+      try {
+        completion = await Promise.prototype.then.call(request, result => result);
+      } catch {
+        return refused('native-promise-unavailable-or-rejected');
+      }
+      if (!current() || target.scrollTop !== after[0] || target.scrollLeft !== after[1]) return refused('superseded');
+      if (!completion || completion.interrupted !== false) return refused('native-interrupted-or-malformed');
+      openProof();
+      if (postWrite?.status !== 'resolved' || !editorScroll.isTextLocationCurrent(postWrite.receipt, proof) || !current()) {
+        lastReadingRestoreFailure = Object.freeze({ phase: 'post-write-completion', index,
+          resolutionStatus: postWrite?.status ?? null });
+        return refused('target-geometry-changed');
+      }
+      traveled ||= before[0] !== after[0] || before[1] !== after[1];
+    }
+    const final = resolveTarget();
+    if (final.status !== 'resolved' || !current() || !editorScroll.isTextLocationCurrent(final.receipt, proof)) {
+      lastReadingRestoreFailure = Object.freeze({ phase: 'final', index: null, resolutionStatus: final.status });
       return refused('target-geometry-changed');
     }
-    const bounds = target.getBoundingClientRect(), scale = scrollerScale(target);
-    const destination = target.scrollTop + (rects[0].top - bounds.top) / scale - target.clientTop - top;
-    if (![destination, left].every(Number.isFinite) || !(scale > 0) || !current()) return refused('invalid-target-geometry');
-    const before = [target.scrollTop, target.scrollLeft];
-    let request, after;
-    try {
-      request = target.scrollTo({ top: destination, left, behavior: 'instant' });
-      after = [target.scrollTop, target.scrollLeft];
-    } catch (error) {
-      console.error('Reading position could not be restored:', error);
-      return refused('native-request-failed');
-    }
-    // Keep the post-write geometry before the exact native completion can be delayed.
-    const postWrite = current() ? resolveTarget() : null;
-    let completion;
-    try {
-      completion = await Promise.prototype.then.call(request, result => result);
-    } catch {
-      return refused('native-promise-unavailable-or-rejected');
-    }
-    if (!current() || target.scrollTop !== after[0] || target.scrollLeft !== after[1]) return refused('superseded');
-    if (!completion || completion.interrupted !== false) return refused('native-interrupted-or-malformed');
-    if (postWrite?.status !== 'resolved' || !editorScroll.isTextLocationCurrent(postWrite.receipt) || !current()) {
-      lastReadingRestoreFailure = Object.freeze({ phase: 'post-write-completion', index,
-        resolutionStatus: postWrite?.status ?? null });
-      return refused('target-geometry-changed');
-    }
-    traveled ||= before[0] !== after[0] || before[1] !== after[1];
+    const rect = final.receipt.range.getClientRects()[0];
+    const exposed = rect && [scroller, ...final.receipt.nested.map(entry => entry.scroller)].every(box => {
+      const bounds = box.getBoundingClientRect(), scale = scrollerScale(box);
+      return rect.right > bounds.left + box.clientLeft * scale &&
+        rect.left < bounds.left + (box.clientLeft + box.clientWidth) * scale &&
+        rect.bottom > bounds.top + box.clientTop * scale &&
+        rect.top < bounds.top + (box.clientTop + box.clientHeight) * scale;
+    });
+    if (!exposed || !current()) return refused('target-clipped');
+    return Object.freeze({ status: 'completed', scope: 'request-offsets', witness: 'target-fragment',
+      travel: traveled ? 'observed-travel' : 'no-observed-travel' });
+  } finally {
+    closeProof();
   }
-  const final = resolveTarget();
-  if (final.status !== 'resolved' || !current() || !editorScroll.isTextLocationCurrent(final.receipt)) {
-    lastReadingRestoreFailure = Object.freeze({ phase: 'final', index: null, resolutionStatus: final.status });
-    return refused('target-geometry-changed');
-  }
-  const rect = final.receipt.range.getClientRects()[0];
-  const exposed = rect && [scroller, ...final.receipt.nested.map(entry => entry.scroller)].every(box => {
-    const bounds = box.getBoundingClientRect(), scale = scrollerScale(box);
-    return rect.right > bounds.left + box.clientLeft * scale &&
-      rect.left < bounds.left + (box.clientLeft + box.clientWidth) * scale &&
-      rect.bottom > bounds.top + box.clientTop * scale &&
-      rect.top < bounds.top + (box.clientTop + box.clientHeight) * scale;
-  });
-  if (!exposed || !current()) return refused('target-clipped');
-  return Object.freeze({ status: 'completed', scope: 'request-offsets', witness: 'target-fragment',
-    travel: traveled ? 'observed-travel' : 'no-observed-travel' });
 }
 
 window.readingLocationAdapter = Object.freeze({
