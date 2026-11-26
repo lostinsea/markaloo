@@ -38,6 +38,21 @@ section is kept here so the register has a visible edge.
 
 ## Current workset
 
+- `windows-baseline-suite-recovery` - **OPEN; SEPARATE FROM THE VIEW → EDIT MERGE**.
+  - The maintainer waived only failures reproduced on the pinned control for
+    merging the Windows View → Edit optimizations (`96666f4`, `e43041d`).
+    See [Performance Audit](PERF-AUDIT.md#follow-up-reuse-root-verification-within-an-edit-restore)
+    for paired timings and bounded native results. Two independent review
+    rounds closed with the legacy R1487 mutation behavior confirmed unchanged.
+  - The integrated tip repeats the control's reading-mode and viewport failure
+    signatures and the deletion-contract startup failures that block the rest
+    of the tabs suite. The official revert harness stops at its existing table
+    suite formatter check. Repair that check's inputs and the companion
+    inventory, then classify and fix the full suite's failures without
+    weakening coverage. Unexecuted tests are not passes.
+  - Track the matching deep wrapped-table history/resize behavior separately
+    as a product defect. The waiver is not release qualification.
+
 - `saved-table-code-paste-padding` / `v0142-release` - **PUBLISHED AND VERIFIED; PHASE ONE COMPLETE**.
   - New report: popup paste/Update/Save leaves escaped fences and `<br>` literal.
     The later raw multiline pipe-table workaround is a separate unsupported path,
